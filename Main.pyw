@@ -1118,16 +1118,25 @@ def __summarize_data(tree: ttk.Treeview, label: tk.Label, time_index: int = 0) -
     today = datetime.today()
 
     if time_index == 0:
-        start_of_week = today - timedelta(days=today.weekday())
-        end_of_week = start_of_week + timedelta(days=6)
+        start_of_period = today - timedelta(days=today.weekday())
+        end_of_period = start_of_period + timedelta(days=6)
 
-        start_date_key = start_of_week.strftime("%Y%m%d")
-        end_date_key = end_of_week.strftime("%Y%m%d")
         label.configure(text="Weekly Summary")
     else:
-        start_date_key = 20250101  ## TODO
-        end_date_key = 20251231
+        start_of_period = today.replace(day=1)
+        if today.month == 12:
+            end_of_period = today.replace(
+                year=today.year + 1, month=1, day=1
+            ) - timedelta(days=1)
+        else:
+            end_of_period = today.replace(month=today.month + 1, day=1) - timedelta(
+                days=1
+            )
+
         label.configure(text="Monthly Summary")
+
+    start_date_key = start_of_period.strftime("%Y%m%d")
+    end_date_key = end_of_period.strftime("%Y%m%d")
 
     grouped_data = pd.read_sql(
         f"select customer_name, project_name, round(sum(total_time),2) as total_time from time where date_key between '{start_date_key}' and '{end_date_key}' group by customer_name, project_name order by 1, 2",
