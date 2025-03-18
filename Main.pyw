@@ -163,10 +163,10 @@ def initialize_db(file_path: str) -> bool:
 
         try:
             add_dates()
-            add_default_bonus()
-            add_default_customers()
-            add_default_projects()
-            add_historic_time()
+            # add_default_bonus()
+            # add_default_customers()
+            # add_default_projects()
+            # add_historic_time()
         except Exception as e:
             print(f"Error reading from database: {e}")
 
@@ -558,7 +558,7 @@ def __populate_sql_output(sql_output: ttk.Treeview, data: pd.DataFrame) -> None:
     for _, row in data.iterrows():
         sql_output.insert("", "end", values=list(row))
 
-    sql_output.place(relx=0.01, rely=0.01, width=540, height=300)
+    sql_output.place(relx=0.01, rely=0.01, width=1160, height=300)
 
 
 def __run_sql(
@@ -824,10 +824,10 @@ def __create_popup(
 
     popup_window.resizable(False, False)
 
-    __add_label(
-        popup_window,
-        text=text,
-    )
+    # __add_label(
+    #     popup_window,
+    #     text=text,
+    # )
     label = __add_label(popup_window, text, font_size=14)
     label.pack(padx=10, pady=10)
 
@@ -1114,8 +1114,77 @@ def __remove_project_popup():
     __add_cancel(popup_window)
 
 
+def __summarize_data(tree: ttk.Treeview, label: tk.Label, time_index: int = 0) -> None:
+    today = datetime.today()
+
+    if time_index == 0:
+        start_of_week = today - timedelta(days=today.weekday())
+        end_of_week = start_of_week + timedelta(days=6)
+
+        start_date_key = start_of_week.strftime("%Y%m%d")
+        end_date_key = end_of_week.strftime("%Y%m%d")
+        label.configure(text="Weekly Summary")
+    else:
+        start_date_key = 20250101  ## TODO
+        end_date_key = 20251231
+        label.configure(text="Monthly Summary")
+
+    grouped_data = pd.read_sql(
+        f"select customer_name, project_name, round(sum(total_time),2) as total_time from time where date_key between '{start_date_key}' and '{end_date_key}' group by customer_name, project_name order by 1, 2",
+        conn,
+    )
+
+    # Clear old data (if any)
+    for row in tree.get_children():
+        tree.delete(row)
+
+    tree["columns"] = list(grouped_data.columns)  # Set column names
+    tree["show"] = "headings"  # Hide default empty column
+
+    # Add column headings
+    for col in grouped_data.columns:
+        tree.heading(col, text=col)  # Column title
+        tree.column(col, width=180, anchor="center")  # Adjust column width
+
+    # Insert DataFrame rows into Treeview
+    for index, row in grouped_data.iterrows():
+        tree.insert("", "end", values=list(row))
+
+    # Pack Treeview in the window
+    tree.pack(expand=True, fill="both")
+
+
+def __add_summary_popup():
+    popup_window = tk.Toplevel(root, bg=__get_color("beige"), width=600)
+    popup_window.title("Time Summary")
+    popup_window.resizable(False, False)
+
+    label = __add_label(popup_window, "Weekly Summary", font_size=14)
+    label.pack(padx=5, pady=5)
+
+    tree = ttk.Treeview(popup_window)
+    tree.pack(expand=True, fill="both")
+
+    week_button = __add_button(
+        frame=popup_window,
+        text="Week",
+        cmd=lambda: __summarize_data(tree=tree, time_index=0, label=label),
+        side="left",
+    )
+    month_button = __add_button(
+        frame=popup_window,
+        text="Month",
+        cmd=lambda: __summarize_data(tree=tree, time_index=1, label=label),
+        side="left",
+    )
+
+    # Default weekly
+    __summarize_data(tree=tree, time_index=0)
+
+
 def __add_sql_popup():
     popup_window = __create_popup(root, "SQL-Editor", "Enter SQL Command")
+    popup_window.geometry("1200x600")
 
     menubar = tk.Menu(popup_window)
     popup_window.config(menu=menubar)
@@ -1124,9 +1193,9 @@ def __add_sql_popup():
     menubar.add_cascade(label="Update", menu=file_menu)
     file_menu.add_command(label="Rerun Time Calculations", command=__update_value_popup)
 
-    entry = __add_entry(popup_window, None, "SQL Command", width=75)
+    entry = __add_entry(popup_window, None, "SQL Command", width=200)
 
-    sql_output_frame = tk.Frame(popup_window, bg=__get_color("beige"))
+    sql_output_frame = tk.Frame(popup_window, bg=__get_color("beige"), width=1200)
     sql_output_frame.pack(fill=tk.BOTH, expand=True)
     sql_output = ttk.Treeview(sql_output_frame)
     sql_output.pack(fill=tk.BOTH, expand=True)
@@ -1325,6 +1394,7 @@ def start_program():
     file_menu.add_command(label="Exit", command=root.quit)
     menubar.add_cascade(label="SQL", menu=sql_menu)
     sql_menu.add_command(label="Run SQL", command=__add_sql_popup)
+    sql_menu.add_command(label="Summarize", command=__add_summary_popup)
 
     __update_ui()
 
