@@ -163,10 +163,6 @@ def initialize_db(file_path: str) -> bool:
 
         try:
             add_dates()
-            # add_default_bonus()
-            # add_default_customers()
-            # add_default_projects()
-            # add_historic_time()
         except Exception as e:
             print(f"Error reading from database: {e}")
 
@@ -529,6 +525,8 @@ def __update_project(c_name: str, p_name: str, button: tk.Button) -> None:
         comment = simpledialog.askstring("Comment", "What work was conducted?")
     else:
         comment = ""
+    if comment is None:
+        return
     insert_time_row(c_name, p_name, comment=comment)
     color = (
         __get_color("green")
@@ -1383,8 +1381,6 @@ def __update_ui():
 
 
 ### Main Code ###
-
-
 def start_program():
     menubar = tk.Menu(root)
     root.config(menu=menubar)
