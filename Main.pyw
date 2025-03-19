@@ -1326,6 +1326,8 @@ def __update_ui():
 
     customers = sorted_projects["customer_name"].unique().tolist()
 
+    if len(customers) == 0:
+        return
     customer_name = customers[0]
     customer_index = 0
     for i, row in enumerate(sorted_projects.iterrows()):
