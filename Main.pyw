@@ -11,9 +11,10 @@ import tkinter.font as tkFont
 from tkinter import ttk, messagebox, simpledialog
 
 ## TODO what happens if select blank customer/project to remove?
-## TODO Cancel button on enter text for work
 ## TODO wage, cost, bonus not calculating correct
 ## TODO easy way to add time in post
+## TODO add project moved to button on screen next to customer
+## TODO total time by customer
 
 # File path for the SQLite database
 db_file = "data.db"
@@ -48,7 +49,6 @@ def __get_project_id(project_name: str) -> int:
         return -1
 
 
-# Define a function to check and initialize the database
 def initialize_db(file_path: str) -> bool:
     global conn
 
@@ -842,7 +842,11 @@ def __add_combobox(frame: tk.Toplevel, entries: list) -> ttk.Combobox:
 
 
 def __add_entry(
-    frame: tk.Toplevel, text_var: tk.StringVar, text: str, width: int = 16
+    frame: tk.Toplevel,
+    text_var: tk.StringVar,
+    text: str,
+    width: int = 16,
+    pack: bool = True,
 ) -> tk.Entry:
     entry = tk.Entry(
         frame,
@@ -855,7 +859,8 @@ def __add_entry(
     entry.insert(0, text)
     entry.bind("<FocusIn>", lambda event, p=text: __entry_on_focus_in(event, p))
     entry.bind("<FocusOut>", lambda event, p=text: __entry_on_focus_out(event, p))
-    entry.pack(padx=10, pady=10)
+    if pack:
+        entry.pack(padx=10, pady=10)
 
     return entry
 
@@ -1120,7 +1125,9 @@ def __summarize_data(tree: ttk.Treeview, label: tk.Label, time_index: int = 0) -
         end_of_period = start_of_period + timedelta(days=6)
 
         label.configure(text="Weekly Summary")
-    else:
+        start_date_key = start_of_period.strftime("%Y%m%d")
+        end_date_key = end_of_period.strftime("%Y%m%d")
+    elif time_index == 1:
         start_of_period = today.replace(day=1)
         if today.month == 12:
             end_of_period = today.replace(
@@ -1130,11 +1137,13 @@ def __summarize_data(tree: ttk.Treeview, label: tk.Label, time_index: int = 0) -
             end_of_period = today.replace(month=today.month + 1, day=1) - timedelta(
                 days=1
             )
-
         label.configure(text="Monthly Summary")
-
-    start_date_key = start_of_period.strftime("%Y%m%d")
-    end_date_key = end_of_period.strftime("%Y%m%d")
+        start_date_key = start_of_period.strftime("%Y%m%d")
+        end_date_key = end_of_period.strftime("%Y%m%d")
+    else:
+        start_date_key = time_index[0]
+        end_date_key = time_index[1]
+        label.configure(text="Custom Period Summary")
 
     grouped_data = pd.read_sql(
         f"select customer_name, project_name, round(sum(total_time),2) as total_time from time where date_key between '{start_date_key}' and '{end_date_key}' group by customer_name, project_name order by 1, 2",
@@ -1151,7 +1160,7 @@ def __summarize_data(tree: ttk.Treeview, label: tk.Label, time_index: int = 0) -
     # Add column headings
     for col in grouped_data.columns:
         tree.heading(col, text=col)  # Column title
-        tree.column(col, width=180, anchor="center")  # Adjust column width
+        tree.column(col, width=200, anchor="center")  # Adjust column width
 
     # Insert DataFrame rows into Treeview
     for index, row in grouped_data.iterrows():
@@ -1166,7 +1175,9 @@ def __add_summary_popup():
     popup_window.title("Time Summary")
     popup_window.resizable(False, False)
 
-    label = __add_label(popup_window, "Weekly Summary", font_size=14)
+    label = __add_label(
+        popup_window, "Weekly Summary", font_size=14, anchor="n", width=40
+    )
     label.pack(padx=5, pady=5)
 
     tree = ttk.Treeview(popup_window)
@@ -1185,8 +1196,33 @@ def __add_summary_popup():
         side="left",
     )
 
+    entry_s_date = tk.StringVar()
+    entry_s_date.trace_add(
+        "write", partial(__entry_date_check, entry_s_date, "yyyymmdd")
+    )
+    s_date = __add_entry(popup_window, entry_s_date, "Date", width=12, pack=False)
+    s_date.insert(0, "20250101")
+    s_date.pack(side="left", padx=5, pady=5)
+
+    entry_e_date = tk.StringVar()
+    entry_e_date.trace_add(
+        "write", partial(__entry_date_check, entry_e_date, "yyyymmdd")
+    )
+    e_date = __add_entry(popup_window, entry_e_date, "Date", width=12, pack=False)
+    e_date.insert(0, "20251231")
+    e_date.pack(side="left", padx=5, pady=5)
+
+    popup_window.bind(
+        "<Return>",
+        lambda event: __summarize_data(
+            tree=tree, time_index=[s_date.get(), e_date.get()], label=label
+        ),
+    )
+
+    __add_cancel(popup_window, side="right")
+
     # Default weekly
-    __summarize_data(tree=tree, time_index=0)
+    __summarize_data(tree=tree, time_index=0, label=label)
 
 
 def __add_sql_popup():
