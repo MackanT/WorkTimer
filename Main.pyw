@@ -15,6 +15,9 @@ from tkinter import ttk, messagebox, simpledialog
 ## TODO easy way to add time in post
 ## TODO add project moved to button on screen next to customer
 ## TODO total time by customer
+## TODO renamne cusomter and project
+## TODO snabbtryck för olika select på tabeller eller att när man trycker på run SQL så körs select * from time direkt
+## TODO lista vilka tabeller som är tillgängliga. Gick inte att selecta INFORMATION_SCHEMA.TABLES
 
 # File path for the SQLite database
 db_file = "data.db"
