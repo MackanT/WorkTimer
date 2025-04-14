@@ -324,6 +324,15 @@ def update_project(customer_name: str, project_name: str, new_project_name: str)
         conn.commit()
 
 
+def remove_project(customer_name: str, project_name: str) -> None:
+    conn.execute(
+        f"update projects set is_current = 0 where project_name = '{project_name}' and is_current = 1 and customer_id in (select customer_id from customers where customer_name = '{customer_name}' and is_current = 1)"
+    )
+
+    if COMMIT:
+        conn.commit()
+
+
 dpg.create_context()
 
 ## Image Input
@@ -867,9 +876,10 @@ def delete_project_data(sender, app_data) -> None:
     __hide_text_after_seconds(
         "project_delete_error_label", "Disabling project in DB!", 3, error=False
     )
-    queue_db_task('delete_project', {"customer_name": customer_name, "project_name": project_name})
+    queue_db_task(
+        "delete_project", {"customer_name": customer_name, "project_name": project_name}
+    )
     __post_user_input()
-    
 
 
 ###
