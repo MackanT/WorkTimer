@@ -797,9 +797,7 @@ def add_customer_data(sender, app_data) -> None:
 
     ## Case Success:
     if __is_valid_date(start_date):
-        print(
-            f"Customer Name: {customer_name}, Start Date: {start_date}, Amount: {amount}"
-        )
+        ## TODO add log
         __hide_text_after_seconds(
             "customer_add_error_label", "Adding customer to DB!", 3, error=False
         )
@@ -844,10 +842,7 @@ def update_customer_data(sender, app_data) -> None:
     )
     __update_dropdown("customer_dropdown")
     __post_user_input()
-
-    print(
-        f"Customer: {customer_name}, New Values: {new_customer_name}, {customer_wage}"
-    )
+    ## TODO add log
 
 
 def delete_customer_data(sender, app_data) -> None:
@@ -863,8 +858,7 @@ def delete_customer_data(sender, app_data) -> None:
     queue_db_task("remove_customer", {"customer_name": customer_name})
     __update_dropdown("customer_dropdown")
     __post_user_input()
-
-    print(f"Removing customer: {customer_name}")
+    ## TODO add log
 
 
 def add_project_data(sender, app_data) -> None:
@@ -879,7 +873,7 @@ def add_project_data(sender, app_data) -> None:
         )
         return
 
-    print(f"Customer Name: {customer_name}, Project Name: {project_name}")
+    ## TODO add log
     __hide_text_after_seconds(
         "project_add_error_label", "Adding project to DB!", 3, error=False
     )
@@ -910,9 +904,7 @@ def update_project_data(sender, app_data) -> None:
         return
 
     # Success Case:
-    print(
-        f"Customer: {customer_name}, Project: {project_name} is renamed: {new_project_name}"
-    )
+    ## TODO add log
     __hide_text_after_seconds(
         "project_update_error_label", "Updating project in DB!", 3, error=False
     )
@@ -941,7 +933,7 @@ def delete_project_data(sender, app_data) -> None:
         )
         return
 
-    print(f"Removing customer: {customer_name}, project: {project_name}")
+    ## TODO add log
     __hide_text_after_seconds(
         "project_delete_error_label", "Disabling project in DB!", 3, error=False
     )
