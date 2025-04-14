@@ -27,7 +27,8 @@ INIT = True
 ###
 # SQL-Backend logic
 ###
-db_file = "data.db"
+db_file = "data_test.db"
+
 
 def initialize_db(file_path: str) -> bool:
     global conn
@@ -330,8 +331,11 @@ width, height, channels, data = dpg.load_image("icon_calendar.png")
 with dpg.texture_registry():
     icon_calendar = dpg.add_static_texture(width, height, data)
 
-#Temp df, all code should read directly from db!
-df = pd.read_sql("select c.customer_id, c.customer_name, p.project_id, p.project_name, 0 as initial_state, '0 h' as initial_text, c.wage from projects p left join customers c on c.customer_id = p.customer_id and c.is_current = 1 where p.is_current = 1 ", conn)
+# Temp df, all code should read directly from db!
+# df = pd.read_sql(
+#     "select c.customer_id, c.customer_name, p.project_id, p.project_name, 0 as initial_state, '0 h' as initial_text, c.wage from projects p left join customers c on c.customer_id = p.customer_id and c.is_current = 1 where p.is_current = 1 ",
+#     conn,
+# )
 input_focused = False
 
 
@@ -443,33 +447,40 @@ def hide_text_after_delay(tag: str, sleep_time: int) -> None:
 
 
 def __update_dropdown(tag: str, c_name: str = None) -> None:
-    if tag == 'customer_dropdown':
+    if tag == "customer_dropdown":
         r_queue = queue.Queue()
-        queue_db_task('get_customer_names', {}, response=r_queue)
+        queue_db_task("get_customer_names", {}, response=r_queue)
         customers = r_queue.get()
-        dpg.configure_item('customer_update_name_dropdown', items=customers)
-        dpg.configure_item('customer_delete_name_dropdown', items=customers)
-        dpg.configure_item('project_add_customer_name_dropdown', items=customers)
-        dpg.configure_item('project_update_customer_name_dropdown', items=customers)
-        dpg.configure_item('project_delete_customer_name_dropdown', items=customers)
+        dpg.configure_item("customer_update_name_dropdown", items=customers)
+        dpg.configure_item("customer_delete_name_dropdown", items=customers)
+        dpg.configure_item("project_add_customer_name_dropdown", items=customers)
+
+        queue_db_task("get_active_customers", {}, response=r_queue)
+        customers = r_queue.get()
+        dpg.configure_item("project_update_customer_name_dropdown", items=customers)
+        dpg.configure_item("project_delete_customer_name_dropdown", items=customers)
 
     elif tag == "project_update_project_name_dropdown":
-        if INIT: # Ensure no dead-lock during setup
+        if INIT:  # Ensure no dead-lock during setup
             return
-        
+
         customer_name = dpg.get_value("project_update_customer_name_dropdown")
 
         r_queue = queue.Queue()
-        queue_db_task('get_project_names', {"customer_name": customer_name}, response=r_queue)
+        queue_db_task(
+            "get_project_names", {"customer_name": customer_name}, response=r_queue
+        )
         projects = r_queue.get()
         dpg.configure_item(tag, items=projects)
     elif tag == "project_delete_project_name_dropdown":
-        if INIT: # Ensure no dead-lock during setup
+        if INIT:  # Ensure no dead-lock during setup
             return
-        
+
         customer_name = dpg.get_value("project_delete_customer_name_dropdown")
         r_queue = queue.Queue()
-        queue_db_task('get_project_names', {"customer_name": customer_name}, response=r_queue)
+        queue_db_task(
+            "get_project_names", {"customer_name": customer_name}, response=r_queue
+        )
         projects = r_queue.get()
         dpg.configure_item(tag, items=projects)
 
@@ -502,6 +513,8 @@ def on_date_selected(sender, app_data):
 def render_customer_project_ui():
     # Clear previous content (but not the container itself!)
     dpg.delete_item("customer_ui_section", children_only=True)
+
+    __update_dropdown("customer_dropdown")
 
     r_queue = queue.Queue()
     queue_db_task('get_customer_ui_list', {}, response=r_queue)
@@ -903,10 +916,8 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
             with dpg.collapsing_header(
                 label="Update Customer", default_open=False, indent=INDENT_2
             ):
-                customers = df["customer_name"].unique().tolist()
-
                 dpg.add_combo(
-                    customers,
+                    [],
                     width=COMBO_WIDTH,
                     label="Customer Name",
                     tag="customer_update_name_dropdown",
@@ -928,7 +939,7 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
                 label="Remove Customer", default_open=False, indent=INDENT_2
             ):
                 dpg.add_combo(
-                    customers,
+                    [],
                     default_value="",
                     width=COMBO_WIDTH,
                     label="Customer Name",
@@ -942,9 +953,8 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
             with dpg.collapsing_header(
                 label="Add Project", default_open=False, indent=INDENT_2
             ):
-                customers = df["customer_name"].unique().tolist()
                 dpg.add_combo(
-                    customers,
+                    [],
                     width=COMBO_WIDTH,
                     label="Customer Name",
                     tag="project_add_customer_name_dropdown",
@@ -955,9 +965,8 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
             with dpg.collapsing_header(
                 label="Update Project", default_open=False, indent=INDENT_2
             ):
-                customers = df["customer_name"].unique().tolist()
                 dpg.add_combo(
-                    customers,
+                    [],
                     width=COMBO_WIDTH,
                     label="Customer Name",
                     tag="project_update_customer_name_dropdown",
@@ -983,9 +992,8 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
             with dpg.collapsing_header(
                 label="Remove Project", default_open=False, indent=INDENT_2
             ):
-                customers = df["customer_name"].unique().tolist()
                 dpg.add_combo(
-                    customers,
+                    [],
                     width=COMBO_WIDTH,
                     label="Customer Name",
                     tag="project_delete_customer_name_dropdown",
