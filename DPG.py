@@ -34,7 +34,6 @@ def initialize_db(file_path: str) -> bool:
     global conn
 
     def add_dates(s_date, e_date) -> None:
-
         # Create a date range
         date_range = pd.date_range(start=s_date, end=e_date)
 
@@ -104,7 +103,6 @@ def initialize_db(file_path: str) -> bool:
         """)
         print("Trigger 'trigger_time_after_update' created successfully.")
 
-
         ## Customers
         conn.execute("""
         create table if not exists customers (
@@ -161,13 +159,14 @@ def initialize_db(file_path: str) -> bool:
 
         try:
             add_dates(s_date="2020-01-01", e_date="2030-12-31")
-            print('Database auto-generated dates table')
+            print("Database auto-generated dates table")
         except Exception as e:
             print(f"Error reading from database: {e}")
 
         conn.commit()
 
     return conn
+
 
 db_queue = queue.Queue()
 conn = initialize_db(db_file)
@@ -208,14 +207,12 @@ def insert_customer(
         "insert into customers (customer_name, start_date, wage, valid_from, valid_to, is_current, inserted_at, updated_at) values (?, ?, ?, ?, ?, 1, ?, ?)",
         (customer_name, start_date, wage, valid_from, None, now, None),
     )
-    
-    if COMMIT: 
+
+    if COMMIT:
         conn.commit()
 
-def update_customer(
-    customer_name: str, new_customer_name: str, wage: int
-) -> None:
-    
+
+def update_customer(customer_name: str, new_customer_name: str, wage: int) -> None:
     conn.execute(
         """
         update customers
@@ -246,21 +243,22 @@ def update_customer(
         ),
     )
 
-    if COMMIT: 
+    if COMMIT:
         conn.commit()
+
 
 def remove_customer(customer_name: str) -> None:
     conn.execute(
         f"update customers set is_current = 0 where customer_name = '{customer_name}'"
     )
-    if COMMIT: 
+    if COMMIT:
         conn.commit()
 
 
 def insert_project(customer_name: str, project_name: str) -> None:
-
     customers = pd.read_sql(
-        f"select * from customers where customer_name = '{customer_name}' and is_current = 1", conn
+        f"select * from customers where customer_name = '{customer_name}' and is_current = 1",
+        conn,
     )
     customer_id = int(customers["customer_id"].iloc[0])
 
@@ -269,23 +267,25 @@ def insert_project(customer_name: str, project_name: str) -> None:
         conn,
     )
     if len(projects[projects["is_current"] == 1]) > 0:
-        return # Project already exists in database!
+        return  # Project already exists in database!
     elif len(projects[projects["is_current"] == 0]) > 0:
         project_id = projects["project_id"].iloc[0]
         conn.execute(
             f"update projects set is_current = 1 where project_id = {project_id}"
         )
-        #Project has been reactivated!
+        # Project has been reactivated!
     else:
         conn.execute(
             "insert into projects (customer_id, project_name, is_current) values (?, ?, ?)",
             (customer_id, project_name, 1),
         )
-    if COMMIT: 
+    if COMMIT:
         conn.commit()
 
-def update_project(customer_name: str, project_name: str, new_project_name: str) -> None:
-    
+
+def update_project(
+    customer_name: str, project_name: str, new_project_name: str
+) -> None:
     conn.execute(
         """
         update projects
@@ -320,7 +320,7 @@ def update_project(customer_name: str, project_name: str, new_project_name: str)
         ),
     )
 
-    if COMMIT: 
+    if COMMIT:
         conn.commit()
 
 
@@ -350,51 +350,89 @@ input_focused = False
 
 ###
 # Queue
-###    
+###
 def process_db_queue():
     while not db_queue.empty():
         task = db_queue.get()
-        action = task['action']
+        action = task["action"]
         data = task["data"]
-        response = task['response']
+        response = task["response"]
         if action == "insert_customer":
-            insert_customer(data['customer_name'], data['start_date'], int(data['wage']))
+            insert_customer(
+                data["customer_name"], data["start_date"], int(data["wage"])
+            )
         elif action == "update_customer":
-            update_customer(data['customer_name'], data['new_customer_name'], int(data['wage']))
-        elif action == 'remove_customer':
-            remove_customer(data['customer_name'])
-        elif action == 'insert_project':
-            insert_project(data['customer_name'], data['project_name'])
-        elif action == 'update_project':
-            update_project(data['customer_name'], data['project_name'], data['new_project_name'])
+            update_customer(
+                data["customer_name"], data["new_customer_name"], int(data["wage"])
+            )
+        elif action == "remove_customer":
+            remove_customer(data["customer_name"])
+        elif action == "insert_project":
+            insert_project(data["customer_name"], data["project_name"])
+        elif action == "update_project":
+            update_project(
+                data["customer_name"], data["project_name"], data["new_project_name"]
+            )
+        elif action == "delete_project":
+            remove_project(data["customer_name"], data["project_name"])
 
-        elif action == 'get_wage':
-            result = pd.read_sql(f"select wage from customers where customer_name = '{data['customer_name']}'", conn).iloc[0,0]
+        elif action == "get_wage":
+            result = pd.read_sql(
+                f"select wage from customers where customer_name = '{data['customer_name']}'",
+                conn,
+            ).iloc[0, 0]
             result = int(result)
-        elif action == 'get_customer_names':
-            result = pd.read_sql("select customer_name from customers where is_current = 1", conn)['customer_name'].unique().tolist()
-        elif action == 'get_customer_ui_list':
-            result = pd.read_sql("select c.customer_id, c.customer_name, p.project_id, p.project_name, 0 as initial_state, '0 h' as initial_text, c.wage from projects p left join customers c on c.customer_id = p.customer_id and c.is_current = 1 where p.is_current = 1", conn)
-        elif action == 'get_project_names':
-            result = pd.read_sql(f"select p.project_name from projects p left join customers c on c.customer_id = p.customer_id where c.customer_name = '{data['customer_name']}'", conn)['project_name'].unique().tolist()
-        
-        elif action == 'run_query':
+        elif action == "get_active_customers":
+            result = (
+                pd.read_sql(
+                    "select distinct c.customer_name from projects p left join customers c on c.customer_id = p.customer_id and p.is_current = 1 where c.is_current = 1",
+                    conn,
+                )["customer_name"]
+                .unique()
+                .tolist()
+            )
+        elif action == "get_customer_names":
+            result = (
+                pd.read_sql(
+                    "select customer_name from customers where is_current = 1", conn
+                )["customer_name"]
+                .unique()
+                .tolist()
+            )
+        elif action == "get_customer_ui_list":
+            result = pd.read_sql(
+                "select c.customer_id, c.customer_name, p.project_id, p.project_name, 0 as initial_state, '0 h' as initial_text, c.wage from projects p left join customers c on c.customer_id = p.customer_id and c.is_current = 1 where p.is_current = 1",
+                conn,
+            )
+        elif action == "get_project_names":
+            result = (
+                pd.read_sql(
+                    f"select p.project_name from projects p left join customers c on c.customer_id = p.customer_id where c.customer_name = '{data['customer_name']}' and p.is_current = 1",
+                    conn,
+                )["project_name"]
+                .unique()
+                .tolist()
+            )
+
+        elif action == "run_query":
             try:
-                result = pd.read_sql(data['query'], conn)
+                result = pd.read_sql(data["query"], conn)
             except Exception as e:
                 result = e
-
-
 
         if response:
             response.put(result)
 
-def queue_db_task(action: str, data: dict, response = None) -> None:
-    db_queue.put({
-        "action": action,
-        "data": data,
-        "response": response # Optional
-    })
+
+def queue_db_task(action: str, data: dict, response=None) -> None:
+    db_queue.put(
+        {
+            "action": action,
+            "data": data,
+            "response": response,  # Optional
+        }
+    )
+
 
 ###
 # Help Functions
@@ -497,17 +535,17 @@ def __update_dropdown(tag: str, c_name: str = None) -> None:
 def __update_text_input(tag: str):
     if tag == "customer_update_name_dropdown":
         cur_val = dpg.get_value(tag)
-        dpg.set_value('customer_update_customer_name_input', cur_val)
+        dpg.set_value("customer_update_customer_name_input", cur_val)
 
         r_queue = queue.Queue()
-        queue_db_task('get_wage', {"customer_name": cur_val}, response=r_queue)
+        queue_db_task("get_wage", {"customer_name": cur_val}, response=r_queue)
         new_wage = r_queue.get()
 
-        dpg.set_value('customer_update_wage_input', new_wage)
-    elif tag == 'project_update_project_name_dropdown':
+        dpg.set_value("customer_update_wage_input", new_wage)
+    elif tag == "project_update_project_name_dropdown":
         cur_val = dpg.get_value(tag)
-        dpg.set_value('project_update_name_input', cur_val)
-        
+        dpg.set_value("project_update_name_input", cur_val)
+
 
 def __autoset_query_window(table_name: str) -> None:
     sql_input = f"select * from {dpg.get_item_label(table_name)}"
@@ -526,18 +564,20 @@ def render_customer_project_ui():
     __update_dropdown("customer_dropdown")
 
     r_queue = queue.Queue()
-    queue_db_task('get_customer_ui_list', {}, response=r_queue)
+    queue_db_task("get_customer_ui_list", {}, response=r_queue)
     df = r_queue.get()
 
     for customer_id in df["customer_id"].unique():
-        customer_name = df.loc[df["customer_id"] == customer_id, "customer_name"].iloc[0]
+        customer_name = df.loc[df["customer_id"] == customer_id, "customer_name"].iloc[
+            0
+        ]
 
         # One header per customer inside the "Customers" section
         header_id = dpg.add_collapsing_header(
             label=customer_name,
             default_open=True,
             indent=10,
-            parent="customer_ui_section"
+            parent="customer_ui_section",
         )
 
         dpg.add_text("Total: 0 h 0 min", parent=header_id, tag=f"total_{customer_id}")
@@ -555,11 +595,12 @@ def render_customer_project_ui():
                 callback=project_button_callback,
                 user_data=(customer_id, project_id),
                 default_value=initial_state,
-                parent=group_id
+                parent=group_id,
             )
 
-            dpg.add_text(initial_text, tag=f"time_{customer_id}_{project_id}", parent=group_id)
-
+            dpg.add_text(
+                initial_text, tag=f"time_{customer_id}_{project_id}", parent=group_id
+            )
 
 
 ###
@@ -643,17 +684,26 @@ def cancel_popup_action(sender, app_data, customer_id, project_id, window_tag):
 def handle_query_input():
     if input_focused:
         query_text = dpg.get_value("query_input")
-        
+
         r_queue = queue.Queue()
-        queue_db_task('run_query', {"query": query_text}, response=r_queue)
+        queue_db_task("run_query", {"query": query_text}, response=r_queue)
         df = r_queue.get()
         if isinstance(df, pd.errors.DatabaseError):
-            with dpg.popup(parent="data_table", modal=True, tag="query_error_popup", mousebutton=dpg.mvMouseButton_Left): ## Add working popup which gives info on error etc.
+            with dpg.popup(
+                parent="data_table",
+                modal=True,
+                tag="query_error_popup",
+                mousebutton=dpg.mvMouseButton_Left,
+            ):  ## Add working popup which gives info on error etc.
                 dpg.add_text(f"Query Error:\n{df}")
                 dpg.add_spacer(height=10)
-                dpg.add_button(label="OK", width=75, callback=lambda: dpg.delete_item("query_error_popup"))
+                dpg.add_button(
+                    label="OK",
+                    width=75,
+                    callback=lambda: dpg.delete_item("query_error_popup"),
+                )
             return
-        
+
         arr = df.to_numpy()
 
         print(f"Query Entered {query_text}: {df}")
@@ -666,7 +716,7 @@ def handle_query_input():
         for i in range(df.shape[0]):
             with dpg.table_row(parent="data_table"):
                 for j in range(df.shape[1]):
-                    dpg.add_text(f"{arr[i,j]}")
+                    dpg.add_text(f"{arr[i, j]}")
 
 
 ###
@@ -706,25 +756,25 @@ def set_start_date():  ## TODO make this more generic if needed to be reused!
 ###
 def __post_user_input() -> None:
     # Add Customer
-    dpg.set_value('customer_add_name_input', '')
-    dpg.set_value('customer_add_start_date_input', '')
-    dpg.set_value('customer_add_wage_input', 0)
+    dpg.set_value("customer_add_name_input", "")
+    dpg.set_value("customer_add_start_date_input", "")
+    dpg.set_value("customer_add_wage_input", 0)
     # Update Customer
-    dpg.set_value('customer_update_name_dropdown', '')
-    dpg.set_value('customer_update_customer_name_input', '')
-    dpg.set_value('customer_update_wage_input', 0)
+    dpg.set_value("customer_update_name_dropdown", "")
+    dpg.set_value("customer_update_customer_name_input", "")
+    dpg.set_value("customer_update_wage_input", 0)
     # Remove Customer
-    dpg.set_value('customer_delete_name_dropdown', '')
+    dpg.set_value("customer_delete_name_dropdown", "")
     # Add Project
-    dpg.set_value('project_add_customer_name_dropdown', '')
-    dpg.set_value('project_add_name_input', '')
+    dpg.set_value("project_add_customer_name_dropdown", "")
+    dpg.set_value("project_add_name_input", "")
     # Update Project
-    dpg.set_value('project_update_customer_name_dropdown', '')
-    dpg.set_value('project_update_project_name_dropdown', '')
-    dpg.set_value('project_update_name_input', '')
+    dpg.set_value("project_update_customer_name_dropdown", "")
+    dpg.set_value("project_update_project_name_dropdown", "")
+    dpg.set_value("project_update_name_input", "")
     # Remove Project
-    dpg.set_value('project_delete_customer_name_dropdown', '')
-    dpg.set_value('project_delete_project_name_dropdown', '')
+    dpg.set_value("project_delete_customer_name_dropdown", "")
+    dpg.set_value("project_delete_project_name_dropdown", "")
 
     render_customer_project_ui()
 
@@ -753,8 +803,11 @@ def add_customer_data(sender, app_data) -> None:
         __hide_text_after_seconds(
             "customer_add_error_label", "Adding customer to DB!", 3, error=False
         )
-        queue_db_task('insert_customer', {"customer_name": customer_name, "start_date": start_date, "wage": amount})
-        __update_dropdown('customer_dropdown')
+        queue_db_task(
+            "insert_customer",
+            {"customer_name": customer_name, "start_date": start_date, "wage": amount},
+        )
+        __update_dropdown("customer_dropdown")
         __post_user_input()
 
     else:
@@ -775,14 +828,21 @@ def update_customer_data(sender, app_data) -> None:
             "customer_update_error_label", "Cannot have blank customer name!", 3
         )
         return
-    
+
     ## Success Case:
     customer_wage = dpg.get_value("customer_update_wage_input")
     __hide_text_after_seconds(
         "customer_update_error_label", "Updating customer in DB!", 3, error=False
     )
-    queue_db_task('update_customer', {"customer_name": customer_name, "new_customer_name": new_customer_name, "wage": customer_wage})
-    __update_dropdown('customer_dropdown')
+    queue_db_task(
+        "update_customer",
+        {
+            "customer_name": customer_name,
+            "new_customer_name": new_customer_name,
+            "wage": customer_wage,
+        },
+    )
+    __update_dropdown("customer_dropdown")
     __post_user_input()
 
     print(
@@ -800,8 +860,8 @@ def delete_customer_data(sender, app_data) -> None:
     __hide_text_after_seconds(
         "customer_delete_error_label", "Disabling customer in DB!", 3, error=False
     )
-    queue_db_task('remove_customer', {"customer_name": customer_name})
-    __update_dropdown('customer_dropdown')
+    queue_db_task("remove_customer", {"customer_name": customer_name})
+    __update_dropdown("customer_dropdown")
     __post_user_input()
 
     print(f"Removing customer: {customer_name}")
@@ -823,7 +883,9 @@ def add_project_data(sender, app_data) -> None:
     __hide_text_after_seconds(
         "project_add_error_label", "Adding project to DB!", 3, error=False
     )
-    queue_db_task('insert_project', {"customer_name": customer_name, "project_name": project_name})
+    queue_db_task(
+        "insert_project", {"customer_name": customer_name, "project_name": project_name}
+    )
     __post_user_input()
 
 
@@ -846,7 +908,7 @@ def update_project_data(sender, app_data) -> None:
             "project_update_error_label", "Cannot have blank project name!", 3
         )
         return
-    
+
     # Success Case:
     print(
         f"Customer: {customer_name}, Project: {project_name} is renamed: {new_project_name}"
@@ -854,7 +916,14 @@ def update_project_data(sender, app_data) -> None:
     __hide_text_after_seconds(
         "project_update_error_label", "Updating project in DB!", 3, error=False
     )
-    queue_db_task('update_project', {"customer_name": customer_name, "project_name": project_name, "new_project_name": new_project_name})
+    queue_db_task(
+        "update_project",
+        {
+            "customer_name": customer_name,
+            "project_name": project_name,
+            "new_project_name": new_project_name,
+        },
+    )
     __post_user_input()
 
 
@@ -990,12 +1059,10 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
                     label="Project Name",
                     tag="project_update_project_name_dropdown",
                     callback=lambda: __update_text_input(
-                        tag='project_update_project_name_dropdown'
-                    )
+                        tag="project_update_project_name_dropdown"
+                    ),
                 )
-                dpg.add_input_text(
-                    label="New Name", tag="project_update_name_input"
-                )
+                dpg.add_input_text(label="New Name", tag="project_update_name_input")
 
                 add_save_button(update_project_data, "project_update", "Update")
 
@@ -1089,13 +1156,17 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
             dpg.add_text("Tabular Data:")
 
             with dpg.table(tag="data_table", resizable=True, width=480):
-                pass # Blank for dynamic columns
+                pass  # Blank for dynamic columns
 
     with dpg.handler_registry():
         dpg.add_key_press_handler(key=dpg.mvKey_F5, callback=handle_query_input)
 
-    with dpg.collapsing_header(label="Customers", default_open=True, tag="customers_section"):
-        with dpg.child_window(tag="customer_ui_section", autosize_x=True, autosize_y=True, border=False):
+    with dpg.collapsing_header(
+        label="Customers", default_open=True, tag="customers_section"
+    ):
+        with dpg.child_window(
+            tag="customer_ui_section", autosize_x=True, autosize_y=True, border=False
+        ):
             pass
 
     # with dpg.collapsing_header(label="Customers", default_open=True):
@@ -1125,7 +1196,6 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
     #                     dpg.add_text(
     #                         initial_text, tag=f"time_{customer_id}_{project_id}"
     #                     )
-
 
 
 frame = dpg.create_viewport(
