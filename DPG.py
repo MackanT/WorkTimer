@@ -1024,13 +1024,18 @@ def __post_user_input() -> None:
     # Add Project
     dpg.set_value("project_add_customer_name_dropdown", "")
     dpg.set_value("project_add_name_input", "")
+    dpg.set_value("project_add_git_input", 0)
     # Update Project
     dpg.set_value("project_update_customer_name_dropdown", "")
     dpg.set_value("project_update_project_name_dropdown", "")
     dpg.set_value("project_update_name_input", "")
+    dpg.set_value("project_update_git_input", 0)
     # Remove Project
     dpg.set_value("project_delete_customer_name_dropdown", "")
     dpg.set_value("project_delete_project_name_dropdown", "")
+    # Add Bonus
+    dpg.set_value("bonus_add_amount_input", 0.0)
+    dpg.set_value("bonus_add_start_date_input", "")
 
     render_customer_project_ui()
 
