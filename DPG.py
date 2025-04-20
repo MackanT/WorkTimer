@@ -124,6 +124,7 @@ def initialize_db(file_path: str) -> bool:
             project_id integer primary key autoincrement,
             customer_id integer,
             project_name str,
+            git_id int,
             is_current bool
         )
         """)
@@ -146,7 +147,6 @@ def initialize_db(file_path: str) -> bool:
                  date_key integer unique
                 ,date text unique
                 ,year integer
-                ,iso_year integer
                 ,month integer
                 ,week integer
                 ,day integer
@@ -265,7 +265,8 @@ def remove_customer(customer_name: str) -> None:
         conn.commit()
 
 
-def insert_project(customer_name: str, project_name: str) -> None:
+## Modify Project Table
+def insert_project(customer_name: str, project_name: str, git_id: int = None) -> None:
     customers = pd.read_sql(
         f"select * from customers where customer_name = '{customer_name}' and is_current = 1",
         conn,
@@ -286,21 +287,22 @@ def insert_project(customer_name: str, project_name: str) -> None:
         # Project has been reactivated!
     else:
         conn.execute(
-            "insert into projects (customer_id, project_name, is_current) values (?, ?, ?)",
-            (customer_id, project_name, 1),
+            "insert into projects (customer_id, project_name, is_current, git_id) values (?, ?, ?, ?)",
+            (customer_id, project_name, 1, git_id),
         )
     if COMMIT:
         conn.commit()
 
 
 def update_project(
-    customer_name: str, project_name: str, new_project_name: str
+    customer_name: str, project_name: str, new_project_name: str, new_git_id: int = None
 ) -> None:
     conn.execute(
         """
         update projects
         set 
-             project_name = ?
+              project_name = ?
+             ,git_id = ?
         where project_name = ?
         and customer_id = (
             select customer_id
@@ -310,6 +312,7 @@ def update_project(
     """,
         (
             new_project_name,
+            new_git_id,
             project_name,
             customer_name,
         ),
@@ -378,10 +381,13 @@ def process_db_queue():
         elif action == "remove_customer":
             remove_customer(data["customer_name"])
         elif action == "insert_project":
-            insert_project(data["customer_name"], data["project_name"])
+            insert_project(data["customer_name"], data["project_name"], data["git_id"])
         elif action == "update_project":
             update_project(
-                data["customer_name"], data["project_name"], data["new_project_name"]
+                data["customer_name"],
+                data["project_name"],
+                data["new_project_name"],
+                data["new_git_id"],
             )
         elif action == "delete_project":
             remove_project(data["customer_name"], data["project_name"])
@@ -699,13 +705,12 @@ def show_project_popup(sender, app_data, customer_id, project_id):
 def save_popup_data(customer_id, project_id, window_tag):
     git_id = dpg.get_value(f"git_id_{customer_id}_{project_id}")
     comment = dpg.get_value(f"comment_{customer_id}_{project_id}")
-    print(f"Saved for Customer ID: {customer_id}, Project ID: {project_id}")
-    print(f"Git-ID: {git_id}, Comment: {comment}")
+
+    insert_time_row(customer_id, project_id, git_id, comment)
     dpg.delete_item(window_tag)
 
 
 def cancel_popup_action(sender, app_data, customer_id, project_id, window_tag):
-    print(f"Cancel action for Customer ID: {customer_id}, Project ID: {project_id}")
     dpg.set_value(sender, not app_data)
     dpg.delete_item(window_tag)
 
@@ -910,13 +915,18 @@ def add_project_data(sender, app_data) -> None:
             "project_add_error_label", "Cannot have blank project name!", 3
         )
         return
+    git_id = dpg.get_value("project_add_git_input")
 
-    ## TODO add log
     __hide_text_after_seconds(
         "project_add_error_label", "Adding project to DB!", 3, error=False
     )
     queue_db_task(
-        "insert_project", {"customer_name": customer_name, "project_name": project_name}
+        "insert_project",
+        {
+            "customer_name": customer_name,
+            "project_name": project_name,
+            "git_id": git_id,
+        },
     )
     __post_user_input()
     __log_message(
@@ -944,9 +954,9 @@ def update_project_data(sender, app_data) -> None:
             "project_update_error_label", "Cannot have blank project name!", 3
         )
         return
+    new_git_id = dpg.get_value("project_update_git_input")
 
     # Success Case:
-    ## TODO add log
     __hide_text_after_seconds(
         "project_update_error_label", "Updating project in DB!", 3, error=False
     )
@@ -956,6 +966,7 @@ def update_project_data(sender, app_data) -> None:
             "customer_name": customer_name,
             "project_name": project_name,
             "new_project_name": new_project_name,
+            "new_git_id": new_git_id,
         },
     )
     __post_user_input()
@@ -979,7 +990,6 @@ def delete_project_data(sender, app_data) -> None:
         )
         return
 
-    ## TODO add log
     __hide_text_after_seconds(
         "project_delete_error_label", "Disabling project in DB!", 3, error=False
     )
