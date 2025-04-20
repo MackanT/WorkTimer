@@ -28,6 +28,7 @@ INIT = True
 # SQL-Backend logic
 ###
 db_file = "data_test.db"
+pre_run_log = []
 
 
 def initialize_db(file_path: str) -> bool:
@@ -57,12 +58,14 @@ def initialize_db(file_path: str) -> bool:
         date_table.to_sql("dates", conn, if_exists="append", index=False)
 
     if os.path.exists(file_path):
-        print(f"Database '{file_path}' exists. Opening...")
+        pre_run_log.append(f"Database '{file_path}' exists. Opening...")
         conn = sqlite3.connect(file_path, check_same_thread=True)
-        print("Database opened successfully.")
+        pre_run_log.append("Database opened successfully.")
         return conn
     else:
-        print(f"Database '{file_path}' does not exist. Creating a new one...")
+        pre_run_log.append(
+            f"Database '{file_path}' does not exist. Creating a new one..."
+        )
         conn = sqlite3.connect(file_path)
 
         ## Time
@@ -85,7 +88,7 @@ def initialize_db(file_path: str) -> bool:
             comment str
         )
         """)
-        print("Table 'time' created successfully.")
+        pre_run_log.append("Table 'time' created successfully.")
 
         conn.execute("""
             CREATE TRIGGER IF NOT EXISTS trigger_time_after_update
@@ -101,7 +104,7 @@ def initialize_db(file_path: str) -> bool:
                 WHERE time_id = NEW.time_id;
             END;
         """)
-        print("Trigger 'trigger_time_after_update' created successfully.")
+        pre_run_log.append("Trigger 'trigger_time_after_update' created successfully.")
 
         ## Customers
         conn.execute("""
@@ -117,7 +120,7 @@ def initialize_db(file_path: str) -> bool:
             updated_at datetime
         )
         """)
-        print("Table 'customers' created successfully.")
+        pre_run_log.append("Table 'customers' created successfully.")
 
         ## Projects
         conn.execute("""
@@ -128,7 +131,7 @@ def initialize_db(file_path: str) -> bool:
             is_current bool
         )
         """)
-        print("Table 'projects' created successfully.")
+        pre_run_log.append("Table 'projects' created successfully.")
 
         ## Bonus
         conn.execute("""
@@ -139,7 +142,7 @@ def initialize_db(file_path: str) -> bool:
             end_date str
         )
         """)
-        print("Table 'bonus' created successfully.")
+        pre_run_log.append("Table 'bonus' created successfully.")
 
         ## Dates
         conn.execute("""
@@ -153,15 +156,14 @@ def initialize_db(file_path: str) -> bool:
                 ,day integer
             )
         """)
-        print("Table 'dates' created successfully.")
-
-        print("Database initialized with empty tables.")
+        pre_run_log.append("Table 'dates' created successfully.")
+        pre_run_log.append("Database initialized with empty tables.")
 
         try:
             add_dates(s_date="2020-01-01", e_date="2030-12-31")
-            print("Database auto-generated dates table")
+            pre_run_log.append("Database auto-generated dates table.")
         except Exception as e:
-            print(f"Error reading from database: {e}")
+            pre_run_log.append(f"Error reading from database: {e}")
 
         conn.commit()
 
@@ -172,7 +174,19 @@ db_queue = queue.Queue()
 conn = initialize_db(db_file)
 
 
-## Update Customer Table
+        __log_message(
+            f"Could not find project in db: {customer_name}, {project_name}",
+            type="WARNING",
+        )
+        __log_message(
+            f"Starting timer for {customer_name}: {project_name}",
+            type="INFO",
+        )
+        __log_message(
+            f"Ending timer for {customer_name}: {project_name}",
+            type="INFO",
+        )
+
 def insert_customer(
     customer_name: str, start_date: str, wage: int, valid_from: str = None
 ) -> None:
@@ -419,9 +433,15 @@ def process_db_queue():
                 result = pd.read_sql(data["query"], conn)
             except Exception as e:
                 result = e
+                __log_message(
+                    f"Select statement failed: {data['query']} \nError: {e}",
+                    type="WARNING",
+                )
+                __log_message(
+                    f"Select statement failed: {data['query']} \nError: {e}",
+                    type="WARNING",
+                )
 
-        if response:
-            response.put(result)
 
 
 def queue_db_task(action: str, data: dict, response=None) -> None:
@@ -465,6 +485,21 @@ def __is_valid_date(date_str):
         return True
     except ValueError:
         return False
+
+def populate_pre_log():
+    for line in pre_run_log:
+        __log_message(line, type="INFO")
+
+
+def __log_message(message: str, type: str = "INFO") -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_log = dpg.get_value("log_box")
+    new_log = (
+        f"{timestamp} [{type}] - {message}\n{current_log}"
+        if current_log
+        else f"{timestamp} [{type}] - {message}"
+    )
+    dpg.set_value("log_box", new_log)
 
 
 ###
@@ -552,9 +587,7 @@ def __autoset_query_window(table_name: str) -> None:
     dpg.set_value("query_input", sql_input)
 
 
-def on_date_selected(sender, app_data):
-    selected = f"{app_data['year'] + 1900}-{app_data['month'] + 1:02d}-{app_data['month_day']:02d}"
-    print(f"Date selected: {selected}")
+    __log_message(f"Date selected: {SELECTED_DATE}", type="INFO")
 
 
 def render_customer_project_ui():
@@ -797,7 +830,6 @@ def add_customer_data(sender, app_data) -> None:
 
     ## Case Success:
     if __is_valid_date(start_date):
-        ## TODO add log
         __hide_text_after_seconds(
             "customer_add_error_label", "Adding customer to DB!", 3, error=False
         )
@@ -807,6 +839,10 @@ def add_customer_data(sender, app_data) -> None:
         )
         __update_dropdown("customer_dropdown")
         __post_user_input()
+        __log_message(
+            f"Customer {customer_name} added to DB with start date {start_date} and wage {amount}",
+            type="INFO",
+        )
 
     else:
         __hide_text_after_seconds("customer_add_error_label", "Invalid start date!", 3)
@@ -842,7 +878,10 @@ def update_customer_data(sender, app_data) -> None:
     )
     __update_dropdown("customer_dropdown")
     __post_user_input()
-    ## TODO add log
+    __log_message(
+        f"Customer {customer_name} in DB renamed to {new_customer_name} with wage {customer_wage}",
+        type="INFO",
+    )
 
 
 def delete_customer_data(sender, app_data) -> None:
@@ -858,7 +897,10 @@ def delete_customer_data(sender, app_data) -> None:
     queue_db_task("remove_customer", {"customer_name": customer_name})
     __update_dropdown("customer_dropdown")
     __post_user_input()
-    ## TODO add log
+    __log_message(
+        f"Customer {customer_name} disabled in the DB",
+        type="INFO",
+    )
 
 
 def add_project_data(sender, app_data) -> None:
@@ -881,6 +923,10 @@ def add_project_data(sender, app_data) -> None:
         "insert_project", {"customer_name": customer_name, "project_name": project_name}
     )
     __post_user_input()
+    __log_message(
+        f"Project {project_name} for customer {customer_name} added to DB",
+        type="INFO",
+    )
 
 
 def update_project_data(sender, app_data) -> None:
@@ -917,6 +963,10 @@ def update_project_data(sender, app_data) -> None:
         },
     )
     __post_user_input()
+    __log_message(
+        f"Project {project_name} renamed to {new_project_name} with git id {new_git_id}",
+        type="INFO",
+    )
 
 
 def delete_project_data(sender, app_data) -> None:
@@ -941,6 +991,15 @@ def delete_project_data(sender, app_data) -> None:
         "delete_project", {"customer_name": customer_name, "project_name": project_name}
     )
     __post_user_input()
+    __log_message(
+        f"Project {project_name} disabled in the DB",
+        type="INFO",
+    )
+
+    __log_message(
+        f"Bonus percent {amount} starting on {start_date} added to the DB",
+        type="INFO",
+    )
 
 
 ###
@@ -1159,35 +1218,13 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
         with dpg.child_window(
             tag="customer_ui_section", autosize_x=True, autosize_y=True, border=False
         ):
-            pass
+            pass  # Placeholder for dynamic content
 
-    # with dpg.collapsing_header(label="Customers", default_open=True):
-    #     # Customer and project UI
-    #     for customer_id in df["customer_id"].unique():
-    #         customer_name = df.loc[
-    #             df["customer_id"] == customer_id, "customer_name"
-    #         ].iloc[0]
-    #         with dpg.collapsing_header(
-    #             label=customer_name, default_open=True, indent=INDENT_2
-    #         ):
-    #             total_text = "Total: 0 h 0 min"
-    #             dpg.add_text(total_text, tag=f"total_{customer_id}")
-    #             for _, row in df[df["customer_id"] == customer_id].iterrows():
-    #                 project_id = row["project_id"]
-    #                 project_name = row["project_name"]
-    #                 initial_state = bool(row["initial_state"])
-    #                 initial_text = row["initial_text"]
-
-    #                 with dpg.group(horizontal=True):
-    #                     dpg.add_checkbox(
-    #                         label=f"{project_name:<15}",
-    #                         callback=project_button_callback,
-    #                         user_data=(customer_id, project_id),
-    #                         default_value=initial_state,
-    #                     )
-    #                     dpg.add_text(
-    #                         initial_text, tag=f"time_{customer_id}_{project_id}"
-    #                     )
+    # Logg Section
+    with dpg.collapsing_header(label="Logs", default_open=False):
+        dpg.add_input_text(
+            tag="log_box", multiline=True, readonly=True, width=WIDTH - 30, height=200
+        )
 
 
 frame = dpg.create_viewport(
@@ -1201,6 +1238,7 @@ dpg.setup_dearpygui()
 dpg.show_viewport()
 
 dpg.set_frame_callback(1, render_customer_project_ui)
+dpg.set_frame_callback(2, populate_pre_log)
 INIT = False
 
 while dpg.is_dearpygui_running():
