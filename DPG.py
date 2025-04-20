@@ -738,14 +738,56 @@ def on_date_selected(sender, app_data) -> None:
     __log_message(f"Date selected: {SELECTED_DATE}", type="INFO")
 
 
+def __get_user_input() -> tuple[int, int, str]:
+    global TIME_ID, TYPE_ID, SELECTED_DATE
+
+    d_queue = queue.Queue()
+    queue_db_task("get_df", {"query": "select * from dates"}, response=d_queue)
+    dates = d_queue.get()
+
+    sel_date = pd.to_datetime(SELECTED_DATE)
+
+    start_date = end_date = sel_date
+
+    if TIME_ID == 4:
+        start_date = int(dates["date"].min().replace("-", ""))
+        end_date = int(dates["date"].max().replace("-", ""))
+    else:
+        if TIME_ID == 1:
+            start_date = sel_date - timedelta(days=sel_date.weekday())
+            end_date = start_date + timedelta(days=6)
+        elif TIME_ID == 2:
+            start_date = sel_date.replace(day=1)
+            next_month = (start_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+            end_date = next_month - timedelta(days=1)
+        elif TIME_ID == 3:
+            start_date = sel_date.replace(month=1, day=1)
+            end_date = sel_date.replace(month=12, day=31)
+
+        start_date = start_date.strftime("%Y%m%d")
+        end_date = end_date.strftime("%Y%m%d")
+
+    if TYPE_ID == 0:
+        sel_type = "total_time"
+    elif TYPE_ID == 1:
+        sel_type = "cost"
+
+    return start_date, end_date, sel_type
+
+
 def render_customer_project_ui():
-    # Clear previous content (but not the container itself!)
+    start_date, end_date, sel_type = __get_user_input()
+
     dpg.delete_item("customer_ui_section", children_only=True)
 
     __update_dropdown("customer_dropdown")
 
     r_queue = queue.Queue()
-    queue_db_task("get_customer_ui_list", {}, response=r_queue)
+    queue_db_task(
+        "get_customer_ui_list",
+        {"start_date": start_date, "end_date": end_date, "data_type": sel_type},
+        response=r_queue,
+    )
     df = r_queue.get()
 
     for customer_id in df["customer_id"].unique():
@@ -761,26 +803,34 @@ def render_customer_project_ui():
             parent="customer_ui_section",
         )
 
-        dpg.add_text("Total: 0 h 0 min", parent=header_id, tag=f"total_{customer_id}")
+        dpg.add_text("", parent=header_id, tag=f"total_{customer_id}")
 
+        db_queue = queue.Queue()
         for _, row in df[df["customer_id"] == customer_id].iterrows():
             project_id = row["project_id"]
             project_name = row["project_name"]
-            initial_state = bool(row["initial_state"])
-            initial_text = row["initial_text"]
+
+            sql_query = f"select * from time where customer_id = {customer_id} and project_id = {project_id} and end_time is null"
+            queue_db_task(
+                "get_df",
+                {"query": sql_query, "meta_data": "render_customer_project_ui"},
+                response=db_queue,
+            )
+            counts = db_queue.get()
+            initial_state = True if len(counts) > 0 else False
 
             group_id = dpg.add_group(horizontal=True, parent=header_id)
 
             dpg.add_checkbox(
-                label=f"{project_name:<15}",
+                label=f"{project_name:<35}",
                 callback=project_button_callback,
                 user_data=(customer_id, project_id),
                 default_value=initial_state,
                 parent=group_id,
             )
 
-            dpg.add_text(
-                initial_text, tag=f"time_{customer_id}_{project_id}", parent=group_id
+            dpg.add_text("", tag=f"time_{customer_id}_{project_id}", parent=group_id)
+
     run_update_ui_task()
 
 
