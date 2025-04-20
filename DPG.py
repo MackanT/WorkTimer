@@ -710,7 +710,8 @@ def __update_text_input(tag: str):
 
         dpg.set_value("customer_update_wage_input", new_wage)
     elif tag == "project_update_project_name_dropdown":
-        cur_val = dpg.get_value(tag)
+        cur_p_name = dpg.get_value(tag)
+        cur_c_name = dpg.get_value("project_update_customer_name_dropdown")
         dpg.set_value("project_update_name_input", cur_p_name)
 
         r_queue = queue.Queue()
