@@ -441,7 +441,7 @@ def insert_bonus(start_date: str, amount: float) -> None:
 dpg.create_context()
 
 ## Image Input
-width, height, channels, data = dpg.load_image("icon_calendar.png")
+width, height, channels, data = dpg.load_image("graphics\\icon_calendar.png")
 with dpg.texture_registry():
     icon_calendar = dpg.add_static_texture(width, height, data)
 
@@ -1580,8 +1580,8 @@ frame = dpg.create_viewport(
     title="Work Timer v2",
     width=WIDTH + 15,
     height=HEIGHT + 50,
-    small_icon="favicon.ico",
-    large_icon="favicon.ico",
+    small_icon="graphics\\program_logo.ico",
+    large_icon="graphics\\program_logo.ico",
 )
 dpg.setup_dearpygui()
 dpg.show_viewport()
