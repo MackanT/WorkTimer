@@ -1207,3 +1207,42 @@ while dpg.is_dearpygui_running():
     process_db_queue()
     dpg.render_dearpygui_frame()
 dpg.destroy_context()
+
+
+###############################
+### update old db to new db ###
+###############################
+
+# alter table time add git_id str, user_bonus float
+# alter table dates drop column iso_year
+# alter table projects add git_id int
+
+# create trigger if not exists trigger_time_after_update
+# after update on time
+# for each row
+# begin
+#     update time
+#     set
+#         total_time = (julianday(new.end_time) - julianday(new.start_time)) * 24,
+#         cost = new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24),
+#         user_bonus = new.bonus * new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24)
+#     where time_id = new.time_id;
+# end;
+
+
+# update values
+# update time
+# set wage = (
+#     select ifnull(c.wage, 0)
+#     from customers c
+#     where c.customer_id = time.customer_id
+#       and time.start_time between c.valid_from and ifnull(c.valid_to, '2099-12-31')
+#     limit 1
+# )
+# where wage <> (
+#     select ifnull(c.wage, 0)
+#     from customers c
+#     where c.customer_id = time.customer_id
+#       and time.start_time between c.valid_from and ifnull(c.valid_to, '2099-12-31')
+#     limit 1
+# );
