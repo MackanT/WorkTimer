@@ -944,9 +944,17 @@ def show_project_popup(sender, app_data, customer_id, project_id):
             width=WIDTH / 2,
             height=HEIGHT / 4,
         ):
+            git_queue = queue.Queue()
+            query = f"select git_id from projects where project_id = {project_id} and customer_id = {customer_id} and is_current = 1"
+            queue_db_task("get_df", {"query": query}, response=git_queue)
+            df = git_queue.get()
+            git_id = _get_value_from_df(df, data_type="int")
+
             dpg.add_text("Work Comments")
             dpg.add_input_int(
-                label="Git-ID (Opt.)", tag=f"git_id_{customer_id}_{project_id}"
+                label="Git-ID (Opt.)",
+                tag=f"git_id_{customer_id}_{project_id}",
+                default_value=git_id,
             )
             dpg.add_input_text(
                 multiline=True,
@@ -1394,6 +1402,7 @@ with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
                     tag="project_add_customer_name_dropdown",
                 )
                 dpg.add_input_text(label="Project Name", tag="project_add_name_input")
+                dpg.add_input_int(label="Git ID (Opt.)", tag="project_add_git_input")
                 add_save_button(add_project_data, "project_add", "Save")
 
             with dpg.collapsing_header(
@@ -1418,6 +1427,7 @@ with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
                     ),
                 )
                 dpg.add_input_text(label="New Name", tag="project_update_name_input")
+                dpg.add_input_int(label="New Git-ID", tag="project_update_git_input")
 
                 add_save_button(update_project_data, "project_update", "Update")
 
@@ -1604,7 +1614,6 @@ def run_update_ui_task():
         response=r_queue,
     )
     df = r_queue.get()
-    print(df)
 
     update_ui_from_df(df, sel_type)
 
@@ -1681,3 +1690,6 @@ dpg.destroy_context()
 #       and time.start_time between c.valid_from and ifnull(c.valid_to, '2099-12-31')
 #     limit 1
 # );
+
+
+## TODO convert "iloc":s to use _get_value_from_df instead
