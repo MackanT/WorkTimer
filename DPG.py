@@ -419,6 +419,23 @@ def remove_project(customer_name: str, project_name: str) -> None:
         conn.commit()
 
 
+## Modify Bonus Table
+def insert_bonus(start_date: str, amount: float) -> None:
+    day_before_start_date = (
+        datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)
+    ).strftime("%Y-%m-%d")
+    conn.execute(
+        f"update bonus set end_date = '{day_before_start_date}' where end_date is Null"
+    )
+
+    conn.execute(
+        "insert into bonus (start_date, bonus_percent) values (?, ?)",
+        (start_date, round(amount, 3)),
+    )
+    if COMMIT:
+        conn.commit()
+
+
 dpg.create_context()
 
 ## Image Input
@@ -464,6 +481,9 @@ def process_db_queue():
             )
         elif action == "delete_project":
             remove_project(data["customer_name"], data["project_name"])
+
+        elif action == "insert_bonus":
+            insert_bonus(data["start_date"], data["amount"])
 
         elif action == "get_wage":
             result = pd.read_sql(
@@ -1105,6 +1125,22 @@ def delete_project_data(sender, app_data) -> None:
         type="INFO",
     )
 
+
+def add_bonus_data(sender, app_data) -> None:
+    amount = dpg.get_value("bonus_add_amount_input")
+    start_date = dpg.get_value("bonus_add_start_date_input")
+
+    if start_date == "":
+        __hide_text_after_seconds(
+            "bonus_add_error_label", "Cannot have blank start date!", 3
+        )
+        return
+
+    __hide_text_after_seconds(
+        "bonus_add_error_label", "Adding bonus to DB!", 3, error=False
+    )
+    queue_db_task("insert_bonus", {"amount": amount, "start_date": start_date})
+    __post_user_input()
     __log_message(
         f"Bonus percent {amount} starting on {start_date} added to the DB",
         type="INFO",
