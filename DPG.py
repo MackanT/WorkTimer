@@ -43,15 +43,12 @@ def initialize_db(file_path: str) -> bool:
             {
                 "date_key": date_range.to_series().dt.strftime("%Y%m%d"),
                 "date": date_range.to_series().dt.strftime("%Y-%m-%d"),
-                "year": date_range.year,  # Gregorian year
-                "iso_year": date_range.to_series().apply(
-                    lambda x: x.isocalendar().year
-                ),  # ISO year
-                "month": date_range.month,  # Month
+                "year": date_range.year,
+                "month": date_range.month,
                 "week": date_range.to_series().apply(
                     lambda x: x.isocalendar().week
                 ),  # ISO week
-                "day": date_range.day,  # Day of the month
+                "day": date_range.day,
             }
         )
 
