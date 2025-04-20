@@ -73,7 +73,7 @@ def initialize_db(file_path: str) -> bool:
         )
         conn = sqlite3.connect(file_path)
 
-        ## Time
+        ## Time ##TODO add "not null" to all columns
         conn.execute("""
         create table if not exists time (
             time_id integer primary key autoincrement,
@@ -256,6 +256,8 @@ def insert_time_row(
             type="INFO",
         )
 
+
+## Modify Customer Table
 def insert_customer(
     customer_name: str, start_date: str, wage: int, valid_from: str = None
 ) -> None:
@@ -443,11 +445,6 @@ width, height, channels, data = dpg.load_image("icon_calendar.png")
 with dpg.texture_registry():
     icon_calendar = dpg.add_static_texture(width, height, data)
 
-# Temp df, all code should read directly from db!
-# df = pd.read_sql(
-#     "select c.customer_id, c.customer_name, p.project_id, p.project_name, 0 as initial_state, '0 h' as initial_text, c.wage from projects p left join customers c on c.customer_id = p.customer_id and c.is_current = 1 where p.is_current = 1 ",
-#     conn,
-# )
 input_focused = False
 
 
@@ -570,8 +567,6 @@ def queue_db_task(action: str, data: dict, response=None) -> None:
 ###
 # Help Functions
 ###
-
-
 def __get_current_date_struct() -> dict:
     now = datetime.now()
     today_struct = {
@@ -592,7 +587,7 @@ def __format_date_struct(input_struct: dict) -> str:
     return f"{year:04d}-{month:02d}-{day:02d}"
 
 
-def __is_valid_date(date_str):
+def __is_valid_date(date_str: str) -> bool:
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
         return True
@@ -1425,7 +1420,7 @@ with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
                 add_save_button(add_bonus_data, "bonus_add", "Save")
 
     ## Settings
-    with dpg.collapsing_header(label="Settings", default_open=True):
+    with dpg.collapsing_header(label="Settings", default_open=False):
         with dpg.group(horizontal=True):  # Time Span
             with dpg.group():
                 dpg.add_text("Select Time Span:")
@@ -1439,7 +1434,7 @@ with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
 
             with dpg.group():  # Data Type
                 dpg.add_text("Select Data Type:")
-                data_type_options = ["Time", "Cost"]
+                data_type_options = ["Time", "Bonus Wage"]
                 dpg.add_radio_button(
                     label="Data Type",
                     items=data_type_options,
@@ -1457,7 +1452,7 @@ with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
     # "Queries" Section
     with dpg.collapsing_header(label="Queries", default_open=False):
         with dpg.group():
-            available_tables = ["time", "customers", "projects", "bonus", "dates"]
+            available_tables = ["time", "customers", "projects", "bonus"]
             with dpg.group(horizontal=True):
                 dpg.add_text("Available tables:")
                 for table in available_tables:
