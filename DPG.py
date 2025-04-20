@@ -879,11 +879,13 @@ def __hide_text_after_seconds(
     ).start()
 
 
-def set_start_date():  ## TODO make this more generic if needed to be reused!
-    date_struct = dpg.get_value("customer_add_start_date_picker")
+def set_start_date(
+    item_tag: str,
+) -> None:
+    date_struct = dpg.get_value(f"{item_tag}_start_date_picker")
     date_str = __format_date_struct(date_struct)
-    dpg.set_value("customer_add_start_date_input", date_str)
-    dpg.hide_item("start_button_popup")
+    dpg.set_value(f"{item_tag}_start_date_input", date_str)
+    dpg.hide_item(f"{item_tag}_start_button_popup")
 
 
 ###
@@ -1138,7 +1140,7 @@ with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
                     parent="customer_add_start_date_button",
                     mousebutton=dpg.mvMouseButton_Left,
                     modal=True,
-                    tag="start_button_popup",
+                    tag="customer_add_start_button_popup",
                 ):
                     today_struct = __get_current_date_struct()
                     dpg.add_date_picker(
@@ -1146,7 +1148,9 @@ with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
                         tag="customer_add_start_date_picker",
                         default_value=today_struct,
                     )
-                    dpg.add_button(label="Done", callback=set_start_date)
+                    dpg.add_button(
+                        label="Done", callback=lambda: set_start_date("customer_add")
+                    )
 
                 add_save_button(add_customer_data, "customer_add", "Save")
 
@@ -1244,6 +1248,41 @@ with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
                 )
 
                 add_save_button(delete_project_data, "project_delete", "Remove")
+
+        with dpg.collapsing_header(
+            label="Bonuses", default_open=False, indent=INDENT_1
+        ):
+            with dpg.collapsing_header(
+                label="Add Bonus", default_open=False, indent=INDENT_2
+            ):
+                dpg.add_input_float(label="Bonus Amount", tag="bonus_add_amount_input")
+                with dpg.group(horizontal=True):
+                    dpg.add_input_text(tag="bonus_add_start_date_input")
+                    dpg.add_image_button(
+                        texture_tag=icon_calendar,
+                        tag="bonus_add_start_date_button",
+                        width=14,
+                        height=14,
+                    )
+                    dpg.add_text("Start Date")
+
+                with dpg.popup(
+                    parent="bonus_add_start_date_button",
+                    mousebutton=dpg.mvMouseButton_Left,
+                    modal=True,
+                    tag="bonus_add_start_button_popup",
+                ):
+                    today_struct = __get_current_date_struct()
+                    dpg.add_date_picker(
+                        label="Start Date",
+                        tag="bonus_add_start_date_picker",
+                        default_value=today_struct,
+                    )
+                    dpg.add_button(
+                        label="Done", callback=lambda: set_start_date("bonus_add")
+                    )
+
+                add_save_button(add_bonus_data, "bonus_add", "Save")
 
     ## Settings
     with dpg.collapsing_header(label="Settings", default_open=True):
