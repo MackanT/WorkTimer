@@ -696,12 +696,6 @@ def __log_message(message: str, type: str = "INFO") -> None:
 ###
 # UI Functions
 ###
-def update_total_time(customer_id: int, label_value: str) -> None:
-    dpg.set_value(f"total_{customer_id}", label_value)
-
-
-def update_individual_time(customer_id: int, project_id: int, label_value: str) -> None:
-    dpg.set_value(f"time_{customer_id}_{project_id}", label_value)
 
 
 def on_input_focus(sender, app_data) -> None:
