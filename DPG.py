@@ -509,7 +509,9 @@ def process_db_queue():
         elif action == "get_active_customers":
             result = (
                 pd.read_sql(
-                    "select distinct c.customer_name from projects p left join customers c on c.customer_id = p.customer_id and p.is_current = 1 where c.is_current = 1",
+                    """select distinct c.customer_name from projects p 
+                    left join customers c on c.customer_id = p.customer_id and p.is_current = 1 
+                    where c.is_current = 1""",
                     conn,
                 )["customer_name"]
                 .unique()
@@ -524,21 +526,58 @@ def process_db_queue():
                 .tolist()
             )
         elif action == "get_customer_ui_list":
+            dt = datetime.now()
+            now = dt.strftime("%Y-%m-%d %H:%M:%S")
+            query = f"""
+            with calculated_time as (
+            select
+                p.customer_id, 
+                c.customer_name, 
+                p.project_id, 
+                p.project_name, 
+                ifnull(sum(ifnull(t.total_time, (julianday('{now}') - julianday(start_time)) * 24)), 0) as total_time
+            from projects p
+            left join customers c 
+                on c.customer_id = p.customer_id 
+                and c.is_current = 1
+            left join time t 
+                on t.customer_id = p.customer_id 
+                and t.project_id = p.project_id 
+                and t.date_key between {data["start_date"]} and {data["end_date"]}
+            where p.is_current = 1
+            group by p.customer_id, c.customer_name, p.project_id, p.project_name
+            )
+            select
+                 ct.customer_id
+                ,ct.customer_name
+                ,ct.project_id
+                ,ct.project_name
+                ,round(ct.total_time, 2) AS total_time
+                ,round(ifnull(cast(ct.total_time as money) * cast(t.bonus as money) * cast(t.wage as money), 0), 2) as user_bonus
+                ,t.bonus
+                ,t.wage
+            from calculated_time ct
+            left join time t 
+                on t.customer_id = ct.customer_id 
+                and t.project_id = ct.project_id
+            group by ct.customer_id, ct.customer_name, ct.project_id, ct.project_name, ct.total_time;"""
             result = pd.read_sql(
-                "select c.customer_id, c.customer_name, p.project_id, p.project_name, 0 as initial_state, '0 h' as initial_text, c.wage from projects p left join customers c on c.customer_id = p.customer_id and c.is_current = 1 where p.is_current = 1",
+                query,
                 conn,
             )
         elif action == "get_project_names":
             result = (
                 pd.read_sql(
-                    f"select p.project_name from projects p left join customers c on c.customer_id = p.customer_id where c.customer_name = '{data['customer_name']}' and p.is_current = 1",
+                    f"""select p.project_name from projects p 
+                    left join customers c on c.customer_id = p.customer_id 
+                    where c.customer_name = '{data["customer_name"]}' and p.is_current = 1""",
                     conn,
                 )["project_name"]
                 .unique()
                 .tolist()
             )
 
-        elif action == "run_query":
+        elif action == "get_df":
             try:
                 result = pd.read_sql(data["query"], conn)
             except Exception as e:
@@ -547,11 +586,36 @@ def process_db_queue():
                     f"Select statement failed: {data['query']} \nError: {e}",
                     type="WARNING",
                 )
+        elif action == "run_query":
+            try:
+                query = data["query"]
+                if query.strip().lower().startswith("select"):
+                    result = pd.read_sql(query, conn)
+                else:
+                    result = conn.execute(query)
+                    result = result.fetchall()
+                    if COMMIT:
+                        conn.commit()
+            except Exception as e:
+                result = e
                 __log_message(
                     f"Select statement failed: {data['query']} \nError: {e}",
                     type="WARNING",
                 )
 
+        elif action == "run_cursor":
+            try:
+                query = data["query"]
+                params = data.get("params", ())
+                cursor = conn.execute(query, params)
+                result = cursor.fetchall()
+                if response:
+                    response.put(result)
+            except Exception as e:
+                result = e
+
+        if response:
+            response.put(result)
 
 
 def queue_db_task(action: str, data: dict, response=None) -> None:
