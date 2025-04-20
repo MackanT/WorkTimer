@@ -178,14 +178,79 @@ db_queue = queue.Queue()
 conn = initialize_db(db_file)
 
 
+## Modify Time Table
+def insert_time_row(
+    customer_id: int,
+    project_id: int,
+    git_id: int = None,
+    comment: str = None,
+) -> None:
+    dt = datetime.now()
+    now = dt.strftime("%Y-%m-%d %H:%M:%S")
+    today = dt.strftime("%Y-%m-%d")
+
+    r_queue = queue.Queue()
+    queue_db_task(
+        "get_customer_name_from_cid", {"customer_id": customer_id}, response=r_queue
+    )
+    customer_name = r_queue.get()
+
+    queue_db_task(
+        "get_project_name_from_pid", {"project_id": project_id}, response=r_queue
+    )
+    project_name = r_queue.get()
+
+    if customer_id == "" or project_id == "":
         __log_message(
             f"Could not find project in db: {customer_name}, {project_name}",
             type="WARNING",
         )
+        return
+
+    date_key = int(dt.strftime("%Y%m%d"))
+
+    sql_query = f"""
+        select time_id, start_time, end_time
+        from time 
+        where customer_id = {customer_id} and project_id = {project_id} and end_time is null
+        order by time_id desc
+    """
+
+    queue_db_task("get_df", {"query": sql_query, "params": {}}, response=r_queue)
+    rows = r_queue.get()
+
+    if len(rows) == 0:
+        # Insert a new row with the current time as start_time
+        w_queue = queue.Queue()
+        b_queue = queue.Queue()
+        queue_db_task("get_wage", {"customer_name": customer_name}, response=w_queue)
+        wage = w_queue.get()
+        queue_db_task("get_bonus", {"date": today}, response=b_queue)
+        bonus = b_queue.get()
+
+        sql_query = f"""
+            insert into time (customer_id, customer_name, project_id, project_name, start_time, date_key, wage, bonus)
+            values ({customer_id}, '{customer_name}', {project_id}, '{project_name}', '{now}', {date_key}, {wage}, {bonus})
+        """
+        queue_db_task("run_query", {"query": sql_query})
         __log_message(
             f"Starting timer for {customer_name}: {project_name}",
             type="INFO",
         )
+
+    else:
+        # Update the latest row with blank end_time
+        last_row_id = rows.iloc[0]["time_id"]
+
+        sql_query = f"""
+            UPDATE time
+            SET 
+                end_time = '{now}',
+                comment = '{comment}',
+                git_id = {git_id}
+            WHERE time_id = {last_row_id}
+        """
+        queue_db_task("run_query", {"query": sql_query})
         __log_message(
             f"Ending timer for {customer_name}: {project_name}",
             type="INFO",
@@ -686,9 +751,7 @@ def project_button_callback(sender, app_data, user_data):
     customer_id, project_id = user_data
 
     if app_data:
-        print(
-            f"Clicked and enabled - Customer ID: {customer_id}, Project ID: {project_id}"
-        )
+        insert_time_row(customer_id, project_id)
     else:
         show_project_popup(sender, app_data, customer_id, project_id)
 
