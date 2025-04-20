@@ -88,18 +88,17 @@ def initialize_db(file_path: str) -> bool:
         pre_run_log.append("Table 'time' created successfully.")
 
         conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS trigger_time_after_update
-            AFTER UPDATE ON time
-            FOR EACH ROW
-            WHEN NEW.end_time IS NOT NULL AND OLD.end_time IS NULL
-            BEGIN
-                UPDATE time
-                SET
-                    total_time = (julianday(NEW.end_time) - julianday(NEW.start_time)) * 24,
-                    cost = NEW.wage * ((julianday(NEW.end_time) - julianday(NEW.start_time)) * 24),
-                    user_bonus = NEW.bonus * NEW.wage * ((julianday(NEW.end_time) - julianday(NEW.start_time)) * 24)
-                WHERE time_id = NEW.time_id;
-            END;
+            create trigger if not exists trigger_time_after_update
+            after update on time
+            for each row
+            begin
+                update time
+                set
+                    total_time = (julianday(new.end_time) - julianday(new.start_time)) * 24,
+                    cost = new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24),
+                    user_bonus = new.bonus * new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24)
+                where time_id = new.time_id;
+            end;
         """)
         pre_run_log.append("Trigger 'trigger_time_after_update' created successfully.")
 
