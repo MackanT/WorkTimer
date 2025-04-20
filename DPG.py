@@ -813,6 +813,17 @@ def cancel_popup_action(sender, app_data, customer_id, project_id, window_tag):
     dpg.delete_item(window_tag)
 
 
+def show_error_popup(error_message: str = None) -> None:
+    if not dpg.does_item_exist("error_popup"):
+        with dpg.popup(parent="query_output_group", tag="error_popup", modal=True):
+            dpg.add_text(error_message, wrap=400, tag="error_text")
+            dpg.add_button(label="OK", callback=lambda: dpg.hide_item("error_popup"))
+            dpg.configure_item("error_popup", show=True)
+    else:
+        dpg.configure_item("error_popup", show=True)
+        dpg.set_value("error_text", error_message)
+
+
 def handle_query_input():
     if input_focused:
         query_text = dpg.get_value("query_input")
@@ -820,25 +831,17 @@ def handle_query_input():
         r_queue = queue.Queue()
         queue_db_task("run_query", {"query": query_text}, response=r_queue)
         df = r_queue.get()
-        if isinstance(df, pd.errors.DatabaseError):
-            with dpg.popup(
-                parent="data_table",
-                modal=True,
-                tag="query_error_popup",
-                mousebutton=dpg.mvMouseButton_Left,
-            ):  ## Add working popup which gives info on error etc.
-                dpg.add_text(f"Query Error:\n{df}")
-                dpg.add_spacer(height=10)
-                dpg.add_button(
-                    label="OK",
-                    width=75,
-                    callback=lambda: dpg.delete_item("query_error_popup"),
-                )
+
+        if isinstance(df, list) and len(df) == 0:
+            show_error_popup("Command completed successfully!")
             return
-
+        elif isinstance(df, pd.errors.DatabaseError) or len(df) == 0:
+            show_error_popup(df)
+            return
+        elif df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            print("Query Error: No data returned! Evaluate and find when we get here!")
+            return
         arr = df.to_numpy()
-
-        print(f"Query Entered {query_text}: {df}")
 
         dpg.delete_item("data_table", children_only=True)
 
@@ -1307,7 +1310,7 @@ with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
             dpg.bind_item_handler_registry("query_input", "query_input_handler")
 
         # Box for displaying tabular data
-        with dpg.group():
+        with dpg.group(tag="query_output_group"):
             dpg.add_text("Tabular Data:")
 
             with dpg.table(tag="data_table", resizable=True, width=WIDTH - 30):
