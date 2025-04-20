@@ -1,13 +1,13 @@
 import dearpygui.dearpygui as dpg
 from datetime import datetime, timedelta
 import pandas as pd
-import numpy as np
 import time
 import queue
 import threading
 
 import os
 import sqlite3
+import json
 
 
 ###
@@ -829,13 +829,16 @@ def __get_user_input() -> tuple[int, int, str]:
     return start_date, end_date, sel_type
 
 
+# Global variable to store the header order
+header_order = []
+
+
 def render_customer_project_ui():
+    global header_order
+
     start_date, end_date, sel_type = __get_user_input()
 
-    dpg.delete_item("customer_ui_section", children_only=True)
-
-    __update_dropdown("customer_dropdown")
-
+    # Fetch the default order of customer IDs from the database
     r_queue = queue.Queue()
     queue_db_task(
         "get_customer_ui_list",
@@ -844,7 +847,22 @@ def render_customer_project_ui():
     )
     df = r_queue.get()
 
-    for customer_id in df["customer_id"].unique():
+    default_customer_ids = df["customer_id"].unique().tolist()
+
+    # Load the header order, initializing with the default order if necessary
+    load_header_order(default_customer_ids)
+
+    dpg.delete_item("customer_ui_section", children_only=True)
+
+    __update_dropdown("customer_dropdown")
+
+    # Sort customers based on the custom order
+    customer_ids = sorted(
+        df["customer_id"].unique(),
+        key=lambda x: header_order.index(x) if x in header_order else len(header_order),
+    )
+
+    for customer_id in customer_ids:
         customer_name = df.loc[df["customer_id"] == customer_id, "customer_name"].iloc[
             0
         ]
@@ -855,9 +873,23 @@ def render_customer_project_ui():
             default_open=True,
             indent=10,
             parent="customer_ui_section",
+            tag=f"header_{customer_id}",
         )
 
-        dpg.add_text("", parent=header_id, tag=f"total_{customer_id}")
+        # Add "Move Up" and "Move Down" buttons
+        with dpg.group(horizontal=True, parent=header_id):
+            dpg.add_text("", tag=f"total_{customer_id}")
+            dpg.add_spacer(width=WIDTH / 3)
+            dpg.add_button(
+                label="Move Up",  # ↑
+                callback=move_header_up,
+                user_data=customer_id,
+            )
+            dpg.add_button(
+                label="Move Down",
+                callback=move_header_down,
+                user_data=customer_id,
+            )
 
         db_queue = queue.Queue()
         for _, row in df[df["customer_id"] == customer_id].iterrows():
@@ -885,7 +917,61 @@ def render_customer_project_ui():
 
             dpg.add_text("", tag=f"time_{customer_id}_{project_id}", parent=group_id)
 
+    # Save the current order of headers
+    save_header_order()
+
     run_update_ui_task()
+
+
+def move_header_up(sender, app_data, customer_id: int) -> None:
+    """Move the header up in the custom order."""
+    global header_order
+    if customer_id not in header_order:
+        header_order.append(customer_id)
+
+    index = header_order.index(customer_id)
+    if index > 0:
+        header_order[index], header_order[index - 1] = (
+            header_order[index - 1],
+            header_order[index],
+        )
+        save_header_order()
+        render_customer_project_ui()
+
+
+def move_header_down(sender, app_data, customer_id: int) -> None:
+    """Move the header down in the custom order."""
+    global header_order
+    if customer_id not in header_order:
+        header_order.append(customer_id)
+
+    index = header_order.index(customer_id)
+    if index < len(header_order) - 1:
+        header_order[index], header_order[index + 1] = (
+            header_order[index + 1],
+            header_order[index],
+        )
+        save_header_order()
+        render_customer_project_ui()
+
+
+def save_header_order():
+    """Save the custom order of headers to persistent storage."""
+    global header_order
+    with open("header_order.json", "w") as f:
+        json.dump(header_order, f)
+
+
+def load_header_order(default_customer_ids):
+    """Load the custom order of headers from persistent storage."""
+    global header_order
+    if os.path.exists("header_order.json"):
+        with open("header_order.json", "r") as f:
+            header_order = json.load(f)
+        if not header_order:  # If the file is empty or contains `null`
+            header_order = default_customer_ids
+    else:
+        header_order = default_customer_ids  # Initialize with default order
 
 
 ###
@@ -1574,7 +1660,6 @@ with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
         dpg.add_input_text(
             tag="log_box", multiline=True, readonly=True, width=WIDTH - 30, height=200
         )
-
 
 frame = dpg.create_viewport(
     title="Work Timer v2",
