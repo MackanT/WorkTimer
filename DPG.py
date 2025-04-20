@@ -487,10 +487,28 @@ def process_db_queue():
 
         elif action == "get_wage":
             result = pd.read_sql(
-                f"select wage from customers where customer_name = '{data['customer_name']}'",
+                f"select wage from customers where customer_name = '{data['customer_name']}' and is_current = 1",
                 conn,
-            ).iloc[0, 0]
-            result = int(result)
+            )
+            result = _get_value_from_df(result, data_type="int")
+        elif action == "get_bonus":
+            result = pd.read_sql(
+                f"select bonus_percent from bonus where '{data['date']}' between start_date and ifnull(end_date, '2099-12-31')",
+                conn,
+            )
+            result = _get_value_from_df(result, data_type="float")
+        elif action == "get_customer_name_from_cid":
+            result = pd.read_sql(
+                f"select customer_name from customers where customer_id = '{data['customer_id']}'",
+                conn,
+            )
+            result = _get_value_from_df(result, data_type="str")
+        elif action == "get_project_name_from_pid":
+            result = pd.read_sql(
+                f"select project_name from projects where project_id = '{data['project_id']}'",
+                conn,
+            )
+            result = _get_value_from_df(result, data_type="str")
         elif action == "get_active_customers":
             result = (
                 pd.read_sql(
@@ -580,6 +598,25 @@ def __is_valid_date(date_str):
         return True
     except ValueError:
         return False
+
+
+def _get_value_from_df(df: pd.DataFrame, data_type: str = "str"):
+    if isinstance(df, pd.DataFrame):
+        val = df.iloc[0, 0]
+    elif isinstance(df, pd.Series):
+        val = df.iloc[0]
+    else:
+        val = df
+
+    if data_type == "str":
+        return val if val is not None else ""
+    elif data_type == "int":
+        return int(val) if val is not None else 0
+    elif data_type == "float":
+        return float(val) if val is not None else 0.0
+    else:
+        raise ValueError("Invalid data type specified.")
+
 
 def populate_pre_log():
     for line in pre_run_log:
@@ -674,7 +711,18 @@ def __update_text_input(tag: str):
         dpg.set_value("customer_update_wage_input", new_wage)
     elif tag == "project_update_project_name_dropdown":
         cur_val = dpg.get_value(tag)
-        dpg.set_value("project_update_name_input", cur_val)
+        dpg.set_value("project_update_name_input", cur_p_name)
+
+        r_queue = queue.Queue()
+        query = f"""select git_id from projects p
+                    left join customers c on c.customer_id = p.customer_id and c.is_current = 1
+                    where p.project_name = '{cur_p_name}'
+                    and c.customer_name = '{cur_c_name}'
+                    and p.is_current = 1
+                    limit 1"""
+        queue_db_task("get_df", {"query": query}, response=r_queue)
+        git_id = _get_value_from_df(r_queue.get(), data_type="int")
+        dpg.set_value("project_update_git_input", git_id)
 
 
 def __autoset_query_window(table_name: str) -> None:
