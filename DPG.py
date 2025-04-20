@@ -713,7 +713,7 @@ def render_customer_project_ui():
 
             dpg.add_text(
                 initial_text, tag=f"time_{customer_id}_{project_id}", parent=group_id
-            )
+    run_update_ui_task()
 
 
 ###
@@ -754,6 +754,8 @@ def project_button_callback(sender, app_data, user_data):
         insert_time_row(customer_id, project_id)
     else:
         show_project_popup(sender, app_data, customer_id, project_id)
+
+    run_update_ui_task()
 
 
 def show_project_popup(sender, app_data, customer_id, project_id):
@@ -1343,9 +1345,67 @@ dpg.set_frame_callback(1, render_customer_project_ui)
 dpg.set_frame_callback(2, populate_pre_log)
 INIT = False
 
+
+last_update_time = time.time()
+
+
+def periodic_update():
+    """Function to periodically queue the update task."""
+    global last_update_time
+    current_time = time.time()
+    if current_time - last_update_time >= 60:
+        threading.Thread(target=run_update_ui_task, daemon=True).start()
+        last_update_time = current_time
+
+
+def run_update_ui_task():
+    """Run the update UI task in a separate thread."""
+    start_date, end_date, sel_type = __get_user_input()
+
+    r_queue = queue.Queue()
+    queue_db_task(
+        "get_customer_ui_list",
+        {"start_date": start_date, "end_date": end_date, "data_type": sel_type},
+        response=r_queue,
+    )
+    df = r_queue.get()
+    print(df)
+
+    update_ui_from_df(df, sel_type)
+
+
+def update_ui_from_df(df: pd.DataFrame, sel_type: str) -> None:
+    """Update the UI with the data from the database."""
+
+    for _, row in df.iterrows():
+        customer_id = row["customer_id"]
+        project_id = row["project_id"]
+
+        tag = f"time_{customer_id}_{project_id}"
+        if sel_type == "total_time":
+            updated_text = f"Total: {row['total_time']} h"
+        elif sel_type == "cost":
+            updated_text = f"Total: {row['user_bonus']} SEK"
+        else:
+            updated_text = "Erronous value!"
+        dpg.set_value(tag, updated_text)
+
+    for customer_id in df["customer_id"].unique():
+        if sel_type == "total_time":
+            total_text = f"Total: {df[df['customer_id'] == customer_id]['total_time'].sum():.2f} h"
+        elif sel_type == "cost":
+            total_text = f"Total: {df[df['customer_id'] == customer_id]['user_bonus'].sum():.2f} SEK"
+        else:
+            total_text = "Erronous value!"
+        dpg.set_value(f"total_{customer_id}", total_text)
+
+
+# Main Dear PyGui loop
 while dpg.is_dearpygui_running():
     process_db_queue()
+    periodic_update()
     dpg.render_dearpygui_frame()
+
 dpg.destroy_context()
 
 
