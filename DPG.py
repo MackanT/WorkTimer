@@ -23,6 +23,14 @@ WARNING_GREEN = [34, 139, 34]
 COMMIT = True
 INIT = True
 
+WIDTH = 500
+HEIGHT = 800
+
+
+TIME_ID = 0  # 0 = Day, 1 = Week, 2 = Month, 3 = Year, 4 = All-Time
+TYPE_ID = 0  # 0 = Time, 1 = Bonus Wage
+SELECTED_DATE = datetime.now().strftime("%Y-%m-%d")
+
 
 ###
 # SQL-Backend logic
@@ -589,6 +597,11 @@ def __autoset_query_window(table_name: str) -> None:
     dpg.set_value("query_input", sql_input)
 
 
+def on_date_selected(sender, app_data) -> None:
+    global SELECTED_DATE
+    SELECTED_DATE = f"{app_data['year'] + 1900}-{app_data['month'] + 1:02d}-{app_data['month_day']:02d}"
+
+    run_update_ui_task()
     __log_message(f"Date selected: {SELECTED_DATE}", type="INFO")
 
 
@@ -642,11 +655,31 @@ def render_customer_project_ui():
 # Button Functions
 ###
 def time_span_callback(sender, app_data):
-    print(f"Selected Time Span: {dpg.get_value('time_span_group')}")
+    global TIME_ID
+    pressed_val = dpg.get_value("time_span_group")
+
+    if pressed_val == "Day":
+        TIME_ID = 0
+    elif pressed_val == "Week":
+        TIME_ID = 1
+    elif pressed_val == "Month":
+        TIME_ID = 2
+    elif pressed_val == "Year":
+        TIME_ID = 3
+    elif pressed_val == "All-Time":
+        TIME_ID = 4
+    run_update_ui_task()
 
 
 def data_type_callback(sender, app_data):
-    print(f"Selected Data Type: {dpg.get_value('data_type_group')}")
+    global TYPE_ID
+
+    pressed_val = dpg.get_value("data_type_group")
+    if pressed_val == "Time":
+        TYPE_ID = 0
+    elif pressed_val == "Bonus Wage":
+        TYPE_ID = 1
+    run_update_ui_task()
 
 
 def project_button_callback(sender, app_data, user_data):
@@ -671,8 +704,8 @@ def show_project_popup(sender, app_data, customer_id, project_id):
             no_resize=True,
             no_move=True,
             no_close=True,
-            width=300,
-            height=150,
+            width=WIDTH / 2,
+            height=HEIGHT / 4,
         ):
             dpg.add_text("Work Comments")
             dpg.add_input_int(
@@ -1011,7 +1044,7 @@ def delete_project_data(sender, app_data) -> None:
 ###
 # UI
 ###
-with dpg.window(label="Work Timer v2", width=500, height=600):
+with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
     ## Input
     with dpg.collapsing_header(label="Input", default_open=False):
         with dpg.collapsing_header(
@@ -1191,8 +1224,8 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
             sql_input = "select * from time"
             dpg.add_input_text(
                 multiline=True,
-                width=480,
-                height=100,
+                width=WIDTH - 30,
+                height=HEIGHT / 6,
                 tag="query_input",
                 default_value=sql_input,
             )
@@ -1212,7 +1245,7 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
         with dpg.group():
             dpg.add_text("Tabular Data:")
 
-            with dpg.table(tag="data_table", resizable=True, width=480):
+            with dpg.table(tag="data_table", resizable=True, width=WIDTH - 30):
                 pass  # Blank for dynamic columns
 
     with dpg.handler_registry():
@@ -1235,8 +1268,8 @@ with dpg.window(label="Work Timer v2", width=500, height=600):
 
 frame = dpg.create_viewport(
     title="Work Timer v2",
-    width=500,
-    height=650,
+    width=WIDTH + 15,
+    height=HEIGHT + 50,
     small_icon="favicon.ico",
     large_icon="favicon.ico",
 )
