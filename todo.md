@@ -11,6 +11,7 @@
 - update customer/project should also update times values!
 - change json sort file to be a column in db per customer and project with sort order
 - make query window scrollable, to big as is
+- ~move database logic to own class~
 
 ### Buggar
 
