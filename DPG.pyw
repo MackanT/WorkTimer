@@ -35,7 +35,7 @@ SELECTED_DATE = datetime.now().strftime("%Y-%m-%d")
 ###
 # SQL-Backend logic
 ###
-db_file = "data_test.db"
+db_file = "data_dpg.db"
 pre_run_log = []
 
 
@@ -383,6 +383,7 @@ def update_project(
             select customer_id
             from customers
             where customer_name = ?
+            and is_current = 1
             )
     """,
         (
@@ -535,7 +536,14 @@ def process_db_queue():
                 c.customer_name, 
                 p.project_id, 
                 p.project_name, 
-                ifnull(sum(ifnull(t.total_time, (julianday('{now}') - julianday(start_time)) * 24)), 0) as total_time
+                ifnull(sum(
+                    ifnull(t.total_time, (julianday('{now}') - julianday(start_time)) * 24)
+                ), 0) as total_time,
+                ifnull(sum(
+                    ifnull(t.total_time, (julianday('{now}') - julianday(start_time)) * 24) 
+                    * ifnull(t.wage, 0) 
+                    * ifnull(t.bonus, 0)
+                ), 0) as user_bonus
             from projects p
             left join customers c 
                 on c.customer_id = p.customer_id 
@@ -545,22 +553,20 @@ def process_db_queue():
                 and t.project_id = p.project_id 
                 and t.date_key between {data["start_date"]} and {data["end_date"]}
             where p.is_current = 1
-            group by p.customer_id, c.customer_name, p.project_id, p.project_name
-            )
-            select
-                 ct.customer_id
-                ,ct.customer_name
-                ,ct.project_id
-                ,ct.project_name
-                ,round(ct.total_time, 2) AS total_time
-                ,round(ifnull(cast(ct.total_time as money) * cast(t.bonus as money) * cast(t.wage as money), 0), 2) as user_bonus
-                ,t.bonus
-                ,t.wage
-            from calculated_time ct
-            left join time t 
-                on t.customer_id = ct.customer_id 
-                and t.project_id = ct.project_id
-            group by ct.customer_id, ct.customer_name, ct.project_id, ct.project_name, ct.total_time;"""
+            group by
+                p.customer_id, 
+                c.customer_name, 
+                p.project_id, 
+                p.project_name
+        )
+        select
+            ct.customer_id,
+            ct.customer_name,
+            ct.project_id,
+            ct.project_name,
+            round(ct.total_time, 2) as total_time,
+            round(ct.user_bonus, 2) as user_bonus
+        from calculated_time ct;"""
             result = pd.read_sql(
                 query,
                 conn,
@@ -588,12 +594,18 @@ def process_db_queue():
                 )
         elif action == "run_query":
             try:
-                query = data["query"]
-                if query.strip().lower().startswith("select"):
+                query = data["query"].strip()
+
+                cursor = conn.cursor()
+
+                is_select = query.lower().lstrip().startswith(
+                    "select"
+                ) or query.lower().lstrip().startswith("with")
+                if is_select:
                     result = pd.read_sql(query, conn)
                 else:
-                    result = conn.execute(query)
-                    result = result.fetchall()
+                    cursor.execute(query)
+                    result = cursor.fetchall() if cursor.description else []
                     if COMMIT:
                         conn.commit()
             except Exception as e:
@@ -1401,7 +1413,7 @@ def add_bonus_data(sender, app_data) -> None:
 ###
 # UI
 ###
-with dpg.window(label="Work Timer v2", width=WIDTH, height=HEIGHT):
+with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
     ## Input
     with dpg.collapsing_header(label="Input", default_open=False):
         with dpg.collapsing_header(
@@ -1742,7 +1754,7 @@ dpg.destroy_context()
 ### update old db to new db ###
 ###############################
 
-# alter table time add git_id str, user_bonus float
+# alter table time add git_id int, user_bonus float
 # alter table dates drop column iso_year
 # alter table projects add git_id int
 

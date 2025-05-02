@@ -1440,7 +1440,7 @@ def start_program():
 def initialize_ui() -> tk.Tk:
     root = tk.Tk()
     root.title("Work Timer v2")
-    root.wm_iconbitmap("program_logo.ico")
+    root.wm_iconbitmap("graphics\\program_logo.ico")
 
     frame = tk.Frame(root, bg=__get_color("beige"))
     frame.pack(fill=tk.BOTH, expand=True)
