@@ -44,108 +44,131 @@ class Database:
             self.pre_run_log.append("Initializing database...")
 
             ## Time Table
-            self.execute_query("""
-            create table if not exists time (
-                time_id integer primary key autoincrement,
-                customer_id integer,
-                customer_name text,
-                project_id integer,
-                project_name text,
-                date_key integer,
-                start_time datetime,
-                end_time datetime,
-                total_time real,
-                wage real,
-                bonus real,
-                cost real,
-                user_bonus real,
-                git_id integer,
-                comment text
+            df_temp = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'time'"
             )
-            """)
-            self.pre_run_log.append("Table 'time' created successfully.")
+            if df_temp.empty:
+                self.execute_query("""
+                create table if not exists time (
+                    time_id integer primary key autoincrement,
+                    customer_id integer,
+                    customer_name text,
+                    project_id integer,
+                    project_name text,
+                    date_key integer,
+                    start_time datetime,
+                    end_time datetime,
+                    total_time real,
+                    wage real,
+                    bonus real,
+                    cost real,
+                    user_bonus real,
+                    git_id integer,
+                    comment text
+                )
+                """)
+                self.pre_run_log.append("Table 'time' created successfully.")
 
-            ## Trigger for Time Table
-            self.execute_query("""
-            create trigger if not exists trigger_time_after_update
-            after update on time
-            for each row
-            begin
-                update time
-                set
-                    total_time = (julianday(new.end_time) - julianday(new.start_time)) * 24,
-                    cost = new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24),
-                    user_bonus = new.bonus * new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24)
-                where time_id = new.time_id;
-            end;
-            """)
-            self.pre_run_log.append(
-                "Trigger 'trigger_time_after_update' created successfully."
-            )
+                ## Trigger for Time Table
+                self.execute_query("""
+                create trigger if not exists trigger_time_after_update
+                after update on time
+                for each row
+                begin
+                    update time
+                    set
+                        total_time = (julianday(new.end_time) - julianday(new.start_time)) * 24,
+                        cost = new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24),
+                        user_bonus = new.bonus * new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24)
+                    where time_id = new.time_id;
+                end;
+                """)
+                self.pre_run_log.append(
+                    "Trigger 'trigger_time_after_update' created successfully."
+                )
 
             ## Customers Table
-            self.execute_query("""
-            create table if not exists customers (
-                customer_id integer primary key autoincrement,
-                customer_name text,
-                start_date datetime,
-                wage real,
-                valid_from datetime,
-                valid_to datetime,
-                is_current integer,
-                inserted_at datetime,
-                updated_at datetime
+            df_temp = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'customers'"
             )
-            """)
-            self.pre_run_log.append("Table 'customers' created successfully.")
+            if df_temp.empty:
+                self.execute_query("""
+                create table if not exists customers (
+                    customer_id integer primary key autoincrement,
+                    customer_name text,
+                    start_date datetime,
+                    wage real,
+                    pat_token text,
+                    
+                    valid_from datetime,
+                    valid_to datetime,
+                    is_current integer,
+                    inserted_at datetime,
+                    updated_at datetime
+                )
+                """)
+                self.pre_run_log.append("Table 'customers' created successfully.")
 
             ## Projects Table
-            self.execute_query("""
-            create table if not exists projects (
-                project_id integer primary key autoincrement,
-                customer_id integer,
-                project_name text,
-                git_id integer,
-                is_current boolean
+            df_time = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'projects'"
             )
-            """)
-            self.pre_run_log.append("Table 'projects' created successfully.")
+            if df_time.empty:
+                self.execute_query("""
+                create table if not exists projects (
+                    project_id integer primary key autoincrement,
+                    customer_id integer,
+                    project_name text,
+                    git_id integer,
+                    is_current boolean
+                )
+                """)
+                self.pre_run_log.append("Table 'projects' created successfully.")
 
             ## Bonus Table
-            self.execute_query("""
-            create table if not exists bonus (
-                bonus_id integer primary key autoincrement,
-                bonus_percent real,
-                start_date text,
-                end_date text
+            df_time = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'bonus'"
             )
-            """)
-            self.pre_run_log.append("Table 'bonus' created successfully.")
+            if df_time.empty:
+                self.execute_query("""
+                create table if not exists bonus (
+                    bonus_id integer primary key autoincrement,
+                    bonus_percent real,
+                    start_date text,
+                    end_date text
+                )
+                """)
+                self.pre_run_log.append("Table 'bonus' created successfully.")
 
             ## Dates Table
-            self.execute_query("""
-            create table if not exists dates (
-                date_key integer unique,
-                date text unique,
-                year integer,
-                month integer,
-                week integer,
-                day integer
+            df_time = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'dates'"
             )
-            """)
-            self.pre_run_log.append("Table 'dates' created successfully.")
+            if df_time.empty:
+                self.execute_query("""
+                create table if not exists dates (
+                    date_key integer unique,
+                    date text unique,
+                    year integer,
+                    month integer,
+                    week integer,
+                    day integer
+                )
+                """)
+                self.pre_run_log.append("Table 'dates' created successfully.")
 
-            # Populate the dates table
-            try:
-                add_dates(s_date="2020-01-01", e_date="2030-12-31")
-                self.pre_run_log.append("Dates table populated successfully.")
-            except Exception as e:
-                self.pre_run_log.append(f"Error populating dates table: {e}")
+                # Populate the dates table
+                try:
+                    add_dates(s_date="2020-01-01", e_date="2030-12-31")
+                    self.pre_run_log.append("Dates table populated successfully.")
+                except Exception as e:
+                    self.pre_run_log.append(f"Error populating dates table: {e}")
 
         except Exception as e:
             self.pre_run_log.append(f"Error initializing database: {e}")
         finally:
             self.conn.commit()
+            self.pre_run_log.append("Database loaded withouter errors!")
 
         ### Time Table Operations ###
 
