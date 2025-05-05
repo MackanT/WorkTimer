@@ -180,7 +180,8 @@ class Database:
         today = dt.strftime("%Y-%m-%d")
 
         customer_name = self._get_value_from_db(
-            "select customer_name from customers where customer_id = ?", (customer_id,)
+            "select customer_name from customers where customer_id = ?",
+            (customer_id,),
         )
         project_name = self._get_value_from_db(
             "select project_name from projects where project_id = ?", (project_id,)
@@ -206,7 +207,9 @@ class Database:
         if rows.empty:
             # Insert a new row with the current time as start_time
             wage = self._get_value_from_db(
-                "select wage from customers where customer_name = ?", (customer_name,)
+                "select wage from customers where customer_name = ?",
+                (customer_name,),
+                data_type="int",
             )
             bonus = self._get_value_from_db(
                 """
@@ -214,6 +217,7 @@ class Database:
                 where ? between start_date and ifnull(end_date, '2099-12-31')
             """,
                 (today,),
+                data_type="float",
             )
 
             self.execute_query(
@@ -235,7 +239,7 @@ class Database:
             print(f"Starting timer for {customer_name}: {project_name}")
         else:
             # Update the latest row with blank end_time
-            last_row_id = rows.iloc[0]["time_id"]
+            last_row_id = int(rows.iloc[0]["time_id"])
 
             self.execute_query(
                 """
@@ -304,6 +308,7 @@ class Database:
                     result = self._get_value_from_db(
                         "selec wage from customers where customer_name = ? and is_current = 1",
                         (data["customer_name"],),
+                        data_type="int",
                     )
                     if response:
                         response.put(result)
@@ -311,6 +316,7 @@ class Database:
                     result = self._get_value_from_db(
                         "select bonus_percent from bonus where ? between start_date and ifnull(end_date, '2099-12-31')",
                         (data["date"],),
+                        data_type="float",
                     )
                     if response:
                         response.put(result)
@@ -494,6 +500,7 @@ class Database:
         customer_id = self._get_value_from_db(
             "select customer_id from customers where customer_name = ? and is_current = 1",
             (customer_name,),
+            data_type="int",
         )
 
         existing_projects = self.fetch_query(
