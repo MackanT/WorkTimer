@@ -1,1484 +1,1234 @@
-import os
-from typing import Literal, Any
-import pandas as pd
-import sqlite3
+import dearpygui.dearpygui as dpg
 from datetime import datetime, timedelta
-import re
-from functools import partial
+import pandas as pd
+import time
+import queue
+import threading
 
-import tkinter as tk
-import tkinter.font as tkFont
-from tkinter import ttk, messagebox, simpledialog
+import os
+import json
+
+from database import Database
+from devops import DevOpsClient
+
+###
+# Constants
+###
+COMBO_WIDTH = 325
+INDENT_1 = 15
+INDENT_2 = 10
+
+WARNING_RED = [255, 99, 71]
+WARNING_GREEN = [34, 139, 34]
+
+COMMIT = True
+INIT = True
+
+WIDTH = 500
+HEIGHT = 800
 
 
-# File path for the SQLite database
-db_file = "data.db"
+TIME_ID = 0  # 0 = Day, 1 = Week, 2 = Month, 3 = Year, 4 = All-Time
+TYPE_ID = 0  # 0 = Time, 1 = Bonus Wage
+SELECTED_DATE = datetime.now().strftime("%Y-%m-%d")
 
 
-def __get_customer_id(customer_name: str, date: str) -> int:
-    query = """
-        SELECT customer_id 
-        FROM customers 
-        WHERE customer_name = ? 
-        AND ? BETWEEN valid_from AND COALESCE(valid_to, '2099-12-31')
-    """
+###
+# SQL-Backend logic
+###
+db_file = "data_dpg.db"
+
+db = Database(db_file)
+db.initialize_db()
+
+personal_access_token = "TEMP"
+organization_url = "https://dev.azure.com/SOMETHING"
+do = DevOpsClient(personal_access_token, organization_url)
+do.connect()
+
+dpg.create_context()
+
+## Image Input
+width, height, channels, data = dpg.load_image("graphics\\icon_calendar.png")
+with dpg.texture_registry():
+    icon_calendar = dpg.add_static_texture(width, height, data)
+
+input_focused = False
+
+
+###
+# Help Functions
+###
+def __get_current_date_struct() -> dict:
+    now = datetime.now()
+    today_struct = {
+        "month_day": now.day,
+        "month": now.month - 1,  # zero-indexed
+        "year": now.year - 1900,  # offset from 1900
+        "hour": 0,
+        "min": 0,
+        "sec": 0,
+    }
+    return today_struct
+
+
+def __format_date_struct(input_struct: dict) -> str:
+    year = input_struct["year"] + 1900
+    month = input_struct["month"] + 1
+    day = input_struct["month_day"]
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def __is_valid_date(date_str: str) -> bool:
     try:
-        customer_id_df = pd.read_sql(query, conn, params=(customer_name, date))
-        if customer_id_df.empty:
-            return -1
-        return int(customer_id_df.iloc[0, 0])
-    except Exception as e:
-        print(f"Error fetching customer ID: {e}")
-        return -1
+        datetime.strptime(date_str, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
 
 
-def __get_project_id(project_name: str) -> int:
-    query = "SELECT project_id FROM projects WHERE project_name = ?"
-    try:
-        project_id_df = pd.read_sql(query, conn, params=(project_name,))
-        if project_id_df.empty:
-            return -1
-        return int(project_id_df.iloc[0, 0])
-    except Exception as e:
-        print(f"Error fetching project ID: {e}")
-        return -1
+def populate_pre_log():
+    for line in db.pre_run_log:
+        __log_message(line, type="INFO")
 
 
-def initialize_db(file_path: str) -> bool:
-    global conn
+def __log_message(message: str, type: str = "INFO") -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_log = dpg.get_value("log_box")
+    new_log = (
+        f"{timestamp} [{type}] - {message}\n{current_log}"
+        if current_log
+        else f"{timestamp} [{type}] - {message}"
+    )
+    dpg.set_value("log_box", new_log)
 
-    def add_dates() -> None:
-        start_date = "2020-01-01"
-        end_date = "2030-12-31"
 
-        # Create a date range
-        date_range = pd.date_range(start=start_date, end=end_date)
-
-        # Build the date table
-        date_table = pd.DataFrame(
-            {
-                "date_key": date_range.to_series().dt.strftime("%Y%m%d"),
-                "date": date_range.to_series().dt.strftime("%Y-%m-%d"),
-                "year": date_range.year,  # Gregorian year
-                "iso_year": date_range.to_series().apply(
-                    lambda x: x.isocalendar().year
-                ),  # ISO year
-                "month": date_range.month,  # Month
-                "week": date_range.to_series().apply(
-                    lambda x: x.isocalendar().week
-                ),  # ISO week
-                "day": date_range.day,  # Day of the month
-            }
-        )
-
-        date_table.to_sql("dates", conn, if_exists="append", index=False)
-
-    if os.path.exists(file_path):
-        print(f"File '{file_path}' exists. Opening...")
-        conn = sqlite3.connect(file_path)
-        print("Database opened successfully.")
-        return conn
+def _get_value_from_df(df: pd.DataFrame, data_type: str = "str"):
+    if isinstance(df, pd.DataFrame):
+        val = df.iloc[0, 0]
+    elif isinstance(df, pd.Series):
+        val = df.iloc[0]
     else:
-        print(f"File '{file_path}' does not exist. Creating a new one...")
-        conn = sqlite3.connect(file_path)
+        val = df
 
-        ## Time
-        conn.execute("""
-        create table if not exists time (
-            time_id integer primary key autoincrement,
-            customer_id integer,
-            customer_name str,
-            project_id integer,
-            project_name str,
-            start_time datetime,
-            end_time datetime,
-            comment str,
-            date_key int,
-            total_time date,
-            cost float,
-            bonus float,
-            wage float
-        )
-        """)
-        print("Table 'time' created successfully.")
-
-        ## Customers
-        conn.execute("""
-        create table if not exists customers (
-            customer_id integer primary key autoincrement,
-            customer_name text,
-            start_date datetime,
-            wage integer,
-            valid_from datetime,
-            valid_to datetime,
-            is_current integer,
-            inserted_at datetime,
-            updated_at datetime
-        )
-        """)
-        print("Table 'customers' created successfully.")
-
-        ## Projects
-        conn.execute("""
-        create table if not exists projects (
-            project_id integer primary key autoincrement,
-            customer_id integer,
-            project_name str,
-            is_current bool
-        )
-        """)
-        print("Table 'projects' created successfully.")
-
-        ## Bonus
-        conn.execute("""
-        create table if not exists bonus (
-            bonus_id integer primary key autoincrement,
-            bonus_percent float,
-            start_date str,
-            end_date str
-        )
-        """)
-        print("Table 'bonus' created successfully.")
-
-        ## Dates
-        conn.execute("""
-            create table if not exists dates (
-                 date_key integer unique
-                ,date text unique
-                ,year integer
-                ,iso_year integer
-                ,month integer
-                ,week integer
-                ,day integer
-            )
-        """)
-        print("Table 'dates' created successfully.")
-
-        print("Database initialized with empty tables.")
-
-        try:
-            add_dates()
-        except Exception as e:
-            print(f"Error reading from database: {e}")
-
-        conn.commit()
-
-    return conn
-
-
-# Insert into tables
-def insert_customer(
-    customer_name: str, start_date: str, wage: int, valid_from: str
-) -> None:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    date_obj = datetime.strptime(start_date, "%Y-%m-%d")
-    day_before = date_obj - timedelta(days=1)
-    valid_to = day_before.strftime("%Y-%m-%d")
-
-    conn.execute(
-        """
-        update customers
-        set 
-             is_current = 0
-            ,valid_to = ? 
-            ,updated_at = ?
-        where customer_name = ? AND is_current = 1
-    """,
-        (
-            valid_to,
-            now,
-            customer_name,
-        ),
-    )
-
-    conn.execute(
-        "insert into customers (customer_name, start_date, wage, valid_from, valid_to, is_current, inserted_at, updated_at) values (?, ?, ?, ?, ?, 1, ?, ?)",
-        (customer_name, start_date, wage, valid_from, None, now, None),
-    )
-    # conn.commit()
-
-
-def insert_time_row(
-    customer_name: str,
-    project_name: str,
-    date: str = None,
-    time: str = None,
-    comment: str = None,
-    commit: bool = True,
-) -> None:
-    # If adding historic data
-    if date and time:
-        now = f"{date} {time}"
-        today = date
+    if data_type == "str":
+        return val if val is not None else ""
+    elif data_type == "int":
+        return int(val) if val is not None else 0
+    elif data_type == "float":
+        return float(val) if val is not None else 0.0
     else:
-        dt = datetime.now()
-        now = dt.strftime("%Y-%m-%d %H:%M:%S")
-        today = dt.strftime("%Y-%m-%d")
-
-    customer_id = __get_customer_id(customer_name, today)
-    project_id = __get_project_id(project_name)
-    if customer_id == -1 or project_id == -1:
-        print("Could not find corresponding data!")
-        return
-
-    date_key = int(
-        pd.read_sql(f"select * from dates where date = '{today}'", conn).iloc[0, 0]
-    )
-
-    cursor = conn.execute(
-        """
-        select time_id, start_time, end_time
-        from time 
-        where customer_id = ? and project_id = ? and date(start_time) = ?
-        order by time_id desc
-    """,
-        (customer_id, project_id, today),
-    )
-    rows = cursor.fetchall()
-
-    if not rows or all(
-        row[2] is not None for row in rows
-    ):  # No rows or all rows have end_time filled
-        # Insert a new row with the current time as start_time
-        conn.execute(
-            """
-            INSERT INTO time (customer_id, customer_name, project_id, project_name, start_time, date_key)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """,
-            (customer_id, customer_name, project_id, project_name, now, date_key),
-        )
-
-    else:
-        # Update the latest row with blank end_time
-        last_row_id = rows[0][0]
-        cost_df = pd.read_sql(
-            f"SELECT wage FROM customers where customer_id = {customer_id}", conn
-        )
-        if cost_df.empty:
-            cost = 0
-        else:
-            cost = int(cost_df.iloc[0, 0])
-
-        bonus_df = pd.read_sql(
-            f"SELECT bonus_percent FROM bonus where '{today}' between start_date and coalesce(end_date, '2099-12-31')",
-            conn,
-        )
-        if bonus_df.empty:
-            bonus = 0.0
-        else:
-            bonus = float(bonus_df.iloc[0, 0])
-
-        conn.execute(
-            """
-            UPDATE time
-            SET 
-                end_time = :end_time,
-                total_time = (JULIANDAY(:end_time) - JULIANDAY(start_time)) * 24,
-                cost = (JULIANDAY(:end_time) - JULIANDAY(start_time)) * 24 * :cost_rate,
-                bonus = :bonus,
-                wage = (JULIANDAY(:end_time) - JULIANDAY(start_time)) * 24 * :cost_rate * :bonus_rate,
-                comment = :comment
-            WHERE time_id = :time_id
-        """,
-            {
-                "end_time": now,
-                "cost_rate": cost,
-                "bonus": bonus,
-                "bonus_rate": bonus,
-                "time_id": last_row_id,
-                "comment": comment,
-            },
-        )
-
-    if commit:
-        conn.commit()
+        raise ValueError("Invalid data type specified.")
 
 
-def insert_project(
-    project_name: str, customer_name: str, is_current: bool, commit: bool = True
-) -> None:
-    customer_id = __get_customer_id(customer_name, datetime.now().strftime("%Y-%m-%d"))
-    conn.execute(
-        "insert into projects (customer_id, project_name, is_current) values (?, ?, ?)",
-        (customer_id, project_name, is_current),
-    )
-    if commit:
-        conn.commit()
+###
+# UI Functions
+###
+def on_input_focus(sender, app_data) -> None:
+    global input_focused
+    input_focused = True
 
 
-def insert_bonus(
-    bonus_percent: float,
-    start_date: str,
-    end_date: str | None = None,
-    commit: bool = True,
-) -> None:
-    if not end_date:
-        date_obj = datetime.strptime(start_date, "%Y%m%d")
-        day_before = date_obj - timedelta(days=1)
-        new_end_date = day_before.strftime("%Y-%m-%d")
-        conn.execute(
-            f"update bonus set end_date = '{new_end_date}' where end_date is Null"
-        )
-        conn.commit()
-    if len(start_date) == 8:
-        start_date = __format_date(start_date)
-
-    conn.execute(
-        "insert into bonus (bonus_percent, start_date, end_date) values (?, ?, ?)",
-        (bonus_percent, start_date, end_date),
-    )
-    if commit:
-        conn.commit()
+def on_input_unfocus(sender, app_data) -> None:
+    global input_focused
+    input_focused = False
 
 
-def insert_historic_time(file_name: str, customer_name: str, project_name: str) -> None:
-    """Runs through files from old format and finds corresponding customer id for specific date. Stores times in time-table"""
-    with open(file_name, "r") as f:
-        content = f.readlines()
-
-    pattern = r"^[0-1]{1}\d{4}-\d{2}-\d{2}.\d{2}:\d{2}:\d{2}\n$"
-
-    for line in content:
-        if not re.match(pattern, line):
-            continue
-        cleaned = line[1:-1]
-        date, time = cleaned.split(" ")
-        insert_time_row(customer_name, project_name, date, time, commit=False)
+def hide_text_after_delay(tag: str, sleep_time: int) -> None:
+    time.sleep(sleep_time)
+    dpg.hide_item(tag)
 
 
-# Insert into tables from UI
-def __add_customer_project(data: dict) -> tuple[bool, str]:
-    p_name = data["Project Name"]
-    c_name = data["Customer Name"]
+def __update_dropdown(tag: str, c_name: str = None) -> None:
+    if tag == "customer_dropdown":
+        r_queue = queue.Queue()
+        db.queue_task("get_customer_names", {}, response=r_queue)
+        customers = r_queue.get()
+        dpg.configure_item("customer_update_name_dropdown", items=customers)
+        dpg.configure_item("customer_delete_name_dropdown", items=customers)
+        dpg.configure_item("project_add_customer_name_dropdown", items=customers)
 
-    customers = pd.read_sql(
-        f"select * from customers where customer_name = '{c_name}'", conn
-    )
-    if len(customers) == 0:  # Add customer
-        return (False, "Customer does not exist in the database!")
+        db.queue_task("get_active_customers", {}, response=r_queue)
+        customers = r_queue.get()
+        dpg.configure_item("project_update_customer_name_dropdown", items=customers)
+        dpg.configure_item("project_delete_customer_name_dropdown", items=customers)
 
-    customer_id = customers["customer_id"].iloc[0]
-
-    projects = pd.read_sql(
-        f"select * from projects where project_name = '{p_name}' and customer_id = '{customer_id}'",
-        conn,
-    )
-    if len(projects[projects["is_current"] == 1]) > 0:
-        return (False, "Project already exists in database!")
-
-    elif len(projects[projects["is_current"] == 0]) > 0:
-        project_id = projects["project_id"].iloc[0]
-        conn.execute(
-            f"update projects set is_current = 1 where project_id = {project_id}"
-        )
-        return (True, "Project has been reactivated!")
-    else:
-        insert_project(p_name, c_name, True)
-
-    return (True, "Successfully added new Project")
-
-
-def __disable_customer_project(p_id: int) -> tuple[bool, str]:
-    conn.execute(f"update projects set is_current = 0 where project_id = {p_id}")
-    conn.commit()
-    return (True, "Project has been deactivated!")
-
-
-def __add_customer(data: dict) -> tuple[bool, str]:
-    c_name = data["Customer Name"]
-    s_date = data["Start Date"]
-    s_date = f"{s_date[:4]}-{s_date[4:6]}-{s_date[-2:]}"
-    wage = int(data["Wage"])
-
-    customers = pd.read_sql(
-        f"select * from customers where customer_name = '{c_name}'", conn
-    )
-    if len(customers) == 0:  # New customer
-        insert_customer(c_name, s_date, wage, s_date)
-        return (True, f"Customer {c_name} added to the database!")
-
-    customer_id = customers["customer_id"].iloc[0]
-
-    if len(customers[customers["is_current"] == 1]) > 0:
-        insert_customer(c_name, s_date, wage, s_date)
-        return (
-            True,
-            f"Customer {c_name} already exists in the database, updating wage!",
-        )
-
-    elif len(customers[customers["is_current"] == 0]) > 0:
-        conn.execute(
-            f"update customers set is_current = 1 where customer_id = {customer_id}"
-        )
-        conn.commit()
-        return (True, "Customer has been reactivated!")
-    else:
-        return (False, "Unknown operation!")
-
-
-def __disable_customer(c_name: str) -> tuple[bool, str]:
-    conn.execute(
-        f"update customers set is_current = 0 where customer_name = '{c_name}'"
-    )
-    conn.commit()
-    return (True, f"Customer {c_name} has been deactivated!")
-
-
-def __add_bonus(data: dict) -> tuple[bool, str]:
-    amount = float(data["Bonus Percent"])
-    date = data["Start Date"]
-    insert_bonus(amount, date)
-    return (True, f"Bonus percent {amount} added to the database!")
-
-
-# Get time values
-def __get_value(customer_name: str, project_name: str, date_key: int) -> float:
-    date_data = pd.read_sql(
-        f"select * from dates where date_key = '{date_key}'", conn
-    ).iloc[0]
-
-    query = """
-        select 
-             t.start_time
-            ,t.end_time
-            ,c.wage
-            ,b.bonus_percent
-            ,d.date_key
-            ,d.year
-            ,d.iso_year
-            ,d.month
-            ,d.week
-            ,d.day
-        from time t
-        left join dates d on d.date_key = t.date_key
-        left join customers c on c.customer_id = t.customer_id
-        left join bonus b on date(t.start_time) between b.start_date and coalesce(b.end_date, '2099-12-31')
-        where
-            t.customer_name = ? 
-            and t.project_name = ? 
-    """
-    params = (customer_name, project_name)
-    data = pd.read_sql(query, conn, params=params)
-
-    data.loc[
-        (data["end_time"].isnull()) & (data["date_key"] == date_key), "end_time"
-    ] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    data["total_time"] = pd.to_datetime(data["end_time"]) - pd.to_datetime(
-        data["start_time"]
-    )
-    data["total_hours"] = data["total_time"].dt.total_seconds() / 3600
-    data["payout"] = data["total_hours"] * data["wage"] * data["bonus_percent"]
-
-    if data.empty:
-        return 0
-
-    if data_format in [0, 1]:
-        sum_column = "total_hours"
-    elif data_format in [2, 3]:
-        sum_column = "payout"
-
-    ## Return todays value
-    if time_index == 0:  # Today
-        val = data[data["date_key"] == date_key][sum_column].sum()
-    elif time_index == 1:  # Week
-        iso_year = date_data["iso_year"]
-        iso_week = date_data["week"]
-        val = data[(data["iso_year"] == iso_year) & (data["week"] == iso_week)][
-            sum_column
-        ].sum()
-    elif time_index == 2:  # Month
-        year = date_data["year"]
-        month = date_data["month"]
-        val = data[(data["year"] == year) & (data["month"] == month)][sum_column].sum()
-    elif time_index == 3:  # Year
-        year = date_data["year"]
-        val = data[data["year"] == year][sum_column].sum()
-    else:
-        val = data[sum_column].sum()
-
-    return val
-
-
-def __update_user_input_date(*args):
-    global user_input_date, date_input
-    user_input_date = int(date_input.get())
-    __update_value()
-
-
-def __update_value() -> None:
-    for obj in projects:
-        c_name, p_name, label = obj
-        time = __get_value(c_name, p_name, user_input_date)
-        formatted_value = __format_value(time)
-        label.config(text=formatted_value)
-
-
-def __update_project(c_name: str, p_name: str, button: tk.Button) -> None:
-    current_color = button.cget("bg")
-    if current_color == __get_color("green"):
-        comment = simpledialog.askstring("Comment", "What work was conducted?")
-    else:
-        comment = ""
-    if comment is None:
-        return
-    insert_time_row(c_name, p_name, comment=comment)
-    color = (
-        __get_color("green")
-        if current_color == __get_color("red")
-        else __get_color("red")
-    )
-    button.config(bg=color)
-
-
-### SQL ###
-def __populate_sql_output(sql_output: ttk.Treeview, data: pd.DataFrame) -> None:
-    """Populate Treeview with DataFrame content."""
-    # Clear any existing data
-    for row in sql_output.get_children():
-        sql_output.delete(row)
-
-    # Insert new data
-    sql_output["columns"] = list(data.columns)
-    sql_output["show"] = "headings"  # Hide default empty column
-
-    # Add column headers
-    for column in data.columns:
-        sql_output.heading(column, text=column)
-        sql_output.column(column, width=100, anchor="center")
-
-    # Add rows
-    for _, row in data.iterrows():
-        sql_output.insert("", "end", values=list(row))
-
-    sql_output.place(relx=0.01, rely=0.01, width=1160, height=300)
-
-
-def __run_sql(
-    event, frame: tk.Toplevel, sql_input: tk.Entry, sql_output: ttk.Treeview
-) -> None:
-    sql_code = sql_input.get()
-
-    override = False
-    if "delete" in sql_code or "update" in sql_code:
-        frame.grab_set()
-        result = messagebox.askyesno(
-            "Confirm",
-            "Running the SQL-command will make changes to the data do you want that?",
-        )
-        frame.grab_release()
-        if result:
-            override = True
-        else:
+    elif tag == "project_update_project_name_dropdown":
+        if INIT:  # Ensure no dead-lock during setup
             return
 
-    try:
-        if override:
-            conn.execute(sql_code)
-            conn.commit()
-            messagebox.showinfo(
-                "SQL-Command Successful", f"SQL command:\n\n{sql_code} ran successfully"
-            )
-        else:
-            data = pd.read_sql(sql_code, conn)
-            __populate_sql_output(sql_output, data)
-            frame.geometry(f"{frame.winfo_width()}x{395}")
+        customer_name = dpg.get_value("project_update_customer_name_dropdown")
 
-    except Exception as e:
-        print(f"Error running sql-code {sql_code}: {e}")
-
-
-def __update_value_id(val: int) -> None:
-    data = pd.read_sql(f"select * from time where time_id = {val}", conn)
-
-    if len(data) == 0:
-        return
-
-    start_time = data["start_time"].iloc[0][0:10]
-    end_time = data["end_time"].iloc[0]
-    c_id = data["customer_id"].iloc[0]
-
-    cost_df = pd.read_sql(
-        f"SELECT wage FROM customers where customer_id = {c_id}", conn
-    )
-    if cost_df.empty:
-        cost = 0
-    else:
-        cost = int(cost_df.iloc[0, 0])
-
-    bonus_df = pd.read_sql(
-        f"SELECT bonus_percent FROM bonus where '{start_time}' between start_date and coalesce(end_date, '2099-12-31')",
-        conn,
-    )
-    if bonus_df.empty:
-        bonus = 0.0
-    else:
-        bonus = float(bonus_df.iloc[0, 0])
-
-    conn.execute(
-        """
-        UPDATE time
-        SET 
-            total_time = (JULIANDAY(:end_time) - JULIANDAY(start_time)) * 24,
-            cost = (JULIANDAY(:end_time) - JULIANDAY(start_time)) * 24 * :cost_rate,
-            bonus = :bonus,
-            wage = (JULIANDAY(:end_time) - JULIANDAY(start_time)) * 24 * :cost_rate * :bonus_rate
-        WHERE time_id = :time_id
-    """,
-        {
-            "end_time": end_time,
-            "cost_rate": cost,
-            "bonus": bonus,
-            "bonus_rate": bonus,
-            "time_id": val,
-        },
-    )
-    conn.commit()
-
-
-### Utilities ###
-def __get_font(size: int, bold: bool = False):
-    if bold:
-        return tkFont.Font(family="Bahnscrift", size=size, weight="bold")
-    else:
-        return tkFont.Font(family="Bahnscrift", size=size)
-
-
-def __get_color(col: str) -> str:
-    return COLS[col]
-
-
-def __format_date_key(date: str) -> str:
-    return date.strftime("%Y%m%d")
-
-
-def __format_date(date: str) -> str:
-    a = datetime.strptime(date, "%Y%m%d")
-    return a.strftime("%Y-%m-%d")
-
-
-def __format_value(value: float) -> str:
-    formatted_value = "arst"
-    if data_format == 0:
-        hours = int(value)
-        minutes = int((value - hours) * 60)
-        formatted_value = f"{hours} h {minutes} min"
-    elif data_format == 1:
-        formatted_value = f"{round(value, 2)} h"
-    elif data_format == 2:
-        formatted_value = f"{round(value, 0)} SEK"
-
-    return formatted_value
-
-
-def __get_active_projects() -> pd.DataFrame:
-    projects = pd.read_sql(
-        "select c.customer_name, c.customer_id, p.project_name, p.project_id from projects p left join customers c on c.customer_id = p.customer_id where p.is_current = 1 and c.is_current = 1",
-        conn,
-    )
-    return projects.sort_values(by="customer_name")
-
-
-def __entry_int_check(var: tk.Entry, p: int, *args):
-    value = var.get()
-
-    # Ignore validation if the value is the placeholder
-    if value == p:
-        return
-
-    if not value.isdigit():
-        var.set("".join(filter(str.isdigit, value)))
-
-
-def __entry_float_check(var: tk.Entry, p: str, *args):
-    value = var.get()
-
-    # Ignore validation if the value is the placeholder
-    if value == p:
-        return
-
-    # Allow empty input to clear the field
-    if value == "":
-        return
-
-    # Check if the value is a valid float or can potentially be a float
-    try:
-        float(value)
-    except ValueError:
-        # If not valid, filter the value to keep only float-compatible characters
-        valid_chars = "-0123456789."
-        # Allow only the first `-` at the start and a single `.`
-        filtered_value = "".join(
-            c
-            for i, c in enumerate(value)
-            if c in valid_chars
-            and (c != "-" or i == 0)
-            and (c != "." or value[:i].count(".") == 0)
+        r_queue = queue.Queue()
+        db.queue_task(
+            "get_project_names", {"customer_name": customer_name}, response=r_queue
         )
-        var.set(filtered_value)
+        projects = r_queue.get()
+        dpg.configure_item(tag, items=projects)
+    elif tag == "project_delete_project_name_dropdown":
+        if INIT:  # Ensure no dead-lock during setup
+            return
 
-
-def __entry_date_check(var: tk.Entry, p: str, *args):
-    value = var.get()
-
-    # Ignore validation if the value is the placeholder
-    if value == p:
-        return
-
-    # Remove any non-digit characters
-    if not value.isdigit():
-        var.set("".join(filter(str.isdigit, value)))
-        return
-
-    # Limit the length to 8 characters
-    if len(value) > 8:
-        var.set(value[:8])
-        return
-
-    # If length is 8, validate the date
-    if len(value) == 8:
-        try:
-            datetime.strptime(value, "%Y%m%d")  # Validate using datetime
-        except ValueError:
-            var.set(value[:-1])  # Remove last character if invalid
-
-
-def __entry_on_focus_in(event, p: str):
-    entry = event.widget
-    if entry.get() == p:
-        entry.delete(0, tk.END)  # Remove placeholder text
-        entry.config(fg="black")  # Change text color to black
-
-
-def __entry_on_focus_out(event, p: str):
-    entry = event.widget
-    if entry.get() == "":  # If entry is empty, reinsert placeholder
-        entry.insert(0, p)
-        entry.config(fg="gray")  # Change text color back to gray
-
-
-def __attempt_save_user_input(
-    frame: tk.Toplevel, add_function, d_dict: dict = None, entity=None
-):
-    data = {}
-
-    for name, dd in d_dict.items():
-        text = dd["entry"].get()
-        if text != name:
-            data[name] = text
-        else:
-            data[name] = None
-
-    # Call the provided add function
-    success, msg = add_function(data)
-
-    if success:
-        messagebox.showinfo("Success", msg)
-        frame.destroy()
-        __update_ui()
-    else:
-        messagebox.showwarning("Failure", msg)
-
-
-def __attempt_remove_user_input(frame: tk.Toplevel, func, entity, d_dict: dict = None):
-    success = False
-    msg = ""
-    if isinstance(entity, ttk.Combobox):
-        value = entity.get()
-
-        if not d_dict:
-            for c_name in entity.cget("values"):
-                if value == c_name:
-                    success, msg = func(c_name)
-                    break
-        else:
-            p_id = d_dict[entity.get()]["p_id"]
-            success, msg = func(p_id)
-
-        if success:
-            messagebox.showinfo("Success", msg)
-            frame.destroy()
-            __update_ui()
-        else:
-            messagebox.showwarning("Failure", msg)
-
-
-### UI ###
-def __create_popup(
-    frame: tk.Toplevel, title: str, text: str, width: int = 100, height: int = None
-) -> tk.Toplevel:
-    if height:
-        popup_window = tk.Toplevel(
-            frame, bg=__get_color("beige"), width=width, height=height
+        customer_name = dpg.get_value("project_delete_customer_name_dropdown")
+        r_queue = queue.Queue()
+        db.queue_task(
+            "get_project_names", {"customer_name": customer_name}, response=r_queue
         )
+        projects = r_queue.get()
+        dpg.configure_item(tag, items=projects)
+
+
+def __update_text_input(tag: str):
+    if tag == "customer_update_name_dropdown":
+        cur_val = dpg.get_value(tag)
+        dpg.set_value("customer_update_customer_name_input", cur_val)
+
+        r_queue = queue.Queue()
+        db.queue_task("get_wage", {"customer_name": cur_val}, response=r_queue)
+        new_wage = r_queue.get()
+
+        dpg.set_value("customer_update_wage_input", new_wage)
+    elif tag == "project_update_project_name_dropdown":
+        cur_p_name = dpg.get_value(tag)
+        cur_c_name = dpg.get_value("project_update_customer_name_dropdown")
+        dpg.set_value("project_update_name_input", cur_p_name)
+
+        r_queue = queue.Queue()
+        query = f"""select git_id from projects p
+                    left join customers c on c.customer_id = p.customer_id and c.is_current = 1
+                    where p.project_name = '{cur_p_name}'
+                    and c.customer_name = '{cur_c_name}'
+                    and p.is_current = 1
+                    limit 1"""
+        db.queue_task("get_df", {"query": query}, response=r_queue)
+        git_id = _get_value_from_df(r_queue.get(), data_type="int")
+        dpg.set_value("project_update_git_input", git_id)
+
+
+def __autoset_query_window(table_name: str) -> None:
+    sql_input = f"select * from {dpg.get_item_label(table_name)}"
+    dpg.set_value("query_input", sql_input)
+
+
+def on_date_selected(sender, app_data) -> None:
+    global SELECTED_DATE
+    SELECTED_DATE = f"{app_data['year'] + 1900}-{app_data['month'] + 1:02d}-{app_data['month_day']:02d}"
+
+    run_update_ui_task()
+    __log_message(f"Date selected: {SELECTED_DATE}", type="INFO")
+
+
+def __get_user_input() -> tuple[int, int, str]:
+    global TIME_ID, TYPE_ID, SELECTED_DATE
+
+    d_queue = queue.Queue()
+    db.queue_task("get_df", {"query": "select * from dates"}, response=d_queue)
+    dates = d_queue.get()
+
+    sel_date = pd.to_datetime(SELECTED_DATE)
+
+    start_date = end_date = sel_date
+
+    if TIME_ID == 4:
+        start_date = int(dates["date"].min().replace("-", ""))
+        end_date = int(dates["date"].max().replace("-", ""))
     else:
-        popup_window = tk.Toplevel(frame, bg=__get_color("beige"), width=width)
-    popup_window.title(title)
+        if TIME_ID == 1:
+            start_date = sel_date - timedelta(days=sel_date.weekday())
+            end_date = start_date + timedelta(days=6)
+        elif TIME_ID == 2:
+            start_date = sel_date.replace(day=1)
+            next_month = (start_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+            end_date = next_month - timedelta(days=1)
+        elif TIME_ID == 3:
+            start_date = sel_date.replace(month=1, day=1)
+            end_date = sel_date.replace(month=12, day=31)
 
-    popup_window.resizable(False, False)
+        start_date = start_date.strftime("%Y%m%d")
+        end_date = end_date.strftime("%Y%m%d")
 
-    # __add_label(
-    #     popup_window,
-    #     text=text,
-    # )
-    label = __add_label(popup_window, text, font_size=14)
-    label.pack(padx=10, pady=10)
+    if TYPE_ID == 0:
+        sel_type = "total_time"
+    elif TYPE_ID == 1:
+        sel_type = "cost"
 
-    return popup_window
-
-
-def __add_combobox(frame: tk.Toplevel, entries: list) -> ttk.Combobox:
-    combobox = ttk.Combobox(frame, state="readonly", width=20, font=__get_font(10))
-    combobox.pack(padx=10, pady=10)
-    combobox.focus()
-    combobox["values"] = entries
-
-    return combobox
+    return start_date, end_date, sel_type
 
 
-def __add_entry(
-    frame: tk.Toplevel,
-    text_var: tk.StringVar,
-    text: str,
-    width: int = 16,
-    pack: bool = True,
-) -> tk.Entry:
-    entry = tk.Entry(
-        frame,
-        fg="gray",
-        textvariable=text_var if text_var else None,
-        width=width,
-        font=__get_font(10),
+# Global variable to store the header order
+header_order = []
+
+
+def render_customer_project_ui():
+    global header_order
+
+    start_date, end_date, sel_type = __get_user_input()
+
+    # Fetch the default order of customer IDs from the database
+    r_queue = queue.Queue()
+    db.queue_task(
+        "get_customer_ui_list",
+        {"start_date": start_date, "end_date": end_date, "data_type": sel_type},
+        response=r_queue,
     )
-    entry.config({"background": __get_color("background")})
-    entry.insert(0, text)
-    entry.bind("<FocusIn>", lambda event, p=text: __entry_on_focus_in(event, p))
-    entry.bind("<FocusOut>", lambda event, p=text: __entry_on_focus_out(event, p))
-    if pack:
-        entry.pack(padx=10, pady=10)
+    df = r_queue.get()
 
-    return entry
+    default_customer_ids = df["customer_id"].unique().tolist()
 
+    # Load the header order, initializing with the default order if necessary
+    load_header_order(default_customer_ids)
 
-def __add_entries(
-    frame: tk.Toplevel,
-    entry_configs: list[dict[Literal["label", "textvariable", "trace_function"], Any]],
-) -> dict:
-    d_dict = {}
-    for config in entry_configs:
-        t = config["label"]
-        text_var = config["textvariable"]
-        if text_var and config["trace_function"]:
-            text_var.trace_add("write", partial(config["trace_function"], text_var, t))
-        entry = __add_entry(frame, text_var, t)
-        d_dict[t] = {"entry": entry}
+    dpg.delete_item("customer_ui_section", children_only=True)
 
-    return d_dict
+    __update_dropdown("customer_dropdown")
 
-
-def __add_label(
-    frame: tk.Toplevel,
-    text: str,
-    bg: str = None,
-    fg: str = None,
-    font_size: int = 13,
-    bold: bool = True,
-    width: int = 18,
-    height: int = 1,
-    anchor: Literal["w", "e", "s", "n"] = tk.W,
-) -> tk.Label:
-    if not bg:
-        bg = "beige"
-    if not fg:
-        fg = "teal"
-
-    label = tk.Label(
-        frame,
-        text=text,
-        bg=__get_color(bg),
-        fg=__get_color(fg),
-        font=__get_font(font_size, bold),
-        width=width,
-        height=height,
-        anchor=anchor,
+    # Sort customers based on the custom order
+    customer_ids = sorted(
+        df["customer_id"].unique(),
+        key=lambda x: header_order.index(x) if x in header_order else len(header_order),
     )
-    return label
 
+    for customer_id in customer_ids:
+        customer_name = df.loc[df["customer_id"] == customer_id, "customer_name"].iloc[
+            0
+        ]
 
-def __add_button(
-    frame: tk.Toplevel,
-    text: str,
-    cmd,
-    side: str = "right",
-    padx: int = 10,
-    pady: int = 10,
-    width: int = 8,
-    height: int = 1,
-    font_size: int = 10,
-    bold: bool = True,
-    bg: str = None,
-    fg: str = None,
-    pack: bool = True,
-) -> tk.Button:
-    if not bg:
-        bg = "green"
-    if not fg:
-        fg = "white"
+        # One header per customer inside the "Customers" section
+        header_id = dpg.add_collapsing_header(
+            label=customer_name,
+            default_open=True,
+            indent=10,
+            parent="customer_ui_section",
+            tag=f"header_{customer_id}",
+        )
 
-    button = tk.Button(
-        frame,
-        text=text,
-        command=cmd,
-        width=width,
-        height=height,
-        bg=__get_color(bg),
-        fg=__get_color(fg),
-        font=__get_font(font_size, bold),
-        relief="flat",
-    )
-    if pack:
-        button.pack(side=side, padx=padx, pady=pady)
-    return button
-
-
-def __add_cancel(frame: tk.Toplevel, side: str = "left") -> None:
-    __add_button(frame, "Cancel", frame.destroy, side=side)
-
-
-def __add_save(
-    frame: tk.Toplevel, text: str, f1, f2, entity=None, d_dict: dict = None
-) -> None:
-    save_button = __add_button(
-        frame=frame, text=text, cmd=lambda: f1(frame, f2, entity=entity, d_dict=d_dict)
-    )
-    frame.bind("<Return>", lambda event=None: save_button.invoke())
-
-
-def __add_bonus_popup():
-    popup_window = __create_popup(root, "Add Bonus", "Enter New Bonus Details")
-
-    # Define configuration for each entry
-    entry_configs = [
-        {
-            "label": "Bonus Percent",
-            "textvariable": tk.StringVar(),
-            "trace_function": __entry_float_check,
-        },
-        {
-            "label": "Start Date",
-            "textvariable": tk.StringVar(),
-            "trace_function": __entry_date_check,
-        },
-    ]
-    d_dict = __add_entries(popup_window, entry_configs)
-
-    __add_save(
-        popup_window,
-        "Add",
-        __attempt_save_user_input,
-        __add_bonus,
-        entity=None,
-        d_dict=d_dict,
-    )
-    __add_cancel(popup_window)
-
-
-def __update_value_popup():
-    popup_window = __create_popup(root, "Recalulate Time Values", "Specify Time-ID")
-
-    # Define configuration for each entry
-    entry_configs = [
-        {
-            "label": "time_id",
-            "textvariable": tk.StringVar(),
-            "trace_function": __entry_int_check,
-        }
-    ]
-    d_dict = __add_entries(popup_window, entry_configs)
-    entry = d_dict["time_id"]["entry"]
-
-    save_button = __add_button(
-        popup_window,
-        text="Update",
-        cmd=lambda: __update_value_id(int(entry.get())),
-        side="left",
-    )
-    popup_window.bind("<Return>", lambda event=None: save_button.invoke())
-
-    __add_cancel(popup_window)
-
-
-def __add_customer_popup():
-    popup_window = __create_popup(root, "Add Customer", "Enter Customer Details")
-
-    # Define configuration for each entry
-    entry_configs = [
-        {
-            "label": "Customer Name",
-            "textvariable": None,
-            "trace_function": None,
-        },
-        {
-            "label": "Start Date",
-            "textvariable": tk.StringVar(),
-            "trace_function": __entry_date_check,
-        },
-        {
-            "label": "Wage",
-            "textvariable": tk.StringVar(),
-            "trace_function": __entry_int_check,
-        },
-    ]
-    d_dict = __add_entries(popup_window, entry_configs)
-
-    __add_save(
-        popup_window,
-        "Add",
-        __attempt_save_user_input,
-        __add_customer,
-        entity=None,
-        d_dict=d_dict,
-    )
-    __add_cancel(popup_window)
-
-
-def __remove_customer_popup():
-    popup_window = __create_popup(root, "Remove Customer", "Customer to Remove")
-
-    projects = __get_active_projects()
-    customers = projects["customer_name"].unique().tolist()
-    combobox = __add_combobox(popup_window, customers)
-
-    __add_save(
-        popup_window,
-        "Select",
-        __attempt_remove_user_input,
-        __disable_customer,
-        entity=combobox,
-        d_dict=None,
-    )
-    __add_cancel(popup_window)
-
-
-def __add_project_popup():
-    popup_window = __create_popup(root, "Enter New Project", "Enter Project Details")
-
-    entry_configs = [
-        {
-            "label": "Project Name",
-            "textvariable": None,
-            "trace_function": None,
-        },
-        {
-            "label": "Customer Name",
-            "textvariable": None,
-            "trace_function": None,
-        },
-    ]
-    d_dict = __add_entries(popup_window, entry_configs)
-
-    __add_save(
-        popup_window,
-        "Add",
-        __attempt_save_user_input,
-        __add_customer_project,
-        entity=None,
-        d_dict=d_dict,
-    )
-    __add_cancel(popup_window)
-
-
-def __remove_project_popup():
-    popup_window = __create_popup(root, "Remove Project", "Project to Remove")
-
-    # Populate the Combobox with project names
-    projects = __get_active_projects()
-    text_names = []
-    data_dict = {}
-    for _, row in projects.iterrows():
-        r_name = f"{row['customer_name']} - {row['project_name']}"
-        data_dict[r_name] = {"p_id": row["project_id"]}
-        text_names.append(r_name)
-    combobox = __add_combobox(popup_window, text_names)
-
-    __add_save(
-        popup_window,
-        "Select",
-        __attempt_remove_user_input,
-        __disable_customer_project,
-        entity=combobox,
-        d_dict=data_dict,
-    )
-    __add_cancel(popup_window)
-
-
-def __summarize_data(tree: ttk.Treeview, label: tk.Label, time_index: int = 0) -> None:
-    today = datetime.today()
-
-    if time_index == 0:
-        start_of_period = today - timedelta(days=today.weekday())
-        end_of_period = start_of_period + timedelta(days=6)
-
-        label.configure(text="Weekly Summary")
-        start_date_key = start_of_period.strftime("%Y%m%d")
-        end_date_key = end_of_period.strftime("%Y%m%d")
-    elif time_index == 1:
-        start_of_period = today.replace(day=1)
-        if today.month == 12:
-            end_of_period = today.replace(
-                year=today.year + 1, month=1, day=1
-            ) - timedelta(days=1)
-        else:
-            end_of_period = today.replace(month=today.month + 1, day=1) - timedelta(
-                days=1
+        # Add "Move Up" and "Move Down" buttons
+        with dpg.group(horizontal=True, parent=header_id):
+            dpg.add_text("", tag=f"total_{customer_id}")
+            dpg.add_spacer(width=WIDTH / 2 - INDENT_1 - 5)
+            dpg.add_button(
+                label="Move Up",  # ↑
+                callback=move_header_up,
+                user_data=customer_id,
             )
-        label.configure(text="Monthly Summary")
-        start_date_key = start_of_period.strftime("%Y%m%d")
-        end_date_key = end_of_period.strftime("%Y%m%d")
+            dpg.add_button(
+                label="Move Down",
+                callback=move_header_down,
+                user_data=customer_id,
+            )
+
+        db_queue = queue.Queue()
+        for _, row in df[df["customer_id"] == customer_id].iterrows():
+            project_id = row["project_id"]
+            project_name = row["project_name"]
+
+            sql_query = f"select * from time where customer_id = {customer_id} and project_id = {project_id} and end_time is null"
+            db.queue_task(
+                "get_df",
+                {"query": sql_query, "meta_data": "render_customer_project_ui"},
+                response=db_queue,
+            )
+            counts = db_queue.get()
+            initial_state = True if len(counts) > 0 else False
+
+            group_id = dpg.add_group(horizontal=True, parent=header_id)
+
+            dpg.add_checkbox(
+                label=f"{project_name:<44}",
+                callback=project_button_callback,
+                user_data=(customer_id, project_id),
+                default_value=initial_state,
+                parent=group_id,
+            )
+
+            dpg.add_text("", tag=f"time_{customer_id}_{project_id}", parent=group_id)
+        # dpg.add_spacer(height=10, parent="customer_ui_section")
+
+    # Save the current order of headers
+    save_header_order()
+
+    run_update_ui_task()
+
+
+def move_header_up(sender, app_data, customer_id: int) -> None:
+    """Move the header up in the custom order."""
+    global header_order
+    if customer_id not in header_order:
+        header_order.append(customer_id)
+
+    index = header_order.index(customer_id)
+    if index > 0:
+        header_order[index], header_order[index - 1] = (
+            header_order[index - 1],
+            header_order[index],
+        )
+        save_header_order()
+        render_customer_project_ui()
+
+
+def move_header_down(sender, app_data, customer_id: int) -> None:
+    """Move the header down in the custom order."""
+    global header_order
+    if customer_id not in header_order:
+        header_order.append(customer_id)
+
+    index = header_order.index(customer_id)
+    if index < len(header_order) - 1:
+        header_order[index], header_order[index + 1] = (
+            header_order[index + 1],
+            header_order[index],
+        )
+        save_header_order()
+        render_customer_project_ui()
+
+
+def save_header_order():
+    """Save the custom order of headers to persistent storage."""
+    global header_order
+    with open("header_order.json", "w") as f:
+        json.dump(header_order, f)
+
+
+def load_header_order(default_customer_ids):
+    """Load the custom order of headers from persistent storage."""
+    global header_order
+    if os.path.exists("header_order.json"):
+        with open("header_order.json", "r") as f:
+            header_order = json.load(f)
+        if not header_order:  # If the file is empty or contains `null`
+            header_order = default_customer_ids
     else:
-        start_date_key = time_index[0]
-        end_date_key = time_index[1]
-        label.configure(text="Custom Period Summary")
-
-    grouped_data = pd.read_sql(
-        f"select customer_name, project_name, round(sum(total_time),2) as total_time from time where date_key between '{start_date_key}' and '{end_date_key}' group by customer_name, project_name order by 1, 2",
-        conn,
-    )
-
-    # Clear old data (if any)
-    for row in tree.get_children():
-        tree.delete(row)
-
-    tree["columns"] = list(grouped_data.columns)  # Set column names
-    tree["show"] = "headings"  # Hide default empty column
-
-    # Add column headings
-    for col in grouped_data.columns:
-        tree.heading(col, text=col)  # Column title
-        tree.column(col, width=200, anchor="center")  # Adjust column width
-
-    # Insert DataFrame rows into Treeview
-    for index, row in grouped_data.iterrows():
-        tree.insert("", "end", values=list(row))
-
-    # Pack Treeview in the window
-    tree.pack(expand=True, fill="both")
+        header_order = default_customer_ids  # Initialize with default order
 
 
-def __add_summary_popup():
-    popup_window = tk.Toplevel(root, bg=__get_color("beige"), width=600)
-    popup_window.title("Time Summary")
-    popup_window.resizable(False, False)
+###
+# Button Functions
+###
+def time_span_callback(sender, app_data):
+    global TIME_ID
+    pressed_val = dpg.get_value("time_span_group")
 
-    label = __add_label(
-        popup_window, "Weekly Summary", font_size=14, anchor="n", width=40
-    )
-    label.pack(padx=5, pady=5)
-
-    tree = ttk.Treeview(popup_window)
-    tree.pack(expand=True, fill="both")
-
-    week_button = __add_button(
-        frame=popup_window,
-        text="Week",
-        cmd=lambda: __summarize_data(tree=tree, time_index=0, label=label),
-        side="left",
-    )
-    month_button = __add_button(
-        frame=popup_window,
-        text="Month",
-        cmd=lambda: __summarize_data(tree=tree, time_index=1, label=label),
-        side="left",
-    )
-
-    entry_s_date = tk.StringVar()
-    entry_s_date.trace_add(
-        "write", partial(__entry_date_check, entry_s_date, "yyyymmdd")
-    )
-    s_date = __add_entry(popup_window, entry_s_date, "Date", width=12, pack=False)
-    s_date.insert(0, "20250101")
-    s_date.pack(side="left", padx=5, pady=5)
-
-    entry_e_date = tk.StringVar()
-    entry_e_date.trace_add(
-        "write", partial(__entry_date_check, entry_e_date, "yyyymmdd")
-    )
-    e_date = __add_entry(popup_window, entry_e_date, "Date", width=12, pack=False)
-    e_date.insert(0, "20251231")
-    e_date.pack(side="left", padx=5, pady=5)
-
-    popup_window.bind(
-        "<Return>",
-        lambda event: __summarize_data(
-            tree=tree, time_index=[s_date.get(), e_date.get()], label=label
-        ),
-    )
-
-    __add_cancel(popup_window, side="right")
-
-    # Default weekly
-    __summarize_data(tree=tree, time_index=0, label=label)
+    if pressed_val == "Day":
+        TIME_ID = 0
+    elif pressed_val == "Week":
+        TIME_ID = 1
+    elif pressed_val == "Month":
+        TIME_ID = 2
+    elif pressed_val == "Year":
+        TIME_ID = 3
+    elif pressed_val == "All-Time":
+        TIME_ID = 4
+    run_update_ui_task()
 
 
-def __add_sql_popup():
-    popup_window = __create_popup(root, "SQL-Editor", "Enter SQL Command")
-    popup_window.geometry("1200x600")
+def data_type_callback(sender, app_data):
+    global TYPE_ID
 
-    menubar = tk.Menu(popup_window)
-    popup_window.config(menu=menubar)
-
-    file_menu = tk.Menu(menubar, tearoff=0)
-    menubar.add_cascade(label="Update", menu=file_menu)
-    file_menu.add_command(label="Rerun Time Calculations", command=__update_value_popup)
-
-    entry = __add_entry(popup_window, None, "SQL Command", width=200)
-
-    sql_output_frame = tk.Frame(popup_window, bg=__get_color("beige"), width=1200)
-    sql_output_frame.pack(fill=tk.BOTH, expand=True)
-    sql_output = ttk.Treeview(sql_output_frame)
-    sql_output.pack(fill=tk.BOTH, expand=True)
-
-    h_scroll = ttk.Scrollbar(
-        popup_window, orient="horizontal", command=sql_output.xview
-    )
-    h_scroll.pack(fill="x", side="bottom")
-    sql_output.configure(xscrollcommand=h_scroll.set)
-
-    sql_output.bind_all(
-        "<MouseWheel>",
-        lambda event: sql_output.yview_scroll(int(-1 * (event.delta / 6)), "units"),
-    )
-    sql_output.bind_all(
-        "<Shift-MouseWheel>",
-        lambda event: sql_output.xview_scroll(int(-1 * (event.delta / 6)), "units"),
-    )
-
-    entry.bind(
-        "<Return>", lambda event: __run_sql(event, popup_window, entry, sql_output)
-    )
+    pressed_val = dpg.get_value("data_type_group")
+    if pressed_val == "Time":
+        TYPE_ID = 0
+    elif pressed_val == "Bonus Wage":
+        TYPE_ID = 1
+    run_update_ui_task()
 
 
-def __add_project_button(c_name: str, p_name: str, state: bool, customer_index: int):
-    col = "green" if state else "red"
+def project_button_callback(sender, app_data, user_data):
+    customer_id, project_id = user_data
 
-    if customer_index == 0:
-        button_frames.append(tk.Frame(frame, bg=__get_color("beige")))
-        this_frame = button_frames[-1]
-        this_frame.grid(column=0, row=len(button_frames))
-
-        c_label = __add_label(this_frame, c_name)
-        c_label.grid(column=0, row=0, padx=0, pady=2)
-
-        separator = tk.Frame(this_frame, bg=__get_color("teal"), height=2, bd=0)
-        separator.grid(column=0, row=1, columnspan=10, padx=5, sticky="ew", pady=5)
-
+    if app_data:
+        db.insert_time_row(int(customer_id), int(project_id))
     else:
-        this_frame = button_frames[-1]
+        show_project_popup(sender, app_data, customer_id, project_id)
 
-    button = __add_button(
-        this_frame,
-        p_name,
-        width=18,
-        height=2,
-        bg=col,
-        pack=False,
-        cmd=lambda c_name=c_name, p_name=p_name: __update_project(
-            c_name, p_name, button
-        ),
-    )
-    button.grid(column=customer_index, row=2, padx=5, pady=0)
-
-    time = __get_value(c_name, p_name, user_input_date)
-    formatted_value = __format_value(time)
-
-    # Create text with total working time for the date
-    total_time = __add_label(
-        this_frame, formatted_value, height=2, font_size=11, bold=False
-    )
-    total_time.grid(column=customer_index, row=3, padx=5, pady=0)
-
-    projects.append((c_name, p_name, total_time))
+    run_update_ui_task()
 
 
-def __update_ui():
-    global button_frames, projects, date_input
-    for ui in button_frames:
-        for widget in ui.winfo_children():
-            widget.destroy()
+def show_project_popup(sender, app_data, customer_id, project_id):
+    window_tag = f"popup_{customer_id}_{project_id}"
 
-    button_frames = []
-    projects = []
-
-    # Find all current projects
-    sorted_projects = __get_active_projects()
-
-    current_times = pd.read_sql(
-        f"select * from time where date_key = '{today_date}' and end_time is null", conn
-    )
-    active_projects = current_times[
-        current_times["project_id"].isin(sorted_projects["project_id"])
-    ]
-
-    customers = sorted_projects["customer_name"].unique().tolist()
-
-    if len(customers) == 0:
-        return
-    customer_name = customers[0]
-    customer_index = 0
-    for i, row in enumerate(sorted_projects.iterrows()):
-        c_name = row[1]["customer_name"]
-        p_name = row[1]["project_name"]
-
-        if c_name != customer_name:
-            customer_index = 0
-            customer_name = c_name
-        elif i != 0:
-            customer_index += 1
-
-        state = False
-        if (
-            c_name in active_projects["customer_name"].tolist()
-            and p_name in active_projects["project_name"].tolist()
+    if not dpg.does_item_exist(window_tag):
+        with dpg.window(
+            tag=window_tag,
+            modal=True,
+            no_title_bar=True,
+            no_resize=True,
+            no_move=True,
+            no_close=True,
+            width=WIDTH / 2,
+            height=HEIGHT / 4,
         ):
-            state = True
+            git_queue = queue.Queue()
+            query = f"select git_id from projects where project_id = {project_id} and customer_id = {customer_id} and is_current = 1"
+            db.queue_task("get_df", {"query": query}, response=git_queue)
+            df = git_queue.get()
+            git_id = _get_value_from_df(df, data_type="int")
 
-        __add_project_button(c_name, p_name, state, customer_index)
+            dpg.add_text("Work Comments")
+            dpg.add_input_int(
+                label="Git-ID (Opt.)",
+                tag=f"git_id_{customer_id}_{project_id}",
+                default_value=git_id,
+            )
+            dpg.add_input_text(
+                multiline=True,
+                label="Comment",
+                tag=f"comment_{customer_id}_{project_id}",
+                height=60,
+            )
 
-    def period_toggle_button():
-        global time_index
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Save",
+                    callback=lambda: save_popup_data(
+                        customer_id, project_id, window_tag
+                    ),
+                )
+                dpg.add_button(
+                    label="Cancel",
+                    callback=lambda: cancel_popup_action(
+                        sender, app_data, customer_id, project_id, window_tag
+                    ),
+                )
+    else:
+        dpg.configure_item(window_tag, show=True)
 
-        if time_index == 0:
-            time_index = 1
-            date_toggle.config({"text": "Current Week"})
-        elif time_index == 1:
-            time_index = 2
-            date_toggle.config({"text": "Current Month"})
-        elif time_index == 2:
-            time_index = 3
-            date_toggle.config({"text": "Current Year"})
-        elif time_index == 3:
-            time_index = 4
-            date_toggle.config({"text": "All Time"})
-        elif time_index == 4:
-            time_index = 0
-            date_toggle.config({"text": "Current Date"})
 
-        __update_value()
+def save_popup_data(customer_id, project_id, window_tag):
+    git_id = dpg.get_value(f"git_id_{customer_id}_{project_id}")
+    comment = dpg.get_value(f"comment_{customer_id}_{project_id}")
 
-    def format_toggle_button():
-        global data_format
+    db.insert_time_row(int(customer_id), int(project_id), git_id, comment)
 
-        if data_format == 0:
-            data_format = 1
-            format_toggle.config({"text": "0.0 h"})
-        elif data_format == 1:
-            data_format = 2
-            format_toggle.config({"text": "SEK"})
-        elif data_format == 2:
-            data_format = 0
-            format_toggle.config({"text": "0 h 0 min"})
+    status, msg = do.add_comment_to_work_item(git_id, comment)
+    print(f"Status: {status}, Message: {msg}")
 
-        __update_value()
+    dpg.delete_item(window_tag)
 
-    ## Date Selection
-    entry_date = tk.StringVar()
-    entry_date.trace_add("write", partial(__entry_date_check, entry_date, "yyyymmdd"))
 
-    date_input = tk.Entry(
-        frame_date_input, width=14, font=__get_font(14), textvariable=entry_date
+def cancel_popup_action(sender, app_data, customer_id, project_id, window_tag):
+    dpg.set_value(sender, not app_data)
+    dpg.delete_item(window_tag)
+
+
+def show_error_popup(error_message: str = None) -> None:
+    if not dpg.does_item_exist("error_popup"):
+        with dpg.popup(parent="query_output_group", tag="error_popup", modal=True):
+            dpg.add_text(error_message, wrap=400, tag="error_text")
+            dpg.add_button(label="OK", callback=lambda: dpg.hide_item("error_popup"))
+            dpg.configure_item("error_popup", show=True)
+    else:
+        dpg.configure_item("error_popup", show=True)
+        dpg.set_value("error_text", error_message)
+
+
+def handle_query_input():
+    if input_focused:
+        query_text = dpg.get_value("query_input")
+
+        r_queue = queue.Queue()
+        db.queue_task("run_query", {"query": query_text}, response=r_queue)
+        df = r_queue.get()
+
+        if isinstance(df, list) and len(df) == 0:
+            show_error_popup("Command completed successfully!")
+            return
+        elif isinstance(df, pd.errors.DatabaseError) or len(df) == 0:
+            show_error_popup(df)
+            return
+        elif df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            print("Query Error: No data returned! Evaluate and find when we get here!")
+            return
+        arr = df.to_numpy()
+
+        dpg.delete_item("data_table", children_only=True)
+
+        for column in df.columns:
+            dpg.add_table_column(parent="data_table", label=column)
+
+        for i in range(df.shape[0]):
+            with dpg.table_row(parent="data_table"):
+                for j in range(df.shape[1]):
+                    dpg.add_text(f"{arr[i, j]}")
+
+
+###
+# Generic User Input
+###
+def add_save_button(function_name, tag_name: str, label: str):
+    dpg.add_spacer(width=10)
+    with dpg.group(horizontal=True):
+        dpg.add_button(label=label, callback=function_name)
+        dpg.add_text("", tag=f"{tag_name}_error_label", show=False, color=WARNING_RED)
+    dpg.add_spacer(width=10)
+
+
+def __hide_text_after_seconds(
+    tag: str, text: str, delay: int, error: bool = True
+) -> None:
+    dpg.set_value(tag, text)
+    if error:
+        dpg.configure_item(tag, color=WARNING_RED)
+    else:
+        dpg.configure_item(tag, color=WARNING_GREEN)
+    dpg.show_item(tag)
+    threading.Thread(
+        target=hide_text_after_delay, args=(tag, delay), daemon=True
+    ).start()
+
+
+def set_start_date(
+    item_tag: str,
+) -> None:
+    date_struct = dpg.get_value(f"{item_tag}_start_date_picker")
+    date_str = __format_date_struct(date_struct)
+    dpg.set_value(f"{item_tag}_start_date_input", date_str)
+    dpg.hide_item(f"{item_tag}_start_button_popup")
+
+
+###
+# User Input
+###
+def __post_user_input() -> None:
+    # Add Customer
+    dpg.set_value("customer_add_name_input", "")
+    dpg.set_value("customer_add_start_date_input", "")
+    dpg.set_value("customer_add_wage_input", 0)
+    # Update Customer
+    dpg.set_value("customer_update_name_dropdown", "")
+    dpg.set_value("customer_update_customer_name_input", "")
+    dpg.set_value("customer_update_wage_input", 0)
+    # Remove Customer
+    dpg.set_value("customer_delete_name_dropdown", "")
+    # Add Project
+    dpg.set_value("project_add_customer_name_dropdown", "")
+    dpg.set_value("project_add_name_input", "")
+    dpg.set_value("project_add_git_input", 0)
+    # Update Project
+    dpg.set_value("project_update_customer_name_dropdown", "")
+    dpg.set_value("project_update_project_name_dropdown", "")
+    dpg.set_value("project_update_name_input", "")
+    dpg.set_value("project_update_git_input", 0)
+    # Remove Project
+    dpg.set_value("project_delete_customer_name_dropdown", "")
+    dpg.set_value("project_delete_project_name_dropdown", "")
+    # Add Bonus
+    dpg.set_value("bonus_add_amount_input", 0.0)
+    dpg.set_value("bonus_add_start_date_input", "")
+
+    render_customer_project_ui()
+
+
+def add_customer_data(sender, app_data) -> None:
+    customer_name = dpg.get_value("customer_add_name_input")
+    if customer_name == "":
+        __hide_text_after_seconds(
+            "customer_add_error_label", "Cannot have blank customer name!", 3
+        )
+        return
+    start_date = dpg.get_value("customer_add_start_date_input")
+    if start_date == "":
+        __hide_text_after_seconds(
+            "customer_add_error_label", "Cannot have blank start date!", 3
+        )
+        return
+
+    amount = dpg.get_value("customer_add_wage_input")
+
+    ## Case Success:
+    if __is_valid_date(start_date):
+        __hide_text_after_seconds(
+            "customer_add_error_label", "Adding customer to DB!", 3, error=False
+        )
+        db.queue_task(
+            "insert_customer",
+            {"customer_name": customer_name, "start_date": start_date, "wage": amount},
+        )
+        __update_dropdown("customer_dropdown")
+        __post_user_input()
+        __log_message(
+            f"Customer {customer_name} added to DB with start date {start_date} and wage {amount}",
+            type="INFO",
+        )
+
+    else:
+        __hide_text_after_seconds("customer_add_error_label", "Invalid start date!", 3)
+        return
+
+
+def update_customer_data(sender, app_data) -> None:
+    customer_name = dpg.get_value("customer_update_name_dropdown")
+    if customer_name == "":
+        __hide_text_after_seconds(
+            "customer_update_error_label", "No customer selected!", 3
+        )
+        return
+    new_customer_name = dpg.get_value("customer_update_customer_name_input")
+    if new_customer_name == "":
+        __hide_text_after_seconds(
+            "customer_update_error_label", "Cannot have blank customer name!", 3
+        )
+        return
+
+    ## Success Case:
+    customer_wage = dpg.get_value("customer_update_wage_input")
+    __hide_text_after_seconds(
+        "customer_update_error_label", "Updating customer in DB!", 3, error=False
     )
-    date_input.config({"background": __get_color("background")})
-    date_input.insert(0, user_input_date)
-    date_input.bind("<Return>", __update_user_input_date)
-    date_input.grid(column=0, row=1, padx=5, pady=5)
-
-    date_toggle = __add_button(
-        frame_date_input,
-        "Current Date",
-        period_toggle_button,
-        pack=False,
-        width=13,
-        font_size=12,
+    db.queue_task(
+        "update_customer",
+        {
+            "customer_name": customer_name,
+            "new_customer_name": new_customer_name,
+            "wage": customer_wage,
+        },
     )
-    date_toggle.grid(column=0, row=2, padx=5, pady=5)
-
-    format_toggle = __add_button(
-        frame_date_input,
-        "0 h 0 min",
-        format_toggle_button,
-        pack=False,
-        width=13,
-        font_size=12,
+    __update_dropdown("customer_dropdown")
+    __post_user_input()
+    __log_message(
+        f"Customer {customer_name} in DB renamed to {new_customer_name} with wage {customer_wage}",
+        type="INFO",
     )
-    format_toggle.grid(column=1, row=2, padx=5, pady=5)
 
 
-### Main Code ###
-def start_program():
-    menubar = tk.Menu(root)
-    root.config(menu=menubar)
-
-    file_menu = tk.Menu(menubar, tearoff=0)
-    sql_menu = tk.Menu(menubar, tearoff=0)
-    menubar.add_cascade(label="File", menu=file_menu)
-    file_menu.add_command(label="Add Customer", command=__add_customer_popup)
-    file_menu.add_command(label="Remove Customer", command=__remove_customer_popup)
-    file_menu.add_separator()
-    file_menu.add_command(label="Add Project", command=__add_project_popup)
-    file_menu.add_command(label="Remove Project", command=__remove_project_popup)
-    file_menu.add_separator()
-    file_menu.add_command(label="Add Bonus", command=__add_bonus_popup)
-    file_menu.add_separator()
-    file_menu.add_command(label="Exit", command=root.quit)
-    menubar.add_cascade(label="SQL", menu=sql_menu)
-    sql_menu.add_command(label="Run SQL", command=__add_sql_popup)
-    sql_menu.add_command(label="Summarize", command=__add_summary_popup)
-
-    __update_ui()
+def delete_customer_data(sender, app_data) -> None:
+    customer_name = dpg.get_value("customer_delete_name_dropdown")
+    if customer_name == "":
+        __hide_text_after_seconds(
+            "customer_delete_error_label", "No customer selected!", 3
+        )
+        return
+    __hide_text_after_seconds(
+        "customer_delete_error_label", "Disabling customer in DB!", 3, error=False
+    )
+    db.queue_task("remove_customer", {"customer_name": customer_name})
+    __update_dropdown("customer_dropdown")
+    __post_user_input()
+    __log_message(
+        f"Customer {customer_name} disabled in the DB",
+        type="INFO",
+    )
 
 
-def initialize_ui() -> tk.Tk:
-    root = tk.Tk()
-    root.title("Work Timer v2")
-    root.wm_iconbitmap("graphics\\program_logo.ico")
+def add_project_data(sender, app_data) -> None:
+    customer_name = dpg.get_value("project_add_customer_name_dropdown")
+    if customer_name == "":
+        __hide_text_after_seconds("project_add_error_label", "No customer selected!", 3)
+        return
+    project_name = dpg.get_value("project_add_name_input")
+    if project_name == "":
+        __hide_text_after_seconds(
+            "project_add_error_label", "Cannot have blank project name!", 3
+        )
+        return
+    git_id = dpg.get_value("project_add_git_input")
 
-    frame = tk.Frame(root, bg=__get_color("beige"))
-    frame.pack(fill=tk.BOTH, expand=True)
-
-    return root, frame
-
-
-### INIT ###
-
-# Initialize the database
-conn = initialize_db(db_file)
-
-COLS = {
-    "beige": "#FCE09B",
-    "red": "#B2533E",
-    "green": "#B5CB99",
-    "teal": "#186F65",
-    "white": "#FFFFFF",
-    "background": "#FDEFD4",
-}
-
-time_index = 0
-data_format = 0
-
-root, frame = initialize_ui()
-
-button_frames = []
-projects = []
-
-frame_date_input = tk.Frame(root, bg=__get_color("beige"))
-frame_date_input.pack(fill=tk.BOTH, expand=True)
-
-today_date = __format_date_key(datetime.now())
-user_input_date = int(today_date)
-
-start_program()
-root.mainloop()
+    __hide_text_after_seconds(
+        "project_add_error_label", "Adding project to DB!", 3, error=False
+    )
+    db.queue_task(
+        "insert_project",
+        {
+            "customer_name": customer_name,
+            "project_name": project_name,
+            "git_id": git_id,
+        },
+    )
+    __post_user_input()
+    __log_message(
+        f"Project {project_name} for customer {customer_name} added to DB",
+        type="INFO",
+    )
 
 
-# Close the conn
-conn.close()
+def update_project_data(sender, app_data) -> None:
+    customer_name = dpg.get_value("project_update_customer_name_dropdown")
+    if customer_name == "":
+        __hide_text_after_seconds(
+            "project_update_error_label", "No customer selected!", 3
+        )
+        return
+    project_name = dpg.get_value("project_update_project_name_dropdown")
+    if customer_name == "":
+        __hide_text_after_seconds(
+            "project_update_error_label", "No project selected!", 3
+        )
+        return
+    new_project_name = dpg.get_value("project_update_name_input")
+    if new_project_name == "":
+        __hide_text_after_seconds(
+            "project_update_error_label", "Cannot have blank project name!", 3
+        )
+        return
+    new_git_id = dpg.get_value("project_update_git_input")
+
+    # Success Case:
+    __hide_text_after_seconds(
+        "project_update_error_label", "Updating project in DB!", 3, error=False
+    )
+    db.queue_task(
+        "update_project",
+        {
+            "customer_name": customer_name,
+            "project_name": project_name,
+            "new_project_name": new_project_name,
+            "new_git_id": new_git_id,
+        },
+    )
+    __post_user_input()
+    __log_message(
+        f"Project {project_name} renamed to {new_project_name} with git id {new_git_id}",
+        type="INFO",
+    )
+
+
+def delete_project_data(sender, app_data) -> None:
+    customer_name = dpg.get_value("project_delete_customer_name_dropdown")
+    if customer_name == "":
+        __hide_text_after_seconds(
+            "project_delete_error_label", "No customer selected!", 3
+        )
+        return
+    project_name = dpg.get_value("project_delete_project_name_dropdown")
+    if project_name == "":
+        __hide_text_after_seconds(
+            "project_delete_error_label", "No project selected!", 3
+        )
+        return
+
+    __hide_text_after_seconds(
+        "project_delete_error_label", "Disabling project in DB!", 3, error=False
+    )
+    db.queue_task(
+        "delete_project", {"customer_name": customer_name, "project_name": project_name}
+    )
+    __post_user_input()
+    __log_message(
+        f"Project {project_name} disabled in the DB",
+        type="INFO",
+    )
+
+
+def add_bonus_data(sender, app_data) -> None:
+    amount = dpg.get_value("bonus_add_amount_input")
+    start_date = dpg.get_value("bonus_add_start_date_input")
+
+    if start_date == "":
+        __hide_text_after_seconds(
+            "bonus_add_error_label", "Cannot have blank start date!", 3
+        )
+        return
+
+    __hide_text_after_seconds(
+        "bonus_add_error_label", "Adding bonus to DB!", 3, error=False
+    )
+    db.queue_task("insert_bonus", {"amount": amount, "start_date": start_date})
+    __post_user_input()
+    __log_message(
+        f"Bonus percent {amount} starting on {start_date} added to the DB",
+        type="INFO",
+    )
+
+
+###
+# UI
+###
+with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
+    ## Input
+    with dpg.collapsing_header(label="Extra", default_open=False):
+        with dpg.collapsing_header(label="Input", default_open=False, indent=INDENT_1):
+            with dpg.collapsing_header(
+                label="Customers", default_open=False, indent=INDENT_2
+            ):
+                with dpg.collapsing_header(
+                    label="Add Customer", default_open=False, indent=INDENT_2
+                ):
+                    dpg.add_input_text(
+                        label="Customer Name", tag="customer_add_name_input"
+                    )
+                    dpg.add_input_int(label="Wage", tag="customer_add_wage_input")
+
+                    with dpg.group(horizontal=True):
+                        dpg.add_input_text(tag="customer_add_start_date_input")
+                        dpg.add_image_button(
+                            texture_tag=icon_calendar,
+                            tag="customer_add_start_date_button",
+                            width=14,
+                            height=14,
+                        )
+                        dpg.add_text("Start Date")
+
+                    with dpg.popup(
+                        parent="customer_add_start_date_button",
+                        mousebutton=dpg.mvMouseButton_Left,
+                        modal=True,
+                        tag="customer_add_start_button_popup",
+                    ):
+                        today_struct = __get_current_date_struct()
+                        dpg.add_date_picker(
+                            label="Start Date",
+                            tag="customer_add_start_date_picker",
+                            default_value=today_struct,
+                        )
+                        dpg.add_button(
+                            label="Done",
+                            callback=lambda: set_start_date("customer_add"),
+                        )
+
+                    add_save_button(add_customer_data, "customer_add", "Save")
+
+                with dpg.collapsing_header(
+                    label="Update Customer", default_open=False, indent=INDENT_2
+                ):
+                    dpg.add_combo(
+                        [],
+                        width=COMBO_WIDTH,
+                        label="Customer Name",
+                        tag="customer_update_name_dropdown",
+                        callback=lambda: __update_text_input(
+                            tag="customer_update_name_dropdown"
+                        ),
+                    )
+                    dpg.add_input_text(
+                        label="New Name",
+                        tag="customer_update_customer_name_input",
+                    )
+                    dpg.add_input_int(
+                        label="Wage",
+                        tag="customer_update_wage_input",
+                    )
+                    add_save_button(update_customer_data, "customer_update", "Update")
+
+                with dpg.collapsing_header(
+                    label="Remove Customer", default_open=False, indent=INDENT_2
+                ):
+                    dpg.add_combo(
+                        [],
+                        default_value="",
+                        width=COMBO_WIDTH,
+                        label="Customer Name",
+                        tag="customer_delete_name_dropdown",
+                    )
+                    add_save_button(delete_customer_data, "customer_delete", "Remove")
+
+            with dpg.collapsing_header(
+                label="Project", default_open=False, indent=INDENT_2
+            ):
+                with dpg.collapsing_header(
+                    label="Add Project", default_open=False, indent=INDENT_2
+                ):
+                    dpg.add_combo(
+                        [],
+                        width=COMBO_WIDTH,
+                        label="Customer Name",
+                        tag="project_add_customer_name_dropdown",
+                    )
+                    dpg.add_input_text(
+                        label="Project Name", tag="project_add_name_input"
+                    )
+                    dpg.add_input_int(
+                        label="Git ID (Opt.)", tag="project_add_git_input"
+                    )
+                    add_save_button(add_project_data, "project_add", "Save")
+
+                with dpg.collapsing_header(
+                    label="Update Project", default_open=False, indent=INDENT_2
+                ):
+                    dpg.add_combo(
+                        [],
+                        width=COMBO_WIDTH,
+                        label="Customer Name",
+                        tag="project_update_customer_name_dropdown",
+                        callback=lambda: __update_dropdown(
+                            tag="project_update_project_name_dropdown"
+                        ),
+                    )
+                    dpg.add_combo(
+                        [],
+                        width=COMBO_WIDTH,
+                        label="Project Name",
+                        tag="project_update_project_name_dropdown",
+                        callback=lambda: __update_text_input(
+                            tag="project_update_project_name_dropdown"
+                        ),
+                    )
+                    dpg.add_input_text(
+                        label="New Name", tag="project_update_name_input"
+                    )
+                    dpg.add_input_int(
+                        label="New Git-ID", tag="project_update_git_input"
+                    )
+
+                    add_save_button(update_project_data, "project_update", "Update")
+
+                with dpg.collapsing_header(
+                    label="Remove Project", default_open=False, indent=INDENT_2
+                ):
+                    dpg.add_combo(
+                        [],
+                        width=COMBO_WIDTH,
+                        label="Customer Name",
+                        tag="project_delete_customer_name_dropdown",
+                        callback=lambda: __update_dropdown(
+                            tag="project_delete_project_name_dropdown"
+                        ),
+                    )
+                    dpg.add_combo(
+                        [],
+                        width=COMBO_WIDTH,
+                        label="Project Name",
+                        tag="project_delete_project_name_dropdown",
+                    )
+
+                    add_save_button(delete_project_data, "project_delete", "Remove")
+
+            with dpg.collapsing_header(
+                label="Bonuses", default_open=False, indent=INDENT_2
+            ):
+                with dpg.collapsing_header(
+                    label="Add Bonus", default_open=False, indent=INDENT_2
+                ):
+                    dpg.add_input_float(
+                        label="Bonus Amount", tag="bonus_add_amount_input"
+                    )
+                    with dpg.group(horizontal=True):
+                        dpg.add_input_text(tag="bonus_add_start_date_input")
+                        dpg.add_image_button(
+                            texture_tag=icon_calendar,
+                            tag="bonus_add_start_date_button",
+                            width=14,
+                            height=14,
+                        )
+                        dpg.add_text("Start Date")
+
+                    with dpg.popup(
+                        parent="bonus_add_start_date_button",
+                        mousebutton=dpg.mvMouseButton_Left,
+                        modal=True,
+                        tag="bonus_add_start_button_popup",
+                    ):
+                        today_struct = __get_current_date_struct()
+                        dpg.add_date_picker(
+                            label="Start Date",
+                            tag="bonus_add_start_date_picker",
+                            default_value=today_struct,
+                        )
+                        dpg.add_button(
+                            label="Done", callback=lambda: set_start_date("bonus_add")
+                        )
+
+                    add_save_button(add_bonus_data, "bonus_add", "Save")
+
+        ## Settings
+        with dpg.collapsing_header(
+            label="Settings", default_open=False, indent=INDENT_1
+        ):
+            with dpg.group(horizontal=True):  # Time Span
+                with dpg.group():
+                    dpg.add_text("Select Time Span:")
+                    time_span_options = ["Day", "Week", "Month", "Year", "All-Time"]
+                    dpg.add_radio_button(
+                        label="Time Span",
+                        items=time_span_options,
+                        tag="time_span_group",
+                        callback=time_span_callback,
+                    )
+
+                with dpg.group():  # Data Type
+                    dpg.add_text("Select Data Type:")
+                    data_type_options = ["Time", "Bonus Wage"]
+                    dpg.add_radio_button(
+                        label="Data Type",
+                        items=data_type_options,
+                        tag="data_type_group",
+                        callback=data_type_callback,
+                    )
+
+                with dpg.group():  # Date Selection
+                    today_struct = __get_current_date_struct()
+                    dpg.add_text("Select Date:")
+                    dpg.add_date_picker(
+                        default_value=today_struct, callback=on_date_selected
+                    )
+
+        # "Queries" Section
+        with dpg.collapsing_header(
+            label="Queries", default_open=False, indent=INDENT_1
+        ):
+            with dpg.group():
+                available_tables = ["time", "customers", "projects", "bonus"]
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Available tables:")
+                    for table in available_tables:
+                        dpg.add_button(
+                            label=table,
+                            callback=lambda t=str(table): __autoset_query_window(t),
+                        )
+
+                dpg.add_spacer(width=10)
+                dpg.add_text("Enter Query:")
+
+                sql_input = "select * from time"
+                dpg.add_input_text(
+                    multiline=True,
+                    width=WIDTH - 30,
+                    height=HEIGHT / 6,
+                    tag="query_input",
+                    default_value=sql_input,
+                )
+
+                # For f5 runs so only work when query is selected
+                with dpg.item_handler_registry(tag="query_input_handler") as handler:
+                    dpg.add_item_activated_handler(
+                        callback=on_input_focus
+                    )  # Triggered when user clicks into it
+                    dpg.add_item_deactivated_after_edit_handler(
+                        callback=on_input_unfocus
+                    )  # Triggered when they click out
+
+                dpg.bind_item_handler_registry("query_input", "query_input_handler")
+
+            # Box for displaying tabular data
+            with dpg.group(tag="query_output_group"):
+                dpg.add_text("Tabular Data:")
+
+                with dpg.child_window(
+                    width=WIDTH - 30, height=300, border=True, tag="query_output_window"
+                ):
+                    with dpg.table(tag="data_table", resizable=True, width=WIDTH - 50):
+                        pass  # Blank for dynamic columns
+
+        with dpg.handler_registry():
+            dpg.add_key_press_handler(key=dpg.mvKey_F5, callback=handle_query_input)
+
+        # Logg Section
+        with dpg.collapsing_header(label="Logs", default_open=False, indent=INDENT_1):
+            dpg.add_input_text(
+                tag="log_box",
+                multiline=True,
+                readonly=True,
+                width=WIDTH - 30,
+                height=200,
+            )
+
+    with dpg.collapsing_header(
+        label="Customers", default_open=True, tag="customers_section"
+    ):
+        with dpg.child_window(
+            tag="customer_ui_section", autosize_x=True, autosize_y=True, border=False
+        ):
+            pass  # Placeholder for dynamic content
+
+frame = dpg.create_viewport(
+    title="Work Timer v3",
+    width=WIDTH + 15,
+    height=HEIGHT + 50,
+    small_icon="graphics\\program_logo.ico",
+    large_icon="graphics\\program_logo.ico",
+)
+dpg.setup_dearpygui()
+dpg.show_viewport()
+
+dpg.set_frame_callback(1, render_customer_project_ui)
+dpg.set_frame_callback(2, populate_pre_log)
+INIT = False
+
+
+last_update_time = time.time()
+
+
+def periodic_update():
+    """Function to periodically queue the update task."""
+    global last_update_time
+    current_time = time.time()
+    if current_time - last_update_time >= 60:
+        threading.Thread(target=run_update_ui_task, daemon=True).start()
+        last_update_time = current_time
+
+
+def run_update_ui_task():
+    """Run the update UI task in a separate thread."""
+    start_date, end_date, sel_type = __get_user_input()
+
+    r_queue = queue.Queue()
+    db.queue_task(
+        "get_customer_ui_list",
+        {"start_date": start_date, "end_date": end_date, "data_type": sel_type},
+        response=r_queue,
+    )
+    df = r_queue.get()
+
+    update_ui_from_df(df, sel_type)
+
+
+def update_ui_from_df(df: pd.DataFrame, sel_type: str) -> None:
+    """Update the UI with the data from the database."""
+
+    for _, row in df.iterrows():
+        customer_id = row["customer_id"]
+        project_id = row["project_id"]
+
+        tag = f"time_{customer_id}_{project_id}"
+        if sel_type == "total_time":
+            updated_text = f"Total: {row['total_time']} h"
+        elif sel_type == "cost":
+            updated_text = f"Total: {row['user_bonus']} SEK"
+        else:
+            updated_text = "Erronous value!"
+        dpg.set_value(tag, updated_text)
+
+    for customer_id in df["customer_id"].unique():
+        if sel_type == "total_time":
+            total_text = f"Total: {df[df['customer_id'] == customer_id]['total_time'].sum():.2f} h"
+        elif sel_type == "cost":
+            total_text = f"Total: {df[df['customer_id'] == customer_id]['user_bonus'].sum():.2f} SEK"
+        else:
+            total_text = "Erronous value!"
+        dpg.set_value(f"total_{customer_id}", total_text)
+
+
+# Main Dear PyGui loop
+while dpg.is_dearpygui_running():
+    db.process_queue()
+    periodic_update()
+    dpg.render_dearpygui_frame()
+
+dpg.destroy_context()
+
+
+###############################
+### update old db to new db ###
+###############################
+
+# alter table time add git_id int, user_bonus float
+# alter table dates drop column iso_year
+# alter table projects add git_id int
+
+# create trigger if not exists trigger_time_after_update
+# after update on time
+# for each row
+# begin
+#     update time
+#     set
+#         total_time = (julianday(new.end_time) - julianday(new.start_time)) * 24,
+#         cost = new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24),
+#         user_bonus = new.bonus * new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24)
+#     where time_id = new.time_id;
+# end;
+
+
+# update values
+# update time
+# set wage = (
+#     select ifnull(c.wage, 0)
+#     from customers c
+#     where c.customer_id = time.customer_id
+#       and time.start_time between c.valid_from and ifnull(c.valid_to, '2099-12-31')
+#     limit 1
+# )
+# where wage <> (
+#     select ifnull(c.wage, 0)
+#     from customers c
+#     where c.customer_id = time.customer_id
+#       and time.start_time between c.valid_from and ifnull(c.valid_to, '2099-12-31')
+#     limit 1
+# );
