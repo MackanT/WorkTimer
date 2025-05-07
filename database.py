@@ -99,7 +99,7 @@ class Database:
                     start_date datetime,
                     wage real,
                     pat_token text,
-                    
+                    org_url text,
                     valid_from datetime,
                     valid_to datetime,
                     is_current integer,

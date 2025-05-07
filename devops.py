@@ -38,11 +38,11 @@ class DevOpsClient:
                 hasattr(e, "inner_exception")
                 and getattr(e.inner_exception, "status_code", None) == 404
             ):
-                return False, f"Work item with ID {work_item_id} does not exist."
+                return f"Work item with ID {work_item_id} does not exist."
             else:
-                return False, f"Azure DevOps error occurred: {e}"
+                return f"Azure DevOps error occurred: {e}"
 
-        return True, updated_item
+        return None
         # print(f"Updated work item {updated_item.id} with new comment.")
 
 

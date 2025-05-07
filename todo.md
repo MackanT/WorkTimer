@@ -13,10 +13,11 @@
 - ~make query window scrollable, to big as is~
 - ~move database logic to own class~
 - Devops connector
+- Make PAT-tokens etc masked
 
 ### Buggar
 
--Varning om att Bonus måste skapas upp, annars krash
+- Varning om att Bonus måste skapas upp, annars krash
 -.JSON fil auto-populeras inte med nya customer_id
 - Efter remove customer döljs den inte från "knapparna"
 - comment not wraping text

@@ -41,10 +41,26 @@ db_file = "data_dpg.db"
 db = Database(db_file)
 db.initialize_db()
 
-personal_access_token = "TEMP"
-organization_url = "https://dev.azure.com/SOMETHING"
-do = DevOpsClient(personal_access_token, organization_url)
-do.connect()
+
+###
+# DepOps Connection
+###
+do_con = {}
+df_do = db.fetch_query(
+    "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and org_url is not null"
+)
+for _, row in df_do.iterrows():
+    org_url = f"https://dev.azure.com/{row['org_url']}"
+    do_con[row["customer_name"]] = DevOpsClient(row["pat_token"], org_url)
+    do_con[row["customer_name"]].connect()
+    db.pre_run_log.append(
+        f"DevOps connection established to {row['customer_name']} for organization {row['org_url']}"
+    )
+
+# personal_access_token = "2Ae4xSjyf1m62hWmywoDxJIDcd4f3fzPSlNqzGomnlRKKTIXZFOrJQQJ99BEACAAAAABrcj0AAASAZDO33L0"
+# organization_url = "https://dev.azure.com/rowico"
+# do = DevOpsClient(personal_access_token, organization_url)
+# do.connect()
 
 dpg.create_context()
 
@@ -336,7 +352,7 @@ def render_customer_project_ui():
             dpg.add_checkbox(
                 label=f"{project_name:<44}",
                 callback=project_button_callback,
-                user_data=(customer_id, project_id),
+                user_data=(customer_id, project_id, customer_name),
                 default_value=initial_state,
                 parent=group_id,
             )
@@ -433,17 +449,19 @@ def data_type_callback(sender, app_data):
 
 
 def project_button_callback(sender, app_data, user_data):
-    customer_id, project_id = user_data
+    customer_id, project_id, customer_name = user_data
 
     if app_data:
         db.insert_time_row(int(customer_id), int(project_id))
     else:
-        show_project_popup(sender, app_data, customer_id, project_id)
+        show_project_popup(sender, app_data, customer_id, project_id, customer_name)
 
     run_update_ui_task()
 
 
-def show_project_popup(sender, app_data, customer_id, project_id):
+def show_project_popup(
+    sender, app_data, customer_id: int, project_id: int, customer_name: str
+):
     window_tag = f"popup_{customer_id}_{project_id}"
 
     if not dpg.does_item_exist(window_tag):
@@ -469,6 +487,11 @@ def show_project_popup(sender, app_data, customer_id, project_id):
                 tag=f"git_id_{customer_id}_{project_id}",
                 default_value=git_id,
             )
+            dpg.add_checkbox(
+                label="Store to DevOps",
+                tag=f"devops_{customer_id}_{project_id}",
+                default_value=True,  # Checked by default
+            )
             dpg.add_input_text(
                 multiline=True,
                 label="Comment",
@@ -480,7 +503,7 @@ def show_project_popup(sender, app_data, customer_id, project_id):
                 dpg.add_button(
                     label="Save",
                     callback=lambda: save_popup_data(
-                        customer_id, project_id, window_tag
+                        customer_id, project_id, window_tag, customer_name
                     ),
                 )
                 dpg.add_button(
@@ -493,14 +516,19 @@ def show_project_popup(sender, app_data, customer_id, project_id):
         dpg.configure_item(window_tag, show=True)
 
 
-def save_popup_data(customer_id, project_id, window_tag):
+def save_popup_data(customer_id: int, project_id: int, window_tag, customer_name: str):
     git_id = dpg.get_value(f"git_id_{customer_id}_{project_id}")
     comment = dpg.get_value(f"comment_{customer_id}_{project_id}")
+    store_to_devops = dpg.get_value(f"devops_{customer_id}_{project_id}")
 
     db.insert_time_row(int(customer_id), int(project_id), git_id, comment)
 
-    status, msg = do.add_comment_to_work_item(git_id, comment)
-    print(f"Status: {status}, Message: {msg}")
+    if store_to_devops:
+        if git_id != 0 and comment != "":
+            status = do_con[customer_name].add_comment_to_work_item(git_id, comment)
+            if status:
+                print("Error:", status)
+                show_error_popup(status)
 
     dpg.delete_item(window_tag)
 
@@ -1202,6 +1230,8 @@ dpg.destroy_context()
 # alter table time add git_id int, user_bonus float
 # alter table dates drop column iso_year
 # alter table projects add git_id int
+
+# alter table customers add pat_token text, org_url text
 
 # create trigger if not exists trigger_time_after_update
 # after update on time
