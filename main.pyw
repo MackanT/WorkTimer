@@ -742,6 +742,8 @@ def delete_customer_data(sender, app_data) -> None:
         type="INFO",
     )
 
+    render_customer_project_ui()
+
 
 def add_project_data(sender, app_data) -> None:
     customer_name = dpg.get_value("project_add_customer_name_dropdown")

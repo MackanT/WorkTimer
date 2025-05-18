@@ -509,6 +509,17 @@ class Database:
             (customer_name,),
         )
 
+        self.execute_query(
+            """
+            update projects
+            set is_current = 0
+            where customer_id in (
+                select customer_id from customers where customer_name = ?
+                )
+        """,
+            (customer_name,),
+        )
+
     ### Project Table Operations ###
     def insert_project(self, customer_name: str, project_name: str, git_id: int = None):
         customer_id = self._get_value_from_db(
