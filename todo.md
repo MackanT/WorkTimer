@@ -14,7 +14,7 @@
 - ~move database logic to own class~
 - Devops connector
 - Make PAT-tokens etc masked
-- Post to devops is default-filled based on if value exists or not
+- ~Post to devops is default-filled based on if value exists or not~
 
 ### Buggar
 
