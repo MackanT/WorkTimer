@@ -6,7 +6,7 @@
 - ~Total time by customer~
 - ~Quick selects from different tables~
 - auto run SQL on tables in sql-query window
-- convert "iloc":s to use _get_value_from_df instead
+- ~convert "iloc":s to use _get_value_from_df instead~
 - minute timer also store "current date", if it is different from stored, updated SELECTED DATE to new value (auto-set date at midnight)
 - update customer/project should also update times values!
 - change json sort file to be a column in db per customer and project with sort order
@@ -14,6 +14,7 @@
 - ~move database logic to own class~
 - Devops connector
 - Make PAT-tokens etc masked
+- Post to devops is default-filled based on if value exists or not
 
 ### Buggar
 
