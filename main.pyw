@@ -31,7 +31,7 @@ HEIGHT = 800
 TIME_ID = 0  # 0 = Day, 1 = Week, 2 = Month, 3 = Year, 4 = All-Time
 TYPE_ID = 0  # 0 = Time, 1 = Bonus Wage
 SELECTED_DATE = datetime.now().strftime("%Y-%m-%d")
-
+CURRENT_DATE = datetime.now().date()
 
 ###
 # SQL-Backend logic
@@ -1167,11 +1167,16 @@ last_update_time = time.time()
 
 def periodic_update():
     """Function to periodically queue the update task."""
-    global last_update_time
+    global last_update_time, CURRENT_DATE, SELECTED_DATE
     current_time = time.time()
     if current_time - last_update_time >= 60:
         threading.Thread(target=run_update_ui_task, daemon=True).start()
         last_update_time = current_time
+
+    current_date = datetime.now().date()
+    if current_date > CURRENT_DATE:
+        CURRENT_DATE = current_date
+        SELECTED_DATE = current_date.strftime("%Y-%m-%d")
 
 
 def run_update_ui_task():
