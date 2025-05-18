@@ -366,6 +366,7 @@ class Database:
                                     * ifnull(t.wage, 0)
                                     * ifnull(t.bonus, 0)
                                 ), 0) as user_bonus
+                                ,min(sort_order) as sort_order
                             from projects p
                             left join customers c on c.customer_id = p.customer_id and c.is_current = 1
                             left join time t on t.customer_id = p.customer_id and t.project_id = p.project_id
@@ -383,8 +384,10 @@ class Database:
                             ct.project_id,
                             ct.project_name,
                             round(ct.total_time, 2) as total_time,
-                            round(ct.user_bonus, 2) as user_bonus
-                        from calculated_time ct;
+                            round(ct.user_bonus, 2) as user_bonus,
+                            sort_order
+                        from calculated_time ct
+                        order by sort_order asc;
                     """
                     result = self.fetch_query(query)
                     if response:
@@ -442,12 +445,23 @@ class Database:
         day_before = date_obj - timedelta(days=1)
         valid_to = day_before.strftime("%Y-%m-%d")
 
+        query = """
+            select
+                case
+                    when exists (select 1 from customers where customer_name = ?)
+                    then (select sort_order from customers where customer_name = ?)
+                    else (select ifnull(max(sort_order), 0) + 1 from customers)
+                end as sort_order
+        """
+        result = self.fetch_query(query, (customer_name, customer_name))
+        sort_orter = int(result.iloc[0, 0])
+
         self.execute_query(
             """
             update customers
             set
                 is_current = 0,
-                valid_to = ?, 
+                valid_to = ?,
                 updated_at = ?
             where customer_name = ? and is_current = 1
         """,
@@ -456,10 +470,10 @@ class Database:
 
         self.execute_query(
             """
-            insert into customers (customer_name, start_date, wage, valid_from, valid_to, is_current, inserted_at, updated_at)
-            values (?, ?, ?, ?, ?, 1, ?, ?)
+            insert into customers (customer_name, start_date, wage, valid_from, valid_to, is_current, inserted_at, updated_at, sort_order)
+            values (?, ?, ?, ?, ?, 1, ?, ?, ?)
         """,
-            (customer_name, start_date, wage, valid_from, None, now, None),
+            (customer_name, start_date, wage, valid_from, None, now, None, sort_orter),
         )
 
     def update_customer(self, customer_name: str, new_customer_name: str, wage: int):

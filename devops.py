@@ -65,3 +65,5 @@ class DevOpsClient:
 
 # # Print the created work item details
 # pprint.pprint(created_work_item)
+
+# alter table customers add column sort_order integer default = 0
