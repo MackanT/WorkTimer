@@ -26,8 +26,7 @@ INIT = True
 
 QUERY_WIDTH = 1280
 WIDTH = 500
-HEIGHT = 800
-
+HEIGHT = 600
 
 TIME_ID = 0  # 0 = Day, 1 = Week, 2 = Month, 3 = Year, 4 = All-Time
 TYPE_ID = 0  # 0 = Time, 1 = Bonus Wage
@@ -481,7 +480,7 @@ def show_project_popup(
             no_move=True,
             no_close=True,
             width=WIDTH / 2,
-            height=HEIGHT / 4,
+            height=HEIGHT / 3,
         ):
             git_queue = queue.Queue()
             query = f"select git_id from projects where project_id = {project_id} and customer_id = {customer_id} and is_current = 1"
