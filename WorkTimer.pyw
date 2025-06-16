@@ -261,6 +261,33 @@ def __autoset_query_window(table_id: int = None, table_name: str = None) -> None
                 "from projects\n"
                 "where is_current = 1"
             )
+        case "weekly":
+            sql_input = (
+                "select\n"
+                "     t.customer_name\n"
+                "    ,t.project_name\n"
+                "    ,round(sum(t.total_time), 2) as total_time\n"
+                "from time t\n"
+                "left join dates d on d.date_key = t.date_key\n"
+                "where d.week = ( select week from dates where date = date('now') limit 1 )\n"
+                "group by t.customer_name, t.project_name\n"
+                "having sum(t.total_time) > 0\n"
+                "order by 1, 2\n"
+            )
+        case "monthly":
+            sql_input = (
+                "select\n"
+                "     t.customer_name\n"
+                "    ,t.project_name\n"
+                "    ,round(sum(t.total_time), 2) as total_time\n"
+                "from time t\n"
+                "left join dates d on d.date_key = t.date_key\n"
+                "where d.year = cast(strftime('%Y', 'now') as integer)\n"
+                "and d.month = cast(strftime('%m', 'now') as integer)\n"
+                "group by customer_name, project_name\n"
+                "having sum(total_time) > 0\n"
+                "order by 1, 2\n"
+            )
         case _:
             sql_input = f"select * from {table_name}"
 
@@ -635,10 +662,17 @@ def open_query_popup() -> None:
         )
 
         with dpg.group():
-            available_tables = ["time", "customers", "projects", "bonus"]
+            available_queries = [
+                "time",
+                "customers",
+                "projects",
+                "bonus",
+                "weekly",
+                "monthly",
+            ]
             with dpg.group(horizontal=True):
                 dpg.add_text("Available tables:")
-                for table in available_tables:
+                for table in available_queries:
                     dpg.add_button(
                         label=table,
                         callback=lambda t=str(table): __autoset_query_window(
