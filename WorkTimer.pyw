@@ -240,6 +240,27 @@ def __autoset_query_window(table_id: int = None, table_name: str = None) -> None
                 "order by time_id desc\n"
                 "limit 100"
             )
+        case "customers":
+            sql_input = (
+                "select\n"
+                "     customer_id\n"
+                "    ,customer_name\n"
+                "    ,wage\n"
+                "    ,org_url\n"
+                "    ,pat_token\n"
+                "from customers\n"
+                "where is_current = 1"
+            )
+        case "projects":
+            sql_input = (
+                "select\n"
+                "     project_id\n"
+                "    ,project_name\n"
+                "    ,customer_id\n"
+                "    ,git_id\n"
+                "from projects\n"
+                "where is_current = 1"
+            )
         case _:
             sql_input = f"select * from {table_name}"
 
