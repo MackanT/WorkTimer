@@ -288,6 +288,19 @@ class Database:
             )
             print(f"Ending timer for {customer_name}: {project_name}")
 
+    def delete_time_row(self, customer_id: int, project_id: int) -> None:
+        """
+        Delete the latest time entry for a given customer and project.
+        """
+        self.execute_query(
+            """
+            delete
+            from time
+            where customer_id = ? and project_id = ? and end_time is null
+        """,
+            (customer_id, project_id),
+        )
+
     def queue_task(self, action: str, data: dict, response=None):
         """
         Add a task to the queue.

@@ -559,6 +559,12 @@ def show_project_popup(
                         sender, app_data, customer_id, project_id, window_tag
                     ),
                 )
+                dpg.add_button(
+                    label="Delete",
+                    callback=lambda: delete_popup_action(
+                        sender, app_data, customer_id, project_id, window_tag
+                    ),
+                )
     else:
         dpg.configure_item(window_tag, show=True)
 
@@ -582,6 +588,11 @@ def save_popup_data(customer_id: int, project_id: int, window_tag, customer_name
 
 def cancel_popup_action(sender, app_data, customer_id, project_id, window_tag):
     dpg.set_value(sender, not app_data)
+    dpg.delete_item(window_tag)
+
+
+def delete_popup_action(sender, app_data, customer_id, project_id, window_tag):
+    db.delete_time_row(int(customer_id), int(project_id))
     dpg.delete_item(window_tag)
 
 
