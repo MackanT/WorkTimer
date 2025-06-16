@@ -649,13 +649,16 @@ class Database:
             self.conn.commit()
         except Exception as e:
             print(f"Error executing query: {query}\n{e}")
+            raise
 
     def fetch_query(self, query: str, params: tuple = ()):
         try:
             return pd.read_sql(query, self.conn, params=params)
         except Exception as e:
-            print(f"Error fetching query: {query}\n{e}")
-            return pd.DataFrame()
+            print(
+                f"Error fetching query: {query}\n{e}"
+            )  # TODO maybe pass logger function with for usage?
+            raise
 
     def _get_value_from_db(
         self, query: str, params: tuple = (), data_type: str = "str"

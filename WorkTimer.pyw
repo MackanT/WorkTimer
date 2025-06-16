@@ -678,14 +678,20 @@ def handle_query_input():
         db.queue_task("run_query", {"query": query_text}, response=r_queue)
         df = r_queue.get()
 
-        if isinstance(df, list) and len(df) == 0:
+        if isinstance(df, Exception):
+            show_error_popup(f"Error: {str(df)}")
+            return
+        elif isinstance(df, list) and len(df) == 0:
             show_error_popup("Command completed successfully!")
             return
-        elif isinstance(df, pd.errors.DatabaseError) or len(df) == 0:
+        elif isinstance(df, pd.errors.DatabaseError):
             show_error_popup(df)
             return
         elif df is None or not isinstance(df, pd.DataFrame) or df.empty:
             print("Query Error: No data returned! Evaluate and find when we get here!")
+            return
+        elif len(df) == 0:
+            show_error_popup("Query returned no results!")
             return
 
         # Remove previous table if it exists
