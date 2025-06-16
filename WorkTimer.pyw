@@ -223,8 +223,26 @@ def __update_text_input(tag: str):
         dpg.set_value("project_update_git_input", git_id)
 
 
-def __autoset_query_window(table_name: str) -> None:
-    sql_input = f"select * from {dpg.get_item_label(table_name)}"
+def __autoset_query_window(table_id: int = None, table_name: str = None) -> None:
+    if table_id:
+        table_name = dpg.get_item_label(table_id)
+
+    match table_name:
+        case "time":
+            sql_input = (
+                "select\n"
+                "     time_id\n"
+                "    ,start_time, end_time, round(total_time, 2) as total_time\n"
+                "    ,customer_id, customer_name\n"
+                "    ,project_id, project_name\n"
+                "    ,git_id, comment\n"
+                "from time\n"
+                "order by time_id desc\n"
+                "limit 100"
+            )
+        case _:
+            sql_input = f"select * from {table_name}"
+
     dpg.set_value("query_input", sql_input)
 
 
