@@ -24,6 +24,7 @@ WARNING_GREEN = [34, 139, 34]
 COMMIT = True
 INIT = True
 
+QUERY_WIDTH = 1280
 WIDTH = 500
 HEIGHT = 800
 
@@ -557,10 +558,79 @@ def show_error_popup(error_message: str = None) -> None:
         dpg.set_value("error_text", error_message)
 
 
-def handle_query_input():
-    if input_focused:
-        query_text = dpg.get_value("query_input")
+def open_query_popup():
+    dpg.set_viewport_width(QUERY_WIDTH + 20)
+    if dpg.does_item_exist("query_popup_window"):
+        dpg.delete_item("query_popup_window")
+    with dpg.window(
+        label="Query Results",
+        tag="query_popup_window",
+        width=QUERY_WIDTH,
+        height=600,
+        modal=True,
+        no_close=True,
+    ):
+        dpg.add_button(
+            label="Close",
+            callback=lambda: (
+                dpg.set_viewport_width(WIDTH + 15),  # Restore original width
+                dpg.set_viewport_height(
+                    HEIGHT + 50
+                ),  # Restore original height if changed
+                dpg.delete_item("query_popup_window"),
+            ),
+        )
 
+        with dpg.group():
+            available_tables = ["time", "customers", "projects", "bonus"]
+            with dpg.group(horizontal=True):
+                dpg.add_text("Available tables:")
+                for table in available_tables:
+                    dpg.add_button(
+                        label=table,
+                        callback=lambda t=str(table): __autoset_query_window(
+                            table_id=t
+                        ),
+                    )
+
+            dpg.add_spacer(width=10)
+            dpg.add_text("Enter Query:")
+
+            sql_input = "select * from time"
+            dpg.add_input_text(
+                multiline=True,
+                width=QUERY_WIDTH - 30,
+                height=HEIGHT / 6,
+                tag="query_input",
+                default_value=sql_input,
+            )
+            __autoset_query_window(table_name="time")
+
+            # For f5 runs so only work when query is selected
+            with dpg.item_handler_registry(tag="query_input_handler") as handler:
+                dpg.add_item_activated_handler(
+                    callback=on_input_focus
+                )  # Triggered when user clicks into it
+                dpg.add_item_deactivated_after_edit_handler(
+                    callback=on_input_unfocus
+                )  # Triggered when they click out
+
+            dpg.bind_item_handler_registry("query_input", "query_input_handler")
+
+        # Box for displaying tabular data
+        # with dpg.group(tag="query_output_group"):
+        dpg.add_text("Tabular Data:")
+
+        handle_query_input()
+
+    with dpg.handler_registry():
+        dpg.add_key_press_handler(key=dpg.mvKey_F5, callback=handle_query_input)
+
+
+def handle_query_input():
+    # Always try to get the query from the popup input if it exists
+    if dpg.does_item_exist("query_input"):
+        query_text = dpg.get_value("query_input")
         r_queue = queue.Queue()
         db.queue_task("run_query", {"query": query_text}, response=r_queue)
         df = r_queue.get()
@@ -574,17 +644,37 @@ def handle_query_input():
         elif df is None or not isinstance(df, pd.DataFrame) or df.empty:
             print("Query Error: No data returned! Evaluate and find when we get here!")
             return
-        arr = df.to_numpy()
 
-        dpg.delete_item("data_table", children_only=True)
+        # Remove previous table if it exists
+        if dpg.does_item_exist("query_table"):
+            dpg.delete_item("query_table")
 
-        for column in df.columns:
-            dpg.add_table_column(parent="data_table", label=column)
-
-        for i in range(df.shape[0]):
-            with dpg.table_row(parent="data_table"):
-                for j in range(df.shape[1]):
-                    dpg.add_text(f"{arr[i, j]}")
+        # Add new table to the popup
+        with dpg.table(
+            parent="query_popup_window",
+            tag="query_table",
+            header_row=True,
+            policy=dpg.mvTable_SizingStretchProp,
+            scrollY=True,
+            scrollX=True,
+            clipper=True,
+            resizable=True,
+            reorderable=True,
+            width=QUERY_WIDTH,
+        ):
+            char_width = 8
+            min_width = 60
+            max_width = 300
+            for col in df.columns:
+                max_len = max([len(str(x)) for x in df[col].values] + [len(str(col))])
+                col_width = max(min_width, max_len * char_width)
+                col_width = min(col_width, max_width)
+                dpg.add_table_column(label=col, init_width_or_weight=col_width)
+            arr = df.to_numpy()
+            for i in range(df.shape[0]):
+                with dpg.table_row():
+                    for j in range(df.shape[1]):
+                        dpg.add_text(str(arr[i, j]))
 
 
 ###
@@ -1090,53 +1180,13 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
 
         # "Queries" Section
         with dpg.collapsing_header(
-            label="Queries", default_open=False, indent=INDENT_1
+            label="Queries",
+            default_open=False,
+            indent=INDENT_1,
         ):
-            with dpg.group():
-                available_tables = ["time", "customers", "projects", "bonus"]
-                with dpg.group(horizontal=True):
-                    dpg.add_text("Available tables:")
-                    for table in available_tables:
-                        dpg.add_button(
-                            label=table,
-                            callback=lambda t=str(table): __autoset_query_window(t),
-                        )
-
-                dpg.add_spacer(width=10)
-                dpg.add_text("Enter Query:")
-
-                sql_input = "select * from time"
-                dpg.add_input_text(
-                    multiline=True,
-                    width=WIDTH - 30,
-                    height=HEIGHT / 6,
-                    tag="query_input",
-                    default_value=sql_input,
-                )
-
-                # For f5 runs so only work when query is selected
-                with dpg.item_handler_registry(tag="query_input_handler") as handler:
-                    dpg.add_item_activated_handler(
-                        callback=on_input_focus
-                    )  # Triggered when user clicks into it
-                    dpg.add_item_deactivated_after_edit_handler(
-                        callback=on_input_unfocus
-                    )  # Triggered when they click out
-
-                dpg.bind_item_handler_registry("query_input", "query_input_handler")
-
-            # Box for displaying tabular data
-            with dpg.group(tag="query_output_group"):
-                dpg.add_text("Tabular Data:")
-
-                with dpg.child_window(
-                    width=WIDTH - 30, height=300, border=True, tag="query_output_window"
-                ):
-                    with dpg.table(tag="data_table", resizable=True, width=WIDTH - 50):
-                        pass  # Blank for dynamic columns
-
-        with dpg.handler_registry():
-            dpg.add_key_press_handler(key=dpg.mvKey_F5, callback=handle_query_input)
+            dpg.add_button(
+                callback=lambda: open_query_popup(), label="Open Query Window"
+            )
 
         # Logg Section
         with dpg.collapsing_header(label="Logs", default_open=False, indent=INDENT_1):
