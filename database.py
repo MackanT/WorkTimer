@@ -87,6 +87,40 @@ class Database:
                     "Trigger 'trigger_time_after_update' created successfully."
                 )
 
+                # Auto-update prject-name based on project_id
+                self.execute_query("""
+                create trigger if not exists trigger_time_project_id_update
+                after update of project_id on time
+                for each row
+                begin
+                    update time
+                    set project_name = (
+                        select project_name from projects where project_id = new.project_id
+                    )
+                    where time_id = new.time_id;
+                end;
+                """)
+                self.pre_run_log.append(
+                    "Trigger 'trigger_time_project_id_update' created successfully."
+                )
+
+                # Auto-update prject-name based on customer_id
+                self.execute_query("""
+                create trigger if not exists trigger_time_customer_id_update
+                after update of customer_id on time
+                for each row
+                begin
+                    update time
+                    set customer_name = (
+                        select customer_name from customers where customer_id = new.customer_id
+                    )
+                    where time_id = new.time_id;
+                end;
+                """)
+                self.pre_run_log.append(
+                    "Trigger 'trigger_time_customer_id_update' created successfully."
+                )
+
             ## Customers Table
             df_temp = self.fetch_query(
                 "select * from sqlite_master where type = 'table' and name = 'customers'"
