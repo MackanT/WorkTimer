@@ -416,6 +416,7 @@ def render_customer_project_ui():
             dpg.add_checkbox(
                 label=f"{project_name:<44}",
                 callback=project_button_callback,
+                tag=f"checkbox_{customer_id}_{project_id}",
                 user_data=(customer_id, project_id, customer_name),
                 default_value=initial_state,
                 parent=group_id,
@@ -423,9 +424,6 @@ def render_customer_project_ui():
 
             dpg.add_text("", tag=f"time_{customer_id}_{project_id}", parent=group_id)
         # dpg.add_spacer(height=10, parent="customer_ui_section")
-
-    # Save the current order of headers
-    # save_header_order()
 
     run_update_ui_task()
 
@@ -611,16 +609,19 @@ def save_popup_data(customer_id: int, project_id: int, window_tag, customer_name
                 show_error_popup(status)
 
     dpg.delete_item(window_tag)
+    run_update_ui_task()
 
 
 def cancel_popup_action(sender, app_data, customer_id, project_id, window_tag):
     dpg.set_value(sender, not app_data)
     dpg.delete_item(window_tag)
+    run_update_ui_task()
 
 
 def delete_popup_action(sender, app_data, customer_id, project_id, window_tag):
     db.delete_time_row(int(customer_id), int(project_id))
     dpg.delete_item(window_tag)
+    run_update_ui_task()
 
 
 def show_error_popup(error_message: str = None) -> None:
@@ -1371,6 +1372,30 @@ def update_ui_from_df(df: pd.DataFrame, sel_type: str) -> None:
         else:
             total_text = "Erronous value!"
         dpg.set_value(f"total_{customer_id}", total_text)
+
+    # --- Add this block to update the header label with indicator ---
+    for customer_id in df["customer_id"].unique():
+        customer_name = df.loc[df["customer_id"] == customer_id, "customer_name"].iloc[
+            0
+        ]
+        ongoing = False
+        for item in dpg.get_all_items():
+            if dpg.does_item_exist(item):
+                tag_str = dpg.get_item_alias(item)
+                if tag_str.startswith(f"checkbox_{customer_id}_"):
+                    try:
+                        if dpg.get_value(item):
+                            ongoing = True
+                            break
+                    except Exception:
+                        continue
+        indicator = "* " if ongoing else ""
+        try:
+            dpg.configure_item(
+                f"header_{customer_id}", label=f"{indicator}{customer_name}"
+            )
+        except Exception:
+            pass  # Header might not exist yet
 
 
 # Main Dear PyGui loop

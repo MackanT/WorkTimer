@@ -17,7 +17,7 @@
 - ~Post to devops is default-filled based on if value exists or not~
 - Option to reenable existing customer/project
 - ~project_name + customer_name in time is updated automatically based on id~
-- Color indicator or other to show customers with active projects
+- ~Color indicator or other to show customers with active projects~
 - ~Started timer cannot be removed without sql~
 - Add custom quick selections
 - ~End of period groupings~
