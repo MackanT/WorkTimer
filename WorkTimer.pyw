@@ -587,7 +587,7 @@ def cancel_popup_action(sender, app_data, customer_id, project_id, window_tag):
 
 def show_error_popup(error_message: str = None) -> None:
     if not dpg.does_item_exist("error_popup"):
-        with dpg.popup(parent="query_output_group", tag="error_popup", modal=True):
+        with dpg.window(label="Error", tag="error_popup"):
             dpg.add_text(error_message, wrap=400, tag="error_text")
             dpg.add_button(label="OK", callback=lambda: dpg.hide_item("error_popup"))
             dpg.configure_item("error_popup", show=True)
@@ -595,8 +595,10 @@ def show_error_popup(error_message: str = None) -> None:
         dpg.configure_item("error_popup", show=True)
         dpg.set_value("error_text", error_message)
 
+    dpg.focus_item("error_popup")
 
-def open_query_popup():
+
+def open_query_popup() -> None:
     dpg.set_viewport_width(QUERY_WIDTH + 20)
     if dpg.does_item_exist("query_popup_window"):
         dpg.delete_item("query_popup_window")
@@ -605,8 +607,10 @@ def open_query_popup():
         tag="query_popup_window",
         width=QUERY_WIDTH,
         height=600,
-        modal=True,
+        modal=False,
         no_close=True,
+        no_collapse=True,
+        no_move=True,
     ):
         dpg.add_button(
             label="Close",
@@ -645,15 +649,16 @@ def open_query_popup():
             __autoset_query_window(table_name="time")
 
             # For f5 runs so only work when query is selected
-            with dpg.item_handler_registry(tag="query_input_handler") as handler:
-                dpg.add_item_activated_handler(
-                    callback=on_input_focus
-                )  # Triggered when user clicks into it
-                dpg.add_item_deactivated_after_edit_handler(
-                    callback=on_input_unfocus
-                )  # Triggered when they click out
+            if not dpg.does_item_exist("query_input_handler"):
+                with dpg.item_handler_registry(tag="query_input_handler") as handler:
+                    dpg.add_item_activated_handler(
+                        callback=on_input_focus
+                    )  # Triggered when user clicks into it
+                    dpg.add_item_deactivated_after_edit_handler(
+                        callback=on_input_unfocus
+                    )  # Triggered when they click out
 
-            dpg.bind_item_handler_registry("query_input", "query_input_handler")
+                dpg.bind_item_handler_registry("query_input", "query_input_handler")
 
         # Box for displaying tabular data
         # with dpg.group(tag="query_output_group"):
