@@ -5,6 +5,7 @@ import time
 import queue
 import threading
 
+import re
 import os
 import json
 
@@ -49,15 +50,18 @@ do_con = {}
 df_do = db.fetch_query(
     "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and org_url is not null"
 )
-for _, row in df_do.iterrows():
-    org_url = f"https://dev.azure.com/{row['org_url']}"
-    do_con[row["customer_name"]] = DevOpsClient(
-        row["pat_token"], org_url
-    )  # TODO add fix for missing PAT token
-    do_con[row["customer_name"]].connect()
-    db.pre_run_log.append(
-        f"DevOps connection established to {row['customer_name']} for organization {row['org_url']}"
-    )
+try:
+    for _, row in df_do.iterrows():
+        org_url = f"https://dev.azure.com/{row['org_url']}"
+        do_con[row["customer_name"]] = DevOpsClient(
+            row["pat_token"], org_url
+        )  # TODO add fix for missing PAT token
+        do_con[row["customer_name"]].connect()
+        db.pre_run_log.append(
+            f"DevOps connection established to {row['customer_name']} for organization {row['org_url']}"
+        )
+except Exception as e:
+    print(e)  ## TODO someting nicer here...!
 
 # personal_access_token = "2Ae4xSjyf1m62hWmywoDxJIDcd4f3fzPSlNqzGomnlRKKTIXZFOrJQQJ99BEACAAAAABrcj0AAASAZDO33L0"
 # organization_url = "https://dev.azure.com/rowico"
@@ -269,7 +273,8 @@ def __autoset_query_window(table_id: int = None, table_name: str = None) -> None
                 "    ,round(sum(t.total_time), 2) as total_time\n"
                 "from time t\n"
                 "left join dates d on d.date_key = t.date_key\n"
-                "where d.week = ( select week from dates where date = date('now') limit 1 )\n"
+                "where d.year = cast(strftime('%Y', 'now') as integer)\n"
+                "and d.week = ( select week from dates where date = date('now') limit 1 )\n"
                 "group by t.customer_name, t.project_name\n"
                 "having sum(t.total_time) > 0\n"
                 "order by 1, 2\n"
@@ -716,6 +721,158 @@ def open_query_popup() -> None:
         dpg.add_key_press_handler(key=dpg.mvKey_F5, callback=handle_query_input)
 
 
+def clb_selectable(sender, app_data, user_data):
+    i, j, cell_value, table_name = user_data
+
+    id_col = dpg.get_item_label("col_0")
+    cur_id = dpg.get_item_label(f"row{i}_column{0}")
+    update_col = dpg.get_item_label(f"col_{j}")
+
+    if table_name != "time":
+        print("Updating these tables is done via input!")
+        dpg.set_value(sender, False)
+        return
+
+    # Checks to stop user from updateing "illegal" fields
+    if update_col in [
+        "time_id",
+        "customer_id",
+        "customer_name",
+        "total_time",
+        "date_key",
+        "cost",
+        "bonus",
+        "wage",
+        "user_bonus",
+    ]:
+        print("Cannot edit these fields")
+        dpg.set_value(sender, False)
+        return
+
+    popup_tag = f"cell_popup_{i}_{j}"
+    input1_tag = f"popup_input1_{i}_{j}"
+    input2_tag = f"popup_input2_{i}_{j}"
+    input3_tag = f"popup_input3_{i}_{j}"
+    input4_tag = f"popup_input4_{i}_{j}"
+
+    def on_ok():
+        val1 = dpg.get_value(input1_tag)
+        val2 = dpg.get_value(input2_tag)
+        val3 = dpg.get_value(input3_tag)
+        val4 = dpg.get_value(input4_tag)
+        # Call your handler here with the values
+
+        if update_col in ["start_time", "end_time"]:
+            # Convert to datetime format if the column is a time field
+            try:
+                val4 = datetime.strptime(val4, "%Y-%m-%d %H:%M:%S")
+                val4 = val4.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                dpg.set_value(
+                    f"{popup_tag}_error_text",
+                    "Invalid date format. Use 'YYYY-MM-DD HH:MM:SS'.",
+                )
+                return
+        if update_col == "project_id":
+            selected_name = dpg.get_value(f"{popup_tag}_project_combo")
+            print(val4, project_id_map.get(selected_name))
+            val4 = project_id_map.get(selected_name)
+
+        if isinstance(val4, str):
+            sql_query = (
+                f"update {val1} set {update_col} = '{val4}' where {val2} = {val3}"
+            )
+        else:
+            sql_query = f"update {val1} set {update_col} = {val4} where {val2} = {val3}"
+
+        r_queue = queue.Queue()
+        db.queue_task("run_query", {"query": sql_query}, response=r_queue)
+        df = r_queue.get()
+
+        print(df)
+
+        dpg.delete_item(popup_tag)
+
+    def on_cancel():
+        dpg.delete_item(popup_tag)
+
+    # Remove popup if it already exists
+    if dpg.does_item_exist(popup_tag):
+        dpg.delete_item(popup_tag)
+
+    with dpg.window(
+        label="Edit Cell",
+        tag=popup_tag,
+        modal=True,
+        no_close=True,
+        width=400,
+        height=200,
+    ):
+        dpg.add_input_text(label="Table Name", tag=input1_tag, default_value=table_name)
+        dpg.add_input_text(label="ID Col", tag=input2_tag, default_value=id_col)
+        dpg.add_input_int(
+            label="Current ID",
+            tag=input3_tag,
+            default_value=int(cur_id) if str(cur_id).isdigit() else 0,
+        )
+        # Choose input type for cell_value
+        if update_col in ["project_name", "project_id"]:
+            sql_query = f"select distinct project_id, project_name from projects where customer_id = ( select customer_id from time where time_id = {cur_id} ) and is_current = 1"
+
+            r_queue = queue.Queue()
+            db.queue_task("run_query", {"query": sql_query}, response=r_queue)
+            df = r_queue.get()
+
+            # After fetching the DataFrame df with columns project_id and project_name
+            project_options = [
+                {"id": row["project_id"], "name": row["project_name"]}
+                for _, row in df.iterrows()
+            ]
+            project_names = [p["name"] for p in project_options]
+            project_id_map = {p["name"]: p["id"] for p in project_options}
+
+            if update_col == "project_id":
+                def_value = df[df["project_id"] == int(cell_value)][
+                    "project_name"
+                ].iloc[0]
+            else:
+                def_value = cell_value
+
+            # Add the combo (dropdown)
+            dpg.add_combo(
+                project_names,
+                label="Project",
+                tag=f"{popup_tag}_project_combo",
+                width=250,
+                default_value=def_value,
+            )
+
+            update_col = "project_id"
+
+        elif isinstance(cell_value, int) or (
+            isinstance(cell_value, str) and cell_value.isdigit()
+        ):
+            dpg.add_input_int(
+                label=update_col, tag=input4_tag, default_value=int(cell_value)
+            )
+        elif isinstance(cell_value, float) or (
+            isinstance(cell_value, str) and cell_value.replace(".", "", 1).isdigit()
+        ):
+            dpg.add_input_float(
+                label=update_col, tag=input4_tag, default_value=float(cell_value)
+            )
+        else:
+            dpg.add_input_text(
+                label=update_col, tag=input4_tag, default_value=str(cell_value)
+            )
+        dpg.add_text("", color=WARNING_RED, tag=f"{popup_tag}_error_text")
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="OK", callback=on_ok)
+            dpg.add_button(label="Cancel", callback=on_cancel)
+
+    dpg.set_value(sender, False)
+
+
 def handle_query_input():
     # Always try to get the query from the popup input if it exists
     if dpg.does_item_exist("query_input"):
@@ -740,6 +897,15 @@ def handle_query_input():
             show_error_popup("Query returned no results!")
             return
 
+        # Extract the table name from the query
+        def extract_table_name(query_text: str) -> str:
+            match = re.search(r"from\s+([^\s;]+)", query_text, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+            return "unknown_table"
+
+        table_name = extract_table_name(query_text)
+
         # Remove previous table if it exists
         if dpg.does_item_exist("query_table"):
             dpg.delete_item("query_table")
@@ -756,20 +922,30 @@ def handle_query_input():
             resizable=True,
             reorderable=True,
             width=QUERY_WIDTH,
+            # ) as selectablecells:
         ):
             char_width = 8
             min_width = 60
             max_width = 300
-            for col in df.columns:
+            for i, col in enumerate(df.columns):
                 max_len = max([len(str(x)) for x in df[col].values] + [len(str(col))])
                 col_width = max(min_width, max_len * char_width)
                 col_width = min(col_width, max_width)
-                dpg.add_table_column(label=col, init_width_or_weight=col_width)
+                dpg.add_table_column(
+                    label=col, init_width_or_weight=col_width, tag=f"col_{i}"
+                )
             arr = df.to_numpy()
             for i in range(df.shape[0]):
                 with dpg.table_row():
                     for j in range(df.shape[1]):
-                        dpg.add_text(str(arr[i, j]))
+                        # dpg.add_text(str(arr[i, j]))
+                        cell_value = str(arr[i, j])
+                        dpg.add_selectable(
+                            label=cell_value,
+                            tag=f"row{i}_column{j}",
+                            callback=clb_selectable,
+                            user_data=(i, j, cell_value, table_name),
+                        )
 
 
 ###

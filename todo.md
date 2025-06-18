@@ -1,7 +1,8 @@
 ### TODO
 
 - ~Wage, cost, bonus not calculating correct~
-- Easy way to add time in post and update a row. FOr ex. change customer/project/git
+- Easy way to add time in post. FOr ex. change customer/project/git
+- ~Easy way to edit time row in post. FOr ex. change customer/project/git~
 - ~Sort order of items in lists~
 - ~Total time by customer~
 - ~Quick selects from different tables~
