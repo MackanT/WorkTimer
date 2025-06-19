@@ -12,6 +12,8 @@ import json
 from database import Database
 from devops import DevOpsClient
 
+from dataclasses import dataclass
+
 ###
 # Constants
 ###
@@ -33,6 +35,69 @@ TIME_ID = 0  # 0 = Day, 1 = Week, 2 = Month, 3 = Year, 4 = All-Time
 TYPE_ID = 0  # 0 = Time, 1 = Bonus Wage
 SELECTED_DATE = datetime.now().strftime("%Y-%m-%d")
 CURRENT_DATE = datetime.now().date()
+
+
+@dataclass
+class TableColumn:
+    editable: bool = False
+    pk: bool = False
+    type: str = "str"
+
+
+TABLE_IDS = {
+    "time": {
+        "time_id": TableColumn(pk=True, type="int"),
+        "customer_id": TableColumn(type="int"),
+        "customer_name": TableColumn(),
+        "project_id": TableColumn(editable=True, type="project_id"),  # Special
+        "project_name": TableColumn(),
+        "start_time": TableColumn(editable=True, type="datetime"),
+        "end_time": TableColumn(editable=True, type="datetime"),
+        "date_key": TableColumn(type="int"),
+        "total_time": TableColumn(type="float"),
+        "cost": TableColumn(type="float"),
+        "bonus": TableColumn(type="float"),
+        "wage": TableColumn(type="int"),
+        "comment": TableColumn(editable=True),
+        "git_id": TableColumn(editable=True, type="int"),
+        "user_bonus": TableColumn(type="float"),
+    },
+    "customers": {
+        "customer_id": TableColumn(pk=True, type="int"),
+        "customer_name": TableColumn(),
+        "start_date": TableColumn(type="date"),
+        "wage": TableColumn(type="int"),
+        "valid_from": TableColumn(type="date"),
+        "valid_to": TableColumn(type="date"),
+        "is_current": TableColumn(type="bool"),
+        "inserted_at": TableColumn(type="datetime"),
+        "pat_token": TableColumn(editable=True),
+        "org_url": TableColumn(editable=True),
+        "sort_order": TableColumn(editable=False, type="int"),
+    },
+    "projects": {
+        "project_id": TableColumn(pk=True, type="int"),
+        "project_name": TableColumn(),
+        "customer_id": TableColumn(type="int"),
+        "is_current": TableColumn(type="bool"),
+        "git_id": TableColumn(editable=True, type="str"),
+    },
+    "bonus": {
+        "bonus_id": TableColumn(pk=True, type="int"),
+        "bonus_percent": TableColumn(type="float"),
+        "start_date": TableColumn(type="date"),
+        "end_date": TableColumn(type="date"),
+    },
+    "dates": {
+        "date_key": TableColumn(pk=True, type="int"),
+        "date": TableColumn(type="date"),
+        "year": TableColumn(type="int"),
+        "month": TableColumn(type="int"),
+        "week": TableColumn(type="int"),
+        "day": TableColumn(type="int"),
+    },
+}
+
 
 ###
 # SQL-Backend logic
@@ -721,154 +786,228 @@ def open_query_popup() -> None:
         dpg.add_key_press_handler(key=dpg.mvKey_F5, callback=handle_query_input)
 
 
-def clb_selectable(sender, app_data, user_data):
-    i, j, cell_value, table_name = user_data
+def _add_project_name(popup_tag: str, customer_id: int, project_name: str) -> dict:
+    sql_query = f"select distinct project_id, project_name from projects where customer_id = {customer_id} and is_current = 1"
 
-    id_col = dpg.get_item_label("col_0")
-    cur_id = dpg.get_item_label(f"row{i}_column{0}")
-    update_col = dpg.get_item_label(f"col_{j}")
+    r_queue = queue.Queue()
+    db.queue_task("run_query", {"query": sql_query}, response=r_queue)
+    df = r_queue.get()
 
-    if table_name != "time":
-        print("Updating these tables is done via input!")
-        dpg.set_value(sender, False)
-        return
+    # After fetching the DataFrame df with columns project_id and project_name
+    project_options = [
+        {"id": row["project_id"], "name": row["project_name"]}
+        for _, row in df.iterrows()
+    ]
+    project_names = [p["name"] for p in project_options]
+    project_id_map = {p["name"]: p["id"] for p in project_options}
 
-    # Checks to stop user from updateing "illegal" fields
-    if update_col in [
-        "time_id",
-        "customer_id",
-        "customer_name",
-        "total_time",
-        "date_key",
-        "cost",
-        "bonus",
-        "wage",
-        "user_bonus",
-    ]:
-        print("Cannot edit these fields")
-        dpg.set_value(sender, False)
-        return
+    # Add the combo (dropdown)
+    dpg.add_combo(
+        project_names,
+        label="Project",
+        tag=f"{popup_tag}_project_id_input",
+        default_value=project_name,
+    )
 
-    popup_tag = f"cell_popup_{i}_{j}"
-    input1_tag = f"popup_input1_{i}_{j}"
-    input2_tag = f"popup_input2_{i}_{j}"
-    input3_tag = f"popup_input3_{i}_{j}"
-    input4_tag = f"popup_input4_{i}_{j}"
+    return project_id_map
 
-    def on_ok():
-        val1 = dpg.get_value(input1_tag)
-        val2 = dpg.get_value(input2_tag)
-        val3 = dpg.get_value(input3_tag)
-        val4 = dpg.get_value(input4_tag)
-        # Call your handler here with the values
 
-        if update_col in ["start_time", "end_time"]:
-            # Convert to datetime format if the column is a time field
+def _on_edit_row_ok(sender, app_data, user_data: str):
+    (
+        popup_tag,
+        editable_cols,
+        table_data,
+        table_name,
+        table_id,
+        key_table,
+        project_dict,
+    ) = user_data
+
+    vals = []
+    errors = []
+    for col in editable_cols:
+        value = dpg.get_value(f"{popup_tag}_{col}_input")
+        meta = table_data[col]
+
+        if meta.type == "int":
             try:
-                val4 = datetime.strptime(val4, "%Y-%m-%d %H:%M:%S")
-                val4 = val4.strftime("%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                dpg.set_value(
-                    f"{popup_tag}_error_text",
-                    "Invalid date format. Use 'YYYY-MM-DD HH:MM:SS'.",
-                )
-                return
-        if update_col == "project_id":
-            selected_name = dpg.get_value(f"{popup_tag}_project_combo")
-            print(val4, project_id_map.get(selected_name))
-            val4 = project_id_map.get(selected_name)
+                int(value)
+            except Exception:
+                errors.append(f"{col} must be an integer.")
+        elif meta.type == "float":
+            try:
+                float(value)
+            except Exception:
+                errors.append(f"{col} must be a float.")
+        elif meta.type == "datetime":
+            try:
+                datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                errors.append(f"{col} must be in YYYY-MM-DD HH:MM:SS format.")
+        elif meta.type == "date":
+            try:
+                datetime.strptime(value, "%Y-%m-%d")
+            except Exception:
+                errors.append(f"{col} must be in YYYY-MM-DD format.")
+        elif meta.type == "project_id":
+            value = project_dict[value]
 
-        if isinstance(val4, str):
-            sql_query = (
-                f"update {val1} set {update_col} = '{val4}' where {val2} = {val3}"
-            )
-        else:
-            sql_query = f"update {val1} set {update_col} = {val4} where {val2} = {val3}"
+        vals.append((col, value))
 
-        r_queue = queue.Queue()
-        db.queue_task("run_query", {"query": sql_query}, response=r_queue)
-        df = r_queue.get()
+    if errors:
+        dpg.set_value(f"{popup_tag}_error_text", "\n".join(errors))
+        return
 
-        print(df)
+    sql_query = f"update {table_name} set "
+    for val_set in vals:
+        data_type = table_data[val_set[0]].type
+        escape = "'" if data_type in ["date", "datetime", "str"] else ""
+        sql_query += f"{val_set[0]} = {escape}{val_set[1]}{escape}, "
+    sql_query = sql_query[:-2] + f" where {table_id} = {key_table}"
 
-        dpg.delete_item(popup_tag)
+    db.queue_task("run_query", {"query": sql_query})
+    __log_message(
+        f"Updating row: {table_id} = {key_table} in {table_name} with command:\n{sql_query}"
+    )
 
-    def on_cancel():
-        dpg.delete_item(popup_tag)
+    dpg.delete_item(popup_tag)
+
+
+def _on_edit_row_cancel(sender, app_data, user_data: str):
+    dpg.delete_item(user_data)
+
+
+def clb_selectable(sender, app_data, user_data):
+    row, table_name, num_cols = user_data
+
+    popup_tag = f"row_popup_{row}"
+
+    # Extract columns + data about editable table
+    table_data = TABLE_IDS.get(table_name)
+    if table_data is None:
+        __log_message(f"Trying to edit undefined table {table_name}!")
+        dpg.set_value(sender, False)
+        return
+    table_id = next(col for col, meta in table_data.items() if meta.pk)
+    all_cols = [col for col, meta in table_data.items()]
+    editable_cols = [col for col, meta in table_data.items() if meta.editable]
+
+    # Ensure PK-column in selection and extract selected rows PK-value
+    dpg_table_cols = []
+    dpg_table_values = []
+    for i in range(num_cols):
+        dpg_table_cols.append(dpg.get_item_label(f"col_{i}"))
+
+    if table_id not in dpg_table_cols:
+        __log_message(
+            f"Trying to edit table {table_name} without including table_key: {table_id}!"
+        )
+        dpg.set_value(sender, False)
+        return
+    else:
+        for i in range(num_cols):
+            dpg_table_values.append(dpg.get_item_label(f"row{row}_column{i}"))
+    dpg_index = dpg_table_cols.index(table_id)
+    key_table = dpg_table_values[dpg_index]
+
+    # Get original data from database for row
+    sql_query = (
+        f"select {', '.join(all_cols)} from {table_name} where {table_id} = {key_table}"
+    )
+    r_queue = queue.Queue()
+    db.queue_task("run_query", {"query": sql_query}, response=r_queue)
+    df = r_queue.get()
 
     # Remove popup if it already exists
     if dpg.does_item_exist(popup_tag):
         dpg.delete_item(popup_tag)
 
+    # (Re)creates popup
     with dpg.window(
         label="Edit Cell",
         tag=popup_tag,
         modal=True,
         no_close=True,
-        width=400,
-        height=200,
+        width=QUERY_WIDTH / 4,  # TODO based on constant
+        height=25
+        * (len(editable_cols) + 4),  # TODO dynamic based on num editable fields!
     ):
-        dpg.add_input_text(label="Table Name", tag=input1_tag, default_value=table_name)
-        dpg.add_input_text(label="ID Col", tag=input2_tag, default_value=id_col)
-        dpg.add_input_int(
-            label="Current ID",
-            tag=input3_tag,
-            default_value=int(cur_id) if str(cur_id).isdigit() else 0,
-        )
-        # Choose input type for cell_value
-        if update_col in ["project_name", "project_id"]:
-            sql_query = f"select distinct project_id, project_name from projects where customer_id = ( select customer_id from time where time_id = {cur_id} ) and is_current = 1"
+        dpg.add_text(f"Updating row in table: {table_name}")
 
-            r_queue = queue.Queue()
-            db.queue_task("run_query", {"query": sql_query}, response=r_queue)
-            df = r_queue.get()
+        project_dict = None
+        for col in editable_cols:
+            meta = table_data[col]
+            # Get the value from df for this column (assuming single row)
+            default_value = df[col].iloc[0] if col in df.columns else ""
+            input_tag = f"{popup_tag}_{col}_input"
 
-            # After fetching the DataFrame df with columns project_id and project_name
-            project_options = [
-                {"id": row["project_id"], "name": row["project_name"]}
-                for _, row in df.iterrows()
-            ]
-            project_names = [p["name"] for p in project_options]
-            project_id_map = {p["name"]: p["id"] for p in project_options}
+            if meta.type == "int":
+                dpg.add_input_int(
+                    label=col.replace("_", " ").title(),
+                    tag=input_tag,
+                    default_value=int(default_value)
+                    if pd.notnull(default_value)
+                    else 0,
+                )
+            elif meta.type == "float":
+                dpg.add_input_float(
+                    label=col.replace("_", " ").title(),
+                    tag=input_tag,
+                    default_value=float(default_value)
+                    if pd.notnull(default_value)
+                    else 0.0,
+                )
+            elif meta.type == "str":
+                dpg.add_input_text(
+                    label=col.replace("_", " ").title(),
+                    tag=input_tag,
+                    default_value=str(default_value)
+                    if pd.notnull(default_value)
+                    else "",
+                )
+            elif meta.type == "datetime":
+                dpg.add_input_text(
+                    label=col.replace("_", " ").title(),
+                    tag=input_tag,
+                    default_value=str(default_value)
+                    if pd.notnull(default_value)
+                    else "",
+                    hint="YYYY-MM-DD HH:MM:SS",
+                )
+            elif meta.type == "date":
+                dpg.add_input_text(
+                    label=col.replace("_", " ").title(),
+                    tag=input_tag,
+                    default_value=str(default_value)
+                    if pd.notnull(default_value)
+                    else "",
+                    hint="YYYY-MM-DD",
+                )
+            elif meta.type == "project_id":
+                project_dict = _add_project_name(
+                    popup_tag=popup_tag,
+                    customer_id=df["customer_id"].iloc[0],
+                    project_name=df["project_name"].iloc[0],
+                )
 
-            if update_col == "project_id":
-                def_value = df[df["project_id"] == int(cell_value)][
-                    "project_name"
-                ].iloc[0]
-            else:
-                def_value = cell_value
-
-            # Add the combo (dropdown)
-            dpg.add_combo(
-                project_names,
-                label="Project",
-                tag=f"{popup_tag}_project_combo",
-                width=250,
-                default_value=def_value,
-            )
-
-            update_col = "project_id"
-
-        elif isinstance(cell_value, int) or (
-            isinstance(cell_value, str) and cell_value.isdigit()
-        ):
-            dpg.add_input_int(
-                label=update_col, tag=input4_tag, default_value=int(cell_value)
-            )
-        elif isinstance(cell_value, float) or (
-            isinstance(cell_value, str) and cell_value.replace(".", "", 1).isdigit()
-        ):
-            dpg.add_input_float(
-                label=update_col, tag=input4_tag, default_value=float(cell_value)
-            )
-        else:
-            dpg.add_input_text(
-                label=update_col, tag=input4_tag, default_value=str(cell_value)
-            )
         dpg.add_text("", color=WARNING_RED, tag=f"{popup_tag}_error_text")
         with dpg.group(horizontal=True):
-            dpg.add_button(label="OK", callback=on_ok)
-            dpg.add_button(label="Cancel", callback=on_cancel)
+            dpg.add_button(
+                label="OK",
+                callback=_on_edit_row_ok,
+                user_data=(
+                    popup_tag,
+                    editable_cols,
+                    table_data,
+                    table_name,
+                    table_id,
+                    key_table,
+                    project_dict,
+                ),
+            )
+            dpg.add_button(
+                label="Cancel", callback=_on_edit_row_cancel, user_data=popup_tag
+            )
 
     dpg.set_value(sender, False)
 
@@ -927,12 +1066,15 @@ def handle_query_input():
             char_width = 8
             min_width = 60
             max_width = 300
+            num_cols = len(df.columns)
             for i, col in enumerate(df.columns):
                 max_len = max([len(str(x)) for x in df[col].values] + [len(str(col))])
                 col_width = max(min_width, max_len * char_width)
                 col_width = min(col_width, max_width)
                 dpg.add_table_column(
-                    label=col, init_width_or_weight=col_width, tag=f"col_{i}"
+                    label=col,
+                    init_width_or_weight=col_width,
+                    tag=f"col_{i}",
                 )
             arr = df.to_numpy()
             for i in range(df.shape[0]):
@@ -943,8 +1085,9 @@ def handle_query_input():
                         dpg.add_selectable(
                             label=cell_value,
                             tag=f"row{i}_column{j}",
+                            span_columns=True,
                             callback=clb_selectable,
-                            user_data=(i, j, cell_value, table_name),
+                            user_data=(i, table_name, num_cols),
                         )
 
 

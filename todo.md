@@ -2,7 +2,7 @@
 
 - ~Wage, cost, bonus not calculating correct~
 - Easy way to add time in post. FOr ex. change customer/project/git
-- ~Easy way to edit time row in post. FOr ex. change customer/project/git~
+- ~Easy way to edit time row in post. For ex. change customer/project/git~
 - ~Sort order of items in lists~
 - ~Total time by customer~
 - ~Quick selects from different tables~
@@ -34,3 +34,4 @@
 - ~Amount shows incorrect wage. I.e project_name = Förvaltning date_key = 20250502 is 133.31, shows 99.99~
 - ~_get_value_from_db returns wrongful datatypes~
 - ~pre_log should not populate "created table" if it did not run. And only run generate_dates if necessary~
+- Fix so git-id is displayed as int
