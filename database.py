@@ -63,7 +63,7 @@ class Database:
                     bonus real,
                     cost real,
                     user_bonus real,
-                    git_id integer,
+                    git_id integer default 0,
                     comment text
                 )
                 """)
@@ -153,7 +153,7 @@ class Database:
                     project_id integer primary key autoincrement,
                     customer_id integer,
                     project_name text,
-                    git_id integer,
+                    git_id integer default 0,
                     is_current boolean
                 )
                 """)

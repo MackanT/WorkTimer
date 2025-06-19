@@ -1789,3 +1789,13 @@ dpg.destroy_context()
 #   where ordered.customer_name = customers.customer_name
 #   limit 1
 # );
+
+# alter table projects rename column git_id to git_id_old
+# alter table projects add column git_id integer default 0
+# update projects set git_id = gid_id_old where git_id_old <> 0
+# alter projects drop column git_id_old
+
+# alter table time rename column git_id to git_id_old
+# alter table time add column git_id integer default 0
+# update time set git_id = gid_id_old where git_id_old <> 0
+# alter table drop column git_id_old
