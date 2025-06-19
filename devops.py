@@ -19,10 +19,9 @@ class DevOpsClient:
             self.wit_client = self.get_work_item_tracking_client()
         except AzureDevOpsServiceError as e:
             if "expired" in str(e).lower():
-                print("Personal Access Token has expired. Please renew it.")
-                return -1
+                raise "Personal Access Token has expired. Please renew it."
             else:
-                print(f"Failed to connect to Azure DevOps: {e}")
+                raise f"Failed to connect to Azure DevOps: {e}"
 
     def get_work_item_tracking_client(self):
         if not self.connection:
