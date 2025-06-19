@@ -117,6 +117,13 @@ df_do = db.fetch_query(
 )
 try:
     for _, row in df_do.iterrows():
+        if row["org_url"].lower() in ["", "none", "null"] or row[
+            "pat_token"
+        ].lower() in ["", "none", "null"]:
+            db.pre_run_log.append(
+                f"Found null row in valid connections for customer: {row['customer_name']}. Skipping connection attempt"
+            )
+            continue
         org_url = f"https://dev.azure.com/{row['org_url']}"
         do_con[row["customer_name"]] = DevOpsClient(
             row["pat_token"], org_url
@@ -126,6 +133,7 @@ try:
             f"DevOps connection established to {row['customer_name']} for organization {row['org_url']}"
         )
 except Exception as e:
+    print("tada")
     print(e)  ## TODO someting nicer here...!
 
 # personal_access_token = "2Ae4xSjyf1m62hWmywoDxJIDcd4f3fzPSlNqzGomnlRKKTIXZFOrJQQJ99BEACAAAAABrcj0AAASAZDO33L0"
