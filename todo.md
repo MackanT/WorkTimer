@@ -29,7 +29,7 @@
 -.JSON fil auto-populeras inte med nya customer_id
 - ~Efter remove customer döljs den inte från "knapparna"~
 - comment not wraping text
-- when minimizing and opening window all customer projects are minimized
+- ~when minimizing and opening window all customer projects are minimized~
 - ~customer tab to tall, moving log to bottom~
 - ~Amount shows incorrect wage. I.e project_name = Förvaltning date_key = 20250502 is 133.31, shows 99.99~
 - ~_get_value_from_db returns wrongful datatypes~

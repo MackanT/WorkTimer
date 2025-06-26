@@ -5,6 +5,7 @@ import time
 import queue
 import threading
 
+import win32gui
 import re
 import os
 import json
@@ -149,6 +150,40 @@ with dpg.texture_registry():
     icon_calendar = dpg.add_static_texture(width, height, data)
 
 input_focused = False
+
+
+###
+# Detect open/closed-state of collapsing customer headers - needed to counteract bug in DPG
+###
+header_state = {}
+
+
+def on_header_change(tag: str):
+    """Updates the stored state of the tag into the dict header_state"""
+    new_state = dpg.get_value(tag)
+    header_state[tag] = not new_state
+
+
+def is_window_minimized(title: str = "Work Timer v3") -> bool:
+    """
+    Returns True if the window with the given title is minimized, otherwise False.
+
+    Args:
+        title (str): The window title to check.
+
+    Returns:
+        bool: True if minimized, False otherwise.
+    """
+    hwnd = win32gui.FindWindow(None, title)
+    if hwnd:
+        return win32gui.IsIconic(hwnd)  # Returns True if minimized
+    return False
+
+
+def __fix_headers() -> None:
+    """Sets header state for customer projects as bug in DPG causes them to auto-close on minimiziation of the window"""
+    for tag in header_state:
+        dpg.set_value(tag, header_state[tag])
 
 
 ###
@@ -447,13 +482,27 @@ def render_customer_project_ui():
         ]
 
         # One header per customer inside the "Customers" section
+        header_tag = f"header_{customer_id}"
         header_id = dpg.add_collapsing_header(
             label=customer_name,
             default_open=True,
             indent=10,
             parent="customer_ui_section",
-            tag=f"header_{customer_id}",
+            tag=header_tag,
         )
+
+        def make_header_callback(tag):
+            return lambda s, a: on_header_change(tag)
+
+        handler_tag = f"header_{customer_id}_handler"
+        if not dpg.does_item_exist(handler_tag):
+            with dpg.item_handler_registry(tag=handler_tag) as handler:
+                dpg.add_item_activated_handler(
+                    callback=make_header_callback(header_tag)
+                )
+            dpg.bind_item_handler_registry(header_id, handler_tag)
+
+        header_state[header_tag] = True
 
         # Add "Move Up" and "Move Down" buttons
         with dpg.group(horizontal=True, parent=header_id):
@@ -1628,8 +1677,10 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
         ):
             pass  # Placeholder for dynamic content
 
+
+program_name = "Work Timer v3"
 frame = dpg.create_viewport(
-    title="Work Timer v3",
+    title=program_name,
     width=WIDTH + 15,
     height=HEIGHT + 50,
     small_icon="graphics\\program_logo.ico",
@@ -1641,7 +1692,6 @@ dpg.show_viewport()
 dpg.set_frame_callback(1, render_customer_project_ui)
 dpg.set_frame_callback(2, populate_pre_log)
 INIT = False
-
 
 last_update_time = time.time()
 
@@ -1726,10 +1776,17 @@ def update_ui_from_df(df: pd.DataFrame, sel_type: str) -> None:
 
 
 # Main Dear PyGui loop
+was_minimized = False
 while dpg.is_dearpygui_running():
     db.process_queue()
     periodic_update()
     dpg.render_dearpygui_frame()
+
+    # Minimize detection logic here
+    minimized = is_window_minimized(program_name)
+    if not minimized and was_minimized:
+        __fix_headers()
+    was_minimized = minimized
 
 dpg.destroy_context()
 
