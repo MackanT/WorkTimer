@@ -26,7 +26,7 @@
 ### Buggar
 
 - Varning om att Bonus måste skapas upp, annars krash
--.JSON fil auto-populeras inte med nya customer_id
+- ~.JSON fil auto-populeras inte med nya customer_id~ Not applicable after move to sql-table
 - ~Efter remove customer döljs den inte från "knapparna"~
 - comment not wraping text
 - ~when minimizing and opening window all customer projects are minimized~

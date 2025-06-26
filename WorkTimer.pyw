@@ -2,6 +2,7 @@ import dearpygui.dearpygui as dpg
 from datetime import datetime, timedelta
 import pandas as pd
 import time
+
 import queue
 import threading
 
@@ -452,13 +453,7 @@ def __get_user_input() -> tuple[int, int, str]:
     return start_date, end_date, sel_type
 
 
-# Global variable to store the header order
-header_order = []
-
-
 def render_customer_project_ui():
-    global header_order
-
     start_date, end_date, sel_type = __get_user_input()
 
     # Fetch the default order of customer IDs from the database
@@ -1774,6 +1769,9 @@ def update_ui_from_df(df: pd.DataFrame, sel_type: str) -> None:
         except Exception:
             pass  # Header might not exist yet
 
+
+# with dpg.handler_registry():
+#     dpg.add_key_press_handler(key=dpg.mvKey_R, callback=lambda: print(header_state))
 
 # Main Dear PyGui loop
 was_minimized = False
