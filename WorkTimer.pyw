@@ -138,11 +138,6 @@ except Exception as e:
     print("tada")
     print(e)  ## TODO someting nicer here...!
 
-# personal_access_token = "2Ae4xSjyf1m62hWmywoDxJIDcd4f3fzPSlNqzGomnlRKKTIXZFOrJQQJ99BEACAAAAABrcj0AAASAZDO33L0"
-# organization_url = "https://dev.azure.com/rowico"
-# do = DevOpsClient(personal_access_token, organization_url)
-# do.connect()
-
 dpg.create_context()
 
 ## Image Input
