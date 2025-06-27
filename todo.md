@@ -6,8 +6,8 @@
 - Devops connector
 - Make PAT-tokens etc masked
 - Option to reenable existing customer/project
-
 - Add custom quick selections
+- Info box not centered on screen
 
 
 ### Buggar
@@ -15,9 +15,7 @@
 - Varning om att Bonus måste skapas upp, annars krash
 - comment not wraping text -- Not possible yet 2025-06-26: https://github.com/hoffstadt/DearPyGui/issues/1504
 
-
-
-### Completed
+### Completed -- Old from before ReadMe
 - ~when minimizing and opening window all customer projects are minimized~
 - ~customer tab to tall, moving log to bottom~
 - ~Amount shows incorrect wage. I.e project_name = Förvaltning date_key = 20250502 is 133.31, shows 99.99~

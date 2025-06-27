@@ -723,7 +723,7 @@ def save_popup_data(customer_id: int, project_id: int, window_tag, customer_name
             status = do_con[customer_name].add_comment_to_work_item(git_id, comment)
             if status:
                 print("Error:", status)
-                show_error_popup(status)
+                show_message_popup(status)
 
     dpg.delete_item(window_tag)
     run_update_ui_task()
@@ -741,17 +741,17 @@ def delete_popup_action(sender, app_data, customer_id, project_id, window_tag):
     run_update_ui_task()
 
 
-def show_error_popup(error_message: str = None) -> None:
-    if not dpg.does_item_exist("error_popup"):
-        with dpg.window(label="Error", tag="error_popup"):
-            dpg.add_text(error_message, wrap=400, tag="error_text")
-            dpg.add_button(label="OK", callback=lambda: dpg.hide_item("error_popup"))
-            dpg.configure_item("error_popup", show=True)
+def show_message_popup(message: str = None, popup_type: str = "Error") -> None:
+    if not dpg.does_item_exist("message_popup"):
+        with dpg.window(label=popup_type, tag="message_popup"):
+            dpg.add_text(message, wrap=400, tag="popup_text")
+            dpg.add_button(label="OK", callback=lambda: dpg.hide_item("message_popup"))
+            dpg.configure_item("message_popup", show=True)
     else:
-        dpg.configure_item("error_popup", show=True)
-        dpg.set_value("error_text", error_message)
+        dpg.configure_item("message_popup", show=True)
+        dpg.set_value("popup_text", message)
 
-    dpg.focus_item("error_popup")
+    dpg.focus_item("message_popup")
 
 
 def open_query_popup() -> None:
@@ -824,7 +824,6 @@ def open_query_popup() -> None:
                 dpg.bind_item_handler_registry("query_input", "query_input_handler")
 
         # Box for displaying tabular data
-        # with dpg.group(tag="query_output_group"):
         dpg.add_text("Tabular Data:")
 
         handle_query_input()
@@ -902,7 +901,7 @@ def _on_edit_row_ok(sender, app_data, user_data: str):
         vals.append((col, value))
 
     if errors:
-        dpg.set_value(f"{popup_tag}_error_text", "\n".join(errors))
+        dpg.set_value(f"{popup_tag}_popup_text", "\n".join(errors))
         return
 
     sql_query = f"update {table_name} set "
@@ -1037,7 +1036,7 @@ def clb_selectable(sender, app_data, user_data):
                     project_name=df["project_name"].iloc[0],
                 )
 
-        dpg.add_text("", color=WARNING_RED, tag=f"{popup_tag}_error_text")
+        dpg.add_text("", color=WARNING_RED, tag=f"{popup_tag}_popup_text")
         with dpg.group(horizontal=True):
             dpg.add_button(
                 label="OK",
@@ -1068,19 +1067,19 @@ def handle_query_input():
         df = r_queue.get()
 
         if isinstance(df, Exception):
-            show_error_popup(f"Error: {str(df)}")
+            show_message_popup(f"Error: {str(df)}")
             return
         elif isinstance(df, list) and len(df) == 0:
-            show_error_popup("Command completed successfully!")
+            show_message_popup("Command completed successfully!", popup_type="Success")
             return
         elif isinstance(df, pd.errors.DatabaseError):
-            show_error_popup(df)
+            show_message_popup(df)
             return
         elif df is None or not isinstance(df, pd.DataFrame) or df.empty:
             print("Query Error: No data returned! Evaluate and find when we get here!")
             return
         elif len(df) == 0:
-            show_error_popup("Query returned no results!")
+            show_message_popup("Query returned no results!", popup_type="Info")
             return
 
         # Extract the table name from the query
