@@ -7,3 +7,4 @@ A helper program to keep time of time spent on different tasks, with built in De
 - First official release
 - Fixed long standing bug with customer headers auto-closing on minimization of the program
 - Message popup now supports multiple types, error, info, etc.
+- DevOps connector throws better error on failure to connect

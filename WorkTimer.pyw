@@ -127,9 +127,7 @@ try:
             )
             continue
         org_url = f"https://dev.azure.com/{row['org_url']}"
-        do_con[row["customer_name"]] = DevOpsClient(
-            row["pat_token"], org_url
-        )  # TODO add fix for missing PAT token
+        do_con[row["customer_name"]] = DevOpsClient(row["pat_token"], org_url)
         do_con[row["customer_name"]].connect()
         db.pre_run_log.append(
             f"DevOps connection established to {row['customer_name']} for organization {row['org_url']}"
