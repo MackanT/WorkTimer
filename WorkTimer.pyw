@@ -229,7 +229,7 @@ def __is_valid_date(date_str: str) -> bool:
         return False
 
 
-def populate_pre_log():
+def __populate_pre_log():
     for line in db.pre_run_log:
         __log_message(line, type="INFO")
 
@@ -1737,10 +1737,19 @@ dpg.setup_dearpygui()
 dpg.show_viewport()
 
 dpg.set_frame_callback(1, render_customer_project_ui)
+dpg.set_frame_callback(2, __populate_pre_log)
 dpg.set_frame_callback(3, __validate_db)
 INIT = False
 
 last_update_time = time.time()
+
+# Debug test function without inputs
+# with dpg.handler_registry():
+#     dpg.add_key_press_handler(key=dpg.mvKey_S, callback=validate_db)
+
+# Debug test function with inputs
+# with dpg.handler_registry():
+#     dpg.add_key_press_handler(key=dpg.mvKey_R, callback=lambda: print("a"))
 
 
 def periodic_update():
@@ -1821,9 +1830,6 @@ def update_ui_from_df(df: pd.DataFrame, sel_type: str) -> None:
         except Exception:
             pass  # Header might not exist yet
 
-
-# with dpg.handler_registry():
-#     dpg.add_key_press_handler(key=dpg.mvKey_R, callback=lambda: print(header_state))
 
 # Main Dear PyGui loop
 was_minimized = False
