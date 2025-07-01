@@ -33,6 +33,9 @@ QUERY_WIDTH = 1280
 WIDTH = 500
 HEIGHT = 600
 
+POPUP_WIDTH = 300
+POPUP_HEIGHT = 100
+
 TIME_ID = 0  # 0 = Day, 1 = Week, 2 = Month, 3 = Year, 4 = All-Time
 TYPE_ID = 0  # 0 = Time, 1 = Bonus Wage
 SELECTED_DATE = datetime.now().strftime("%Y-%m-%d")
@@ -133,7 +136,6 @@ try:
             f"DevOps connection established to {row['customer_name']} for organization {row['org_url']}"
         )
 except Exception as e:
-    print("tada")
     print(e)  ## TODO someting nicer here...!
 
 dpg.create_context()
@@ -658,7 +660,7 @@ def show_project_popup(
             no_resize=True,
             no_move=True,
             no_close=True,
-            width=WIDTH / 2,
+            width=WIDTH / 1.5,
             height=HEIGHT / 3,
         ):
             git_queue = queue.Queue()
@@ -740,14 +742,28 @@ def delete_popup_action(sender, app_data, customer_id, project_id, window_tag):
 
 
 def show_message_popup(message: str = None, popup_type: str = "Error") -> None:
+    # Get the current viewport size
+    vp_width, vp_height = dpg.get_viewport_width(), dpg.get_viewport_height()
+
+    # Calculate centered position
+    pos_x = (vp_width - POPUP_WIDTH) // 2
+    pos_y = (vp_height - POPUP_HEIGHT) // 2
+
     if not dpg.does_item_exist("message_popup"):
-        with dpg.window(label=popup_type, tag="message_popup"):
+        with dpg.window(
+            label=popup_type,
+            tag="message_popup",
+            width=POPUP_WIDTH,
+            height=POPUP_HEIGHT,
+            pos=(pos_x, pos_y),
+        ):
             dpg.add_text(message, wrap=400, tag="popup_text")
             dpg.add_button(label="OK", callback=lambda: dpg.hide_item("message_popup"))
             dpg.configure_item("message_popup", show=True)
     else:
         dpg.configure_item("message_popup", show=True)
         dpg.set_value("popup_text", message)
+        dpg.set_item_pos("message_popup", [pos_x, pos_y])
 
     dpg.focus_item("message_popup")
 
@@ -966,15 +982,24 @@ def clb_selectable(sender, app_data, user_data):
     if dpg.does_item_exist(popup_tag):
         dpg.delete_item(popup_tag)
 
+    vp_width, vp_height = dpg.get_viewport_width(), dpg.get_viewport_height()
+
+    popup_width = QUERY_WIDTH / 4
+    popup_height = 25 * (len(editable_cols) + 4)
+
+    # Calculate centered position
+    pos_x = (vp_width - POPUP_WIDTH) // 2
+    pos_y = (vp_height - POPUP_HEIGHT) // 2
+
     # (Re)creates popup
     with dpg.window(
         label="Edit Cell",
         tag=popup_tag,
         modal=True,
         no_close=True,
-        width=QUERY_WIDTH / 4,  # TODO based on constant
-        height=25
-        * (len(editable_cols) + 4),  # TODO dynamic based on num editable fields!
+        width=popup_width,
+        height=popup_height,
+        pos=(pos_x, pos_y),
     ):
         dpg.add_text(f"Updating row in table: {table_name}")
 

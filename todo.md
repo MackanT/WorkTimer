@@ -7,7 +7,6 @@
 - Make PAT-tokens etc masked
 - Option to reenable existing customer/project
 - Add custom quick selections
-- Info box not centered on screen
 
 
 ### Buggar
