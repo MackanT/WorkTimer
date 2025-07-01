@@ -501,7 +501,7 @@ class Database:
                 end as sort_order
         """
         result = self.fetch_query(query, (customer_name, customer_name))
-        sort_orter = int(result.iloc[0, 0])
+        sort_order = int(result.iloc[0, 0])
 
         self.execute_query(
             """
@@ -517,10 +517,10 @@ class Database:
 
         self.execute_query(
             """
-            insert into customers (customer_name, start_date, wage, valid_from, valid_to, is_current, inserted_at, updated_at, sort_order)
+            insert into customers (customer_name, start_date, wage, sort_order, valid_from, valid_to, is_current, inserted_at, updated_at)
             values (?, ?, ?, ?, ?, 1, ?, ?, ?)
         """,
-            (customer_name, start_date, wage, valid_from, None, now, None, sort_orter),
+            (customer_name, start_date, wage, sort_order, valid_from, None, now, None),
         )
 
     def update_customer(self, customer_name: str, new_customer_name: str, wage: int):
