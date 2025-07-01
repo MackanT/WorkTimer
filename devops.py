@@ -1,6 +1,6 @@
 from azure.devops.connection import Connection
 from msrest.authentication import BasicAuthentication
-from azure.devops.v7_1.work_item_tracking.models import JsonPatchOperation
+from azure.devops.v7_1.work_item_tracking.models import CommentCreate
 from azure.devops.exceptions import AzureDevOpsServiceError
 
 
@@ -32,16 +32,14 @@ class DevOpsClient:
         return self.connection.clients.get_work_item_tracking_client()
 
     def add_comment_to_work_item(self, work_item_id, comment_text):
-        # Create a patch document to add a comment
-        patch_document = [
-            JsonPatchOperation(
-                op="add", path="/fields/System.History", value=comment_text
-            )
-        ]
+        comment_text = comment_text.replace("\n", "<br>")  # Fix for new lines
 
         try:
-            updated_item = self.wit_client.update_work_item(
-                document=patch_document, id=work_item_id
+            comment_obj = CommentCreate(text=comment_text)
+            self.wit_client.add_comment(
+                request=comment_obj,
+                project="Rowico Home Data Cloud",
+                work_item_id=work_item_id,
             )
         except AzureDevOpsServiceError as e:
             if (
@@ -53,7 +51,6 @@ class DevOpsClient:
                 return f"Azure DevOps error occurred: {e}"
 
         return None
-        # print(f"Updated work item {updated_item.id} with new comment.")
 
 
 # # Define the work item fields

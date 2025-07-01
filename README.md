@@ -9,3 +9,6 @@ A helper program to keep time of time spent on different tasks, with built in De
 - Message popup now supports multiple types, error, info, etc.
 - DevOps connector throws better error on failure to connect
 - Error/Info and edit popups are now centered on screen upon creation
+- Added argpares support '--db {db_name}' to allow running code with multiple databases
+- Added option for startup checks on db. Currently only checks if a bonus is added or not
+- Newlines are now kept when writing to devops

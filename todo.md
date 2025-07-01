@@ -11,7 +11,6 @@
 
 ### Buggar
 
-- Varning om att Bonus måste skapas upp, annars krash
 - comment not wraping text -- Not possible yet 2025-06-26: https://github.com/hoffstadt/DearPyGui/issues/1504
 
 ### Completed -- Old from before ReadMe
