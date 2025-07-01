@@ -772,8 +772,11 @@ def show_message_popup(message: str = None, popup_type: str = "Error") -> None:
             width=POPUP_WIDTH,
             height=POPUP_HEIGHT,
             pos=(pos_x, pos_y),
+            no_close=True,
+            no_collapse=True,
+            no_move=True,
         ):
-            dpg.add_text(message, wrap=400, tag="popup_text")
+            dpg.add_text(message, wrap=POPUP_WIDTH - 20, tag="popup_text")
             dpg.add_button(label="OK", callback=lambda: dpg.hide_item("message_popup"))
             dpg.configure_item("message_popup", show=True)
     else:
