@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import time
 
+import argparse
 import queue
 import threading
 
@@ -19,6 +20,8 @@ from dataclasses import dataclass
 ###
 # Constants
 ###
+PROGRAM_NAME = "Work Timer v3"
+
 COMBO_WIDTH = 325
 INDENT_1 = 15
 INDENT_2 = 10
@@ -105,9 +108,22 @@ TABLE_IDS = {
 
 
 ###
+# Argument Paring
+###
+def parse_args():
+    parser = argparse.ArgumentParser(description=PROGRAM_NAME)
+    parser.add_argument(
+        "--db", type=str, default="data_dpg", help="Database name to load"
+    )
+    return parser.parse_args()
+
+
+###
 # SQL-Backend logic
 ###
-db_file = "data_dpg.db"
+
+args = parse_args()
+db_file = f"{args.db}.db"
 
 db = Database(db_file)
 db.initialize_db()
@@ -1692,7 +1708,7 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
 
 program_name = "Work Timer v3"
 frame = dpg.create_viewport(
-    title=program_name,
+    title=PROGRAM_NAME,
     width=WIDTH + 15,
     height=HEIGHT + 50,
     small_icon="graphics\\program_logo.ico",
@@ -1798,7 +1814,7 @@ while dpg.is_dearpygui_running():
     dpg.render_dearpygui_frame()
 
     # Minimize detection logic here
-    minimized = is_window_minimized(program_name)
+    minimized = is_window_minimized(PROGRAM_NAME)
     if not minimized and was_minimized:
         __fix_headers()
     was_minimized = minimized
