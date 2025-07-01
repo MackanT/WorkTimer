@@ -132,6 +132,7 @@ class Database:
                     customer_name text,
                     start_date datetime,
                     wage real,
+                    sort_order integer default 1,
                     pat_token text,
                     org_url text,
                     valid_from datetime,
@@ -413,7 +414,7 @@ class Database:
                                     * ifnull(t.wage, 0)
                                     * ifnull(t.bonus, 0)
                                 ), 0) as user_bonus
-                                ,min(sort_order) as sort_order
+                                ,min(coalesce(c.sort_order, 0)) as sort_order
                             from projects p
                             left join customers c on c.customer_id = p.customer_id and c.is_current = 1
                             left join time t on t.customer_id = p.customer_id and t.project_id = p.project_id
