@@ -138,8 +138,7 @@ class Database:
                     valid_from datetime,
                     valid_to datetime,
                     is_current integer,
-                    inserted_at datetime,
-                    updated_at datetime
+                    inserted_at datetime
                 )
                 """)
                 self.pre_run_log.append("Table 'customers' created successfully.")
@@ -354,7 +353,7 @@ class Database:
                     self.insert_bonus(data["start_date"], data["amount"])
                 elif action == "get_wage":
                     result = self._get_value_from_db(
-                        "selec wage from customers where customer_name = ? and is_current = 1",
+                        "select wage from customers where customer_name = ? and is_current = 1",
                         (data["customer_name"],),
                         data_type="int",
                     )
@@ -482,6 +481,7 @@ class Database:
     def insert_customer(
         self, customer_name: str, start_date: str, wage: int, valid_from: str = None
     ):
+        print("here")
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if not valid_from:
@@ -501,6 +501,7 @@ class Database:
                     else (select ifnull(max(sort_order), 0) + 1 from customers)
                 end as sort_order
         """
+
         result = self.fetch_query(query, (customer_name, customer_name))
         sort_order = int(result.iloc[0, 0])
 
@@ -509,19 +510,28 @@ class Database:
             update customers
             set
                 is_current = 0,
-                valid_to = ?,
-                updated_at = ?
+                valid_to = ?
             where customer_name = ? and is_current = 1
         """,
-            (valid_to, now, customer_name),
+            (valid_to, customer_name),
         )
 
         self.execute_query(
             """
-            insert into customers (customer_name, start_date, wage, sort_order, valid_from, valid_to, is_current, inserted_at, updated_at)
-            values (?, ?, ?, ?, ?, 1, ?, ?, ?)
+            insert into customers (customer_name, start_date, wage, sort_order, pat_token, org_url, valid_from, valid_to, is_current, inserted_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """,
-            (customer_name, start_date, wage, sort_order, valid_from, None, now, None),
+            (
+                customer_name,
+                start_date,
+                wage,
+                sort_order,
+                None,
+                None,
+                valid_from,
+                None,
+                now,
+            ),
         )
 
     def update_customer(self, customer_name: str, new_customer_name: str, wage: int):
