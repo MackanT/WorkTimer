@@ -481,7 +481,6 @@ class Database:
     def insert_customer(
         self, customer_name: str, start_date: str, wage: int, valid_from: str = None
     ):
-        print("here")
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if not valid_from:
@@ -501,7 +500,6 @@ class Database:
                     else (select ifnull(max(sort_order), 0) + 1 from customers)
                 end as sort_order
         """
-
         result = self.fetch_query(query, (customer_name, customer_name))
         sort_order = int(result.iloc[0, 0])
 
