@@ -1706,7 +1706,26 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
             pass  # Placeholder for dynamic content
 
 
-program_name = "Work Timer v3"
+def __validate_db():
+    err_msg = ""
+
+    r_queue = queue.Queue()
+    db.queue_task(
+        "run_query",
+        {
+            "query": "select count(*) as count from bonus where current_timestamp between start_date and coalesce(end_date, '2999-12-31')"
+        },
+        response=r_queue,
+    )
+    df = r_queue.get()
+
+    if df["count"].iloc[0] != 1:
+        err_msg += "Found no valid bonus set! Add one before using the program!"
+
+    if err_msg != "":
+        show_message_popup(err_msg)
+
+
 frame = dpg.create_viewport(
     title=PROGRAM_NAME,
     width=WIDTH + 15,
@@ -1718,7 +1737,7 @@ dpg.setup_dearpygui()
 dpg.show_viewport()
 
 dpg.set_frame_callback(1, render_customer_project_ui)
-dpg.set_frame_callback(2, populate_pre_log)
+dpg.set_frame_callback(3, __validate_db)
 INIT = False
 
 last_update_time = time.time()
