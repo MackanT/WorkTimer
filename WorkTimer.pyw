@@ -1117,11 +1117,10 @@ def handle_query_input():
         elif isinstance(df, pd.errors.DatabaseError):
             show_message_popup(df)
             return
-        elif df is None or not isinstance(df, pd.DataFrame) or df.empty:
-            print("Query Error: No data returned! Evaluate and find when we get here!")
-            return
-        elif len(df) == 0:
-            show_message_popup("Query returned no results!", popup_type="Info")
+        elif df is None or not isinstance(df, pd.DataFrame):
+            __log_message(
+                "Query Error: No data returned! Evaluate and find when we get here!"
+            )
             return
 
         # Extract the table name from the query
