@@ -1781,7 +1781,8 @@ def run_update_ui_task():
     )
     df = r_queue.get()
 
-    update_ui_from_df(df, sel_type)
+    if len(df) > 1:
+        update_ui_from_df(df, sel_type)
 
 
 def update_ui_from_df(df: pd.DataFrame, sel_type: str) -> None:
