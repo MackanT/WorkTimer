@@ -17,7 +17,11 @@ class DevOpsClient:
                 base_url=self.organization_url, creds=credentials
             )
             self.wit_client = self.get_work_item_tracking_client()
-        except AzureDevOpsServiceError as e:
+
+            # Attempt a simple call to ensure connection is valid
+            core_client = self.connection.clients.get_core_client()
+            core_client.get_projects(top=1)
+        except Exception as e:
             msg = str(e).lower()
             if "expired" in msg or "revoked" in msg or "unauthorized" in msg:
                 raise Exception(
