@@ -21,6 +21,7 @@ from dataclasses import dataclass
 # Constants
 ###
 PROGRAM_NAME = "Work Timer v3"
+DEVOPS_URL = "https://dev.azure.com/"
 
 COMBO_WIDTH = 325
 INDENT_1 = 15
@@ -145,7 +146,7 @@ try:
                 f"Found null row in valid connections for customer: {row['customer_name']}. Skipping connection attempt"
             )
             continue
-        org_url = f"https://dev.azure.com/{row['org_url']}"
+        org_url = f"{DEVOPS_URL}{row['org_url']}"
         do_con[row["customer_name"]] = DevOpsClient(row["pat_token"], org_url)
         do_con[row["customer_name"]].connect()
         db.pre_run_log.append(
