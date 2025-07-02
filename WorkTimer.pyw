@@ -11,6 +11,7 @@ import win32gui
 import re
 import os
 import json
+import random
 
 from database import Database
 from devops import DevOpsClient
@@ -327,10 +328,18 @@ def __update_text_input(tag: str):
         dpg.set_value("customer_update_customer_name_input", cur_val)
 
         r_queue = queue.Queue()
-        db.queue_task("get_wage", {"customer_name": cur_val}, response=r_queue)
-        new_wage = r_queue.get()
+        db.queue_task(
+            "get_customer_update", {"customer_name": cur_val}, response=r_queue
+        )
+        df = r_queue.get()
+        df = df.iloc[0] if isinstance(df, pd.DataFrame) else df
+        new_wage = int(df["wage"])
+        org_url = df["org_url"]
+        pat_token = df["pat_token"]
 
         dpg.set_value("customer_update_wage_input", new_wage)
+        dpg.set_value("customer_update_devops_url_input", org_url)
+        dpg.set_value("customer_update_devops_pat_input", pat_token)
     elif tag == "project_update_project_name_dropdown":
         cur_p_name = dpg.get_value(tag)
         cur_c_name = dpg.get_value("project_update_customer_name_dropdown")

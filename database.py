@@ -357,11 +357,10 @@ class Database:
                     self.remove_project(data["customer_name"], data["project_name"])
                 elif action == "insert_bonus":
                     self.insert_bonus(data["start_date"], data["amount"])
-                elif action == "get_wage":
-                    result = self._get_value_from_db(
-                        "select wage from customers where customer_name = ? and is_current = 1",
+                elif action == "get_customer_update":
+                    result = self.fetch_query(
+                        "select wage, org_url, pat_token from customers where customer_name = ? and is_current = 1",
                         (data["customer_name"],),
-                        data_type="int",
                     )
                     if response:
                         response.put(result)
