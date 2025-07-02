@@ -947,6 +947,23 @@ def _on_edit_row_ok(sender, app_data, user_data: str):
         dpg.set_value(f"{popup_tag}_popup_text", "\n".join(errors))
         return
 
+    if table_name == "customers":
+        pat_token = ""
+        org_url = ""
+        for val in vals:
+            if val[0] == "pat_token":
+                pat_token = val[1]
+            elif val[0] == "org_url":
+                org_url = val[1]
+
+        try:
+            full_org_url = f"{DEVOPS_URL}{org_url}"
+            devops_client = DevOpsClient(pat_token, full_org_url)
+            devops_client.connect()
+        except Exception as e:
+            dpg.set_value(f"{popup_tag}_popup_text", "Failure connecting to DevOps!")
+            return
+
     sql_query = f"update {table_name} set "
     for val_set in vals:
         data_type = table_data[val_set[0]].type
