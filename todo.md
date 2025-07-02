@@ -1,7 +1,7 @@
 ### TODO
 
-- Easy way to add time in post. For ex. change customer/project/git
-(auto-set date at midnight)~
+- Easy way to add time in post.
+- ~auto-set date at midnight~
 - update customer/project should also update times values!
 - Devops connector
 - Make PAT-tokens etc masked
