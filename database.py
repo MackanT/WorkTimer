@@ -326,13 +326,19 @@ class Database:
             try:
                 if action == "insert_customer":
                     self.insert_customer(
-                        data["customer_name"], data["start_date"], int(data["wage"])
+                        customer_name=data["customer_name"],
+                        start_date=data["start_date"],
+                        wage=int(data["wage"]),
+                        pat_token=data.get("pat_token"),
+                        org_url=data.get("org_url"),
                     )
                 elif action == "update_customer":
                     self.update_customer(
-                        data["customer_name"],
-                        data["new_customer_name"],
-                        int(data["wage"]),
+                        customer_name=data["customer_name"],
+                        new_customer_name=data["new_customer_name"],
+                        wage=int(data["wage"]),
+                        org_url=data.get("org_url"),
+                        pat_token=data.get("pat_token"),
                     )
                 elif action == "remove_customer":
                     self.remove_customer(data["customer_name"])
@@ -479,7 +485,13 @@ class Database:
 
     ### Customer Table Operations ###
     def insert_customer(
-        self, customer_name: str, start_date: str, wage: int, valid_from: str = None
+        self,
+        customer_name: str,
+        start_date: str,
+        wage: int,
+        org_url: str = None,
+        pat_token: str = None,
+        valid_from: str = None,
     ):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -524,24 +536,33 @@ class Database:
                 start_date,
                 wage,
                 sort_order,
-                None,
-                None,
+                pat_token,
+                org_url,
                 valid_from,
                 None,
                 now,
             ),
         )
 
-    def update_customer(self, customer_name: str, new_customer_name: str, wage: int):
+    def update_customer(
+        self,
+        customer_name: str,
+        new_customer_name: str,
+        wage: int,
+        org_url: str = None,
+        pat_token: str = None,
+    ):
         self.execute_query(
             """
             update customers
             set
                 customer_name = ?,
-                wage = ? 
+                wage = ?,
+                org_url = ?,
+                pat_token = ?
             where customer_name = ?
         """,
-            (new_customer_name, wage, customer_name),
+            (new_customer_name, wage, org_url, pat_token, customer_name),
         )
 
         self.execute_query(

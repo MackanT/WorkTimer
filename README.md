@@ -12,3 +12,4 @@ A helper program to keep time of time spent on different tasks, with built in De
 - Added argpares support '--db {db_name}' to allow running code with multiple databases
 - Added option for startup checks on db. Currently only checks if a bonus is added or not
 - Newlines are now kept when writing to devops
+- When adding or updating customers org-url and pat-token can now be entered directly

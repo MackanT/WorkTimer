@@ -1220,10 +1220,14 @@ def __post_user_input() -> None:
     dpg.set_value("customer_add_name_input", "")
     dpg.set_value("customer_add_start_date_input", "")
     dpg.set_value("customer_add_wage_input", 0)
+    dpg.set_value("customer_add_devops_url_input", "")
+    dpg.set_value("customer_add_devops_pat_input", "")
     # Update Customer
     dpg.set_value("customer_update_name_dropdown", "")
     dpg.set_value("customer_update_customer_name_input", "")
     dpg.set_value("customer_update_wage_input", 0)
+    dpg.set_value("customer_update_devops_url_input", "")
+    dpg.set_value("customer_update_devops_pat_input", "")
     # Remove Customer
     dpg.set_value("customer_delete_name_dropdown", "")
     # Add Project
@@ -1245,6 +1249,38 @@ def __post_user_input() -> None:
     render_customer_project_ui()
 
 
+def __validate_devops_inputs(tag_type: str, org_url: str, pat_token: str) -> bool:
+    if (org_url and not pat_token) or (not org_url and pat_token):
+        rand = random.randint(0, 10)
+        def_msg = "Both Org-URL and PAT-Token must be specified!"
+        if rand < 3:
+            def_msg = "You can't have one without the other!"
+        __hide_text_after_seconds(
+            f"customer_{tag_type}_error_label",
+            def_msg,
+            3,
+        )
+        return False
+    if org_url and pat_token:
+        try:
+            full_org_url = f"{DEVOPS_URL}{org_url}"
+            devops_client = DevOpsClient(pat_token, full_org_url)
+            devops_client.connect()
+        except Exception as e:
+            __log_message(
+                f"Failed to add Customer, error connecting with specified DevOps connection: {str(e)}",
+                type="ERROR",
+            )
+            __hide_text_after_seconds(
+                f"customer_{tag_type}_error_label",
+                "Org-URL and PAT-Token fails connection!",
+                3,
+            )
+            return False
+
+    return True
+
+
 def add_customer_data(sender, app_data) -> None:
     customer_name = dpg.get_value("customer_add_name_input")
     if customer_name == "":
@@ -1261,6 +1297,12 @@ def add_customer_data(sender, app_data) -> None:
 
     amount = dpg.get_value("customer_add_wage_input")
 
+    org_url = dpg.get_value("customer_add_devops_url_input")
+    pat_token = dpg.get_value("customer_add_devops_pat_input")
+
+    if not __validate_devops_inputs("add", org_url, pat_token):
+        return
+
     ## Case Success:
     if __is_valid_date(start_date):
         __hide_text_after_seconds(
@@ -1268,12 +1310,21 @@ def add_customer_data(sender, app_data) -> None:
         )
         db.queue_task(
             "insert_customer",
-            {"customer_name": customer_name, "start_date": start_date, "wage": amount},
+            {
+                "customer_name": customer_name,
+                "start_date": start_date,
+                "wage": amount,
+                "org_url": org_url,
+                "pat_token": pat_token,
+            },
         )
         __update_dropdown("customer_dropdown")
         __post_user_input()
+        add_msg = ""
+        if org_url and pat_token:
+            add_msg = f" with org URL {org_url} and PAT token {pat_token}."
         __log_message(
-            f"Customer {customer_name} added to DB with start date {start_date} and wage {amount}",
+            f"Customer {customer_name} added to DB with start date {start_date} and wage {amount}. {add_msg}",
             type="INFO",
         )
 
@@ -1298,6 +1349,12 @@ def update_customer_data(sender, app_data) -> None:
 
     ## Success Case:
     customer_wage = dpg.get_value("customer_update_wage_input")
+    pat_token = dpg.get_value("customer_update_devops_pat_input")
+    org_url = dpg.get_value("customer_update_devops_url_input")
+
+    if not __validate_devops_inputs("update", org_url, pat_token):
+        return
+
     __hide_text_after_seconds(
         "customer_update_error_label", "Updating customer in DB!", 3, error=False
     )
@@ -1307,12 +1364,17 @@ def update_customer_data(sender, app_data) -> None:
             "customer_name": customer_name,
             "new_customer_name": new_customer_name,
             "wage": customer_wage,
+            "org_url": org_url,
+            "pat_token": pat_token,
         },
     )
     __update_dropdown("customer_dropdown")
     __post_user_input()
+    add_msg = ""
+    if org_url and pat_token:
+        add_msg = f" with org URL {org_url} and PAT token {pat_token}."
     __log_message(
-        f"Customer {customer_name} in DB renamed to {new_customer_name} with wage {customer_wage}",
+        f"Customer {customer_name} in DB renamed to {new_customer_name} with wage {customer_wage}. {add_msg}",
         type="INFO",
     )
 
@@ -1503,6 +1565,13 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                             callback=lambda: set_start_date("customer_add"),
                         )
 
+                    dpg.add_input_text(
+                        label="DevOps Org. URL", tag="customer_add_devops_url_input"
+                    )
+                    dpg.add_input_text(
+                        label="DevOps PAT", tag="customer_add_devops_pat_input"
+                    )
+
                     add_save_button(add_customer_data, "customer_add", "Save")
 
                 with dpg.collapsing_header(
@@ -1525,6 +1594,13 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                         label="Wage",
                         tag="customer_update_wage_input",
                     )
+                    dpg.add_input_text(
+                        label="DevOps Org. URL", tag="customer_update_devops_url_input"
+                    )
+                    dpg.add_input_text(
+                        label="DevOps PAT", tag="customer_update_devops_pat_input"
+                    )
+
                     add_save_button(update_customer_data, "customer_update", "Update")
 
                 with dpg.collapsing_header(
