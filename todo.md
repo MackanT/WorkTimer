@@ -1,12 +1,12 @@
 ### TODO
 
 - Easy way to add time in post.
-- ~auto-set date at midnight~
 - update customer/project should also update times values!
 - Devops connector
 - Make PAT-tokens etc masked
 - Option to reenable existing customer/project
 - Add custom quick selections
+- Defaults to first project available per organisationurl
 
 
 ### Buggar

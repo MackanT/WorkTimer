@@ -1,5 +1,5 @@
 import dearpygui.dearpygui as dpg
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pandas as pd
 import time
 
@@ -155,7 +155,6 @@ try:
         )
 except Exception as e:
     print(e)  ## TODO someting nicer here...!
-
 dpg.create_context()
 
 ## Image Input
@@ -1779,7 +1778,9 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                     today_struct = __get_current_date_struct()
                     dpg.add_text("Select Date:")
                     dpg.add_date_picker(
-                        default_value=today_struct, callback=on_date_selected
+                        default_value=today_struct,
+                        callback=on_date_selected,
+                        tag="settings_date_picker",
                     )
 
         # "Queries" Section
@@ -1848,9 +1849,14 @@ INIT = False
 
 last_update_time = time.time()
 
-# Debug test function without inputs
+
+# def test_code():
+#     dpg.set_value("settings_date_picker", __get_current_date_struct())
+
+
+# # Debug test function without inputs
 # with dpg.handler_registry():
-#     dpg.add_key_press_handler(key=dpg.mvKey_S, callback=validate_db)
+#     dpg.add_key_press_handler(key=dpg.mvKey_S, callback=test_code)
 
 # Debug test function with inputs
 # with dpg.handler_registry():
@@ -1869,6 +1875,7 @@ def periodic_update():
     if current_date > CURRENT_DATE:
         CURRENT_DATE = current_date
         SELECTED_DATE = current_date.strftime("%Y-%m-%d")
+        dpg.set_value("settings_date_picker", __get_current_date_struct())
 
 
 def run_update_ui_task():
