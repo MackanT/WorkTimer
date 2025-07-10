@@ -20,7 +20,10 @@ class DevOpsClient:
 
             # Attempt a simple call to ensure connection is valid
             core_client = self.connection.clients.get_core_client()
-            core_client.get_projects(top=1)
+
+            project_list = core_client.get_projects(top=1)  # This is a list now
+            self.project_name = project_list[0].name  # Get the first project's name
+
         except Exception as e:
             msg = str(e).lower()
             if "expired" in msg or "revoked" in msg or "unauthorized" in msg:
@@ -42,7 +45,7 @@ class DevOpsClient:
             comment_obj = CommentCreate(text=comment_text)
             self.wit_client.add_comment(
                 request=comment_obj,
-                project="Rowico Home Data Cloud",
+                project=self.project_name,
                 work_item_id=work_item_id,
             )
         except AzureDevOpsServiceError as e:
