@@ -59,25 +59,22 @@ class DevOpsClient:
 
         return None
 
+    def get_workitem_level(self, level: str):
+        wiql_query = {
+            "query": f"""
+            SELECT [System.Id], [System.Title], [System.State], [System.WorkItemType]
+            FROM WorkItems
+            WHERE [System.TeamProject] = '{self.project_name}'
+            AND [System.WorkItemType] = '{level}'
+            ORDER BY [System.ChangedDate] DESC
+            """
+        }
 
-# # Define the work item fields
-# work_item = [
-#     {"op": "add", "path": "/fields/System.Title", "value": "Sample Task"},
-#     {
-#         "op": "add",
-#         "path": "/fields/System.Description",
-#         "value": "This is a sample task created via the Azure DevOps Python API.",
-#     },
-# ]
+        result = self.wit_client.query_by_wiql(wiql=wiql_query)
+        epic_ids = [item.id for item in result.work_items]
 
-# # Create the work item
-# project = "YOUR_PROJECT_NAME"
-# work_item_type = "Task"
-# created_work_item = wit_client.create_work_item(
-#     document=work_item, project=project, type=work_item_type
-# )
+        # Now get full details
+        epics = self.wit_client.get_work_items(epic_ids, expand="All")
 
-# # Print the created work item details
-# pprint.pprint(created_work_item)
-
-# alter table customers add column sort_order integer default = 0
+        for epic in epics:
+            print(f"{epic.id} - {epic.fields['System.Title']}")

@@ -1850,13 +1850,13 @@ INIT = False
 last_update_time = time.time()
 
 
-# def test_code():
-#     dpg.set_value("settings_date_picker", __get_current_date_struct())
+def test_code():
+    do_con["Castellum"].get_workitem_level("epic")
 
 
-# # Debug test function without inputs
-# with dpg.handler_registry():
-#     dpg.add_key_press_handler(key=dpg.mvKey_S, callback=test_code)
+# Debug test function without inputs
+with dpg.handler_registry():
+    dpg.add_key_press_handler(key=dpg.mvKey_S, callback=test_code)
 
 # Debug test function with inputs
 # with dpg.handler_registry():
