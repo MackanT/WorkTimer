@@ -15,6 +15,51 @@ class Database:
         Initialize the database by creating necessary tables, triggers, and populating the dates table.
         """
 
+        def add_default_settings():
+            # Build the date table
+            color_settings = [
+                ("mvThemeCol_Text", (255, 255, 255, 255), "Text"),
+                (
+                    "mvThemeCol_TextDisabled",
+                    (100, 0, 0, 255),
+                    "Ex. Dates not in current month",
+                ),
+                ("mvThemeCol_WindowBg", (37, 37, 37, 255), "BG around container"),
+                ("mvThemeCol_ChildBg", (37, 37, 37, 255), "BG within container"),
+                ("mvThemeCol_PopupBg", (37, 37, 37, 255), "Popup background"),
+                ("mvThemeCol_Border", (20, 20, 20, 255), "Popup border"),
+                ("mvThemeCol_BorderShadow", (128, 0, 128, 255), "Purple"),
+                ("mvThemeCol_FrameBg", (50, 50, 50, 255), "Input fields"),
+                (
+                    "mvThemeCol_FrameBgHovered",
+                    (128, 128, 128, 255),
+                    "Input field hover",
+                ),
+                ("mvThemeCol_FrameBgActive", (220, 220, 220, 255), "Clicking buttons"),
+                ("mvThemeCol_TitleBg", (37, 37, 37, 255), "Titlebar during popups"),
+                ("mvThemeCol_TitleBgActive", (15, 86, 135, 255), "Titlebar default"),
+                ("mvThemeCol_TitleBgCollapsed", (255, 0, 0, 255), "Navy"),
+            ]
+
+            rows = [
+                {
+                    "setting_name": name,
+                    "setting_type": "ui_color",
+                    "setting_description": desc,
+                    "red": r,
+                    "green": g,
+                    "blue": b,
+                    "alpha": a,
+                }
+                for name, (r, g, b, a), desc in color_settings
+            ]
+
+            # Create DataFrame
+            settings_table = pd.DataFrame(rows)
+            settings_table.to_sql(
+                "settings", self.conn, if_exists="append", index=False
+            )
+
         def add_dates(s_date, e_date):
             """
             Add a range of dates to the 'dates' table.
@@ -197,6 +242,30 @@ class Database:
                     self.pre_run_log.append("Dates table populated successfully.")
                 except Exception as e:
                     self.pre_run_log.append(f"Error populating dates table: {e}")
+
+            ## UI Settings table
+            df_time = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'settings'"
+            )
+            if df_time.empty:
+                self.execute_query("""
+                create table if not exists settings (
+                    setting_name text unique,
+                    setting_type text,
+                    setting_description text,
+                    red integer not null,
+                    green integer not null,
+                    blue integer not null,
+                    alpha integer not null
+                )
+                """)
+                self.pre_run_log.append("Table 'settings' created successfully.")
+
+                try:
+                    add_default_settings()
+                    self.pre_run_log.append("Settings table populated successfully.")
+                except Exception as e:
+                    self.pre_run_log.append(f"Error populating settings table: {e}")
 
         except Exception as e:
             self.pre_run_log.append(f"Error initializing database: {e}")
