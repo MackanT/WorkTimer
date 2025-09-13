@@ -7,6 +7,10 @@
 - Option to reenable existing customer/project
 - Add custom quick selections
 - Defaults to first project available per organisationurl
+- Easy way to schema merge old db struct to new.
+- If loading db with wrong schema, print out errors and allow for fixing instead of crash
+- FAQ
+- Auto set cursor in comment upon closing project
 
 
 ### Buggar
