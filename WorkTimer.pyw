@@ -46,6 +46,9 @@ TYPE_ID = 0  # 0 = Time, 1 = Bonus Wage
 SELECTED_DATE = datetime.now().strftime("%Y-%m-%d")
 CURRENT_DATE = datetime.now().date()
 
+THEME_DF = {}
+_apply_theme_timer = None
+
 
 @dataclass
 class TableColumn:
@@ -228,6 +231,65 @@ def __is_valid_date(date_str: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def __populate_ui_settings():
+    global THEME_DF
+    __apply_default_theme()
+
+    for _, row in THEME_DF.iterrows():
+        name, desc, r, g, b, a = row
+        color_tag = f"color_square_{name}"
+
+        with dpg.group(horizontal=True, parent="ui_settings"):
+            dpg.add_color_edit(
+                default_value=[r, g, b, a],
+                tag=color_tag,
+                width=30,
+                callback=update_theme_df,
+                user_data=name,
+                no_drag_drop=True,
+                no_inputs=True,
+            )
+            dpg.add_text(desc)
+
+    # Add save button to write THEME_DF to DB
+    def save_theme_to_db():
+        for _, row in THEME_DF.iterrows():
+            name, desc, r, g, b, a = row
+            query = f"UPDATE settings SET red = {r}, green = {g}, blue = {b}, alpha = {a} WHERE setting_name = '{name}' and setting_type = 'ui_color'"
+            db.queue_task("run_query", {"query": query})
+        __log_message("Theme settings saved to database.", type="INFO")
+
+    dpg.add_button(
+        label="Save Theme Settings", callback=save_theme_to_db, parent="ui_settings"
+    )
+
+
+def update_theme_df(sender, app_data, user_data):
+    idx = THEME_DF.index[THEME_DF["setting_name"] == user_data].tolist()
+    if idx:
+        # Convert r, g, b to int in [0,255] range, alpha stays as is
+        r, g, b, a = app_data
+        r = int(r * 255)
+        g = int(g * 255)
+        b = int(b * 255)
+        a = int(a * 255)
+        THEME_DF.loc[idx[0], ["red", "green", "blue", "alpha"]] = [r, g, b, a]
+
+    debounce_apply_theme(THEME_DF)
+
+
+def debounce_apply_theme(theme_df, delay=0.3):
+    global _apply_theme_timer
+    if _apply_theme_timer is not None:
+        _apply_theme_timer.cancel()
+
+    def call_theme():
+        apply_theme(theme_df)
+
+    _apply_theme_timer = threading.Timer(delay, call_theme)
+    _apply_theme_timer.start()
 
 
 def __populate_pre_log():
@@ -1783,6 +1845,12 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                         tag="settings_date_picker",
                     )
 
+        with dpg.collapsing_header(
+            label="UI", default_open=True, indent=INDENT_1, tag="ui_settings"
+        ):
+            dpg.add_text("Customize the UI settings:")
+            pass
+
         # "Queries" Section
         with dpg.collapsing_header(
             label="Queries",
@@ -1832,6 +1900,37 @@ def __validate_db():
         show_message_popup(err_msg)
 
 
+def __apply_default_theme():
+    global THEME_DF
+    r_queue = queue.Queue()
+    db.queue_task(
+        "run_query",
+        {
+            "query": "select setting_name, setting_description, red, green, blue, alpha from settings where setting_type = 'ui_color'"
+        },
+        response=r_queue,
+    )
+    THEME_DF = r_queue.get()
+    apply_theme(THEME_DF)
+
+
+def apply_theme(THEME_DF: pd.DataFrame):
+    theme_colors = {}
+    for _, row in THEME_DF.iterrows():
+        name, _, red, green, blue, alpha = row
+        mv_type = eval(f"dpg.{name}")
+        theme_colors[mv_type] = (red, green, blue, alpha)
+
+    # Unbind current theme
+    dpg.bind_theme(None)
+    # Create and bind new theme
+    with dpg.theme() as new_theme:
+        with dpg.theme_component(dpg.mvAll):
+            for key, value in theme_colors.items():
+                dpg.add_theme_color(key, value)
+    dpg.bind_theme(new_theme)
+
+
 frame = dpg.create_viewport(
     title=PROGRAM_NAME,
     width=WIDTH + 15,
@@ -1839,19 +1938,28 @@ frame = dpg.create_viewport(
     small_icon="graphics\\program_logo.ico",
     large_icon="graphics\\program_logo.ico",
 )
+
 dpg.setup_dearpygui()
 dpg.show_viewport()
 
 dpg.set_frame_callback(1, render_customer_project_ui)
 dpg.set_frame_callback(2, __populate_pre_log)
 dpg.set_frame_callback(3, __validate_db)
+dpg.set_frame_callback(4, __populate_ui_settings)
 INIT = False
 
 last_update_time = time.time()
 
 
 def test_code():
-    do_con["Castellum"].get_workitem_level("epic")
+    # do_con["Castellum"].get_workitem_level("feature")
+    # alt_colors = {
+    #     dpg.mvThemeCol_WindowBg: [0, 0, 0, 255],  # Black
+    #     dpg.mvThemeCol_ChildBg: [255, 255, 255, 255],  # White
+    #     dpg.mvThemeCol_Button: [255, 0, 0, 255],  # Red
+    #     # ... add all theme keys you want to change
+    # }
+    1
 
 
 # Debug test function without inputs
@@ -2000,7 +2108,7 @@ dpg.destroy_context()
 #     limit 1
 # );
 #
-# alter table customers add column sort_order integer default = 1
+# alter table customers add column sort_order integer default 1
 #
 # with ordered as (
 #   select
@@ -2024,4 +2132,4 @@ dpg.destroy_context()
 # alter table time rename column git_id to git_id_old
 # alter table time add column git_id integer default 0
 # update time set git_id = gid_id_old where git_id_old <> 0
-# alter table drop column git_id_old
+# alter table time drop column git_id_old
