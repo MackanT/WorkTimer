@@ -261,9 +261,27 @@ def __populate_ui_settings():
             db.queue_task("run_query", {"query": query})
         __log_message("Theme settings saved to database.", type="INFO")
 
-    dpg.add_button(
-        label="Save Theme Settings", callback=save_theme_to_db, parent="ui_settings"
-    )
+    def reset_theme_colors():
+        __apply_default_theme()
+        # Update color edits in the UI to match THEME_DF
+        for _, row in THEME_DF.iterrows():
+            name, desc, r, g, b, a = row
+            color_tag = f"color_square_{name}"
+            dpg.set_value(color_tag, [r, g, b, a])
+
+        __log_message("Theme colors reset to database values.", type="INFO")
+
+    dpg.add_spacer(height=5, parent="ui_settings")
+
+    with dpg.group(horizontal=True, parent="ui_settings"):
+        dpg.add_button(label="Save color changes", callback=save_theme_to_db)
+
+        dpg.add_button(
+            label="Reset Changes",
+            callback=reset_theme_colors,
+        )
+
+    dpg.add_spacer(height=5, parent="ui_settings")
 
 
 def update_theme_df(sender, app_data, user_data):

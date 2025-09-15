@@ -18,27 +18,75 @@ class Database:
         def add_default_settings():
             # Build the date table
             color_settings = [
-                ("mvThemeCol_Text", (255, 255, 255, 255), "Text"),
+                ("mvThemeCol_Text", (255, 255, 255, 255), "Main text color"),
                 (
                     "mvThemeCol_TextDisabled",
                     (100, 0, 0, 255),
-                    "Ex. Dates not in current month",
+                    "Disabled text color (ex. dates not in current month)",
                 ),
-                ("mvThemeCol_WindowBg", (37, 37, 37, 255), "BG around container"),
-                ("mvThemeCol_ChildBg", (37, 37, 37, 255), "BG within container"),
-                ("mvThemeCol_PopupBg", (37, 37, 37, 255), "Popup background"),
-                ("mvThemeCol_Border", (20, 20, 20, 255), "Popup border"),
-                ("mvThemeCol_BorderShadow", (128, 0, 128, 255), "Purple"),
-                ("mvThemeCol_FrameBg", (50, 50, 50, 255), "Input fields"),
+                (
+                    "mvThemeCol_WindowBg",
+                    (37, 37, 37, 255),
+                    "Background outside main containers",
+                ),
+                (
+                    "mvThemeCol_ChildBg",
+                    (37, 37, 37, 255),
+                    "Background inside child containers",
+                ),
+                ("mvThemeCol_PopupBg", (37, 37, 37, 255), "Background for popups"),
+                (
+                    "mvThemeCol_Border",
+                    (20, 20, 20, 255),
+                    "Border color for containers and popups",
+                ),
+                (
+                    "mvThemeCol_BorderShadow",
+                    (128, 0, 128, 255),
+                    "Shadow color for borders",
+                ),
+                (
+                    "mvThemeCol_TitleBgActive",
+                    (15, 86, 135, 255),
+                    "Title bar background (active)",
+                ),
+                (
+                    "mvThemeCol_TitleBgCollapsed",
+                    (255, 0, 0, 255),
+                    "Title bar background (collapsed)",
+                ),
+                (
+                    "mvThemeCol_FrameBg",
+                    (50, 50, 50, 255),
+                    "Input field background",
+                ),
                 (
                     "mvThemeCol_FrameBgHovered",
                     (128, 128, 128, 255),
-                    "Input field hover",
+                    "Input field background (hovered)",
                 ),
-                ("mvThemeCol_FrameBgActive", (220, 220, 220, 255), "Clicking buttons"),
-                ("mvThemeCol_TitleBg", (37, 37, 37, 255), "Titlebar during popups"),
-                ("mvThemeCol_TitleBgActive", (15, 86, 135, 255), "Titlebar default"),
-                ("mvThemeCol_TitleBgCollapsed", (255, 0, 0, 255), "Navy"),
+                (
+                    "mvThemeCol_FrameBgActive",
+                    (220, 220, 220, 255),
+                    "Input field background (active/clicked)",
+                ),
+                ("mvThemeCol_TitleBg", (37, 37, 37, 255), "Title bar background"),
+                ("mvThemeCol_Button", (50, 50, 50, 255), "Button background color"),
+                (
+                    "mvThemeCol_ButtonHovered",
+                    (128, 128, 128, 255),  # 34, 83, 117
+                    "Button color (hovered)",
+                ),
+                (
+                    "mvThemeCol_ButtonActive",
+                    (220, 220, 220, 255),  # 24, 63, 87
+                    "Button color (active/clicked)",
+                ),
+                (
+                    "mvThemeCol_CheckMark",
+                    (0, 120, 215, 255),
+                    "Checkmark color for selected radio buttons and checkboxes",
+                ),
             ]
 
             rows = [
