@@ -926,24 +926,6 @@ def show_message_popup(message: str = None, popup_type: str = "Error") -> None:
     dpg.focus_item("message_popup")
 
 
-## Toggle toggle popups
-def toggle_popup(tag, open_func, close_func):
-    if dpg.does_item_exist(tag):
-        close_func()
-    else:
-        open_func()
-
-
-## Close Tab popups
-def close_popup(tag: str):
-    global CURRENT_UI_STATE
-    CURRENT_UI_STATE = UIState.MAIN
-    dpg.set_viewport_width(WIDTH + 15)  # Restore original width
-    dpg.set_viewport_height(HEIGHT + 50)  # Restore original height if changed
-    dpg.delete_item(tag)
-    switch_back_to_previous_tab()
-
-
 # State-driven UI update function
 def update_ui_for_state():
     # State-driven handling for query and log popups
@@ -1091,6 +1073,7 @@ def _add_project_name(popup_tag: str, customer_id: int, project_name: str) -> di
     return project_id_map
 
 
+## Query editor changes
 def _on_edit_row_ok(sender, app_data, user_data: str):
     (
         popup_tag,
@@ -1365,7 +1348,6 @@ def handle_query_input():
             resizable=True,
             reorderable=True,
             width=QUERY_WIDTH,
-            # ) as selectablecells:
         ):
             char_width = 8
             min_width = 60
@@ -1384,7 +1366,6 @@ def handle_query_input():
             for i in range(df.shape[0]):
                 with dpg.table_row():
                     for j in range(df.shape[1]):
-                        # dpg.add_text(str(arr[i, j]))
                         cell_value = str(arr[i, j])
                         dpg.add_selectable(
                             label=cell_value,
