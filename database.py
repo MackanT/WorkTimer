@@ -16,7 +16,7 @@ class Database:
         """
 
         def add_default_settings():
-            # Build the date table
+            # Build the date table https://dearpygui.readthedocs.io/en/latest/documentation/themes.html
             color_settings = [
                 ("mvThemeCol_Text", (255, 255, 255, 255), "Main text color"),
                 (
