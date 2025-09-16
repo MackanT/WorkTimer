@@ -49,6 +49,8 @@ CURRENT_DATE = datetime.now().date()
 THEME_DF = {}
 _apply_theme_timer = None
 
+LOG_CONTENT = ""
+
 
 @dataclass
 class TableColumn:
@@ -316,14 +318,16 @@ def __populate_pre_log():
 
 
 def __log_message(message: str, type: str = "INFO") -> None:
+    global LOG_CONTENT
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    current_log = dpg.get_value("log_box")
     new_log = (
-        f"{timestamp} [{type}] - {message}\n{current_log}"
-        if current_log
+        f"{timestamp} [{type}] - {message}\n{LOG_CONTENT}"
+        if LOG_CONTENT
         else f"{timestamp} [{type}] - {message}"
     )
-    dpg.set_value("log_box", new_log)
+    LOG_CONTENT = new_log
+    if dpg.does_item_exist("log_box"):
+        dpg.set_value("log_box", LOG_CONTENT)
 
 
 def _get_value_from_df(df: pd.DataFrame, data_type: str = "str"):
@@ -952,6 +956,36 @@ def open_query_popup() -> None:
 
     with dpg.handler_registry():
         dpg.add_key_press_handler(key=dpg.mvKey_F5, callback=handle_query_input)
+
+
+## Log popup
+def open_log_popup():
+    log_popup_tag = "log_popup_window"
+    dpg.set_viewport_width(QUERY_WIDTH + 20)
+    if dpg.does_item_exist(log_popup_tag):
+        dpg.delete_item(log_popup_tag)
+    with dpg.window(
+        label="Log Viewer",
+        tag=log_popup_tag,
+        width=QUERY_WIDTH,
+        height=600,
+        modal=False,
+        no_close=True,
+        no_collapse=True,
+        no_move=True,
+    ):
+        dpg.add_button(
+            label="Close",
+            callback=close_log_popup,
+        )
+        dpg.add_input_text(
+            tag="log_box",
+            multiline=True,
+            readonly=True,
+            width=QUERY_WIDTH - 30,
+            height=HEIGHT,
+            default_value=LOG_CONTENT,
+        )
 
 
 def _add_project_name(popup_tag: str, customer_id: int, project_name: str) -> dict:
