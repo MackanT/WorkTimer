@@ -1374,10 +1374,10 @@ def handle_query_input():
 ###
 # Generic User Input
 ###
-def add_save_button(function_name, tag_name: str, label: str):
+def add_save_button(function_name, tag_name: str, label: str, width: int = 75) -> None:
     dpg.add_spacer(width=10)
     with dpg.group(horizontal=True):
-        dpg.add_button(label=label, callback=function_name)
+        dpg.add_button(label=label, callback=function_name, width=width)
         dpg.add_text("", tag=f"{tag_name}_error_label", show=False, color=WARNING_RED)
     dpg.add_spacer(width=10)
 
