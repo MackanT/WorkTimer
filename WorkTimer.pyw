@@ -880,13 +880,47 @@ def show_message_popup(message: str = None, popup_type: str = "Error") -> None:
     dpg.focus_item("message_popup")
 
 
+## Toggle toggle popups
+def toggle_popup(tag, open_func, close_func):
+    if dpg.does_item_exist(tag):
+        close_func()
+    else:
+        open_func()
+
+
+def toggle_query_popup():
+    toggle_popup("query_popup_window", open_query_popup, close_query_popup)
+
+
+def toggle_log_popup():
+    toggle_popup("log_popup_window", open_log_popup, close_log_popup)
+
+
+## Close Tab popups
+def close_popup(tag: str):
+    dpg.set_viewport_width(WIDTH + 15)  # Restore original width
+    dpg.set_viewport_height(HEIGHT + 50)  # Restore original height if changed
+    dpg.delete_item(tag)
+    switch_back_to_previous_tab()
+
+
+def close_query_popup():
+    close_popup("query_popup_window")
+
+
+def close_log_popup():
+    close_popup("log_popup_window")
+
+
+## Open Tab Popups
 def open_query_popup() -> None:
+    query_popup_tag = "query_popup_window"
     dpg.set_viewport_width(QUERY_WIDTH + 20)
-    if dpg.does_item_exist("query_popup_window"):
-        dpg.delete_item("query_popup_window")
+    if dpg.does_item_exist(query_popup_tag):
+        dpg.delete_item(query_popup_tag)
     with dpg.window(
         label="Query Results",
-        tag="query_popup_window",
+        tag=query_popup_tag,
         width=QUERY_WIDTH,
         height=600,
         modal=False,
@@ -896,13 +930,7 @@ def open_query_popup() -> None:
     ):
         dpg.add_button(
             label="Close",
-            callback=lambda: (
-                dpg.set_viewport_width(WIDTH + 15),  # Restore original width
-                dpg.set_viewport_height(
-                    HEIGHT + 50
-                ),  # Restore original height if changed
-                dpg.delete_item("query_popup_window"),
-            ),
+            callback=close_query_popup,
         )
 
         with dpg.group():
@@ -2017,6 +2045,11 @@ def test_code():
 # Debug test function without inputs
 with dpg.handler_registry():
     dpg.add_key_press_handler(key=dpg.mvKey_S, callback=test_code)
+
+with dpg.handler_registry():
+    dpg.add_key_press_handler(
+        key=dpg.mvKey_Q, callback=toggle_query_popup
+    )  # Ctrl+Q for Query Editor
 
 # Debug test function with inputs
 # with dpg.handler_registry():
