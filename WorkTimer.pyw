@@ -934,14 +934,6 @@ def toggle_popup(tag, open_func, close_func):
         open_func()
 
 
-def toggle_query_popup():
-    toggle_popup("query_popup_window", open_query_popup, close_query_popup)
-
-
-def toggle_log_popup():
-    toggle_popup("log_popup_window", open_log_popup, close_log_popup)
-
-
 ## Close Tab popups
 def close_popup(tag: str):
     global CURRENT_UI_STATE
@@ -952,120 +944,125 @@ def close_popup(tag: str):
     switch_back_to_previous_tab()
 
 
-def close_query_popup():
-    close_popup("query_popup_window")
-
-
-def close_log_popup():
-    close_popup("log_popup_window")
-
-
-## Open Tab Popups
-def open_query_popup() -> None:
-    global CURRENT_UI_STATE
-    CURRENT_UI_STATE = UIState.QUERY_EDITOR
+# State-driven UI update function
+def update_ui_for_state():
+    # State-driven handling for query and log popups
     query_popup_tag = "query_popup_window"
-    dpg.set_viewport_width(QUERY_WIDTH + 20)
-    if dpg.does_item_exist(query_popup_tag):
-        dpg.delete_item(query_popup_tag)
-    with dpg.window(
-        label="Query Results",
-        tag=query_popup_tag,
-        width=QUERY_WIDTH,
-        height=600,
-        modal=False,
-        no_close=True,
-        no_collapse=True,
-        no_move=True,
-    ):
-        dpg.add_button(
-            label="Close",
-            callback=close_query_popup,
-        )
-
-        with dpg.group():
-            available_queries = [
-                "time",
-                "customers",
-                "projects",
-                "bonus",
-                "weekly",
-                "monthly",
-            ]
-            with dpg.group(horizontal=True):
-                dpg.add_text("Available tables:")
-                for table in available_queries:
-                    dpg.add_button(
-                        label=table,
-                        callback=lambda t=str(table): __autoset_query_window(
-                            table_id=t
-                        ),
-                    )
-
-            dpg.add_spacer(width=10)
-            dpg.add_text("Enter Query:")
-
-            sql_input = "select * from time"
-            dpg.add_input_text(
-                multiline=True,
-                width=QUERY_WIDTH - 30,
-                height=HEIGHT / 6,
-                tag="query_input",
-                default_value=sql_input,
-            )
-            __autoset_query_window(table_name="time")
-
-            # For f5 runs so only work when query is selected
-            if not dpg.does_item_exist("query_input_handler"):
-                with dpg.item_handler_registry(tag="query_input_handler") as handler:
-                    dpg.add_item_activated_handler(
-                        callback=on_input_focus
-                    )  # Triggered when user clicks into it
-                    dpg.add_item_deactivated_after_edit_handler(
-                        callback=on_input_unfocus
-                    )  # Triggered when they click out
-
-                dpg.bind_item_handler_registry("query_input", "query_input_handler")
-
-        # Box for displaying tabular data
-        dpg.add_text("Tabular Data:")
-
-        handle_query_input()
-
-    with dpg.handler_registry():
-        dpg.add_key_press_handler(key=dpg.mvKey_F5, callback=handle_query_input)
-
-
-## Log popup
-def open_log_popup():
-    global CURRENT_UI_STATE
-    CURRENT_UI_STATE = UIState.LOG_POPUP
     log_popup_tag = "log_popup_window"
-    dpg.set_viewport_width(QUERY_WIDTH + 20)
-    if dpg.does_item_exist(log_popup_tag):
-        dpg.delete_item(log_popup_tag)
-    with dpg.window(
-        label="Log Viewer",
-        tag=log_popup_tag,
-        width=QUERY_WIDTH,
-        height=600,
-        modal=False,
-        no_close=True,
-        no_collapse=True,
-        no_move=True,
-    ):
-        dpg.add_button(
-            label="Close",
-            callback=close_log_popup,
-        )
-        dpg.add_input_text(
-            tag="log_box",
-            multiline=True,
-            readonly=True,
-            width=QUERY_WIDTH - 30,
-            height=HEIGHT,
-            default_value=LOG_CONTENT,
-        )
+    if CURRENT_UI_STATE == UIState.QUERY_EDITOR:
+        if not dpg.does_item_exist(query_popup_tag):
+            dpg.set_viewport_width(QUERY_WIDTH + 20)
+            with dpg.window(
+                label="Query Results",
+                tag=query_popup_tag,
+                width=QUERY_WIDTH,
+                height=600,
+                modal=False,
+                no_close=True,
+                no_collapse=True,
+                no_move=True,
+            ):
+                dpg.add_button(
+                    label="Close",
+                    callback=lambda: (
+                        globals().__setitem__("CURRENT_UI_STATE", UIState.MAIN),
+                        update_ui_for_state(),
+                        switch_back_to_previous_tab(),
+                    ),
+                )
+                with dpg.group():
+                    available_queries = [
+                        "time",
+                        "customers",
+                        "projects",
+                        "bonus",
+                        "weekly",
+                        "monthly",
+                    ]
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Available tables:")
+                        for table in available_queries:
+                            dpg.add_button(
+                                label=table,
+                                callback=lambda t=str(table): __autoset_query_window(
+                                    table_id=t
+                                ),
+                            )
+                    dpg.add_spacer(width=10)
+                    dpg.add_text("Enter Query:")
+                    sql_input = "select * from time"
+                    dpg.add_input_text(
+                        multiline=True,
+                        width=QUERY_WIDTH - 30,
+                        height=HEIGHT / 6,
+                        tag="query_input",
+                        default_value=sql_input,
+                    )
+                    __autoset_query_window(table_name="time")
+                    if not dpg.does_item_exist("query_input_handler"):
+                        with dpg.item_handler_registry(
+                            tag="query_input_handler"
+                        ) as handler:
+                            dpg.add_item_activated_handler(callback=on_input_focus)
+                            dpg.add_item_deactivated_after_edit_handler(
+                                callback=on_input_unfocus
+                            )
+                        dpg.bind_item_handler_registry(
+                            "query_input", "query_input_handler"
+                        )
+                dpg.add_text("Tabular Data:")
+                handle_query_input()
+            with dpg.handler_registry():
+                dpg.add_key_press_handler(key=dpg.mvKey_F5, callback=handle_query_input)
+        else:
+            dpg.configure_item(query_popup_tag, show=True)
+        # Hide log popup if open
+        if dpg.does_item_exist(log_popup_tag):
+            dpg.delete_item(log_popup_tag)
+    elif CURRENT_UI_STATE == UIState.LOG_POPUP:
+        if not dpg.does_item_exist(log_popup_tag):
+            dpg.set_viewport_width(QUERY_WIDTH + 20)
+            with dpg.window(
+                label="Log Viewer",
+                tag=log_popup_tag,
+                width=QUERY_WIDTH,
+                height=600,
+                modal=False,
+                no_close=True,
+                no_collapse=True,
+                no_move=True,
+            ):
+                dpg.add_button(
+                    label="Close",
+                    callback=lambda: (
+                        globals().__setitem__("CURRENT_UI_STATE", UIState.MAIN),
+                        update_ui_for_state(),
+                        switch_back_to_previous_tab(),
+                    ),
+                )
+                dpg.add_input_text(
+                    tag="log_box",
+                    multiline=True,
+                    readonly=True,
+                    width=QUERY_WIDTH - 30,
+                    height=HEIGHT,
+                    default_value=LOG_CONTENT,
+                )
+        else:
+            dpg.configure_item(log_popup_tag, show=True)
+        # Hide query popup if open
+        if dpg.does_item_exist(query_popup_tag):
+            dpg.delete_item(query_popup_tag)
+    else:
+        # Hide both popups if not in either state
+        if dpg.does_item_exist(query_popup_tag):
+            dpg.delete_item(query_popup_tag)
+            dpg.set_viewport_width(WIDTH + 15)
+            dpg.set_viewport_height(HEIGHT + 50)
+        if dpg.does_item_exist(log_popup_tag):
+            dpg.delete_item(log_popup_tag)
+            dpg.set_viewport_width(WIDTH + 15)
+            dpg.set_viewport_height(HEIGHT + 50)
 
 
 def _add_project_name(popup_tag: str, customer_id: int, project_name: str) -> dict:
@@ -1750,30 +1747,18 @@ def switch_back_to_previous_tab():
 
 
 def tab_selected_callback(sender, app_data):
-    global previous_tab
+    global previous_tab, CURRENT_UI_STATE
 
     tab_tag = dpg.get_item_alias(app_data)
     if tab_tag not in ["query_tab", "logs_tab"]:
         previous_tab = tab_tag
 
     if tab_tag == "query_tab":
-        toggle_query_popup()
+        CURRENT_UI_STATE = UIState.QUERY_EDITOR
+        update_ui_for_state()
     elif tab_tag == "logs_tab":
-        toggle_log_popup()
-
-
-def show_customer_action(selected_action):
-    # Hide all groups
-    dpg.hide_item("customer_add_group")
-    dpg.hide_item("customer_update_group")
-    dpg.hide_item("customer_remove_group")
-    # Show the selected group
-    if selected_action == "Add":
-        dpg.show_item("customer_add_group")
-    elif selected_action == "Update":
-        dpg.show_item("customer_update_group")
-    elif selected_action == "Remove":
-        dpg.show_item("customer_remove_group")
+        CURRENT_UI_STATE = UIState.LOG_POPUP
+        update_ui_for_state()
 
 
 with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
@@ -2113,35 +2098,36 @@ last_update_time = time.time()
 
 def test_code():
     # do_con["Castellum"].get_workitem_level("feature")
-    # alt_colors = {
-    #     dpg.mvThemeCol_WindowBg: [0, 0, 0, 255],  # Black
-    #     dpg.mvThemeCol_ChildBg: [255, 255, 255, 255],  # White
-    #     dpg.mvThemeCol_Button: [255, 0, 0, 255],  # Red
-    #     # ... add all theme keys you want to change
-    # }
     1
 
 
-# Debug test function without inputs
-with dpg.handler_registry():
-    dpg.add_key_press_handler(key=dpg.mvKey_S, callback=test_code)
-
-
 def on_ctrl_q(sender, app_data):
+    global CURRENT_UI_STATE
     if CURRENT_UI_STATE in [UIState.MAIN, UIState.QUERY_EDITOR]:
         if dpg.is_key_down(dpg.mvKey_Control):
-            toggle_query_popup()
+            if CURRENT_UI_STATE == UIState.QUERY_EDITOR:
+                CURRENT_UI_STATE = UIState.MAIN
+            else:
+                CURRENT_UI_STATE = UIState.QUERY_EDITOR
+            update_ui_for_state()
 
 
 def on_ctrl_l(sender, app_data):
+    global CURRENT_UI_STATE
     if CURRENT_UI_STATE in [UIState.MAIN, UIState.LOG_POPUP]:
         if dpg.is_key_down(dpg.mvKey_Control):
-            toggle_log_popup()
+            if CURRENT_UI_STATE == UIState.LOG_POPUP:
+                CURRENT_UI_STATE = UIState.MAIN
+            else:
+                CURRENT_UI_STATE = UIState.LOG_POPUP
+            update_ui_for_state()
 
 
 with dpg.handler_registry():
     dpg.add_key_press_handler(key=dpg.mvKey_Q, callback=on_ctrl_q)
     dpg.add_key_press_handler(key=dpg.mvKey_L, callback=on_ctrl_l)
+    # Debug test function without inputs
+    dpg.add_key_press_handler(key=dpg.mvKey_S, callback=test_code)
 
 
 def periodic_update():
