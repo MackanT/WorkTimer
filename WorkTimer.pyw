@@ -50,6 +50,7 @@ THEME_DF = {}
 _apply_theme_timer = None
 
 LOG_CONTENT = ""
+previous_tab = "settings_tab"  # Default tab on startup
 
 
 @dataclass
@@ -1715,10 +1716,6 @@ def add_bonus_data(sender, app_data) -> None:
 ###
 # UI
 ###
-
-previous_tab = "settings_tab"  # Default tab on startup
-
-
 def switch_back_to_previous_tab():
     global previous_tab
     tab_id = dpg.get_alias_id(previous_tab)
@@ -1738,226 +1735,23 @@ def tab_selected_callback(sender, app_data):
         toggle_log_popup()
 
 
+def show_customer_action(selected_action):
+    # Hide all groups
+    dpg.hide_item("customer_add_group")
+    dpg.hide_item("customer_update_group")
+    dpg.hide_item("customer_remove_group")
+    # Show the selected group
+    if selected_action == "Add":
+        dpg.show_item("customer_add_group")
+    elif selected_action == "Update":
+        dpg.show_item("customer_update_group")
+    elif selected_action == "Remove":
+        dpg.show_item("customer_remove_group")
+
+
 with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
     with dpg.tab_bar(callback=tab_selected_callback, tag="main_tab_bar"):
         with dpg.tab(label="Settings", tag="settings_tab"):
-            dpg.add_text("Settings")
-        with dpg.tab(label="Customers", tag="customers_tab"):
-            dpg.add_text("Customer Management")
-        with dpg.tab(label="Projects", tag="projects_tab"):
-            dpg.add_text("Project Management")
-        with dpg.tab(label="Bonuses", tag="bonuses_tab"):
-            dpg.add_text("Bonus Management")
-        with dpg.tab(label="UI", tag="ui_tab"):
-            dpg.add_text("Customize the UI settings:")
-        with dpg.tab(label="Query Editor", tag="query_tab"):
-            pass  # No content needed, acts as a button
-        with dpg.tab(label="Logs", tag="logs_tab"):
-            dpg.add_text("Log Viewer")
-
-    ## Input
-    with dpg.collapsing_header(label="Extra", default_open=False):
-        with dpg.collapsing_header(label="Input", default_open=False, indent=INDENT_1):
-            with dpg.collapsing_header(
-                label="Customers", default_open=False, indent=INDENT_2
-            ):
-                with dpg.collapsing_header(
-                    label="Add Customer", default_open=False, indent=INDENT_2
-                ):
-                    dpg.add_input_text(
-                        label="Customer Name", tag="customer_add_name_input"
-                    )
-                    dpg.add_input_int(label="Wage", tag="customer_add_wage_input")
-
-                    with dpg.group(horizontal=True):
-                        dpg.add_input_text(tag="customer_add_start_date_input")
-                        dpg.add_image_button(
-                            texture_tag=icon_calendar,
-                            tag="customer_add_start_date_button",
-                            width=14,
-                            height=14,
-                        )
-                        dpg.add_text("Start Date")
-
-                    with dpg.popup(
-                        parent="customer_add_start_date_button",
-                        mousebutton=dpg.mvMouseButton_Left,
-                        modal=True,
-                        tag="customer_add_start_button_popup",
-                    ):
-                        today_struct = __get_current_date_struct()
-                        dpg.add_date_picker(
-                            label="Start Date",
-                            tag="customer_add_start_date_picker",
-                            default_value=today_struct,
-                        )
-                        dpg.add_button(
-                            label="Done",
-                            callback=lambda: set_start_date("customer_add"),
-                        )
-
-                    dpg.add_input_text(
-                        label="DevOps Org. URL", tag="customer_add_devops_url_input"
-                    )
-                    dpg.add_input_text(
-                        label="DevOps PAT", tag="customer_add_devops_pat_input"
-                    )
-
-                    add_save_button(add_customer_data, "customer_add", "Save")
-
-                with dpg.collapsing_header(
-                    label="Update Customer", default_open=False, indent=INDENT_2
-                ):
-                    dpg.add_combo(
-                        [],
-                        width=COMBO_WIDTH,
-                        label="Customer Name",
-                        tag="customer_update_name_dropdown",
-                        callback=lambda: __update_text_input(
-                            tag="customer_update_name_dropdown"
-                        ),
-                    )
-                    dpg.add_input_text(
-                        label="New Name",
-                        tag="customer_update_customer_name_input",
-                    )
-                    dpg.add_input_int(
-                        label="Wage",
-                        tag="customer_update_wage_input",
-                    )
-                    dpg.add_input_text(
-                        label="DevOps Org. URL", tag="customer_update_devops_url_input"
-                    )
-                    dpg.add_input_text(
-                        label="DevOps PAT", tag="customer_update_devops_pat_input"
-                    )
-
-                    add_save_button(update_customer_data, "customer_update", "Update")
-
-                with dpg.collapsing_header(
-                    label="Remove Customer", default_open=False, indent=INDENT_2
-                ):
-                    dpg.add_combo(
-                        [],
-                        default_value="",
-                        width=COMBO_WIDTH,
-                        label="Customer Name",
-                        tag="customer_delete_name_dropdown",
-                    )
-                    add_save_button(delete_customer_data, "customer_delete", "Remove")
-
-            with dpg.collapsing_header(
-                label="Project", default_open=False, indent=INDENT_2
-            ):
-                with dpg.collapsing_header(
-                    label="Add Project", default_open=False, indent=INDENT_2
-                ):
-                    dpg.add_combo(
-                        [],
-                        width=COMBO_WIDTH,
-                        label="Customer Name",
-                        tag="project_add_customer_name_dropdown",
-                    )
-                    dpg.add_input_text(
-                        label="Project Name", tag="project_add_name_input"
-                    )
-                    dpg.add_input_int(
-                        label="Git ID (Opt.)", tag="project_add_git_input"
-                    )
-                    add_save_button(add_project_data, "project_add", "Save")
-
-                with dpg.collapsing_header(
-                    label="Update Project", default_open=False, indent=INDENT_2
-                ):
-                    dpg.add_combo(
-                        [],
-                        width=COMBO_WIDTH,
-                        label="Customer Name",
-                        tag="project_update_customer_name_dropdown",
-                        callback=lambda: __update_dropdown(
-                            tag="project_update_project_name_dropdown"
-                        ),
-                    )
-                    dpg.add_combo(
-                        [],
-                        width=COMBO_WIDTH,
-                        label="Project Name",
-                        tag="project_update_project_name_dropdown",
-                        callback=lambda: __update_text_input(
-                            tag="project_update_project_name_dropdown"
-                        ),
-                    )
-                    dpg.add_input_text(
-                        label="New Name", tag="project_update_name_input"
-                    )
-                    dpg.add_input_int(
-                        label="New Git-ID", tag="project_update_git_input"
-                    )
-
-                    add_save_button(update_project_data, "project_update", "Update")
-
-                with dpg.collapsing_header(
-                    label="Remove Project", default_open=False, indent=INDENT_2
-                ):
-                    dpg.add_combo(
-                        [],
-                        width=COMBO_WIDTH,
-                        label="Customer Name",
-                        tag="project_delete_customer_name_dropdown",
-                        callback=lambda: __update_dropdown(
-                            tag="project_delete_project_name_dropdown"
-                        ),
-                    )
-                    dpg.add_combo(
-                        [],
-                        width=COMBO_WIDTH,
-                        label="Project Name",
-                        tag="project_delete_project_name_dropdown",
-                    )
-
-                    add_save_button(delete_project_data, "project_delete", "Remove")
-
-            with dpg.collapsing_header(
-                label="Bonuses", default_open=False, indent=INDENT_2
-            ):
-                with dpg.collapsing_header(
-                    label="Add Bonus", default_open=False, indent=INDENT_2
-                ):
-                    dpg.add_input_float(
-                        label="Bonus Amount", tag="bonus_add_amount_input"
-                    )
-                    with dpg.group(horizontal=True):
-                        dpg.add_input_text(tag="bonus_add_start_date_input")
-                        dpg.add_image_button(
-                            texture_tag=icon_calendar,
-                            tag="bonus_add_start_date_button",
-                            width=14,
-                            height=14,
-                        )
-                        dpg.add_text("Start Date")
-
-                    with dpg.popup(
-                        parent="bonus_add_start_date_button",
-                        mousebutton=dpg.mvMouseButton_Left,
-                        modal=True,
-                        tag="bonus_add_start_button_popup",
-                    ):
-                        today_struct = __get_current_date_struct()
-                        dpg.add_date_picker(
-                            label="Start Date",
-                            tag="bonus_add_start_date_picker",
-                            default_value=today_struct,
-                        )
-                        dpg.add_button(
-                            label="Done", callback=lambda: set_start_date("bonus_add")
-                        )
-
-                    add_save_button(add_bonus_data, "bonus_add", "Save")
-
-        ## Settings
-        with dpg.collapsing_header(
-            label="Settings", default_open=False, indent=INDENT_1
-        ):
             with dpg.group(horizontal=True):  # Time Span
                 with dpg.group():
                     dpg.add_text("Select Time Span:")
@@ -1988,31 +1782,227 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                         tag="settings_date_picker",
                     )
 
-        with dpg.collapsing_header(
-            label="UI", default_open=True, indent=INDENT_1, tag="ui_settings"
-        ):
+        with dpg.theme(tag="vertical_tab_button_theme"):
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 12)  # Rounded corners
+                dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 8, 4)
+                dpg.add_theme_color(dpg.mvThemeCol_Button, [50, 50, 50, 255])
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, [128, 128, 128, 255])
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, [220, 220, 220, 255])
+
+        with dpg.tab(label="Customers", tag="customers_tab"):
+            dpg.add_spacer(height=10)
+            with dpg.group(horizontal=True):
+                dpg.add_spacer(width=20)
+                with dpg.tab_bar(tag="customer_action_tab_bar"):
+                    with dpg.tab(label="Add", tag="customer_add_tab"):
+                        with dpg.group(tag="customer_add_group"):
+                            dpg.add_input_text(
+                                label="Customer Name", tag="customer_add_name_input"
+                            )
+                            dpg.add_input_int(
+                                label="Wage", tag="customer_add_wage_input"
+                            )
+
+                            with dpg.group(horizontal=True):
+                                dpg.add_input_text(tag="customer_add_start_date_input")
+                                dpg.add_image_button(
+                                    texture_tag=icon_calendar,
+                                    tag="customer_add_start_date_button",
+                                    width=14,
+                                    height=14,
+                                )
+                                dpg.add_text("Start Date")
+
+                            with dpg.popup(
+                                parent="customer_add_start_date_button",
+                                mousebutton=dpg.mvMouseButton_Left,
+                                modal=True,
+                                tag="customer_add_start_button_popup",
+                            ):
+                                today_struct = __get_current_date_struct()
+                                dpg.add_date_picker(
+                                    label="Start Date",
+                                    tag="customer_add_start_date_picker",
+                                    default_value=today_struct,
+                                )
+                                dpg.add_button(
+                                    label="Done",
+                                    callback=lambda: set_start_date("customer_add"),
+                                )
+
+                            dpg.add_input_text(
+                                label="DevOps Org. URL",
+                                tag="customer_add_devops_url_input",
+                            )
+                            dpg.add_input_text(
+                                label="DevOps PAT", tag="customer_add_devops_pat_input"
+                            )
+
+                            add_save_button(add_customer_data, "customer_add", "Add")
+
+                    with dpg.tab(label="Update", tag="customer_update_tab"):
+                        dpg.add_combo(
+                            [],
+                            width=COMBO_WIDTH,
+                            label="Customer Name",
+                            tag="customer_update_name_dropdown",
+                            callback=lambda: __update_text_input(
+                                tag="customer_update_name_dropdown"
+                            ),
+                        )
+                        dpg.add_input_text(
+                            label="New Name",
+                            tag="customer_update_customer_name_input",
+                        )
+                        dpg.add_input_int(
+                            label="Wage",
+                            tag="customer_update_wage_input",
+                        )
+                        dpg.add_input_text(
+                            label="DevOps Org. URL",
+                            tag="customer_update_devops_url_input",
+                        )
+                        dpg.add_input_text(
+                            label="DevOps PAT", tag="customer_update_devops_pat_input"
+                        )
+
+                        add_save_button(
+                            update_customer_data, "customer_update", "Update"
+                        )
+
+                    with dpg.tab(label="Disable", tag="customer_remove_tab"):
+                        dpg.add_combo(
+                            [],
+                            default_value="",
+                            width=COMBO_WIDTH,
+                            label="Customer Name",
+                            tag="customer_delete_name_dropdown",
+                        )
+                        add_save_button(
+                            delete_customer_data, "customer_delete", "Disable"
+                        )
+
+        with dpg.tab(label="Projects", tag="projects_tab"):
+            dpg.add_spacer(height=10)
+            with dpg.group(horizontal=True):
+                dpg.add_spacer(width=20)
+                with dpg.tab_bar(tag="project_action_tab_bar"):
+                    with dpg.tab(label="Add", tag="project_add_tab"):
+                        dpg.add_combo(
+                            [],
+                            width=COMBO_WIDTH,
+                            label="Customer Name",
+                            tag="project_add_customer_name_dropdown",
+                        )
+                        dpg.add_input_text(
+                            label="Project Name", tag="project_add_name_input"
+                        )
+                        dpg.add_input_int(
+                            label="Git ID (Opt.)", tag="project_add_git_input"
+                        )
+                        add_save_button(add_project_data, "project_add", "Add")
+
+                    with dpg.tab(label="Update", tag="project_update_tab"):
+                        dpg.add_combo(
+                            [],
+                            width=COMBO_WIDTH,
+                            label="Customer Name",
+                            tag="project_update_customer_name_dropdown",
+                            callback=lambda: __update_dropdown(
+                                tag="project_update_project_name_dropdown"
+                            ),
+                        )
+                        dpg.add_combo(
+                            [],
+                            width=COMBO_WIDTH,
+                            label="Project Name",
+                            tag="project_update_project_name_dropdown",
+                            callback=lambda: __update_text_input(
+                                tag="project_update_project_name_dropdown"
+                            ),
+                        )
+                        dpg.add_input_text(
+                            label="New Name", tag="project_update_name_input"
+                        )
+                        dpg.add_input_int(
+                            label="New Git-ID", tag="project_update_git_input"
+                        )
+
+                        add_save_button(update_project_data, "project_update", "Update")
+
+                    with dpg.tab(label="Disable", tag="project_disable_tab"):
+                        dpg.add_combo(
+                            [],
+                            width=COMBO_WIDTH,
+                            label="Customer Name",
+                            tag="project_delete_customer_name_dropdown",
+                            callback=lambda: __update_dropdown(
+                                tag="project_delete_project_name_dropdown"
+                            ),
+                        )
+                        dpg.add_combo(
+                            [],
+                            width=COMBO_WIDTH,
+                            label="Project Name",
+                            tag="project_delete_project_name_dropdown",
+                        )
+
+                        add_save_button(
+                            delete_project_data, "project_delete", "Disable"
+                        )
+
+        with dpg.tab(label="Bonuses", tag="bonuses_tab"):
+            dpg.add_spacer(height=10)
+            with dpg.group(horizontal=True):
+                dpg.add_spacer(width=20)
+                with dpg.tab_bar(tag="bonus_action_tab_bar"):
+                    with dpg.tab(label="Add", tag="bonus_add_tab"):
+                        dpg.add_input_float(
+                            label="Bonus Amount", tag="bonus_add_amount_input"
+                        )
+                        with dpg.group(horizontal=True):
+                            dpg.add_input_text(tag="bonus_add_start_date_input")
+                            dpg.add_image_button(
+                                texture_tag=icon_calendar,
+                                tag="bonus_add_start_date_button",
+                                width=14,
+                                height=14,
+                            )
+                            dpg.add_text("Start Date")
+
+                        with dpg.popup(
+                            parent="bonus_add_start_date_button",
+                            mousebutton=dpg.mvMouseButton_Left,
+                            modal=True,
+                            tag="bonus_add_start_button_popup",
+                        ):
+                            today_struct = __get_current_date_struct()
+                            dpg.add_date_picker(
+                                label="Start Date",
+                                tag="bonus_add_start_date_picker",
+                                default_value=today_struct,
+                            )
+                            dpg.add_button(
+                                label="Done",
+                                callback=lambda: set_start_date("bonus_add"),
+                            )
+
+                        add_save_button(add_bonus_data, "bonus_add", "Add")
+
+        with dpg.tab(label="UI", tag="ui_tab"):
             dpg.add_text("Customize the UI settings:")
-            pass
+            with dpg.group(tag="ui_settings"):
+                pass  # UI settings will be populated here
 
-        # "Queries" Section
-        with dpg.collapsing_header(
-            label="Queries",
-            default_open=False,
-            indent=INDENT_1,
-        ):
-            dpg.add_button(
-                callback=lambda: open_query_popup(), label="Open Query Window"
-            )
+        with dpg.tab(label="Query Editor", tag="query_tab"):
+            pass  # No content needed, acts as a button
 
-        # Logg Section
-        with dpg.collapsing_header(label="Logs", default_open=False, indent=INDENT_1):
-            dpg.add_input_text(
-                tag="log_box",
-                multiline=True,
-                readonly=True,
-                width=WIDTH - 30,
-                height=200,
-            )
+        with dpg.tab(label="Logs", tag="logs_tab"):
+            dpg.add_text("Log Viewer")
+
+    dpg.add_separator()
+    dpg.add_spacer(height=5)
 
     with dpg.collapsing_header(
         label="Customers", default_open=True, tag="customers_section"
