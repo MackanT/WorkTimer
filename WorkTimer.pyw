@@ -2099,14 +2099,20 @@ def test_code():
 with dpg.handler_registry():
     dpg.add_key_press_handler(key=dpg.mvKey_S, callback=test_code)
 
-with dpg.handler_registry():
-    dpg.add_key_press_handler(
-        key=dpg.mvKey_Q, callback=toggle_query_popup
-    )  # Ctrl+Q for Query Editor
 
-# Debug test function with inputs
-# with dpg.handler_registry():
-#     dpg.add_key_press_handler(key=dpg.mvKey_R, callback=lambda: print("a"))
+def on_ctrl_q(sender, app_data):
+    if dpg.is_key_down(dpg.mvKey_Control):
+        toggle_query_popup()
+
+
+def on_ctrl_l(sender, app_data):
+    if dpg.is_key_down(dpg.mvKey_Control):
+        toggle_log_popup()
+
+
+with dpg.handler_registry():
+    dpg.add_key_press_handler(key=dpg.mvKey_Q, callback=on_ctrl_q)
+    dpg.add_key_press_handler(key=dpg.mvKey_L, callback=on_ctrl_l)
 
 
 def periodic_update():
