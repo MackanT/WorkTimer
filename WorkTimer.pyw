@@ -17,6 +17,7 @@ from database import Database
 from devops import DevOpsClient
 
 from dataclasses import dataclass
+from enum import Enum, auto
 
 ###
 # Constants
@@ -51,6 +52,16 @@ _apply_theme_timer = None
 
 LOG_CONTENT = ""
 previous_tab = "settings_tab"  # Default tab on startup
+
+
+class UIState(Enum):
+    MAIN = auto()
+    QUERY_EDITOR = auto()
+    LOG_POPUP = auto()
+    TASK_INPUT = auto()
+
+
+CURRENT_UI_STATE = UIState.MAIN
 
 
 @dataclass
@@ -781,9 +792,19 @@ def project_button_callback(sender, app_data, user_data):
     run_update_ui_task()
 
 
+def close_project_popup(window_tag):
+    global CURRENT_UI_STATE
+    CURRENT_UI_STATE = UIState.MAIN
+    if dpg.does_item_exist(window_tag):
+        dpg.configure_item(window_tag, show=False)
+        dpg.delete_item(window_tag)
+
+
 def show_project_popup(
     sender, app_data, customer_id: int, project_id: int, customer_name: str
 ):
+    global CURRENT_UI_STATE
+    CURRENT_UI_STATE = UIState.TASK_INPUT
     window_tag = f"popup_{customer_id}_{project_id}"
 
     if not dpg.does_item_exist(window_tag):
@@ -859,19 +880,19 @@ def save_popup_data(customer_id: int, project_id: int, window_tag, customer_name
                 print("Error:", status)
                 show_message_popup(status)
 
-    dpg.delete_item(window_tag)
+    close_project_popup(window_tag)
     run_update_ui_task()
 
 
 def cancel_popup_action(sender, app_data, customer_id, project_id, window_tag):
     dpg.set_value(sender, not app_data)
-    dpg.delete_item(window_tag)
+    close_project_popup(window_tag)
     run_update_ui_task()
 
 
 def delete_popup_action(sender, app_data, customer_id, project_id, window_tag):
     db.delete_time_row(int(customer_id), int(project_id))
-    dpg.delete_item(window_tag)
+    close_project_popup(window_tag)
     run_update_ui_task()
 
 
@@ -923,6 +944,8 @@ def toggle_log_popup():
 
 ## Close Tab popups
 def close_popup(tag: str):
+    global CURRENT_UI_STATE
+    CURRENT_UI_STATE = UIState.MAIN
     dpg.set_viewport_width(WIDTH + 15)  # Restore original width
     dpg.set_viewport_height(HEIGHT + 50)  # Restore original height if changed
     dpg.delete_item(tag)
@@ -939,6 +962,8 @@ def close_log_popup():
 
 ## Open Tab Popups
 def open_query_popup() -> None:
+    global CURRENT_UI_STATE
+    CURRENT_UI_STATE = UIState.QUERY_EDITOR
     query_popup_tag = "query_popup_window"
     dpg.set_viewport_width(QUERY_WIDTH + 20)
     if dpg.does_item_exist(query_popup_tag):
@@ -1013,6 +1038,8 @@ def open_query_popup() -> None:
 
 ## Log popup
 def open_log_popup():
+    global CURRENT_UI_STATE
+    CURRENT_UI_STATE = UIState.LOG_POPUP
     log_popup_tag = "log_popup_window"
     dpg.set_viewport_width(QUERY_WIDTH + 20)
     if dpg.does_item_exist(log_popup_tag):
@@ -2101,13 +2128,15 @@ with dpg.handler_registry():
 
 
 def on_ctrl_q(sender, app_data):
-    if dpg.is_key_down(dpg.mvKey_Control):
-        toggle_query_popup()
+    if CURRENT_UI_STATE in [UIState.MAIN, UIState.QUERY_EDITOR]:
+        if dpg.is_key_down(dpg.mvKey_Control):
+            toggle_query_popup()
 
 
 def on_ctrl_l(sender, app_data):
-    if dpg.is_key_down(dpg.mvKey_Control):
-        toggle_log_popup()
+    if CURRENT_UI_STATE in [UIState.MAIN, UIState.LOG_POPUP]:
+        if dpg.is_key_down(dpg.mvKey_Control):
+            toggle_log_popup()
 
 
 with dpg.handler_registry():
