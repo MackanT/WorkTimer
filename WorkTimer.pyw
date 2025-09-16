@@ -1691,7 +1691,46 @@ def add_bonus_data(sender, app_data) -> None:
 ###
 # UI
 ###
+
+previous_tab = "settings_tab"  # Default tab on startup
+
+
+def switch_back_to_previous_tab():
+    global previous_tab
+    tab_id = dpg.get_alias_id(previous_tab)
+    dpg.set_value("main_tab_bar", tab_id)
+
+
+def tab_selected_callback(sender, app_data):
+    global previous_tab
+
+    tab_tag = dpg.get_item_alias(app_data)
+    if tab_tag not in ["query_tab", "logs_tab"]:
+        previous_tab = tab_tag
+
+    if tab_tag == "query_tab":
+        toggle_query_popup()
+    elif tab_tag == "logs_tab":
+        toggle_log_popup()
+
+
 with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
+    with dpg.tab_bar(callback=tab_selected_callback, tag="main_tab_bar"):
+        with dpg.tab(label="Settings", tag="settings_tab"):
+            dpg.add_text("Settings")
+        with dpg.tab(label="Customers", tag="customers_tab"):
+            dpg.add_text("Customer Management")
+        with dpg.tab(label="Projects", tag="projects_tab"):
+            dpg.add_text("Project Management")
+        with dpg.tab(label="Bonuses", tag="bonuses_tab"):
+            dpg.add_text("Bonus Management")
+        with dpg.tab(label="UI", tag="ui_tab"):
+            dpg.add_text("Customize the UI settings:")
+        with dpg.tab(label="Query Editor", tag="query_tab"):
+            pass  # No content needed, acts as a button
+        with dpg.tab(label="Logs", tag="logs_tab"):
+            dpg.add_text("Log Viewer")
+
     ## Input
     with dpg.collapsing_header(label="Extra", default_open=False):
         with dpg.collapsing_header(label="Input", default_open=False, indent=INDENT_1):
