@@ -10,8 +10,11 @@
 - Easy way to schema merge old db struct to new.
 - If loading db with wrong schema, print out errors and allow for fixing instead of crash
 - FAQ
-- Auto set cursor in comment upon closing project
-
+- adding new customer with same customer_name does not update projects customer_id 
+- "error" command completed successfully (after for ex update query)
+- closing query editor should redraw ui if changes were made!
+- clean up of customer sort order
+- clean up query editor
 
 ### Buggar
 
