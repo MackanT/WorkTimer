@@ -664,7 +664,7 @@ def render_customer_project_ui():
         # Add "Move Up" and "Move Down" buttons
         with dpg.group(horizontal=True, parent=header_id):
             dpg.add_text("", tag=f"total_{customer_id}")
-            dpg.add_spacer(width=WIDTH / 2 - INDENT_1 - 5)
+            dpg.add_spacer(width=WIDTH / 2 - INDENT_1 - 20)
             if cid == 0:
                 dpg.add_spacer(width=55)
             if cid != 0:
@@ -698,7 +698,7 @@ def render_customer_project_ui():
             group_id = dpg.add_group(horizontal=True, parent=header_id)
 
             dpg.add_checkbox(
-                label=f"{project_name:<44}",
+                label=f"{project_name:<42}",
                 callback=project_button_callback,
                 tag=f"checkbox_{customer_id}_{project_id}",
                 user_data=(customer_id, project_id, customer_name),
@@ -707,7 +707,6 @@ def render_customer_project_ui():
             )
 
             dpg.add_text("", tag=f"time_{customer_id}_{project_id}", parent=group_id)
-        # dpg.add_spacer(height=10, parent="customer_ui_section")
 
     run_update_ui_task()
 
@@ -1820,9 +1819,11 @@ def tab_selected_callback(sender, app_data):
 with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
     with dpg.tab_bar(callback=tab_selected_callback, tag="main_tab_bar"):
         with dpg.tab(label="Settings", tag="settings_tab"):
+            dpg.add_spacer(height=10)
             with dpg.group(horizontal=True):  # Time Span
+                dpg.add_spacer(width=20)
                 with dpg.group():
-                    dpg.add_text("Select Time Span:")
+                    dpg.add_text("Time Span:")
                     time_span_options = ["Day", "Week", "Month", "Year", "All-Time"]
                     dpg.add_radio_button(
                         label="Time Span",
@@ -1830,25 +1831,26 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                         tag="time_span_group",
                         callback=time_span_callback,
                     )
-
+                dpg.add_spacer(width=30)
                 with dpg.group():  # Data Type
-                    dpg.add_text("Select Data Type:")
+                    dpg.add_text("Display Type:")
                     data_type_options = ["Time", "Bonus Wage"]
                     dpg.add_radio_button(
-                        label="Data Type",
+                        label="Display Type",
                         items=data_type_options,
                         tag="data_type_group",
                         callback=data_type_callback,
                     )
-
+                dpg.add_spacer(width=30)
                 with dpg.group():  # Date Selection
                     today_struct = __get_current_date_struct()
-                    dpg.add_text("Select Date:")
+                    dpg.add_text("Date Selection:")
                     dpg.add_date_picker(
                         default_value=today_struct,
                         callback=on_date_selected,
                         tag="settings_date_picker",
                     )
+            dpg.add_spacer(height=10)
 
         with dpg.theme(tag="vertical_tab_button_theme"):
             with dpg.theme_component(dpg.mvButton):
@@ -1962,6 +1964,8 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                         add_save_button(
                             enable_customer_data, "customer_enable", "Enable"
                         )
+            dpg.add_spacer(height=10)
+
         with dpg.tab(label="Projects", tag="projects_tab"):
             dpg.add_spacer(height=10)
             with dpg.group(horizontal=True):
@@ -2049,6 +2053,8 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                         )
 
                         add_save_button(enable_project_data, "project_enable", "Enable")
+            dpg.add_spacer(height=10)
+
         with dpg.tab(label="Bonuses", tag="bonuses_tab"):
             dpg.add_spacer(height=10)
             with dpg.group(horizontal=True):
@@ -2086,11 +2092,14 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                             )
 
                         add_save_button(add_bonus_data, "bonus_add", "Add")
+            dpg.add_spacer(height=10)
 
         with dpg.tab(label="UI", tag="ui_tab"):
+            dpg.add_spacer(height=10)
             dpg.add_text("Customize the UI settings:")
             with dpg.group(tag="ui_settings"):
                 pass  # UI settings will be populated here
+            dpg.add_spacer(height=10)
 
         with dpg.tab(label="Query Editor", tag="query_tab"):
             pass  # No content needed, acts as a button
