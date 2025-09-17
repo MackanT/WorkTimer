@@ -392,6 +392,14 @@ def __update_dropdown(tag: str, c_name: str = None) -> None:
         dpg.configure_item("project_update_customer_name_dropdown", items=customers)
         dpg.configure_item("project_delete_customer_name_dropdown", items=customers)
 
+        db.queue_task("get_inactive_customers", {}, response=r_queue)
+        customers = r_queue.get()
+        dpg.configure_item("customer_enable_name_dropdown", items=customers)
+
+        db.queue_task("get_customers_with_inactive_projects", {}, response=r_queue)
+        customers = r_queue.get()
+        dpg.configure_item("project_enable_customer_name_dropdown", items=customers)
+
     elif tag == "project_update_project_name_dropdown":
         if INIT:  # Ensure no dead-lock during setup
             return
@@ -412,6 +420,20 @@ def __update_dropdown(tag: str, c_name: str = None) -> None:
         r_queue = queue.Queue()
         db.queue_task(
             "get_project_names", {"customer_name": customer_name}, response=r_queue
+        )
+        projects = r_queue.get()
+        dpg.configure_item(tag, items=projects)
+
+    elif tag == "project_enable_project_name_dropdown":
+        if INIT:  # Ensure no dead-lock during setup
+            return
+
+        customer_name = dpg.get_value("project_enable_customer_name_dropdown")
+        r_queue = queue.Queue()
+        db.queue_task(
+            "get_inactive_project_names",
+            {"customer_name": customer_name},
+            response=r_queue,
         )
         projects = r_queue.get()
         dpg.configure_item(tag, items=projects)
@@ -1428,6 +1450,8 @@ def __post_user_input() -> None:
     dpg.set_value("customer_update_devops_pat_input", "")
     # Remove Customer
     dpg.set_value("customer_delete_name_dropdown", "")
+    # Enable Customer
+    dpg.set_value("customer_enable_name_dropdown", "")
     # Add Project
     dpg.set_value("project_add_customer_name_dropdown", "")
     dpg.set_value("project_add_name_input", "")
@@ -1440,6 +1464,9 @@ def __post_user_input() -> None:
     # Remove Project
     dpg.set_value("project_delete_customer_name_dropdown", "")
     dpg.set_value("project_delete_project_name_dropdown", "")
+    # Enable Project
+    dpg.set_value("project_enable_customer_name_dropdown", "")
+    dpg.set_value("project_enable_project_name_dropdown", "")
     # Add Bonus
     dpg.set_value("bonus_add_amount_input", 0.0)
     dpg.set_value("bonus_add_start_date_input", "")
@@ -1598,6 +1625,27 @@ def delete_customer_data(sender, app_data) -> None:
     render_customer_project_ui()
 
 
+def enable_customer_data(sender, app_data) -> None:
+    customer_name = dpg.get_value("customer_enable_name_dropdown")
+    if customer_name == "":
+        __hide_text_after_seconds(
+            "customer_enable_error_label", "No customer selected!", 3
+        )
+        return
+    __hide_text_after_seconds(
+        "customer_enable_error_label", "Enabling customer in DB!", 3, error=False
+    )
+    db.queue_task("enable_customer", {"customer_name": customer_name})
+    __update_dropdown("customer_dropdown")
+    __post_user_input()
+    __log_message(
+        f"Customer {customer_name} enabled in the DB",
+        type="INFO",
+    )
+
+    render_customer_project_ui()
+
+
 def add_project_data(sender, app_data) -> None:
     customer_name = dpg.get_value("project_add_customer_name_dropdown")
     if customer_name == "":
@@ -1693,6 +1741,33 @@ def delete_project_data(sender, app_data) -> None:
     __post_user_input()
     __log_message(
         f"Project {project_name} disabled in the DB",
+        type="INFO",
+    )
+
+
+def enable_project_data(sender, app_data) -> None:
+    customer_name = dpg.get_value("project_enable_customer_name_dropdown")
+    if customer_name == "":
+        __hide_text_after_seconds(
+            "project_enable_error_label", "No customer selected!", 3
+        )
+        return
+    project_name = dpg.get_value("project_enable_project_name_dropdown")
+    if project_name == "":
+        __hide_text_after_seconds(
+            "project_enable_error_label", "No project selected!", 3
+        )
+        return
+
+    __hide_text_after_seconds(
+        "project_enable_error_label", "Enabling project in DB!", 3, error=False
+    )
+    db.queue_task(
+        "enable_project", {"customer_name": customer_name, "project_name": project_name}
+    )
+    __post_user_input()
+    __log_message(
+        f"Project {project_name} enabled in the DB",
         type="INFO",
     )
 
@@ -1876,6 +1951,17 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                             delete_customer_data, "customer_delete", "Disable"
                         )
 
+                    with dpg.tab(label="Enable", tag="customer_enable_tab"):
+                        dpg.add_combo(
+                            [],
+                            default_value="",
+                            width=COMBO_WIDTH,
+                            label="Customer Name",
+                            tag="customer_enable_name_dropdown",
+                        )
+                        add_save_button(
+                            enable_customer_data, "customer_enable", "Enable"
+                        )
         with dpg.tab(label="Projects", tag="projects_tab"):
             dpg.add_spacer(height=10)
             with dpg.group(horizontal=True):
@@ -1945,6 +2031,24 @@ with dpg.window(label="Work Timer v3", width=WIDTH, height=HEIGHT):
                             delete_project_data, "project_delete", "Disable"
                         )
 
+                    with dpg.tab(label="Enable", tag="project_enable_tab"):
+                        dpg.add_combo(
+                            [],
+                            width=COMBO_WIDTH,
+                            label="Customer Name",
+                            tag="project_enable_customer_name_dropdown",
+                            callback=lambda: __update_dropdown(
+                                tag="project_enable_project_name_dropdown"
+                            ),
+                        )
+                        dpg.add_combo(
+                            [],
+                            width=COMBO_WIDTH,
+                            label="Project Name",
+                            tag="project_enable_project_name_dropdown",
+                        )
+
+                        add_save_button(enable_project_data, "project_enable", "Enable")
         with dpg.tab(label="Bonuses", tag="bonuses_tab"):
             dpg.add_spacer(height=10)
             with dpg.group(horizontal=True):

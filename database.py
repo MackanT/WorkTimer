@@ -459,6 +459,8 @@ class Database:
                     )
                 elif action == "remove_customer":
                     self.remove_customer(data["customer_name"])
+                elif action == "enable_customer":
+                    self.enable_customer(data["customer_name"])
                 elif action == "insert_project":
                     self.insert_project(
                         data["customer_name"], data["project_name"], data["git_id"]
@@ -472,6 +474,8 @@ class Database:
                     )
                 elif action == "delete_project":
                     self.remove_project(data["customer_name"], data["project_name"])
+                elif action == "enable_project":
+                    self.enable_project(data["customer_name"], data["project_name"])
                 elif action == "insert_bonus":
                     self.insert_bonus(data["start_date"], data["amount"])
                 elif action == "get_customer_update":
@@ -509,6 +513,24 @@ class Database:
                         from projects p
                         left join customers c on c.customer_id = p.customer_id and p.is_current = 1
                         where c.is_current = 1
+                    """)
+                    if response:
+                        response.put(result["customer_name"].unique().tolist())
+                elif action == "get_inactive_customers":
+                    result = self.fetch_query("""
+                        select c.customer_name
+                        from customers c
+                        group by c.customer_name
+                        having sum(c.is_current) = 0
+                    """)
+                    if response:
+                        response.put(result["customer_name"].unique().tolist())
+                elif action == "get_customers_with_inactive_projects":
+                    result = self.fetch_query("""
+                        select c.customer_name
+                        from projects p
+                        left join customers c on c.customer_id = p.customer_id
+                        where p.is_current = 0
                     """)
                     if response:
                         response.put(result["customer_name"].unique().tolist())
@@ -568,6 +590,18 @@ class Database:
                         from projects p
                         left join customers c on c.customer_id = p.customer_id
                         where c.customer_name = ? and p.is_current = 1
+                    """,
+                        (data["customer_name"],),
+                    )
+                    if response:
+                        response.put(result["project_name"].unique().tolist())
+                elif action == "get_inactive_project_names":
+                    result = self.fetch_query(
+                        """
+                        select p.project_name
+                        from projects p
+                        left join customers c on c.customer_id = p.customer_id
+                        where c.customer_name = ? and p.is_current = 0
                     """,
                         (data["customer_name"],),
                     )
@@ -702,13 +736,12 @@ class Database:
             (customer_name,),
         )
 
+    def enable_customer(self, customer_name: str):
         self.execute_query(
             """
-            update projects
-            set is_current = 0
-            where customer_id in (
-                select customer_id from customers where customer_name = ?
-                )
+            update customers
+            set is_current = 1
+            where customer_name = ?
         """,
             (customer_name,),
         )
@@ -782,6 +815,18 @@ class Database:
             set is_current = 0
             where project_name = ? and is_current = 1 and customer_id in (
                 select customer_id from customers where customer_name = ? and is_current = 1
+            )
+        """,
+            (project_name, customer_name),
+        )
+
+    def enable_project(self, customer_name: str, project_name: str):
+        self.execute_query(
+            """
+            update projects
+            set is_current = 1
+            where project_name = ? and customer_id in (
+                select customer_id from customers where customer_name = ?
             )
         """,
             (project_name, customer_name),
