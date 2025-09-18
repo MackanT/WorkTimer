@@ -965,54 +965,45 @@ def update_ui_for_state():
                 no_collapse=True,
                 no_move=True,
             ):
-                dpg.add_button(
-                    label="Close",
-                    callback=lambda: (
-                        globals().__setitem__("CURRENT_UI_STATE", UIState.MAIN),
-                        update_ui_for_state(),
-                        switch_back_to_previous_tab(),
-                    ),
+                with dpg.tab_bar(callback=tab_query_callback, tag="query_tab_bar"):
+                    with dpg.tab(label="Close", tag="query_close_tab"):
+                        pass
+                    with dpg.tab(label="Time", tag="query_time_tab"):
+                        pass
+                    with dpg.tab(label="Customers", tag="query_customers_tab"):
+                        pass
+                    with dpg.tab(label="Projects", tag="query_projects_tab"):
+                        pass
+                    with dpg.tab(label="Bonus", tag="query_bonus_tab"):
+                        pass
+                    with dpg.tab(label="Weekly", tag="query_weekly_tab"):
+                        pass
+                    with dpg.tab(label="Monthly", tag="query_monthly_tab"):
+                        pass
+
+                tab_id = dpg.get_alias_id("query_time_tab")
+                dpg.set_value("query_tab_bar", tab_id)
+
+                dpg.add_spacer(width=10)
+                dpg.add_text("Enter Query:")
+                sql_input = "select * from time"
+                dpg.add_input_text(
+                    multiline=True,
+                    width=QUERY_WIDTH - 30,
+                    height=HEIGHT / 6,
+                    tag="query_input",
+                    default_value=sql_input,
                 )
-                with dpg.group():
-                    available_queries = [
-                        "time",
-                        "customers",
-                        "projects",
-                        "bonus",
-                        "weekly",
-                        "monthly",
-                    ]
-                    with dpg.group(horizontal=True):
-                        dpg.add_text("Available tables:")
-                        for table in available_queries:
-                            dpg.add_button(
-                                label=table,
-                                callback=lambda t=str(table): __autoset_query_window(
-                                    table_id=t
-                                ),
-                            )
-                    dpg.add_spacer(width=10)
-                    dpg.add_text("Enter Query:")
-                    sql_input = "select * from time"
-                    dpg.add_input_text(
-                        multiline=True,
-                        width=QUERY_WIDTH - 30,
-                        height=HEIGHT / 6,
-                        tag="query_input",
-                        default_value=sql_input,
-                    )
-                    __autoset_query_window(table_name="time")
-                    if not dpg.does_item_exist("query_input_handler"):
-                        with dpg.item_handler_registry(
-                            tag="query_input_handler"
-                        ) as handler:
-                            dpg.add_item_activated_handler(callback=on_input_focus)
-                            dpg.add_item_deactivated_after_edit_handler(
-                                callback=on_input_unfocus
-                            )
-                        dpg.bind_item_handler_registry(
-                            "query_input", "query_input_handler"
+                __autoset_query_window(table_name="time")
+                if not dpg.does_item_exist("query_input_handler"):
+                    with dpg.item_handler_registry(
+                        tag="query_input_handler"
+                    ) as handler:
+                        dpg.add_item_activated_handler(callback=on_input_focus)
+                        dpg.add_item_deactivated_after_edit_handler(
+                            callback=on_input_unfocus
                         )
+                    dpg.bind_item_handler_registry("query_input", "query_input_handler")
                 dpg.add_text("Tabular Data:")
                 handle_query_input()
             with dpg.handler_registry():
@@ -1799,6 +1790,28 @@ def switch_back_to_previous_tab():
     global previous_tab
     tab_id = dpg.get_alias_id(previous_tab)
     dpg.set_value("main_tab_bar", tab_id)
+
+
+def tab_query_callback(sender, app_data):
+    global CURRENT_UI_STATE
+
+    tab_tag = dpg.get_item_alias(app_data)
+    if tab_tag == "query_close_tab":
+        CURRENT_UI_STATE = UIState.MAIN
+        update_ui_for_state()
+        switch_back_to_previous_tab()
+    elif tab_tag == "query_time_tab":
+        __autoset_query_window(table_name="time")
+    elif tab_tag == "query_customers_tab":
+        __autoset_query_window(table_name="customers")
+    elif tab_tag == "query_projects_tab":
+        __autoset_query_window(table_name="projects")
+    elif tab_tag == "query_bonus_tab":
+        __autoset_query_window(table_name="bonus")
+    elif tab_tag == "query_weekly_tab":
+        __autoset_query_window(table_name="weekly")
+    elif tab_tag == "query_monthly_tab":
+        __autoset_query_window(table_name="monthly")
 
 
 def tab_selected_callback(sender, app_data):
