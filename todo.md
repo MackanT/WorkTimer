@@ -4,7 +4,6 @@
 - update customer/project should also update times values!
 - Devops connector
 - Make PAT-tokens etc masked
-- Option to reenable existing customer/project
 - Add custom quick selections
 - Defaults to first project available per organisationurl
 - Easy way to schema merge old db struct to new.
@@ -12,9 +11,8 @@
 - FAQ
 - adding new customer with same customer_name does not update projects customer_id 
 - "error" command completed successfully (after for ex update query)
-- closing query editor should redraw ui if changes were made!
 - clean up of customer sort order
-- clean up query editor
+- color coded in sql input
 
 ### Buggar
 
