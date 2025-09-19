@@ -863,6 +863,9 @@ def show_project_popup(
                 tag=f"comment_{customer_id}_{project_id}",
                 height=60,
             )
+            dpg.focus_item(
+                f"git_id_{customer_id}_{project_id}"
+            )  # change to comment for comment auto-focus!
 
             with dpg.group(horizontal=True):
                 dpg.add_button(
