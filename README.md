@@ -3,6 +3,15 @@ A helper program to keep time of time spent on different tasks, with built in De
 
 # Changelog
 
+1.0.1 (2025-09-15)
+- Added total counts on time in weekly and monthly selects
+- Added ui color customization
+- Revamped ui to use tabs and less collapsing headers
+- Added keyboard shortcuts to query + log
+- Cleaned up ui also in query window
+- Added simplified method to reenable old customer and projects
+- Closing query now automatically redraws ui (in case changes were made that affect customers, projects, times etc)
+
 1.0.0 (2025-06-26)
 - First official release
 - Fixed long standing bug with customer headers auto-closing on minimization of the program
