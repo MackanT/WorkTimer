@@ -952,6 +952,7 @@ def update_ui_for_state():
     # State-driven handling for query and log popups
     query_popup_tag = "query_popup_window"
     log_popup_tag = "log_popup_window"
+    project_popup_tag = "project_popup_window"
     if CURRENT_UI_STATE == UIState.QUERY_EDITOR:
         if not dpg.does_item_exist(query_popup_tag):
             dpg.set_viewport_width(QUERY_WIDTH + 20)
@@ -1031,7 +1032,6 @@ def update_ui_for_state():
                     callback=lambda: (
                         globals().__setitem__("CURRENT_UI_STATE", UIState.MAIN),
                         update_ui_for_state(),
-                        switch_back_to_previous_tab(),
                     ),
                 )
                 dpg.add_input_text(
@@ -1047,16 +1047,19 @@ def update_ui_for_state():
         # Hide query popup if open
         if dpg.does_item_exist(query_popup_tag):
             dpg.delete_item(query_popup_tag)
+    elif CURRENT_UI_STATE == UIState.TASK_INPUT:
+        1
+
     else:
         # Hide both popups if not in either state
         if dpg.does_item_exist(query_popup_tag):
             dpg.delete_item(query_popup_tag)
-            dpg.set_viewport_width(WIDTH + 15)
-            dpg.set_viewport_height(HEIGHT + 50)
         if dpg.does_item_exist(log_popup_tag):
             dpg.delete_item(log_popup_tag)
-            dpg.set_viewport_width(WIDTH + 15)
-            dpg.set_viewport_height(HEIGHT + 50)
+        dpg.set_viewport_width(WIDTH + 15)
+        dpg.set_viewport_height(HEIGHT + 50)
+        run_update_ui_task()
+        switch_back_to_previous_tab()
 
 
 def _add_project_name(popup_tag: str, customer_id: int, project_name: str) -> dict:
@@ -1799,7 +1802,6 @@ def tab_query_callback(sender, app_data):
     if tab_tag == "query_close_tab":
         CURRENT_UI_STATE = UIState.MAIN
         update_ui_for_state()
-        switch_back_to_previous_tab()
     elif tab_tag == "query_time_tab":
         __autoset_query_window(table_name="time")
     elif tab_tag == "query_customers_tab":
