@@ -1366,6 +1366,7 @@ def handle_query_input():
             resizable=True,
             reorderable=True,
             width=QUERY_WIDTH,
+            row_background=True,
         ):
             char_width = 8
             min_width = 60
