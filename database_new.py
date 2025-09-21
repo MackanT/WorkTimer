@@ -679,8 +679,8 @@ class Database:
                 c.pat_token,
                 p.is_current as p_current, 
                 c.is_current as c_current 
-            from projects p
-            left join customers c on c.customer_id = p.customer_id
+            from customers c
+            left join projects p on p.customer_id = c.customer_id
         """
         result = self.fetch_query(query)
         return result
