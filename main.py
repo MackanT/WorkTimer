@@ -11,6 +11,7 @@ debug = True
 
 add_data_df = None
 
+
 @dataclass
 class SaveData:
     function: str
@@ -18,7 +19,6 @@ class SaveData:
     main_param: str
     secondary_action: str
     button_name: str = "Save"
-
 
 
 async def refresh_add_data():
@@ -42,10 +42,6 @@ async def function_db(func_name: str, *args, **kwargs):
 
 
 async def query_db(query: str):
-    return await asyncio.to_thread(Database.db.fetch_query, query)
-
-
-async def smart_query_db(query: str):
     return await asyncio.to_thread(Database.db.smart_query, query)
 
 
@@ -888,7 +884,7 @@ def ui_query_editor():
     async def run_code():
         query = editor.value
         try:
-            df = await smart_query_db(query)
+            df = await query_db(query)
             if df is not None:
                 grid_box.options["columnDefs"] = [
                     {"field": str(col).lower(), "headerName": str(col).lower()}
