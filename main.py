@@ -39,10 +39,6 @@ async def smart_query_db(query: str):
     return await asyncio.to_thread(Database.db.smart_query, query)
 
 
-async def modify_db(query: str):
-    return await asyncio.to_thread(Database.db.execute_query, query)
-
-
 ## UI SETUP ##
 def ui_time_tracking():
     with ui.row().classes("items-center mt-4 mb-2"):
@@ -164,7 +160,6 @@ def ui_time_tracking():
     def make_callback(customer_id, project_id):
         return lambda e: on_checkbox_change(e, e.value, customer_id, project_id)
 
-    # Store references to value labels and their associated project rows
     value_labels = []
 
     async def get_ui_data():
@@ -236,7 +231,6 @@ def ui_time_tracking():
                                     (value_label, customer_id, project["project_id"])
                                 )
 
-    # Function to update only the value labels' text
     async def update_ui():
         df = await get_ui_data()
         # Build a lookup for (customer_id, project_id) to row
@@ -882,7 +876,6 @@ def setup_ui():
         tab_ui_edits = ui.tab("UI Edits")
         tab_query_editors = ui.tab("Query Editors")
         tab_log = ui.tab("Log")
-    # Combine settings and time tracking in one tab
     with ui.tab_panels(tabs, value=tab_time).classes("w-full"):
         with ui.tab_panel(tab_time):
             ui_time_tracking()
