@@ -444,6 +444,25 @@ class Database:
         result = self.fetch_query(query)
         return result
 
+    def get_data_input_list(self):
+        query = """
+            select 
+                c.customer_name, 
+                c.customer_id, 
+                p.project_name, 
+                p.project_id,
+                p.git_id, 
+                c.wage, 
+                c.org_url, 
+                c.pat_token,
+                p.is_current as p_current, 
+                c.is_current as c_current 
+            from projects p
+            left join customers c on c.customer_id = p.customer_id
+        """
+        result = self.fetch_query(query)
+        return result
+
     # def queue_task(self, action: str, data: dict, response=None):
     #     """
     #     Add a task to the queue.

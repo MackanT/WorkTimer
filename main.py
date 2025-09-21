@@ -8,6 +8,14 @@ from datetime import date, datetime
 
 debug = True
 
+add_data_df = None
+
+
+async def refresh_add_data():
+    global add_data_df
+    df = await function_db("get_data_input_list")
+    add_data_df = df
+
 
 def main():
     print("Starting WorkTimer!")
@@ -250,27 +258,559 @@ def ui_time_tracking():
 
 
 def ui_add_data():
-    with ui.splitter(value=30).classes("w-full h-56") as splitter:
+    global add_data_df
+    asyncio.run(refresh_add_data())
+
+    def date_input(label):
+        with ui.input(label).props("readonly").classes(input_width) as date:
+            with ui.menu().props("no-parent-event") as menu:
+                with ui.date().bind_value(date):
+                    with ui.row().classes("justify-end"):
+                        ui.button("Close", on_click=menu.close).props("flat")
+            with date.add_slot("append"):
+                ui.icon("edit_calendar").on("click", menu.open).classes(
+                    "cursor-pointer"
+                )
+        return date
+
+    input_width = "w-64"
+
+    def on_customer_change(e):
+        nonlocal selected_customer
+        selected_customer = e.args.get("label")
+
+    def on_project_change(e):
+        nonlocal selected_project
+        selected_project = e.args.get("label")
+
+    with ui.splitter(value=30).classes("w-full h-full") as splitter:
         with splitter.before:
-            with ui.tabs().props("vertical").classes("w-full") as tabs:
-                mail = ui.tab("Customers", icon="mail")
-                alarm = ui.tab("Projects", icon="alarm")
-                movie = ui.tab("Bonuses", icon="movie")
+            with ui.tabs().props("vertical").classes("w-full") as main_tabs:
+                tab_customers = ui.tab("Customers", icon="mail")
+                tab_projects = ui.tab("Projects", icon="alarm")
+                tab_bonuses = ui.tab("Bonuses", icon="movie")
         with splitter.after:
             with (
-                ui.tab_panels(tabs, value=mail)
+                ui.tab_panels(main_tabs, value=tab_customers)
                 .props("vertical")
                 .classes("w-full h-full")
             ):
-                with ui.tab_panel(mail):
-                    ui.label("Customers").classes("text-h4")
-                    ui.label("Content of customers")
-                with ui.tab_panel(alarm):
-                    ui.label("Projects").classes("text-h4")
-                    ui.label("Content of projects")
-                with ui.tab_panel(movie):
-                    ui.label("Bonuses").classes("text-h4")
-                    ui.label("Content of bonuses")
+                # Customers
+                with ui.tab_panel(tab_customers):
+                    with ui.tabs().classes("mb-2") as customer_tabs:
+                        tab_add = ui.tab("Add")
+                        tab_update = ui.tab("Update")
+                        tab_disable = ui.tab("Disable")
+                        tab_reenable = ui.tab("Reenable")
+                    with ui.tab_panels(customer_tabs, value=tab_add):
+                        # Add Customer
+                        with ui.tab_panel(tab_add):
+                            name_input_add = ui.input("Name").classes(input_width)
+                            wage_input_add = ui.number("Wage").classes(input_width)
+                            start_date_input_add = date_input("Start Date")
+                            org_url_input_add = ui.input("DevOps Org. URL").classes(
+                                input_width
+                            )
+                            pat_input_add = ui.input("DevOps PAT").classes(input_width)
+
+                            def customer_add():
+                                print("Name:", name_input_add.value)
+                                print("Wage:", wage_input_add.value)
+                                print("Start Date:", start_date_input_add.value)
+                                print("DevOps Org. URL:", org_url_input_add.value)
+                                print("DevOps PAT:", pat_input_add.value)
+                                ui.notify("Customer Add saved!")
+                                print("TODO: Save to DB")  ## TODO
+
+                            ui.button("Save", on_click=customer_add).classes("mt-2")
+                        # Update Customer
+                        with ui.tab_panel(tab_update):
+                            customer_data_upd = (
+                                add_data_df[add_data_df["c_current"] == 1][
+                                    "customer_name"
+                                ]
+                                .unique()
+                                .tolist()
+                            )
+
+                            selected_customer = None
+                            name_input_upd = ui.select(customer_data_upd).classes(
+                                input_width
+                            )
+                            name_input_upd.on("update:model-value", on_customer_change)
+
+                            new_name_input_upd = ui.input("New Name").classes(
+                                input_width
+                            )
+                            org_url_input_upd = ui.input("DevOps Org. URL").classes(
+                                input_width
+                            )
+                            pat_input_upd = ui.input("DevOps PAT").classes(input_width)
+
+                            widget_list = [
+                                new_name_input_upd,
+                                org_url_input_upd,
+                                pat_input_upd,
+                            ]
+
+                            def autofill_fields(e):
+                                filtered = add_data_df.loc[
+                                    (add_data_df["c_current"] == 1)
+                                    & (
+                                        add_data_df["customer_name"]
+                                        == selected_customer
+                                    )
+                                ]
+
+                                if filtered.empty:
+                                    for widget in widget_list:
+                                        widget.value = ""
+                                        widget.update()
+                                    return
+                                row = filtered.iloc[0]
+                                new_name_input_upd.value = row.get("customer_name", "")
+                                org_url_input_upd.value = row.get("org_url", "")
+                                pat_input_upd.value = row.get("pat_token", "")
+                                for widget in widget_list:
+                                    widget.update()
+
+                            name_input_upd.on("update:model-value", autofill_fields)
+
+                            async def customer_update():
+                                if debug:
+                                    ui.notify(f"Updating customer {selected_customer}!")
+
+                                filtered = add_data_df.loc[
+                                    (add_data_df["c_current"] == 1)
+                                    & (
+                                        add_data_df["customer_name"]
+                                        == selected_customer
+                                    )
+                                ]
+                                customer_id = (
+                                    filtered.iloc[0]["customer_id"]
+                                    if not filtered.empty
+                                    else None
+                                )
+                                print("Customer ID:", customer_id)
+                                print("Name:", selected_customer)
+                                print("New Name:", new_name_input_upd.value)
+                                print("DevOps Org. URL:", org_url_input_upd.value)
+                                print("DevOps PAT:", pat_input_upd.value)
+
+                                print("TODO: Save to DB")  ## TODO
+
+                            ui.button("Save", on_click=customer_update).classes("mt-2")
+                        # Disable Customer
+                        with ui.tab_panel(tab_disable):
+                            customer_data_dis = (
+                                add_data_df[add_data_df["c_current"] == 1][
+                                    "customer_name"
+                                ]
+                                .unique()
+                                .tolist()
+                            )
+
+                            selected_customer = None
+                            name_input_dis = ui.select(customer_data_dis).classes(
+                                input_width
+                            )
+                            name_input_dis.on("update:model-value", on_customer_change)
+
+                            async def customer_disable():
+                                if debug:
+                                    ui.notify(
+                                        f"Disabling customer {selected_customer}!"
+                                    )
+                                ## TODO disable in DB
+
+                            ui.button("Save", on_click=customer_disable).classes("mt-2")
+                        # Reenable Customer
+                        with ui.tab_panel(tab_reenable):
+                            customer_data_ree = (
+                                add_data_df[add_data_df["c_current"] == 0][
+                                    "customer_name"
+                                ]
+                                .unique()
+                                .tolist()
+                            )
+
+                            selected_customer = None
+                            name_input_ree = ui.select(customer_data_ree).classes(
+                                input_width
+                            )
+                            name_input_ree.on("update:model-value", on_customer_change)
+
+                            async def customer_reenable():
+                                if debug:
+                                    ui.notify(
+                                        f"Reenabling customer {selected_customer}!"
+                                    )
+                                ## TODO reenable in DB
+
+                            ui.button("Save", on_click=customer_reenable).classes(
+                                "mt-2"
+                            )
+
+                # Projects
+                with ui.tab_panel(tab_projects):
+                    with ui.tabs().classes("mb-2") as project_tabs:
+                        tab_add = ui.tab("Add")
+                        tab_update = ui.tab("Update")
+                        tab_disable = ui.tab("Disable")
+                        tab_reenable = ui.tab("Reenable")
+                    with ui.tab_panels(project_tabs, value=tab_add):
+                        # Add Projects
+                        with ui.tab_panel(tab_add):
+                            customer_data_p_add = (
+                                add_data_df[add_data_df["c_current"] == 1][
+                                    "customer_name"
+                                ]
+                                .unique()
+                                .tolist()
+                            )
+
+                            selected_customer = None
+                            name_input_p_add = ui.select(customer_data_p_add).classes(
+                                input_width
+                            )
+                            name_input_p_add.on(
+                                "update:model-value", on_customer_change
+                            )
+
+                            project_name_input_p_add = ui.input("Name").classes(
+                                input_width
+                            )
+                            git_id_input_p_add = ui.number("Git ID (opt.)").classes(
+                                input_width
+                            )
+
+                            def project_add():
+                                if debug:
+                                    ui.notify(
+                                        f"Adding project {project_name_input_p_add.value}!"
+                                    )
+
+                                filtered = add_data_df.loc[
+                                    (add_data_df["c_current"] == 1)
+                                    & (
+                                        add_data_df["customer_name"]
+                                        == selected_customer
+                                    )
+                                ]
+                                customer_id_p_add = (
+                                    filtered.iloc[0]["customer_id"]
+                                    if not filtered.empty
+                                    else None
+                                )
+                                print("Customer:", selected_customer)
+                                print("Customer ID:", customer_id_p_add)
+                                print("Project Name:", project_name_input_p_add.value)
+                                print("Git ID:", git_id_input_p_add.value)
+                                print("TODO: Save to DB")  ## TODO
+
+                            ui.button("Save", on_click=project_add).classes("mt-2")
+                        # Update Projects
+                        with ui.tab_panel(tab_update):
+                            active_data = add_data_df[add_data_df["c_current"] == 1]
+
+                            customer_data_p_upd = (
+                                active_data["customer_name"].unique().tolist()
+                            )
+
+                            selected_customer = None
+                            name_input_p_upd = ui.select(customer_data_p_upd).classes(
+                                input_width
+                            )
+                            name_input_p_upd.on(
+                                "update:model-value", on_customer_change
+                            )
+
+                            selected_project = None
+                            project_name_input_p_upd = ui.select([]).classes(
+                                input_width
+                            )
+                            project_name_input_p_upd.on(
+                                "update:model-value", on_project_change
+                            )
+                            print("project_options", project_name_input_p_upd.options)
+
+                            project_new_name_input_p_upd = ui.input(
+                                "New Project Name"
+                            ).classes(input_width)
+                            git_id_input_p_upd = ui.number("New Git ID").classes(
+                                input_width
+                            )
+
+                            widget_list = [
+                                project_new_name_input_p_upd,
+                                git_id_input_p_upd,
+                            ]
+
+                            def autofill_project_update_fields(e):
+                                filtered = (
+                                    active_data[
+                                        active_data["customer_name"]
+                                        == selected_customer
+                                    ]["project_name"]
+                                    .unique()
+                                    .tolist()
+                                )
+                                project_name_input_p_upd.options = filtered
+                                project_name_input_p_upd.update()
+
+                            def autofill_fields(e):
+                                filtered = active_data.loc[
+                                    (active_data["customer_name"] == selected_customer)
+                                    & (active_data["project_name"] == selected_project)
+                                ]
+                                if filtered.empty:
+                                    for widget in widget_list:
+                                        widget.value = ""
+                                        widget.update()
+                                    return
+                                row = filtered.iloc[0]
+                                project_new_name_input_p_upd.value = row.get(
+                                    "project_name", ""
+                                )
+                                git_id_input_p_upd.value = row.get("git_id", "")
+                                for widget in widget_list:
+                                    widget.update()
+
+                            name_input_p_upd.on(
+                                "update:model-value", autofill_project_update_fields
+                            )
+                            project_name_input_p_upd.on(
+                                "update:model-value", autofill_fields
+                            )
+
+                            def project_update():
+                                if debug:
+                                    ui.notify(
+                                        f"Updating project {project_name_input_p_upd.value}!"
+                                    )
+
+                                project_df = (
+                                    active_data[
+                                        active_data["project_name"] == selected_project
+                                    ][["customer_id", "project_id"]]
+                                    if not active_data.empty
+                                    else None
+                                )
+                                print("Customer:", selected_customer)
+                                print("Customer ID:", project_df.iloc[0]["customer_id"])
+                                print("Project Name:", project_name_input_p_upd.value)
+                                print("Project ID:", project_df.iloc[0]["project_id"])
+                                print(
+                                    "New Project Name:",
+                                    project_new_name_input_p_upd.value,
+                                )
+                                print("Git ID:", git_id_input_p_upd.value)
+                                print("TODO: Save to DB")  ## TODO
+
+                            ui.button("Save", on_click=project_update).classes("mt-2")
+                        # Disable Projects
+                        with ui.tab_panel(tab_disable):
+                            active_data_p_dis = add_data_df[
+                                add_data_df["c_current"] == 1
+                            ]
+
+                            customer_data_p_dis = (
+                                active_data_p_dis["customer_name"].unique().tolist()
+                            )
+
+                            selected_customer = None
+                            name_input_p_dis = ui.select(customer_data_p_dis).classes(
+                                input_width
+                            )
+                            name_input_p_dis.on(
+                                "update:model-value", on_customer_change
+                            )
+
+                            project_name_input_p_dis = ui.select([]).classes(
+                                input_width
+                            )
+
+                            def autofill_project_disable_fields(e):
+                                filtered = (
+                                    add_data_df[
+                                        add_data_df["customer_name"]
+                                        == selected_customer
+                                    ]["project_name"]
+                                    .unique()
+                                    .tolist()
+                                )
+
+                                project_name_input_p_dis.options = filtered
+                                project_name_input_p_dis.update()
+
+                            def project_disable():
+                                if debug:
+                                    ui.notify(
+                                        f"Disabling project {project_name_input_p_dis.value}!"
+                                    )
+
+                                filtered = add_data_df.loc[
+                                    (add_data_df["c_current"] == 1)
+                                    & (
+                                        add_data_df["customer_name"]
+                                        == selected_customer
+                                    )
+                                ]
+                                customer_id = (
+                                    filtered.iloc[0]["customer_id"]
+                                    if not filtered.empty
+                                    else None
+                                )
+                                project_id = (
+                                    filtered[
+                                        filtered["project_name"]
+                                        == project_name_input_p_dis.value
+                                    ]["project_id"]
+                                    if not filtered.empty
+                                    else None
+                                )
+                                print("\n", project_id, "\n")
+                                print("Customer:", selected_customer)
+                                print("Customer ID:", customer_id)
+                                print("Project Name:", project_name_input_p_dis.value)
+                                print("Project ID:", project_id.iloc[0])
+                                print("TODO: Save to DB")  ## TODO
+
+                            name_input_p_dis.on(
+                                "update:model-value", autofill_project_disable_fields
+                            )
+                            ui.button("Save", on_click=project_disable).classes("mt-2")
+                        # Reenable Projects
+                        with ui.tab_panel(tab_reenable):
+                            active_data_p_ree = add_data_df[
+                                add_data_df["c_current"] == 1
+                            ]
+
+                            customer_data_p_ree = (
+                                active_data_p_ree["customer_name"].unique().tolist()
+                            )
+
+                            selected_customer = None
+                            name_input_p_ree = ui.select(customer_data_p_ree).classes(
+                                input_width
+                            )
+                            name_input_p_ree.on(
+                                "update:model-value", on_customer_change
+                            )
+
+                            project_name_input_p_ree = ui.select([]).classes(
+                                input_width
+                            )
+
+                            def autofill_project_reenable_fields(e):
+                                filtered = (
+                                    add_data_df[
+                                        (
+                                            add_data_df["customer_name"]
+                                            == selected_customer
+                                        )
+                                        & (add_data_df["p_current"] == 0)
+                                    ]["project_name"]
+                                    .unique()
+                                    .tolist()
+                                )
+
+                                project_name_input_p_ree.options = filtered
+                                project_name_input_p_ree.update()
+
+                            def project_reenable():
+                                if debug:
+                                    ui.notify(
+                                        f"Disabling project {project_name_input_p_ree.value}!"
+                                    )
+
+                                filtered = add_data_df.loc[
+                                    (add_data_df["c_current"] == 1)
+                                    & (
+                                        add_data_df["customer_name"]
+                                        == selected_customer
+                                    )
+                                ]
+                                customer_id = (
+                                    filtered.iloc[0]["customer_id"]
+                                    if not filtered.empty
+                                    else None
+                                )
+                                project_id = (
+                                    filtered[
+                                        filtered["project_name"] == selected_project
+                                    ]["project_id"]
+                                    if not filtered.empty
+                                    else None
+                                )
+                                print("Customer:", selected_customer)
+                                print("Customer ID:", customer_id)
+                                print("Project Name:", project_name_input_p_ree.value)
+                                print("Project ID:", project_id.iloc[0])
+                                print("TODO: Save to DB")  ## TODO
+
+                            name_input_p_ree.on(
+                                "update:model-value", autofill_project_reenable_fields
+                            )
+                            ui.button("Save", on_click=project_reenable).classes("mt-2")
+
+                # Bonuses
+                with ui.tab_panel(tab_bonuses):
+                    with ui.tabs().classes("mb-2") as bonus_tabs:
+                        tab_add = ui.tab("Add")
+                        tab_update = ui.tab("Update")
+                        tab_disable = ui.tab("Disable")
+                        tab_reenable = ui.tab("Reenable")
+                    with ui.tab_panels(bonus_tabs, value=tab_add):
+                        with ui.tab_panel(tab_add):
+
+                            def save_bonus_add():
+                                ui.notify("Bonus Add saved!")
+
+                            # nested_tab_panel(
+                            #     "Add Bonus",
+                            #     [
+                            #         lambda: ui.input("Name"),
+                            #         lambda: ui.number("Bonus Amount"),
+                            #         lambda: date_input("Bonus Date"),
+                            #     ],
+                            #     save_bonus_add,
+                            # )
+                        with ui.tab_panel(tab_update):
+
+                            def save_bonus_update():
+                                ui.notify("Bonus Update saved!")
+
+                            # nested_tab_panel(
+                            #     "Update Bonus",
+                            #     [
+                            #         lambda: ui.input("Name"),
+                            #         lambda: ui.number("Bonus Amount"),
+                            #         lambda: date_input("Bonus Date"),
+                            #     ],
+                            #     save_bonus_update,
+                            # )
+                        with ui.tab_panel(tab_disable):
+
+                            def save_bonus_disable():
+                                ui.notify("Bonus Disable saved!")
+
+                            # nested_tab_panel(
+                            #     "Disable Bonus",
+                            #     [lambda: ui.number("Bonus ID")],
+                            #     save_bonus_disable,
+                            # )
+                        with ui.tab_panel(tab_reenable):
+
+                            def save_bonus_reenable():
+                                ui.notify("Bonus Reenable saved!")
+
+                            # nested_tab_panel(
+                            #     "Reenable Bonus",
+                            #     [lambda: ui.number("Bonus ID")],
+                            #     save_bonus_reenable,
+                            # )
 
 
 def ui_edit_settings():
