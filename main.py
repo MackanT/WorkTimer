@@ -3,13 +3,13 @@ from nicegui.events import KeyEventArguments
 import helpers
 import asyncio
 from database_new import Database
+from devops_new import DevOpsManager
 from datetime import date, datetime
 from dataclasses import dataclass
-# from devops import DevOpsClient
 
 debug = True
-
 add_data_df = None
+devops_manager = None
 
 
 @dataclass
@@ -43,6 +43,15 @@ async def function_db(func_name: str, *args, **kwargs):
 
 async def query_db(query: str):
     return await asyncio.to_thread(Database.db.smart_query, query)
+
+
+## DEVOPS SETUP ##
+async def setup_devops():
+    global devops_manager
+    df = await query_db(
+        "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and org_url is not null"
+    )
+    devops_manager = DevOpsManager(df)
 
 
 ## UI SETUP ##
@@ -110,7 +119,7 @@ def ui_time_tracking():
     container = ui.element()
 
     async def on_checkbox_change(event, checked, customer_id, project_id):
-        print(event, checked, customer_id, project_id)
+        global devops_manager
         if checked:
             if debug:
                 ui.notify(
@@ -148,6 +157,29 @@ def ui_time_tracking():
                             git_id=int(id_input.value),
                             comment=comment_input.value,
                         )
+                        sql_code = f"select customer_name from customers where customer_id = {customer_id}"
+                        customer_name = await query_db(sql_code)
+                        if id_checkbox.value and int(id_input.value) > 0:
+                            if devops_manager:
+                                msg = devops_manager.save_comment(
+                                    customer_name=customer_name.iloc[0][
+                                        "customer_name"
+                                    ],
+                                    comment=comment_input.value,
+                                    git_id=int(id_input.value),
+                                )
+                                if msg:
+                                    ui.notify(
+                                        "No valid DevOps connection",
+                                        color="negative",
+                                        close_button="OK",
+                                    )
+                                else:
+                                    ui.notify(
+                                        "Comment stored successfully",
+                                        color="positive",
+                                        close_button="OK",
+                                    )
                         popup.close()
 
                     async def delete_popup():
@@ -977,6 +1009,6 @@ if __name__ in {"__main__", "__mp_main__"}:
     </script>
     """)
 
-    # setup_devops()
+    asyncio.run(setup_devops())
     setup_ui()
     ui.run()
