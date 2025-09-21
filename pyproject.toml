@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "worktimer"
-version = "1.0.0"
+version = "0.1.0"
 authors = [
   { name = "Marcus Toftås", email = "mackan.toftas@live.com" }
 ]
@@ -13,12 +13,15 @@ maintainers = [
 ]
 description = "A helper program to keep time of time spent on different tasks, with built in DevOps integration."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
+dependencies = [
+    "nicegui>=2.24.1",
+    "pandas>=2.3.2",
+]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
-
 
 [project.urls]
 "Homepage" = "https://github.com/MackanT/WorkTimer"
