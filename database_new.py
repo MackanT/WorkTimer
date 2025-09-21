@@ -621,6 +621,21 @@ class Database:
             (project_name, customer_name),
         )
 
+    ### Bonus Table Operations ###
+
+    def insert_bonus(self, start_date: str, bonus_percent: int) -> None:
+        day_before_start_date = (
+            datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)
+        ).strftime("%Y-%m-%d")
+        self.execute_query(
+            f"update bonus set end_date = '{day_before_start_date}' where end_date is Null"
+        )
+        amount = min(bonus_percent / 100, 1)
+        self.execute_query(
+            "insert into bonus (start_date, bonus_percent) values (?, ?)",
+            (start_date, round(amount, 3)),
+        )
+
     ### UI Operations ###
 
     def get_customer_ui_list(self, start_date: str, end_date: str):
@@ -887,20 +902,6 @@ class Database:
     #         except Exception as e:
     #             if response:
     #                 response.put(e)
-
-    # ## Modify Bonus Table
-    # def insert_bonus(self, start_date: str, amount: float) -> None:
-    #     day_before_start_date = (
-    #         datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)
-    #     ).strftime("%Y-%m-%d")
-    #     self.execute_query(
-    #         f"update bonus set end_date = '{day_before_start_date}' where end_date is Null"
-    #     )
-
-    #     self.execute_query(
-    #         "insert into bonus (start_date, bonus_percent) values (?, ?)",
-    #         (start_date, round(amount, 3)),
-    #     )
 
     def execute_query(self, query: str, params: tuple = ()):
         try:

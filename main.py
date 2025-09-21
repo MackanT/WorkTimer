@@ -294,9 +294,9 @@ def ui_add_data():
             elif field["type"] == "date":
                 widgets[field["name"]] = date_input(label)
             elif field["type"] == "select":
-                widgets[field["name"]] = ui.select(field["options"]).classes(
-                    input_width
-                )
+                widgets[field["name"]] = ui.select(
+                    field["options"], label=label
+                ).classes(input_width)
         return widgets
 
     def autofill_widgets(widgets, row, field_map):
@@ -483,7 +483,6 @@ def ui_add_data():
                 widgets["customer_name"].on("update:model-value", on_name_change)
 
                 add_save_button(save_data, fields, widgets)
-
             elif tab_type == "Disable":
                 customer_data = (
                     add_data_df[add_data_df["c_current"] == 1]["customer_name"]
@@ -496,6 +495,7 @@ def ui_add_data():
                         "label": "Name",
                         "type": "select",
                         "options": customer_data,
+                        "optional": False,
                     },
                 ]
                 save_data = SaveData(
@@ -507,7 +507,6 @@ def ui_add_data():
                 )
                 widgets = make_input_row(fields)
                 add_save_button(save_data, fields, widgets)
-
             elif tab_type == "Reenable":
                 # Only show customer_name where c_current == 0 and NOT present in any row where c_current == 1
                 all_current_names = set(
@@ -527,6 +526,7 @@ def ui_add_data():
                         "label": "Name",
                         "type": "select",
                         "options": reenable_names,
+                        "optional": False,
                     },
                 ]
                 save_data = SaveData(
@@ -650,7 +650,7 @@ def ui_add_data():
                     autofill_widgets(
                         widgets,
                         row,
-                        {"new_name": "new_project_name", "git_id": "new_git_id"},
+                        {"new_project_name": "project_name", "new_git_id": "git_id"},
                     )
 
                 widgets["project_name"].on("update:model-value", on_project_change)
@@ -745,14 +745,46 @@ def ui_add_data():
                 widgets["customer_name"].on("update:model-value", on_customer_change)
                 add_save_button(save_data, fields, widgets)
 
+    def build_bonus_tab_panel(tab_type):
+        container = tab_bonus_containers.get(tab_type)
+        if container is None:
+            container = ui.element()
+            tab_bonus_containers[tab_type] = container
+        container.clear()
+        with container:
+            if tab_type == "Add":
+                fields = [
+                    {
+                        "name": "bonus_percent",
+                        "label": "Bonus Percentage (%)",
+                        "type": "number",
+                        "optional": False,
+                    },
+                    {
+                        "name": "start_date",
+                        "label": "Start Date",
+                        "type": "date",
+                        "optional": False,
+                    },
+                ]
+                widgets = make_input_row(fields)
+                save_data = SaveData(
+                    function="insert_bonus",
+                    main_action="Bonus",
+                    main_param="bonus_percent",
+                    secondary_action="added",
+                    button_name="Add",
+                )
+                add_save_button(save_data, fields, widgets)
+
     input_width = "w-64"
 
     with ui.splitter(value=30).classes("w-full h-full") as splitter:
         with splitter.before:
             with ui.tabs().props("vertical").classes("w-full") as main_tabs:
-                tab_customers = ui.tab("Customers", icon="mail")
-                tab_projects = ui.tab("Projects", icon="alarm")
-                tab_bonuses = ui.tab("Bonuses", icon="movie")
+                tab_customers = ui.tab("Customers", icon="business")
+                tab_projects = ui.tab("Projects", icon="assignment")
+                tab_bonuses = ui.tab("Bonuses", icon="attach_money")
         with splitter.after:
             with (
                 ui.tab_panels(main_tabs, value=tab_customers)
@@ -761,6 +793,7 @@ def ui_add_data():
             ):
                 tab_customer_containers = {}
                 tab_project_containers = {}
+                tab_bonus_containers = {}
 
                 async def on_customer_tab_change(e):
                     tab_type = e.args
@@ -771,6 +804,11 @@ def ui_add_data():
                     tab_type = e.args
                     await refresh_add_data()
                     build_project_tab_panel(tab_type)
+
+                async def on_bonus_tab_change(e):
+                    tab_type = e.args
+                    await refresh_add_data()
+                    build_bonus_tab_panel(tab_type)
 
                 # Customers
                 with ui.tab_panel(tab_customers):
@@ -809,61 +847,22 @@ def ui_add_data():
                 with ui.tab_panel(tab_bonuses):
                     with ui.tabs().classes("mb-2") as bonus_tabs:
                         tab_add = ui.tab("Add")
-                        tab_update = ui.tab("Update")
-                        tab_disable = ui.tab("Disable")
-                        tab_reenable = ui.tab("Reenable")
+                        # tab_update = ui.tab("Update")
+                        # tab_disable = ui.tab("Disable")
+                        # tab_reenable = ui.tab("Reenable")
                     with ui.tab_panels(bonus_tabs, value=tab_add):
                         with ui.tab_panel(tab_add):
-
-                            def save_bonus_add():
-                                ui.notify("Bonus Add saved!")
-
-                            # nested_tab_panel(
-                            #     "Add Bonus",
-                            #     [
-                            #         lambda: ui.input("Name"),
-                            #         lambda: ui.number("Bonus Amount"),
-                            #         lambda: date_input("Bonus Date"),
-                            #     ],
-                            #     save_bonus_add,
-                            # )
+                            build_bonus_tab_panel("Add")
                         with ui.tab_panel(tab_update):
-
-                            def save_bonus_update():
-                                ui.notify("Bonus Update saved!")
-
-                            # nested_tab_panel(
-                            #     "Update Bonus",
-                            #     [
-                            #         lambda: ui.input("Name"),
-                            #         lambda: ui.number("Bonus Amount"),
-                            #         lambda: date_input("Bonus Date"),
-                            #     ],
-                            #     save_bonus_update,
-                            # )
+                            build_bonus_tab_panel("Update")
                         with ui.tab_panel(tab_disable):
-
-                            def save_bonus_disable():
-                                ui.notify("Bonus Disable saved!")
-
-                            # nested_tab_panel(
-                            #     "Disable Bonus",
-                            #     [lambda: ui.number("Bonus ID")],
-                            #     save_bonus_disable,
-                            # )
+                            build_bonus_tab_panel("Disable")
                         with ui.tab_panel(tab_reenable):
-
-                            def save_bonus_reenable():
-                                ui.notify("Bonus Reenable saved!")
-
-                            # nested_tab_panel(
-                            #     "Reenable Bonus",
-                            #     [lambda: ui.number("Bonus ID")],
-                            #     save_bonus_reenable,
-                            # )
+                            build_bonus_tab_panel("Reenable")
 
             customer_tabs.on("update:model-value", on_customer_tab_change)
             project_tabs.on("update:model-value", on_project_tab_change)
+            bonus_tabs.on("update:model-value", on_bonus_tab_change)
 
 
 def ui_edit_settings():
