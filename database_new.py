@@ -332,7 +332,7 @@ class Database:
             self.conn.commit()
             self.pre_run_log.append("Database loaded withouter errors!")
 
-        ### Time Table Operations ###
+    ### Time Table Operations ###
 
     def insert_time_row(
         self, customer_id: int, project_id: int, git_id: int = None, comment: str = None
@@ -400,6 +400,228 @@ class Database:
         """,
             (customer_id, project_id),
         )
+
+    ### Customer Table Operations ###
+
+    def insert_customer(
+        self,
+        customer_name: str,
+        start_date: str,
+        wage: int,
+        org_url: str = None,
+        pat_token: str = None,
+        valid_from: str = None,
+    ):
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        if not valid_from:
+            valid_from = datetime.now().strftime("%Y-%m-%d")
+            if valid_from > start_date:
+                valid_from = start_date
+
+        date_obj = datetime.strptime(start_date, "%Y-%m-%d")
+        day_before = date_obj - timedelta(days=1)
+        valid_to = day_before.strftime("%Y-%m-%d")
+
+        # Find the old customer_id (to be set to is_current=0)
+        old_customer_id = self._get_value_from_db(
+            "select customer_id from customers where customer_name = ? and is_current = 1",
+            (customer_name,),
+            data_type="int",
+        )
+
+        self.execute_query(
+            """
+            update customers
+            set
+                is_current = 0,
+                valid_to = ?
+            where customer_name = ? and is_current = 1
+        """,
+            (valid_to, customer_name),
+        )
+
+        # Insert new customer row
+        self.execute_query(
+            """
+            insert into customers (customer_name, start_date, wage, pat_token, org_url, valid_from, valid_to, is_current, inserted_at)
+            values (?, ?, ?, ?, ?, ?, ?, 1, ?)
+        """,
+            (
+                customer_name,
+                start_date,
+                wage,
+                pat_token,
+                org_url,
+                valid_from,
+                None,
+                now,
+            ),
+        )
+
+        # Get the new customer_id
+        new_customer_id = self._get_value_from_db(
+            "select customer_id from customers where customer_name = ? and is_current = 1",
+            (customer_name,),
+            data_type="int",
+        )
+
+        # Update projects to use new customer_id
+        if old_customer_id and new_customer_id:
+            self.execute_query(
+                """
+                update projects
+                set customer_id = ?
+                where customer_id = ?
+            """,
+                (new_customer_id, old_customer_id),
+            )
+
+    def update_customer(
+        self,
+        customer_name: str,
+        new_customer_name: str,
+        org_url: str = None,
+        pat_token: str = None,
+    ):
+        self.execute_query(
+            """
+            update customers
+            set
+                customer_name = ?,
+                org_url = ?,
+                pat_token = ?
+            where customer_name = ?
+        """,
+            (new_customer_name, org_url, pat_token, customer_name),
+        )
+
+        self.execute_query(
+            """
+            update time
+            set
+                customer_name = ?
+            where customer_name = ?
+        """,
+            (new_customer_name, customer_name),
+        )
+
+    def disable_customer(self, customer_name: str):
+        self.execute_query(
+            """
+            update customers
+            set is_current = 0
+            where customer_name = ?
+        """,
+            (customer_name,),
+        )
+
+    def enable_customer(self, customer_name: str):
+        self.execute_query(
+            """
+            update customers
+            set is_current = 1  
+            where customer_name = ? 
+            and valid_to is null
+            and customer_id = (
+                select customer_id from customers
+                where customer_name = ?
+                and valid_to is null
+                order by datetime(inserted_at) desc
+                limit 1
+            )
+        """,
+            (customer_name, customer_name),
+        )
+
+    ### Project Table Operations ###
+
+    def insert_project(self, customer_name: str, project_name: str, git_id: int = None):
+        customer_id = self._get_value_from_db(
+            "select customer_id from customers where customer_name = ? and is_current = 1",
+            (customer_name,),
+            data_type="int",
+        )
+
+        existing_projects = self.fetch_query(
+            """
+            select * from projects
+            where project_name = ? and customer_id = ?
+        """,
+            (project_name, customer_id),
+        )
+
+        if not existing_projects.empty and existing_projects["is_current"].iloc[0] == 1:
+            return  # Project already exists in database!
+        elif not existing_projects.empty:
+            project_id = existing_projects["project_id"].iloc[0]
+            self.execute_query(
+                "update projects set is_current = 1 where project_id = ?", (project_id,)
+            )
+        else:
+            self.execute_query(
+                """
+                insert into projects (customer_id, project_name, is_current, git_id)
+                values (?, ?, 1, ?)
+            """,
+                (customer_id, project_name, git_id),
+            )
+
+    def update_project(
+        self,
+        customer_name: str,
+        project_name: str,
+        new_project_name: str,
+        new_git_id: int = None,
+    ):
+        self.execute_query(
+            """
+            update projects
+            set
+                project_name = ?,
+                git_id = ?
+            where project_name = ? and customer_id = (
+                select customer_id from customers where customer_name = ? and is_current = 1
+            )
+        """,
+            (new_project_name, new_git_id, project_name, customer_name),
+        )
+
+        self.execute_query(
+            """
+            update time
+            set
+                project_name = ?
+            where project_name = ? and customer_name = ?
+        """,
+            (new_project_name, project_name, customer_name),
+        )
+
+    def disable_project(self, customer_name: str, project_name: str):
+        self.execute_query(
+            """
+            update projects
+            set is_current = 0
+            where project_name = ? and customer_id in (
+                select customer_id from customers where customer_name = ? and is_current = 1
+            )
+        """,
+            (project_name, customer_name),
+        )
+
+    def enable_project(self, customer_name: str, project_name: str):
+        self.execute_query(
+            """
+            update projects
+            set is_current = 1
+            where project_name = ? and customer_id in (
+                select customer_id from customers where customer_name = ?
+            )
+        """,
+            (project_name, customer_name),
+        )
+
+    ### UI Operations ###
 
     def get_customer_ui_list(self, start_date: str, end_date: str):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
