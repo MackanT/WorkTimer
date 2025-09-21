@@ -41,12 +41,14 @@ async def smart_query_db(query: str):
 
 ## UI SETUP ##
 def ui_time_tracking():
-    with ui.row().classes("items-center mt-4 mb-2"):
-        ui.label("Time Span")
+    with ui.grid(columns="160px 550px 240px").classes("w-full gap-0 items-center"):
+        ui.label("Time Span").classes("items-center")
         time_options = ["Day", "Week", "Month", "Year", "All-Time", "Custom"]
-        selected_time = ui.radio(time_options, value="Day").props("inline")
+        selected_time = (
+            ui.radio(time_options, value="Day").props("inline").classes("items-center")
+        )
         selected_time
-        with ui.input("Date range").classes("w-50 ml-4") as date_input:
+        with ui.input("Date range").classes("w-50 ml-4 items-center") as date_input:
             with ui.menu().props("no-parent-event") as menu:
                 date_picker = (
                     ui.date()
@@ -66,31 +68,32 @@ def ui_time_tracking():
                     ui.button("Close", on_click=menu.close).props("flat")
             with date_input.add_slot("append"):
                 ui.icon("edit_calendar").on("click", menu.open).classes(
-                    "cursor-pointer"
+                    "cursor-pointer items-center"
                 )
 
-        def set_custom_radio(e):
-            if debug:
-                ui.notify(f"Date picker selected: {date_input.value}")
-            selected_time.value = "Custom"
-            asyncio.create_task(update_ui())
-
-        def on_radio_time_change(e):
-            if debug:
-                ui.notify(f"Radio Date selected: {selected_time.value}")
-            date_input.value = helpers.get_range_for(selected_time.value)
-            asyncio.create_task(update_ui())
-
-        def on_radio_type_change(e):
-            if debug:
-                ui.notify(f"Radio Type selected: {radio_display_selection.value}")
-            asyncio.create_task(update_ui())
-
-    with ui.row().classes("items-center mt-4 mb-2"):
-        ui.label("Display Options")
-        radio_display_selection = ui.radio(["Time", "Bonus"], value="Time").props(
-            "inline"
+        ui.label("Display Options").classes("mr-8 items-center")
+        radio_display_selection = (
+            ui.radio(["Time", "Bonus"], value="Time")
+            .props("inline")
+            .classes("items-center")
         )
+
+    def set_custom_radio(e):
+        if debug:
+            ui.notify(f"Date picker selected: {date_input.value}")
+        selected_time.value = "Custom"
+        asyncio.create_task(update_ui())
+
+    def on_radio_time_change(e):
+        if debug:
+            ui.notify(f"Radio Date selected: {selected_time.value}")
+        date_input.value = helpers.get_range_for(selected_time.value)
+        asyncio.create_task(update_ui())
+
+    def on_radio_type_change(e):
+        if debug:
+            ui.notify(f"Radio Type selected: {radio_display_selection.value}")
+        asyncio.create_task(update_ui())
 
     date_input.value = helpers.get_range_for(selected_time.value)
     date_input.on("update:model-value", set_custom_radio)
@@ -183,14 +186,14 @@ def ui_time_tracking():
             with (
                 ui.row()
                 .classes("justify-between overflow-x-auto")
-                .style("flex-wrap:nowrap; min-width:100vw;")
+                .style("flex-wrap:nowrap; width:100%; max-width:1800px; margin:0 auto;")
             ):
                 for (customer_id, customer_name), group in customers:
                     with (
                         ui.column()
                         .classes("items-start")
                         .style(
-                            "flex:1 1 320px; min-width:320px; max-width:480px; margin:0 12px"
+                            "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
                         )
                     ):
                         ui.label(str(customer_name)).classes("text-h6")
@@ -199,7 +202,7 @@ def ui_time_tracking():
                                 ui.row()
                                 .classes("items-center w-full")
                                 .style(
-                                    "display: grid; grid-template-columns: 20px 1fr 64px; align-items: center; margin-bottom:2px; min-height:20px;"
+                                    "display: grid; grid-template-columns: 20px 1fr 100px; align-items: center; margin-bottom:2px; min-height:20px;"
                                 )
                             ):
                                 sql_query = f"select * from time where customer_id = {customer_id} and project_id = {project['project_id']} and end_time is null"
