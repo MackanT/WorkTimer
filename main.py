@@ -202,6 +202,7 @@ def ui_time_tracking():
         return lambda e: on_checkbox_change(e, e.value, customer_id, project_id)
 
     value_labels = []
+    customer_total_labels = []
 
     async def get_ui_data():
         date_range_str = date_input.value
@@ -216,6 +217,7 @@ def ui_time_tracking():
 
     async def render_ui():
         value_labels.clear()
+        customer_total_labels.clear()
         df = await get_ui_data()
 
         container.clear()
@@ -234,7 +236,21 @@ def ui_time_tracking():
                             "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
                         )
                     ):
-                        ui.label(str(customer_name)).classes("text-h6")
+                        total_string = (
+                            f"{df[df['customer_id'] == customer_id]['total_time'].sum():.2f} h"
+                            if "time" in radio_display_selection.value.lower()
+                            else f"{df[df['customer_id'] == customer_id]['user_bonus'].sum():.2f} SEK"
+                        )
+                        with (
+                            ui.row()
+                            .classes("w-full justify-between")
+                            .style("display:flex; align-items:center;")
+                        ):
+                            ui.label(str(customer_name)).classes("text-lg text-right")
+                            label_total = ui.label(total_string).classes(
+                                "text-base text-grey text-right"
+                            )
+                            customer_total_labels.append((label_total, customer_id))
                         for _, project in group.iterrows():
                             with (
                                 ui.row()
@@ -256,13 +272,13 @@ def ui_time_tracking():
                                 ui.label(str(project["project_name"])).classes(
                                     "ml-2 truncate"
                                 )
-                                time_string = (
+                                total_string = (
                                     f"{project['total_time']} h"
                                     if "time" in radio_display_selection.value.lower()
                                     else f"{project['user_bonus']} SEK"
                                 )
                                 value_label = (
-                                    ui.label(f"{time_string}")
+                                    ui.label(f"{total_string}")
                                     .classes(
                                         "text-grey text-right whitespace-nowrap w-full"
                                     )
@@ -287,6 +303,15 @@ def ui_time_tracking():
                     else f"{row['user_bonus']} SEK"
                 )
                 value_label.text = time_string
+
+        # Update customer total labels
+        for label_total, customer_id in customer_total_labels:
+            if "time" in radio_display_selection.value.lower():
+                total = df[df["customer_id"] == customer_id]["total_time"].sum()
+                label_total.text = f"{total:.2f} h"
+            else:
+                total = df[df["customer_id"] == customer_id]["user_bonus"].sum()
+                label_total.text = f"{total:.2f} SEK"
 
     # Initial render
     asyncio.run(render_ui())
