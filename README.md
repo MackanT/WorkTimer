@@ -3,6 +3,11 @@ A helper program to keep time of time spent on different tasks, with built in De
 
 # Changelog
 
+2.0.0 (2025-09-XX)
+- Rewritten UI interface to webpage with Nice GUI.
+- Color coding in query-editor
+- Overall cleaner and nicer layout (full screen width compatible!)
+
 1.0.1 (2025-09-15)
 - Added total counts on time in weekly and monthly selects
 - Added ui color customization

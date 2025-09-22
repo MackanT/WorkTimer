@@ -9,10 +9,10 @@
 - Easy way to schema merge old db struct to new.
 - If loading db with wrong schema, print out errors and allow for fixing instead of crash
 - FAQ
-- adding new customer with same customer_name does not update projects customer_id 
-- "error" command completed successfully (after for ex update query)
-- clean up of customer sort order
-- color coded in sql input
+- adding new customer with same customer_name does not update projects customer_id  (Think it is fixed now?)
+- "error" command completed successfully (after for ex update query) (not needed anymore)
+- clean up of customer sort order (not needed anymore)
+- color coded in sql input (Done)
 
 ### Buggar
 
