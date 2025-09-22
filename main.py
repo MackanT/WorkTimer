@@ -93,6 +93,8 @@ def ui_time_tracking():
             .classes("items-center")
         )
 
+    ui.separator().classes("my-2")
+
     def set_custom_radio(e):
         if debug:
             ui.notify(f"Date picker selected: {date_input.value}")
