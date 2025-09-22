@@ -4,7 +4,7 @@ import helpers
 import asyncio
 from database_new import Database
 from devops_new import DevOpsManager
-from datetime import date, datetime
+from datetime import datetime
 from dataclasses import dataclass
 
 debug = True
@@ -126,7 +126,6 @@ def ui_time_tracking():
             if debug:
                 ui.notify(
                     f"Checkbox status: {checked}, customer_id: {customer_id}, project_id: {project_id}",
-                    close_button="OK",
                 )
             await function_db("insert_time_row", int(customer_id), int(project_id))
         else:
@@ -134,9 +133,16 @@ def ui_time_tracking():
             checkbox = event.sender
             with ui.dialog().props("persistent") as popup:
                 with ui.card().classes("w-96"):
-                    ui.label(
-                        f"Project {project_id} for Customer {customer_id}"
-                    ).classes("text-h6")
+                    sql_query = f"""
+                    select distinct customer_name, project_name from time
+                    where customer_id = {customer_id}
+                    and project_id = {project_id}
+                    """
+                    df = await query_db(sql_query)
+                    c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
+                    p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
+
+                    ui.label(f"{p_name} - {c_name}").classes("text-h6")
                     id_input = ui.number(label="Git-ID", value=0, step=1, format="%.0f")
                     id_checkbox = ui.checkbox("Store to DevOps")
                     comment_input = ui.textarea(
@@ -174,13 +180,11 @@ def ui_time_tracking():
                                     ui.notify(
                                         "No valid DevOps connection",
                                         color="negative",
-                                        close_button="OK",
                                     )
                                 else:
                                     ui.notify(
                                         "Comment stored successfully",
                                         color="positive",
-                                        close_button="OK",
                                     )
                         popup.close()
 
@@ -192,6 +196,7 @@ def ui_time_tracking():
                         await function_db(
                             "delete_time_row", int(customer_id), int(project_id)
                         )
+                        ui.notify("Entry deleted", color="negative")
                         popup.close()
 
                     with ui.row().classes("justify-end"):
@@ -371,7 +376,6 @@ def ui_add_data():
                 ui.notify(
                     f"{field.replace('_', ' ').title()} is required!",
                     color="negative",
-                    close_button="OK",
                 )
                 is_ok = False
         return is_ok
@@ -382,7 +386,6 @@ def ui_add_data():
         ui.notify(
             f"{table} {main_param} {action_type}!",
             color="positive",
-            close_button="OK",
         )
         if debug and widgets:
             print_msg = ""
