@@ -167,22 +167,65 @@ def ui_time_tracking():
             # Show a centered popup/modal with input and three buttons
             checkbox = event.sender
             with ui.dialog().props("persistent") as popup:
-                with ui.card().classes("w-96"):
+                with ui.card().classes("w-112"):
                     sql_query = f"""
-                    select distinct customer_name, project_name from time
-                    where customer_id = {customer_id}
-                    and project_id = {project_id}
+                    select distinct t.customer_name, t.project_name, p.git_id from time t
+                    left join projects p on p.project_id = t.project_id
+                    where t.customer_id = {customer_id}
+                    and t.project_id = {project_id}
                     """
                     df = await query_db(sql_query)
                     c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
                     p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
+                    git_id = df.iloc[0]["git_id"] if not df.empty else 0
+                    has_git_id = git_id is not None and git_id > 0
 
-                    ui.label(f"{p_name} - {c_name}").classes("text-h6")
-                    id_input = ui.number(label="Git-ID", value=0, step=1, format="%.0f")
-                    id_checkbox = ui.checkbox("Store to DevOps")
+                    ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
+                    dev_ope_label = ui.label("").classes(
+                        "text-base text-grey-6 w-full -mt-2"
+                    )
+                    id_input = ui.number(
+                        label="DevOps-ID", value=git_id, step=1, min=0, format="%.0f"
+                    ).classes("w-full -mb-2")
+
+                    def on_id_input_change(e):
+                        id_checkbox.value = False
+                        id_checkbox.update()
+
+                    id_input.on("update:model-value", on_id_input_change)
+                    with ui.row().classes("w-full items-center justify-between -mt-2"):
+
+                        def toggle_switch():
+                            id_checkbox.value = not id_checkbox.value
+                            id_checkbox.update()
+
+                        def print_git_name(e):
+                            new_state = e.args[0]
+                            if not new_state:
+                                return
+
+                            status, devops_name = devops_helper(
+                                func_name="get_workitem_level",
+                                customer_name=c_name,
+                                git_id=id_input.value,
+                            )
+                            if status:
+                                dev_ope_label.text = devops_name if devops_name else ""
+                            else:
+                                id_checkbox.value = False
+                                dev_ope_label.text = ""
+
+                        ui.label("Store to DevOps").on("click", toggle_switch).classes(
+                            "cursor-pointer"
+                        )
+                        id_checkbox = (
+                            ui.switch(value=has_git_id)
+                            .props("dense")
+                            .on("update:model-value", lambda e: print_git_name(e))
+                        )
                     comment_input = ui.textarea(
                         label="Comment", placeholder="What work was done?"
-                    )
+                    ).classes("w-full -mt-2")
 
                     def close_popup():
                         popup.close()
@@ -234,10 +277,15 @@ def ui_time_tracking():
                         ui.notify("Entry deleted", color="negative")
                         popup.close()
 
-                    with ui.row().classes("justify-end"):
-                        ui.button("Save", on_click=save_popup)
-                        ui.button("Close", on_click=close_popup).props("flat")
-                        ui.button("Delete", on_click=delete_popup)
+                    with ui.row().classes("justify-end gap-2"):
+                        btn_classes = "w-28"
+                        ui.button("Save", on_click=save_popup).classes(btn_classes)
+                        ui.button("Delete", on_click=delete_popup).props(
+                            "color=negative"
+                        ).classes(f"q-btn--warning {btn_classes}")
+                        ui.button("Close", on_click=close_popup).props("flat").classes(
+                            btn_classes
+                        )
             popup.open()
 
     def make_callback(customer_id, project_id):
