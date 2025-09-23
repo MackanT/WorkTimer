@@ -26,6 +26,12 @@ class DevOpsManager:
             return f"No DevOps connection for {customer_name}"
         return client.add_comment_to_work_item(git_id, comment)
 
+    def get_workitem_level(self, customer_name, level=None, work_item_id=None):
+        client = self.clients.get(customer_name)
+        if not client:
+            return f"No DevOps connection for {customer_name}"
+        return client.get_workitem_level(level, work_item_id)
+
 
 class DevOpsClient:
     def __init__(self, personal_access_token, organization_url):
@@ -63,7 +69,6 @@ class DevOpsClient:
 
     def add_comment_to_work_item(self, work_item_id, comment_text):
         comment_text = comment_text.replace("\n", "<br>")  # Fix for new lines
-
         try:
             comment_obj = CommentCreate(text=comment_text)
             self.wit_client.add_comment(
@@ -76,28 +81,39 @@ class DevOpsClient:
                 hasattr(e, "inner_exception")
                 and getattr(e.inner_exception, "status_code", None) == 404
             ):
-                return f"Work item with ID {work_item_id} does not exist."
+                return (False, f"Work item with ID {work_item_id} does not exist.")
             else:
-                return f"Azure DevOps error occurred: {e}"
+                return (False, f"Azure DevOps error occurred: {e}")
+        return (True, "Comment added successfully.")
 
-        return None
-
-    def get_workitem_level(self, level: str):
-        wiql_query = {
-            "query": f"""
+    def get_workitem_level(self, level: str = None, work_item_id: int = None):
+        query = f"""
             SELECT [System.Id], [System.Title], [System.State], [System.WorkItemType]
             FROM WorkItems
             WHERE [System.TeamProject] = '{self.project_name}'
-            AND [System.WorkItemType] = '{level}'
-            ORDER BY [System.ChangedDate] DESC
-            """
-        }
-
-        result = self.wit_client.query_by_wiql(wiql=wiql_query)
-        epic_ids = [item.id for item in result.work_items]
-
-        # Now get full details
-        epics = self.wit_client.get_work_items(epic_ids, expand="All")
-
-        for epic in epics:
-            print(f"{epic.id} - {epic.fields['System.Title']}")
+        """
+        if level:
+            query += f" AND [System.WorkItemType] = '{level}'"
+        if work_item_id:
+            query += f" AND [System.Id] = {work_item_id}"
+        wiql_query = {"query": query}
+        try:
+            result = self.wit_client.query_by_wiql(wiql=wiql_query)
+            ids = [item.id for item in result.work_items]
+            if not ids:
+                return (False, "No work items found.")
+            items = self.wit_client.get_work_items(ids, expand="All")
+            if work_item_id:
+                # Return the title of the single work item
+                title = items[0].fields.get("System.Title", None)
+                if title:
+                    return (True, title)
+                else:
+                    return (False, "Title not found for work item.")
+            else:
+                # Print all matching items
+                for item in items:
+                    print(f"{item.id} - {item.fields['System.Title']}")
+                return (True, f"Fetched {len(items)} work items.")
+        except Exception as e:
+            return (False, f"Error fetching work items: {e}")

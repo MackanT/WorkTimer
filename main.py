@@ -54,6 +54,41 @@ async def setup_devops():
     devops_manager = DevOpsManager(df)
 
 
+def devops_helper(func_name: str, customer_name: str, *args, **kwargs):
+    if not devops_manager:
+        ui.notify(
+            "No DevOps connections available",
+            color="negative",
+        )
+        return None
+    msg = None
+    extra = ""
+    if func_name == "save_comment":
+        status, msg = devops_manager.save_comment(
+            customer_name=customer_name,
+            comment=kwargs.get("comment"),
+            git_id=int(kwargs.get("git_id")),
+        )
+    elif func_name == "get_workitem_level":
+        status, msg = devops_manager.get_workitem_level(
+            customer_name=customer_name,
+            work_item_id=int(kwargs.get("git_id")),
+            level=kwargs.get("level"),
+        )
+        extra = "Found DevOps task: "
+    if not status:
+        ui.notify(
+            msg,
+            color="negative",
+        )
+    else:
+        ui.notify(
+            extra + msg,
+            color="positive",
+        )
+    return status, msg
+
+
 ## UI SETUP ##
 def ui_time_tracking():
     with ui.grid(columns="160px 550px 240px").classes("w-full gap-0 items-center"):
