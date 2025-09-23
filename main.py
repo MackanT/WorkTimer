@@ -27,6 +27,12 @@ async def refresh_add_data():
     add_data_df = df
 
 
+async def refresh_query_data():
+    global query_df
+    df = await function_db("get_query_list")
+    query_df = df
+
+
 def main():
     print("Starting WorkTimer!")
 
@@ -1011,6 +1017,167 @@ def ui_edit_settings():
 
 
 def ui_query_editor():
+    asyncio.run(refresh_query_data())
+
+    async def save_custom_query():
+        query = editor.value
+        try:
+            await query_db(query)
+
+            with ui.dialog() as popup:
+                with ui.card().classes("w-64"):
+                    name_input = ui.input("Query Name").classes("w-full")
+
+                    def close_popup():
+                        popup.close()
+
+                    async def save_popup():
+                        name = name_input.value.strip()
+                        if not name:
+                            ui.notify("Query name required", color="negative")
+                            return
+                        if name in query_df["query_name"].tolist():
+                            ui.notify("Query name already exists", color="negative")
+                            return
+                        # Save to queries table
+                        await function_db(
+                            "execute_query",
+                            "insert into queries (query_name, query_sql) values (?, ?)",
+                            (name, query),
+                        )
+                        ui.notify(f"Query '{name}' saved!", color="positive")
+                        popup.close()
+                        await refresh_query_data()
+                        render_query_buttons()
+
+                    with ui.row().classes("justify-between items-center w-full"):
+                        ui.button("Save", on_click=save_popup).classes("w-24")
+                        ui.button("Cancel", on_click=close_popup).props("flat").classes(
+                            "w-24"
+                        )
+            popup.open()
+        except Exception as e:
+            ui.notify("Query is invalid", color="negative")
+
+    async def update_custom_query():
+        if len(query_df[query_df["is_default"] != 1]["query_name"]) <= 1:
+            ui.notify("At least one custom query must exist", color="negative")
+            return
+
+        query = editor.value
+        try:
+            await query_db(query)
+
+            with ui.dialog() as popup:
+                with ui.card().classes("w-64"):
+                    name_input = ui.select(
+                        options=query_df[query_df["is_default"] != 1][
+                            "query_name"
+                        ].tolist(),
+                        label="Existing Query",
+                    ).classes("w-full")
+
+                    def close_popup():
+                        popup.close()
+
+                    async def save_popup():
+                        name = name_input.value.strip()
+                        if not name:
+                            ui.notify("Select a existing query", color="negative")
+                            return
+                        # Save to queries table
+                        await function_db(
+                            "execute_query",
+                            "update queries set query_sql = ? where query_name = ?",
+                            (query, name),
+                        )
+                        ui.notify(f"Query '{name}' updated!", color="positive")
+                        popup.close()
+                        await refresh_query_data()
+                        render_query_buttons()
+
+                    with ui.row().classes("justify-between items-center w-full"):
+                        ui.button("Update", on_click=save_popup).classes("w-24")
+                        ui.button("Cancel", on_click=close_popup).props("flat").classes(
+                            "w-24"
+                        )
+            popup.open()
+        except Exception as e:
+            ui.notify("Query is invalid", color="negative")
+
+    async def delete_custom_query():
+        if len(query_df[query_df["is_default"] != 1]["query_name"]) <= 1:
+            ui.notify("At least one custom query must exist", color="negative")
+            return
+
+        try:
+            with ui.dialog() as popup:
+                with ui.card().classes("w-64"):
+                    name_input = ui.select(
+                        options=query_df[query_df["is_default"] != 1][
+                            "query_name"
+                        ].tolist(),
+                        label="Existing Query",
+                    ).classes("w-full")
+
+                    def close_popup():
+                        popup.close()
+
+                    async def save_popup():
+                        name = name_input.value.strip()
+                        if not name:
+                            ui.notify("Select a existing query", color="negative")
+                            return
+                        # Save to queries table
+                        await function_db(
+                            "execute_query",
+                            "delete from queries where query_name = ?",
+                            (name,),
+                        )
+                        ui.notify(f"Query '{name}' deleted!", color="positive")
+                        popup.close()
+                        await refresh_query_data()
+                        render_query_buttons()
+
+                    with ui.row().classes("justify-between items-center w-full"):
+                        ui.button("Delete", on_click=save_popup).classes("w-24")
+                        ui.button("Cancel", on_click=close_popup).props("flat").classes(
+                            "w-24"
+                        )
+            popup.open()
+        except Exception as e:
+            ui.notify("You should not see this!", color="negative")
+
+    with ui.row().classes("justify-between items-center w-full"):
+        preset_queries = ui.element()
+
+        def render_query_buttons():
+            preset_queries.clear()
+            with preset_queries:
+                with ui.button_group().classes("gap-1"):
+                    for _, row in query_df.iterrows():
+                        ui.button(
+                            row["query_name"],
+                            on_click=lambda r=row: editor.set_value(r["query_sql"]),
+                        ).props("flat dense").classes(
+                            "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
+                        )
+
+        render_query_buttons()
+
+        with ui.button_group().classes("gap-1"):
+            for name, function in [
+                ("Save Query", save_custom_query),
+                ("Update Query", update_custom_query),
+                ("Delete Query", delete_custom_query),
+            ]:
+                ui.button(
+                    name,
+                    on_click=function,
+                ).props("flat dense").classes(
+                    "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
+                )
+
     ui.label("Query Editors")
 
     editor = ui.codemirror(

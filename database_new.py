@@ -1,4 +1,5 @@
 import sqlite3
+from textwrap import dedent
 import pandas as pd
 from datetime import datetime, timedelta
 
@@ -108,6 +109,124 @@ class Database:
             settings_table.to_sql(
                 "settings", self.conn, if_exists="append", index=False
             )
+
+        def add_default_queries():
+            query_settings = [
+                (
+                    "time",
+                    """
+                select
+                     time_id
+                    ,start_time, end_time, round(total_time, 2) as total_time
+                    ,customer_id, customer_name
+                    ,project_id, project_name
+                    ,git_id, comment
+                from time
+                order by time_id desc
+                limit 100
+                """,
+                ),
+                (
+                    "customers",
+                    """
+                select
+                     customer_id
+                    ,customer_name
+                    ,wage
+                    ,org_url
+                    ,pat_token
+                from customers
+                where is_current = 1
+                """,
+                ),
+                (
+                    "projects",
+                    """
+                select
+                     project_id
+                    ,project_name
+                    ,customer_id
+                    ,git_id
+                from projects
+                where is_current = 1
+                """,
+                ),
+                (
+                    "weekly",
+                    """
+                select
+                     t.customer_name
+                    ,t.project_name
+                    ,round(sum(t.total_time), 2) as total_time
+                from time t
+                left join dates d on d.date_key = t.date_key
+                where d.year = cast(strftime('%Y', 'now') as integer)
+                    and d.week = (select week from dates where date = date('now') limit 1)
+                group by t.customer_name, t.project_name
+                having sum(t.total_time) > 0
+                union all
+                select '', '', ''
+                union all
+                select
+                     t.customer_name
+                    ,'total' as project_name
+                    ,round(sum(t.total_time), 2) as total_time
+                from time t
+                left join dates d on d.date_key = t.date_key
+                where d.year = cast(strftime('%Y', 'now') as integer)
+                    and d.week = (select week from dates where date = date('now') limit 1)
+                group by t.customer_name
+                having sum(t.total_time) > 0
+                """,
+                ),
+                (
+                    "monthly",
+                    """
+                select
+                     t.customer_name
+                    ,t.project_name
+                    ,round(sum(t.total_time), 2) as total_time
+                from time t
+                left join dates d on d.date_key = t.date_key
+                where d.year = cast(strftime('%Y', 'now') as integer)
+                    and d.month = cast(strftime('%m', 'now') as integer)
+                group by t.customer_name, t.project_name
+                having sum(t.total_time) > 0
+                union all
+                select '', '', ''
+                union all
+                select
+                     t.customer_name
+                    ,'total' as project_name
+                    ,round(sum(t.total_time), 2) as total_time
+                from time t
+                left join dates d on d.date_key = t.date_key
+                where d.year = cast(strftime('%Y', 'now') as integer)
+                   and d.month = cast(strftime('%m', 'now') as integer)
+                group by t.customer_name
+                having sum(t.total_time) > 0
+                """,
+                ),
+            ]
+
+            def remove_leading_blank_line(sql_code: str) -> str:
+                lines = sql_code.splitlines()
+                if lines and lines[0].strip() == "":
+                    lines = lines[1:]
+                return "\n".join(lines)
+
+            rows = [
+                {
+                    "query_name": name,
+                    "query_sql": remove_leading_blank_line(dedent(sql_code)),
+                    "is_default": 1,
+                }
+                for name, sql_code in query_settings
+            ]
+
+            # Create DataFrame
+            queries_table = pd.DataFrame(rows)
+            queries_table.to_sql("queries", self.conn, if_exists="append", index=False)
 
         def add_dates(s_date, e_date):
             """
@@ -325,6 +444,26 @@ class Database:
                     self.pre_run_log.append("Settings table populated successfully.")
                 except Exception as e:
                     self.pre_run_log.append(f"Error populating settings table: {e}")
+
+            ## Query Snippets table
+            df_time = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'queries'"
+            )
+            if df_time.empty:
+                self.execute_query("""
+                create table if not exists queries (
+                    query_name text unique,
+                    query_sql text not null,
+                    is_default boolean
+                )
+                """)
+                self.pre_run_log.append("Table 'queries' created successfully.")
+
+                try:
+                    add_default_queries()
+                    self.pre_run_log.append("Queries table populated successfully.")
+                except Exception as e:
+                    self.pre_run_log.append(f"Error populating queries table: {e}")
 
         except Exception as e:
             self.pre_run_log.append(f"Error initializing database: {e}")
@@ -635,6 +774,19 @@ class Database:
             "insert into bonus (start_date, bonus_percent) values (?, ?)",
             (start_date, round(amount, 3)),
         )
+
+    ### Query Operations ###
+
+    def get_query_list(self):
+        query = """
+            select
+                query_name,
+                query_sql,
+                is_default
+            from queries
+        """
+        result = self.fetch_query(query)
+        return result
 
     ### UI Operations ###
 
