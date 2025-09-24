@@ -852,6 +852,16 @@ class Database:
         result = self.fetch_query(query)
         return result
 
+    def get_project_list_from_project_id(self, project_id: int):
+        query = """
+            select 
+                p.project_id, p.project_name
+            from projects p
+            where p.customer_id in (select customer_id from projects where project_id = ?)
+        """
+        result = self.fetch_query(query, (project_id,))
+        return result
+
     # def process_queue(self):
     #     """
     #     Process tasks in the queue.

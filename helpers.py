@@ -42,3 +42,10 @@ def parse_date_range(date_range_str):
         end = end.replace("-", "")
         return start, end
     return None, None
+
+
+def extract_table_name(query_text: str) -> str:
+    match = re.search(r"from\s+([^\s;]+)", query_text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return "unknown_table"

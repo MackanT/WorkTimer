@@ -21,6 +21,68 @@ class SaveData:
     button_name: str = "Save"
 
 
+@dataclass
+class TableColumn:
+    editable: bool = False
+    pk: bool = False
+    type: str = "str"
+
+
+TABLE_IDS = {
+    "time": {
+        "time_id": TableColumn(pk=True, type="int"),
+        "customer_id": TableColumn(type="int"),
+        "customer_name": TableColumn(),
+        "project_id": TableColumn(editable=True, type="project_id"),  # Special
+        "project_name": TableColumn(),
+        "start_time": TableColumn(editable=True, type="datetime"),
+        "end_time": TableColumn(editable=True, type="datetime"),
+        "date_key": TableColumn(type="int"),
+        "total_time": TableColumn(type="float"),
+        "cost": TableColumn(type="float"),
+        "bonus": TableColumn(type="float"),
+        "wage": TableColumn(type="int"),
+        "comment": TableColumn(editable=True, type="long_str"),
+        "git_id": TableColumn(editable=True, type="int"),
+        "user_bonus": TableColumn(type="float"),
+    },
+    "customers": {
+        "customer_id": TableColumn(pk=True, type="int"),
+        "customer_name": TableColumn(),
+        "start_date": TableColumn(type="date"),
+        "wage": TableColumn(type="int"),
+        "valid_from": TableColumn(type="date"),
+        "valid_to": TableColumn(type="date"),
+        "is_current": TableColumn(type="bool"),
+        "inserted_at": TableColumn(type="datetime"),
+        "pat_token": TableColumn(editable=True),
+        "org_url": TableColumn(editable=True),
+        "sort_order": TableColumn(editable=False, type="int"),
+    },
+    "projects": {
+        "project_id": TableColumn(pk=True, type="int"),
+        "project_name": TableColumn(),
+        "customer_id": TableColumn(type="int"),
+        "is_current": TableColumn(type="bool"),
+        "git_id": TableColumn(editable=True, type="str"),
+    },
+    "bonus": {
+        "bonus_id": TableColumn(pk=True, type="int"),
+        "bonus_percent": TableColumn(type="float"),
+        "start_date": TableColumn(type="date"),
+        "end_date": TableColumn(type="date"),
+    },
+    "dates": {
+        "date_key": TableColumn(pk=True, type="int"),
+        "date": TableColumn(type="date"),
+        "year": TableColumn(type="int"),
+        "month": TableColumn(type="int"),
+        "week": TableColumn(type="int"),
+        "day": TableColumn(type="int"),
+    },
+}
+
+
 async def refresh_add_data():
     global add_data_df
     df = await function_db("get_data_input_list")
@@ -1178,20 +1240,153 @@ def ui_query_editor():
                     "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
                 )
 
+
+    async def show_row_edit_popup(row_data, on_save_callback):
+        table_name = helpers.extract_table_name(editor.value)
+        table_data = TABLE_IDS.get(table_name)
+        if table_data is None:
+            ui.notify(f"Cannot register which table is being edited: {table_name}!")
+            return
+
+        has_seen_pk = False
+        pk_data = None
+        proj_df = None
+        with ui.dialog() as popup:
+            with ui.card().classes("w-96"):
+                inputs = {}
+                for field in row_data:
+                    if field in table_data:
+                        meta = table_data[field]
+
+                        if meta.pk:
+                            has_seen_pk = True
+                            pk_data = (field, row_data.get(field, None))
+
+                        if not meta.editable:
+                            continue
+
+                        if meta.type == "int":
+                            inputs[field] = ui.number(
+                                field, value=int(row_data.get(field) or 0), step=1
+                            ).classes("w-full")
+                        elif meta.type == "float":
+                            inputs[field] = ui.number(
+                                field, value=float(row_data.get(field) or 0.0), step=0.1
+                            ).classes("w-full")
+                        elif meta.type == "str":
+                            inputs[field] = ui.input(
+                                field,
+                                value=str(row_data.get(field, "")),
+                            ).classes("w-full")
+                        elif meta.type == "long_str":
+                            inputs[field] = ui.textarea(
+                                field,
+                                value=str(row_data.get(field, "")),
+                            ).classes("w-full")
+                        elif meta.type == "datetime":
+                            inputs[field] = ui.input(
+                                field,
+                                value=str(row_data.get(field, "")),
+                                placeholder="YYYY-MM-DD HH:MM:SS",
+                            ).classes("w-full")
+                        elif meta.type == "date":
+                            inputs[field] = ui.input(
+                                field,
+                                value=str(row_data.get(field, "")),
+                                placeholder="YYYY-MM-DD",
+                            ).classes("w-full")
+                        elif meta.type == "project_id" and table_name == "time":
+                            proj_df = await function_db(
+                                "get_project_list_from_project_id",
+                                row_data.get(field, 0),
+                            )
+                            p_name = proj_df[
+                                proj_df["project_id"] == row_data.get(field, 0)
+                            ]
+                            inputs[field] = ui.select(
+                                label=field,
+                                options=proj_df["project_name"].tolist(),
+                                value=p_name["project_name"].iloc[0]
+                                if (hasattr(p_name, "empty") and not p_name.empty)
+                                else None,
+                            ).classes("w-full")
+
+                def close_popup():
+                    popup.close()
+
+                async def save_popup():
+                    updated_data = {field: inp.value for field, inp in inputs.items()}
+                    await on_save_callback(
+                        row_data, updated_data, table_name, pk_data, table_data, proj_df
+                    )
+                    popup.close()
+
+                with ui.row().classes("justify-end gap-2"):
+                    ui.button("Save", on_click=save_popup).classes("w-24")
+                    ui.button("Cancel", on_click=close_popup).props("flat").classes(
+                        "w-24"
+                    )
+        if has_seen_pk:
+            popup.open()
+        else:
+            ui.notify(
+                "Ensure  the tables primary key is in your query!", color="negative"
+            )
+
+    async def on_cell_clicked(event):
+        row_data = event.args["data"]
+
+        async def save_row_callback(
+            original_row, updated_data, table_name, pk_data, table_data, proj_df
+        ):
+            key_table, key = pk_data
+            sql_query = f"update {table_name} set "
+            for col, data in updated_data.items():
+                if col == "project_id" and table_name == "time":
+                    if proj_df is not None:
+                        data = proj_df[proj_df["project_name"] == data][
+                            "project_id"
+                        ].values[0]
+                    else:
+                        ui.notify("Project data not found!", color="negative")
+                        return
+
+                data_type = table_data[col].type
+                escape = (
+                    "'" if data_type in ["date", "datetime", "str", "long_str"] else ""
+                )
+                sql_query += f"{col} = {escape}{data}{escape}, "
+            sql_query = sql_query[:-2] + f" where {key_table} = {key}"
+
+            await query_db(sql_query)
+            ui.notify(
+                f"Updating row: {key_table} = {key} in {table_name} with command:\n{sql_query}"
+            )
+
+        await show_row_edit_popup(row_data, save_row_callback)
+
     ui.label("Query Editors")
 
+    initial_query = query_df[query_df["query_name"] == "time"]["query_sql"].values[0]
     editor = ui.codemirror(
-        "select * from time\norder by time_id desc\nlimit 50",
+        initial_query,
         language="SQLite",
         theme="dracula",
     ).classes("h-48 w-full")
-    grid_box = ui.aggrid(
-        {
-            "columnDefs": [{"field": ""}],
-            "rowData": [],
-        },
-        theme="alpine-dark",
-    ).classes("h-96 w-full")
+    grid_box = (
+        ui.aggrid(
+            {
+                "columnDefs": [{"field": ""}],
+                "rowData": [],
+            },
+            theme="alpine-dark",
+        )
+        .classes("h-96 w-full")
+        .on(
+            "cellClicked",
+            on_cell_clicked,  # lambda event: ui.notify(f"Cell value: {event.args['value']}"
+        )
+    )
 
     async def run_code():
         query = editor.value
@@ -1210,6 +1405,8 @@ def ui_query_editor():
         except Exception as e:
             with grid_box:
                 ui.notify(f"Error: {e}")
+
+    asyncio.run(run_code())
 
     def handle_key(e: KeyEventArguments):
         if e.key.f5 and not e.key.shift and e.action.keydown:  # Check for F5 key press
