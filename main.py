@@ -1440,6 +1440,18 @@ def setup_ui():
         tab_ui_edits = ui.tab("UI Edits")
         tab_query_editors = ui.tab("Query Editors")
         tab_log = ui.tab("Log")
+
+    def on_tab_change(e):
+        tab_value = (
+            e.args["value"]
+            if isinstance(e.args, dict) and "value" in e.args
+            else e.args
+        )
+        if tab_value == tab_time.label:
+            asyncio.create_task(render_ui())
+
+    tabs.on("update:model-value", on_tab_change)
+
     with ui.tab_panels(tabs, value=tab_time).classes("w-full"):
         with ui.tab_panel(tab_time):
             ui_time_tracking()
