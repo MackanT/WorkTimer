@@ -373,6 +373,8 @@ def ui_time_tracking():
         )
         return df
 
+    global render_ui
+
     async def render_ui():
         value_labels.clear()
         customer_total_labels.clear()
@@ -781,7 +783,7 @@ def ui_add_data():
                 ]
                 widgets = make_input_row(fields)
                 save_data = SaveData(
-                    function="add_project",
+                    function="insert_project",
                     main_action="Project",
                     main_param="project_name",
                     secondary_action="added",
@@ -820,11 +822,11 @@ def ui_add_data():
                 ]
                 widgets = make_input_row(fields)
                 save_data = SaveData(
-                    function="add_project",
+                    function="update_project",
                     main_action="Project",
                     main_param="project_name",
-                    secondary_action="added",
-                    button_name="Add",
+                    secondary_action="updated",
+                    button_name="Update",
                 )
 
                 def on_customer_change(e):
@@ -1239,7 +1241,6 @@ def ui_query_editor():
                 ).props("flat dense").classes(
                     "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
                 )
-
 
     async def show_row_edit_popup(row_data, on_save_callback):
         table_name = helpers.extract_table_name(editor.value)
