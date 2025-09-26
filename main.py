@@ -6,6 +6,7 @@ from database_new import Database
 from devops_new import DevOpsManager
 from datetime import datetime
 from dataclasses import dataclass
+from textwrap import dedent
 
 debug = True
 add_data_df = None
@@ -1076,8 +1077,101 @@ def ui_add_data():
             bonus_tabs.on("update:model-value", on_bonus_tab_change)
 
 
-def ui_edit_settings():
-    ui.label("UI Edits")
+def devops_settings():
+    ui.label("DevOps Settings")
+
+    async def get_devops_customers():
+        sql_query = "select customer_name from customers where is_current = 1 and org_url is not Null and org_url <> '' and pat_token is not null and pat_token <> ''"
+        df = await query_db(sql_query)
+        return df
+
+    customer_df = asyncio.run(get_devops_customers())
+
+    customer_input = ui.select(customer_df["customer_name"].tolist()).classes(
+        "mb-4 w-96"
+    )
+    title_input = ui.input("Title").classes("mb-4 w-96")
+
+    source_input = ui.select(
+        ["Teams", "Email", "Call", "In Person", "Other"], label="Source"
+    ).classes("mb-4 w-96")
+    source_input.value = "Other"
+
+    problem_input = ui.textarea("Problem Description").classes("mb-4 w-96")
+    more_info_input = ui.textarea("More Information").classes("mb-4 w-96")
+    solution_input = ui.textarea("Solution").classes("mb-4 w-96")
+    validation_input = ui.textarea("Validation").classes("mb-4 w-96")
+    contact_info_input = ui.textarea("Contact Information").classes("mb-4 w-96")
+    date_input = ui.input("Received Date (yyyy-mm-dd)").classes("mb-4 w-96")
+    date_input.value = datetime.now().strftime("%Y-%m-%d")
+
+    assigned_to_input = ui.input("Assigned To (email)").classes("mb-4 w-96")
+    assigned_to_input.value = "marcus.toftas@rowico.com"
+
+    parent_input = ui.input("Parent ID").classes("mb-4 w-96")
+    parent_input.value = "841"
+
+    state_input = ui.select(
+        ["New", "Active", "Resolved", "Closed"], label="State"
+    ).classes("mb-4 w-96")
+    state_input.value = "New"
+
+    tag_input = ui.select(
+        ["Bug", "Feature", "Estimate", "Change Request", ""], label="Tags"
+    ).classes("mb-4 w-96")
+
+    tag2_input = ui.input_chips(
+        "My favorite chips", value=["Bug", "Feature", "Estimate", "Change Request"]
+    )
+
+    priority_input = ui.select(["1", "2", "3", "4"], label="Priority").classes(
+        "mb-4 w-96"
+    )
+    priority_input.value = "2"
+
+    markdown_info = ui.switch("Use Markdown", value=True).classes("mb-4")
+
+    def add_user_story():
+        description = f"""
+            **Source:** {source_input.value}
+            **Contact:** {contact_info_input.value}
+            **Received Date:** {date_input.value}
+
+            **Problem:**
+            {problem_input.value}
+
+            **More Info:**
+            {more_info_input.value}
+
+            **Solution:**
+            {solution_input.value}
+
+            **Validation:**
+            {validation_input.value}
+
+        """
+
+        print("tag_input.value", tag_input.value)
+        print("tag2_input.value", tag2_input.value)
+
+        additional_fields = {
+            "System.State": state_input.value,
+            "System.Tags": tag_input.value,
+            "Microsoft.VSTS.Common.Priority": int(priority_input.value),
+            "System.AssignedTo": assigned_to_input.value,
+        }
+
+        success, message = devops_manager.create_user_story(
+            customer_name=customer_input.value,
+            title=title_input.value,
+            description=dedent(description),
+            additional_fields=additional_fields,
+            markdown=markdown_info.value,
+            parent=int(parent_input.value),
+        )
+        print(success, message)
+
+    ui.button("Add User Story", on_click=add_user_story).classes("mb-4")
 
 
 def ui_query_editor():
@@ -1437,7 +1531,7 @@ def setup_ui():
     with ui.tabs().classes("w-full") as tabs:
         tab_time = ui.tab("Time Tracking")
         tab_data_input = ui.tab("Data Input")
-        tab_ui_edits = ui.tab("UI Edits")
+        tab_ui_edits = ui.tab("DevOps Settings")
         tab_query_editors = ui.tab("Query Editors")
         tab_log = ui.tab("Log")
 
@@ -1458,7 +1552,7 @@ def setup_ui():
         with ui.tab_panel(tab_data_input):
             ui_add_data()
         with ui.tab_panel(tab_ui_edits):
-            ui_edit_settings()
+            devops_settings()
         with ui.tab_panel(tab_query_editors):
             ui_query_editor()
         with ui.tab_panel(tab_log):

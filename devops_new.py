@@ -32,6 +32,22 @@ class DevOpsManager:
             return f"No DevOps connection for {customer_name}"
         return client.get_workitem_level(level, work_item_id)
 
+    def create_user_story(
+        self,
+        customer_name,
+        title,
+        description=None,
+        additional_fields=None,
+        markdown=False,
+        parent=None,
+    ):
+        client = self.clients.get(customer_name)
+        if not client:
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.create_user_story(
+            title, description, additional_fields, markdown, parent
+        )
+
 
 class DevOpsClient:
     def __init__(self, personal_access_token, organization_url):
@@ -117,3 +133,61 @@ class DevOpsClient:
                 return (True, f"Fetched {len(items)} work items.")
         except Exception as e:
             return (False, f"Error fetching work items: {e}")
+
+    def create_user_story(
+        self,
+        title,
+        description=None,
+        additional_fields=None,
+        markdown=False,
+        parent=None,
+    ):
+        """Create a new User Story work item in Azure DevOps."""
+        try:
+            patch_document = [
+                {"op": "add", "path": "/fields/System.Title", "value": title}
+            ]
+            if description:
+                patch_document.append(
+                    {
+                        "op": "add",
+                        "path": "/fields/System.Description",
+                        "value": description,
+                    }
+                )
+            if additional_fields:
+                for field, value in additional_fields.items():
+                    if value is not None:
+                        patch_document.append(
+                            {"op": "add", "path": f"/fields/{field}", "value": value}
+                        )
+            if markdown:
+                patch_document.append(
+                    {
+                        "op": "add",
+                        "path": "/multilineFieldsFormat/System.Description",
+                        "value": "Markdown",
+                    }
+                )
+            if parent:
+                patch_document.append(
+                    {
+                        "op": "add",
+                        "path": "/relations/-",
+                        "value": {
+                            "rel": "System.LinkTypes.Hierarchy-Reverse",
+                            "url": f"{self.organization_url}/{self.project_name}/_apis/wit/workItems/{parent}",
+                        },
+                    }
+                )
+
+            print(patch_document)
+
+            work_item = self.wit_client.create_work_item(
+                patch_document, project=self.project_name, type="User Story"
+            )
+            return (True, f"Created User Story with ID {work_item.id}")
+        except AzureDevOpsServiceError as e:
+            return (False, f"Azure DevOps error occurred: {e}")
+        except Exception as e:
+            return (False, f"Error creating user story: {e}")
