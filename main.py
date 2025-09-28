@@ -1,5 +1,6 @@
 from nicegui import ui
 from nicegui.events import KeyEventArguments
+import pandas as pd
 import helpers
 import asyncio
 from database_new import Database
@@ -9,8 +10,13 @@ from dataclasses import dataclass
 from textwrap import dedent
 
 debug = True
+
+## Globals ##
 add_data_df = None
+query_df = None
 devops_manager = None
+devops_df = None
+devops_long_df = None
 
 
 @dataclass
@@ -130,12 +136,73 @@ async def query_db(query: str):
 
 
 async def update_devops():
+    global devops_df
+    if not devops_manager:
+        print("No DevOps connections available")
+        return None
     print("Getting latest devops data")
-    status, devops_df = devops_helper("refresh_devops_table", customer_name="")
+    status, devops_df = devops_manager.get_epics_feature_df()
     if status:
         await function_db("update_devops_data", df=devops_df)
     else:
         print("Error when updating the devops data:", devops_df)
+
+
+async def get_devops_df():
+    global devops_df, devops_long_df
+    df = await query_db("select * from devops")
+    devops_df = df if not df.empty else None
+    if devops_df.empty:
+        print("DevOps dataframe is empty")
+    else:
+        print("DevOps dataframe loaded with", len(devops_df), "rows")
+        devops_long_df = get_devops_long_df(devops_df)
+
+
+def get_devops_long_df(devops_df):
+    if devops_df is None or devops_df.empty:
+        return None
+    records = []
+    for _, row in devops_df.iterrows():
+        # Epic
+        if pd.notna(row.get("epic_id")):
+            records.append(
+                {
+                    "customer_name": row["customer_name"],
+                    "type": "Epic",
+                    "id": int(row["epic_id"]),
+                    "title": row["epic_title"],
+                    "state": row["epic_state"],
+                    "name": f"Epic: {int(row['epic_id'])} - {row['epic_title']}",
+                }
+            )
+        # Feature
+        if pd.notna(row.get("feature_id")):
+            records.append(
+                {
+                    "customer_name": row["customer_name"],
+                    "type": "Feature",
+                    "id": int(row["feature_id"]),
+                    "title": row["feature_title"],
+                    "state": row["feature_state"],
+                    "name": f"Feature: {int(row['feature_id'])} - {row['feature_title']}",
+                }
+            )
+        # User Story
+        if pd.notna(row.get("user_story_id")):
+            records.append(
+                {
+                    "customer_name": row["customer_name"],
+                    "type": "User Story",
+                    "id": int(row["user_story_id"]),
+                    "title": row["user_story_title"],
+                    "state": row["user_story_state"],
+                    "name": f"User Story: {int(row['user_story_id'])} - {row['user_story_title']}",
+                }
+            )
+    long_df = pd.DataFrame(records)
+    long_df = long_df[long_df["state"].isin(["New", "Active"])].drop_duplicates()
+    return long_df
 
 
 ## DEVOPS SETUP ##
