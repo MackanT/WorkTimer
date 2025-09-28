@@ -788,6 +788,12 @@ class Database:
         result = self.fetch_query(query)
         return result
 
+    ### DevOps Operations ###
+
+    def update_devops_data(self, df: pd.DataFrame):
+        df.to_sql("devops", self.conn, if_exists="replace", index=False)
+        self.conn.commit()
+
     ### UI Operations ###
 
     def get_customer_ui_list(self, start_date: str, end_date: str):
