@@ -48,6 +48,76 @@ class DevOpsManager:
             title, description, additional_fields, markdown, parent
         )
 
+    def get_epics_feature_df(self):
+        epics = []
+        features = []
+        for customer_name, client in self.clients.items():
+            status, epic_items = client.get_workitem_level("Epic", return_full=True)
+            status_f, feature_items = client.get_workitem_level(
+                "Feature", return_full=True
+            )
+            epic_id_title_map = {}
+            if status and epic_items:
+                for epic in epic_items:
+                    epic_id = getattr(epic, "id", None)
+                    epic_title = getattr(epic, "fields", {}).get("System.Title", None)
+                    epics.append(
+                        {
+                            "customer_name": customer_name,
+                            "epic_id": epic_id,
+                            "epic_title": epic_title,
+                        }
+                    )
+                    epic_id_title_map[epic_id] = epic_title
+            if status_f and feature_items:
+                for feature in feature_items:
+                    feature_id = getattr(feature, "id", None)
+                    feature_title = getattr(feature, "fields", {}).get(
+                        "System.Title", None
+                    )
+                    parent_epic_id = None
+                    for rel in getattr(feature, "relations", []):
+                        if (
+                            getattr(rel, "rel", None)
+                            == "System.LinkTypes.Hierarchy-Reverse"
+                        ):
+                            url = getattr(rel, "url", None)
+                            if url:
+                                try:
+                                    parent_epic_id = int(url.rstrip("/").split("/")[-1])
+                                except Exception:
+                                    parent_epic_id = None
+                    features.append(
+                        {
+                            "customer_name": customer_name,
+                            "feature_id": feature_id,
+                            "feature_title": feature_title,
+                            "parent_epic_id": parent_epic_id,
+                            "parent_epic_title": epic_id_title_map.get(parent_epic_id),
+                        }
+                    )
+        epic_df = pd.DataFrame(epics)
+        feature_df = pd.DataFrame(features)
+        combined_df = feature_df.merge(
+            epic_df,
+            left_on=["customer_name", "parent_epic_id"],
+            right_on=["customer_name", "epic_id"],
+            how="right",
+        )
+        # Fill missing feature columns for epics without features
+        for col in ["feature_id", "feature_title"]:
+            if col not in combined_df.columns:
+                combined_df[col] = None
+        # Drop parent_epic_id and parent_epic_title columns if present
+        combined_df = combined_df.drop(
+            columns=[
+                c
+                for c in ["parent_epic_id", "parent_epic_title"]
+                if c in combined_df.columns
+            ]
+        )
+        return (True, combined_df)
+
 
 class DevOpsClient:
     def __init__(self, personal_access_token, organization_url):

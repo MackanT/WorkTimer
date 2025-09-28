@@ -114,6 +114,15 @@ async def query_db(query: str):
     return await asyncio.to_thread(Database.db.smart_query, query)
 
 
+async def update_devops():
+    print("Getting latest devops data")
+    status, devops_df = devops_helper("refresh_devops_table", customer_name="")
+    if status:
+        await function_db("update_devops_data", df=devops_df)
+    else:
+        print("Error when updating the devops data:", devops_df)
+
+
 ## DEVOPS SETUP ##
 async def setup_devops():
     global devops_manager
@@ -1594,5 +1603,6 @@ if __name__ in {"__main__", "__mp_main__"}:
     """)
 
     asyncio.run(setup_devops())
+    # asyncio.run(update_devops())
     setup_ui()
     ui.run()
