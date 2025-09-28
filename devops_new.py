@@ -2,6 +2,7 @@ from azure.devops.connection import Connection
 from msrest.authentication import BasicAuthentication
 from azure.devops.v7_1.work_item_tracking.models import CommentCreate
 from azure.devops.exceptions import AzureDevOpsServiceError
+import pandas as pd
 
 
 class DevOpsManager:
@@ -172,7 +173,9 @@ class DevOpsClient:
                 return (False, f"Azure DevOps error occurred: {e}")
         return (True, "Comment added successfully.")
 
-    def get_workitem_level(self, level: str = None, work_item_id: int = None):
+    def get_workitem_level(
+        self, level: str = None, work_item_id: int = None, return_full=False
+    ):
         query = f"""
             SELECT [System.Id], [System.Title], [System.State], [System.WorkItemType]
             FROM WorkItems
@@ -197,10 +200,12 @@ class DevOpsClient:
                 else:
                     return (False, "Title not found for work item.")
             else:
-                # Print all matching items
-                for item in items:
-                    print(f"{item.id} - {item.fields['System.Title']}")
-                return (True, f"Fetched {len(items)} work items.")
+                if return_full:
+                    return (True, items)
+                epic_list = [
+                    f"{item.id} - {item.fields['System.Title']}" for item in items
+                ]
+                return (True, epic_list)
         except Exception as e:
             return (False, f"Error fetching work items: {e}")
 
@@ -250,8 +255,6 @@ class DevOpsClient:
                         },
                     }
                 )
-
-            print(patch_document)
 
             work_item = self.wit_client.create_work_item(
                 patch_document, project=self.project_name, type="User Story"
