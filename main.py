@@ -142,20 +142,16 @@ async def update_devops():
 async def setup_devops():
     global devops_manager
     df = await query_db(
-        "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and org_url is not null"
+        "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and pat_token is not '' and org_url is not null and org_url is not ''"
     )
     devops_manager = DevOpsManager(df)
 
 
 def devops_helper(func_name: str, customer_name: str, *args, **kwargs):
     if not devops_manager:
-        ui.notify(
-            "No DevOps connections available",
-            color="negative",
-        )
+        print("No DevOps connections available")
         return None
     msg = None
-    extra = ""
     if func_name == "save_comment":
         status, msg = devops_manager.save_comment(
             customer_name=customer_name,
@@ -163,22 +159,21 @@ def devops_helper(func_name: str, customer_name: str, *args, **kwargs):
             git_id=int(kwargs.get("git_id")),
         )
     elif func_name == "get_workitem_level":
+        git_id_raw = kwargs.get("git_id")
         status, msg = devops_manager.get_workitem_level(
             customer_name=customer_name,
-            work_item_id=int(kwargs.get("git_id")),
+            work_item_id=int(git_id_raw) if str(git_id_raw).isnumeric() else None,
             level=kwargs.get("level"),
         )
-        extra = "Found DevOps task: "
+    elif func_name == "refresh_devops_table":
+        status, msg = devops_manager.get_epics_feature_df()
     if not status:
-        ui.notify(
-            msg,
-            color="negative",
-        )
-    else:
-        ui.notify(
-            extra + msg,
-            color="positive",
-        )
+        print(msg)
+    # elif print_result:
+    #     ui.notify(
+    #         extra + msg,
+    #         color="positive",
+    #     )
     return status, msg
 
 
