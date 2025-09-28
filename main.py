@@ -329,48 +329,29 @@ def ui_time_tracking():
                     has_git_id = git_id is not None and git_id > 0
 
                     ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
-                    dev_ope_label = ui.label("").classes(
-                        "text-base text-grey-6 w-full -mt-2"
-                    )
-                    id_input = ui.number(
-                        label="DevOps-ID", value=git_id, step=1, min=0, format="%.0f"
+
+                    id_options = devops_long_df[
+                        (devops_long_df["customer_name"] == c_name)
+                    ][["name", "id"]].dropna()
+
+                    id_input = ui.select(
+                        id_options["name"].tolist(), with_input=True, label="DevOps-ID"
                     ).classes("w-full -mb-2")
+                    if has_git_id:
+                        id_input.value = id_options[id_options["id"] == git_id][
+                            "name"
+                        ].iloc[0]
 
-                    def on_id_input_change(e):
-                        id_checkbox.value = False
-                        id_checkbox.update()
-
-                    id_input.on("update:model-value", on_id_input_change)
                     with ui.row().classes("w-full items-center justify-between -mt-2"):
 
                         def toggle_switch():
                             id_checkbox.value = not id_checkbox.value
                             id_checkbox.update()
 
-                        def print_git_name(e):
-                            new_state = e.args[0]
-                            if not new_state:
-                                return
-
-                            status, devops_name = devops_helper(
-                                func_name="get_workitem_level",
-                                customer_name=c_name,
-                                git_id=id_input.value,
-                            )
-                            if status:
-                                dev_ope_label.text = devops_name if devops_name else ""
-                            else:
-                                id_checkbox.value = False
-                                dev_ope_label.text = ""
-
                         ui.label("Store to DevOps").on("click", toggle_switch).classes(
                             "cursor-pointer"
                         )
-                        id_checkbox = (
-                            ui.switch(value=has_git_id)
-                            .props("dense")
-                            .on("update:model-value", lambda e: print_git_name(e))
-                        )
+                        id_checkbox = ui.switch(value=has_git_id).props("dense")
                     comment_input = ui.textarea(
                         label="Comment", placeholder="What work was done?"
                     ).classes("w-full -mt-2")
