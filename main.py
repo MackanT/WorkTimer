@@ -232,15 +232,8 @@ def devops_helper(func_name: str, customer_name: str, *args, **kwargs):
             work_item_id=int(git_id_raw) if str(git_id_raw).isnumeric() else None,
             level=kwargs.get("level"),
         )
-    elif func_name == "refresh_devops_table":
-        status, msg = devops_manager.get_epics_feature_df()
     if not status:
         print(msg)
-    # elif print_result:
-    #     ui.notify(
-    #         extra + msg,
-    #         color="positive",
-    #     )
     return status, msg
 
 
