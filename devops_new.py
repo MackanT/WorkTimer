@@ -176,6 +176,10 @@ class DevOpsClient:
     def get_workitem_level(
         self, level: str = None, work_item_id: int = None, return_full=False
     ):
+        def batched(iterable, n):
+            for i in range(0, len(iterable), n):
+                yield iterable[i : i + n]
+
         query = f"""
             SELECT [System.Id], [System.Title], [System.State], [System.WorkItemType]
             FROM WorkItems
@@ -191,19 +195,22 @@ class DevOpsClient:
             ids = [item.id for item in result.work_items]
             if not ids:
                 return (False, "No work items found.")
-            items = self.wit_client.get_work_items(ids, expand="All")
+            all_items = []
+            for batch in batched(ids, 200):
+                items = self.wit_client.get_work_items(batch, expand="All")
+                all_items.extend(items)
             if work_item_id:
                 # Return the title of the single work item
-                title = items[0].fields.get("System.Title", None)
+                title = all_items[0].fields.get("System.Title", None)
                 if title:
                     return (True, title)
                 else:
                     return (False, "Title not found for work item.")
             else:
                 if return_full:
-                    return (True, items)
+                    return (True, all_items)
                 epic_list = [
-                    f"{item.id} - {item.fields['System.Title']}" for item in items
+                    f"{item.id} - {item.fields['System.Title']}" for item in all_items
                 ]
                 return (True, epic_list)
         except Exception as e:
