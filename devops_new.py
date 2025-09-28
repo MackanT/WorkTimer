@@ -50,74 +50,108 @@ class DevOpsManager:
         )
 
     def get_epics_feature_df(self):
-        epics = []
-        features = []
+        rows = []
         for customer_name, client in self.clients.items():
-            status, epic_items = client.get_workitem_level("Epic", return_full=True)
-            status_f, feature_items = client.get_workitem_level(
-                "Feature", return_full=True
-            )
-            epic_id_title_map = {}
-            if status and epic_items:
-                for epic in epic_items:
-                    epic_id = getattr(epic, "id", None)
-                    epic_title = getattr(epic, "fields", {}).get("System.Title", None)
-                    epics.append(
+            status, items = client.get_workitem_level(level=None, return_full=True)
+            if not status or not items:
+                continue
+            # Build lookup dicts for hierarchy
+            epics = {
+                item.id: item
+                for item in items
+                if getattr(item, "fields", {}).get("System.WorkItemType") == "Epic"
+            }
+            features = {
+                item.id: item
+                for item in items
+                if getattr(item, "fields", {}).get("System.WorkItemType") == "Feature"
+            }
+            user_stories = {
+                item.id: item
+                for item in items
+                if getattr(item, "fields", {}).get("System.WorkItemType")
+                == "User Story"
+            }
+
+            # Build parent relationships
+            feature_to_epic = {}
+            for feature in features.values():
+                parent_id = feature.fields.get("System.Parent")
+                if parent_id in epics:
+                    feature_to_epic[feature.id] = parent_id
+
+            user_story_to_feature = {}
+            for us in user_stories.values():
+                parent_id = us.fields.get("System.Parent")
+                if parent_id in features:
+                    user_story_to_feature[us.id] = parent_id
+
+            # Build rows for each user story, feature, epic
+            for us_id, us in user_stories.items():
+                feature_id = user_story_to_feature.get(us_id)
+                feature = features.get(feature_id)
+                epic_id = feature_to_epic.get(feature_id) if feature_id else None
+                epic = epics.get(epic_id)
+                rows.append(
+                    {
+                        "customer_name": customer_name,
+                        "epic_id": epic.id if epic else None,
+                        "epic_title": epic.fields.get("System.Title") if epic else None,
+                        "epic_state": epic.fields.get("System.State") if epic else None,
+                        "feature_id": feature.id if feature else None,
+                        "feature_title": feature.fields.get("System.Title")
+                        if feature
+                        else None,
+                        "feature_state": feature.fields.get("System.State")
+                        if feature
+                        else None,
+                        "user_story_id": us.id,
+                        "user_story_title": us.fields.get("System.Title"),
+                        "user_story_state": us.fields.get("System.State"),
+                    }
+                )
+            # Add features without user stories
+            for feature_id, feature in features.items():
+                if feature_id not in user_story_to_feature.values():
+                    epic_id = feature_to_epic.get(feature_id)
+                    epic = epics.get(epic_id)
+                    rows.append(
                         {
                             "customer_name": customer_name,
-                            "epic_id": epic_id,
-                            "epic_title": epic_title,
+                            "epic_id": epic.id if epic else None,
+                            "epic_title": epic.fields.get("System.Title")
+                            if epic
+                            else None,
+                            "epic_state": epic.fields.get("System.State")
+                            if epic
+                            else None,
+                            "feature_id": feature.id,
+                            "feature_title": feature.fields.get("System.Title"),
+                            "feature_state": feature.fields.get("System.State"),
+                            "user_story_id": None,
+                            "user_story_title": None,
+                            "user_story_state": None,
                         }
                     )
-                    epic_id_title_map[epic_id] = epic_title
-            if status_f and feature_items:
-                for feature in feature_items:
-                    feature_id = getattr(feature, "id", None)
-                    feature_title = getattr(feature, "fields", {}).get(
-                        "System.Title", None
-                    )
-                    parent_epic_id = None
-                    for rel in getattr(feature, "relations", []):
-                        if (
-                            getattr(rel, "rel", None)
-                            == "System.LinkTypes.Hierarchy-Reverse"
-                        ):
-                            url = getattr(rel, "url", None)
-                            if url:
-                                try:
-                                    parent_epic_id = int(url.rstrip("/").split("/")[-1])
-                                except Exception:
-                                    parent_epic_id = None
-                    features.append(
+            # Add epics without features
+            for epic_id, epic in epics.items():
+                if epic_id not in feature_to_epic.values():
+                    rows.append(
                         {
                             "customer_name": customer_name,
-                            "feature_id": feature_id,
-                            "feature_title": feature_title,
-                            "parent_epic_id": parent_epic_id,
-                            "parent_epic_title": epic_id_title_map.get(parent_epic_id),
+                            "epic_id": epic.id,
+                            "epic_title": epic.fields.get("System.Title"),
+                            "epic_state": epic.fields.get("System.State"),
+                            "feature_id": None,
+                            "feature_title": None,
+                            "feature_state": None,
+                            "user_story_id": None,
+                            "user_story_title": None,
+                            "user_story_state": None,
                         }
                     )
-        epic_df = pd.DataFrame(epics)
-        feature_df = pd.DataFrame(features)
-        combined_df = feature_df.merge(
-            epic_df,
-            left_on=["customer_name", "parent_epic_id"],
-            right_on=["customer_name", "epic_id"],
-            how="right",
-        )
-        # Fill missing feature columns for epics without features
-        for col in ["feature_id", "feature_title"]:
-            if col not in combined_df.columns:
-                combined_df[col] = None
-        # Drop parent_epic_id and parent_epic_title columns if present
-        combined_df = combined_df.drop(
-            columns=[
-                c
-                for c in ["parent_epic_id", "parent_epic_title"]
-                if c in combined_df.columns
-            ]
-        )
-        return (True, combined_df)
+        df = pd.DataFrame(rows)
+        return (True, df)
 
 
 class DevOpsClient:
