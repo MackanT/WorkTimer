@@ -209,7 +209,7 @@ def get_devops_long_df(devops_df):
 async def setup_devops():
     global devops_manager
     df = await query_db(
-        "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and pat_token is not '' and org_url is not null and org_url is not ''"
+        "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and pat_token is not '' and org_url is not null and org_url is not '' and is_current = 1"
     )
     devops_manager = DevOpsManager(df)
 
