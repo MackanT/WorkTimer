@@ -29,6 +29,13 @@ class TableColumn:
     type: str = "str"
 
 
+@dataclass
+class DevOpsTag:
+    name: str = ""
+    icon: str = "bookmark"
+    color: str = "green"
+
+
 TABLE_IDS = {
     "time": {
         "time_id": TableColumn(pk=True, type="int"),
@@ -82,6 +89,14 @@ TABLE_IDS = {
         "day": TableColumn(type="int"),
     },
 }
+
+DEVOPS_TAGS = [
+    DevOpsTag(name="Bug", icon="bug_report", color="#b71c1c"),
+    DevOpsTag(name="Feature", icon="star", color="#ffb300"),
+    DevOpsTag(name="Estimate", icon="assignment", color="#e57399"),
+    DevOpsTag(name="Change Request", icon="edit", color="#1976d2"),
+    DevOpsTag(name="New", icon="new_releases", color="#388e3c"),
+]
 
 
 async def refresh_add_data():
@@ -1087,58 +1102,12 @@ def ui_add_data():
 
 
 def devops_settings():
-    ui.label("DevOps Settings")
-
     async def get_devops_customers():
         sql_query = "select customer_name from customers where is_current = 1 and org_url is not Null and org_url <> '' and pat_token is not null and pat_token <> ''"
         df = await query_db(sql_query)
         return df
 
     customer_df = asyncio.run(get_devops_customers())
-
-    customer_input = ui.select(customer_df["customer_name"].tolist()).classes(
-        "mb-4 w-96"
-    )
-    title_input = ui.input("Title").classes("mb-4 w-96")
-
-    source_input = ui.select(
-        ["Teams", "Email", "Call", "In Person", "Other"], label="Source"
-    ).classes("mb-4 w-96")
-    source_input.value = "Other"
-
-    problem_input = ui.textarea("Problem Description").classes("mb-4 w-96")
-    more_info_input = ui.textarea("More Information").classes("mb-4 w-96")
-    solution_input = ui.textarea("Solution").classes("mb-4 w-96")
-    validation_input = ui.textarea("Validation").classes("mb-4 w-96")
-    contact_info_input = ui.textarea("Contact Information").classes("mb-4 w-96")
-    date_input = ui.input("Received Date (yyyy-mm-dd)").classes("mb-4 w-96")
-    date_input.value = datetime.now().strftime("%Y-%m-%d")
-
-    assigned_to_input = ui.input("Assigned To (email)").classes("mb-4 w-96")
-    assigned_to_input.value = "marcus.toftas@rowico.com"
-
-    parent_input = ui.input("Parent ID").classes("mb-4 w-96")
-    parent_input.value = "841"
-
-    state_input = ui.select(
-        ["New", "Active", "Resolved", "Closed"], label="State"
-    ).classes("mb-4 w-96")
-    state_input.value = "New"
-
-    tag_input = ui.select(
-        ["Bug", "Feature", "Estimate", "Change Request", ""], label="Tags"
-    ).classes("mb-4 w-96")
-
-    tag2_input = ui.input_chips(
-        "My favorite chips", value=["Bug", "Feature", "Estimate", "Change Request"]
-    )
-
-    priority_input = ui.select(["1", "2", "3", "4"], label="Priority").classes(
-        "mb-4 w-96"
-    )
-    priority_input.value = "2"
-
-    markdown_info = ui.switch("Use Markdown", value=True).classes("mb-4")
 
     def add_user_story():
         description = f"""
@@ -1160,27 +1129,110 @@ def devops_settings():
 
         """
 
-        print("tag_input.value", tag_input.value)
-        print("tag2_input.value", tag2_input.value)
-
         additional_fields = {
             "System.State": state_input.value,
-            "System.Tags": tag_input.value,
+            "System.Tags": ", ".join([t.text for t in tag_input if t.selected]),
             "Microsoft.VSTS.Common.Priority": int(priority_input.value),
             "System.AssignedTo": assigned_to_input.value,
         }
 
+        parent_val = parent_input.value.strip()
+        parent_id = int(parent_val) if parent_val else None
         success, message = devops_manager.create_user_story(
             customer_name=customer_input.value,
             title=title_input.value,
             description=dedent(description),
             additional_fields=additional_fields,
             markdown=markdown_info.value,
-            parent=int(parent_input.value),
+            parent=parent_id,
         )
         print(success, message)
 
-    ui.button("Add User Story", on_click=add_user_story).classes("mb-4")
+    async def set_epic_list(e):
+        customer_name = e.args["label"]
+        sql_code = f"select distinct epic_title from devops where customer_name = '{customer_name}'"
+        epic_df = await query_db(sql_code)
+        epic_input.options = epic_df["epic_title"].tolist()
+        epic_input.update()
+
+    async def set_feature_list(e):
+        epic_title = e.args["label"]
+        sql_code = f"select distinct feature_title from devops where customer_name = '{customer_input.value}' and epic_title = '{epic_title}'"
+        feature_df = await query_db(sql_code)
+        feature_input.options = feature_df["feature_title"].tolist()
+        feature_input.update()
+
+    with ui.card().classes("w-full mx-auto my-8 p-4"):
+        ui.label("Create DevOps User Story").classes("text-h5 mb-4")
+
+        with ui.row().classes("gap-8 mb-4"):
+            with ui.column():
+                ui.label("General Info").classes("text-h6 mb-2")
+                customer_input = (
+                    ui.select(customer_df["customer_name"].tolist(), label="Customer")
+                    .classes("mb-4 w-96")
+                    .on("update:model-value", lambda e: set_epic_list(e))
+                )
+                title_input = ui.input("User Story Title").classes("mb-4 w-96")
+                state_input = ui.select(
+                    ["New", "Active", "Resolved", "Closed"], label="State"
+                ).classes("mb-4 w-96")
+                source_input = ui.select(
+                    ["Teams", "Email", "Call", "In Person", "Other"], label="Source"
+                ).classes("mb-4 w-96")
+                source_input.value = "Other"
+                contact_info_input = ui.input("Contact Information").classes(
+                    "mb-4 w-96"
+                )
+
+            with ui.column():
+                ui.label("Assignment & Tags").classes("text-h6 mb-2")
+                assigned_to_input = ui.input("Assigned To (email)").classes("mb-4 w-96")
+                assigned_to_input.value = "marcus.toftas@rowico.com"
+
+                tag_input = []
+                with ui.row().classes("mb-4 w-96 gap-1"):
+                    for row in DEVOPS_TAGS:
+                        tag_input.append(
+                            ui.chip(
+                                row.name,
+                                selectable=True,
+                                icon=row.icon,
+                                color=row.color,
+                            )
+                        )
+
+                parent_input = ui.input("Parent ID").classes("mb-4 w-96")
+                parent_input.value = "841"
+
+                epic_input = (
+                    ui.select([], label="Epic")
+                    .classes("mb-4 w-96")
+                    .on("update:model-value", lambda e: set_feature_list(e))
+                )
+                feature_input = ui.select([], label="Feature").classes("mb-4 w-96")
+
+                state_input.value = "New"
+                priority_input = ui.select(
+                    ["1", "2", "3", "4"], label="Priority"
+                ).classes("mb-4 w-96")
+                priority_input.value = "2"
+                date_input = ui.input("Received Date (yyyy-mm-dd)").classes("mb-4 w-96")
+                date_input.value = datetime.now().strftime("%Y-%m-%d")
+
+            with ui.column():
+                ui.label("Task Description").classes("text-h6 mb-2")
+                problem_input = ui.textarea("Problem Description").classes("mb-4 w-96")
+                more_info_input = ui.textarea("More Information").classes("mb-4 w-96")
+                solution_input = ui.textarea("Solution").classes("mb-4 w-96")
+                validation_input = ui.textarea("Validation").classes("mb-4 w-96")
+                markdown_info = ui.switch("Use Markdown", value=True).classes(
+                    "mb-4 w-96"
+                )
+
+        ui.button("Add User Story", on_click=add_user_story).classes("mt-4")
+
+    # ui.button("Add User Story", on_click=add_user_story).classes("mb-4")
 
 
 def ui_query_editor():
