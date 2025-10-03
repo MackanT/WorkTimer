@@ -712,10 +712,12 @@ def ui_add_data():
             container = ui.element()
             tab_customer_containers[tab_type] = container
         container.clear()
+
+        fields = config["customer"][tab_type.lower()]["fields"]
+        action = config["customer"][tab_type.lower()]["action"]
+
         with container:
             if tab_type == "Add":
-                fields = config["customer"][tab_type.lower()]["fields"]
-                action = config["customer"][tab_type.lower()]["action"]
                 widgets = make_input_row(fields)
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)
@@ -725,8 +727,6 @@ def ui_add_data():
                     .unique()
                     .tolist()
                 )
-                fields = config["customer"][tab_type.lower()]["fields"]
-                action = config["customer"][tab_type.lower()]["action"]
                 assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
@@ -767,8 +767,6 @@ def ui_add_data():
                     .unique()
                     .tolist()
                 )
-                fields = config["customer"][tab_type.lower()]["fields"]
-                action = config["customer"][tab_type.lower()]["action"]
                 assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
@@ -789,8 +787,6 @@ def ui_add_data():
                     .tolist()
                 )
                 reenable_names = sorted(list(candidate_names - all_current_names))
-                fields = config["customer"][tab_type.lower()]["fields"]
-                action = config["customer"][tab_type.lower()]["action"]
                 assign_dynamic_options(
                     fields, data_sources={"customer_data": reenable_names}
                 )
@@ -804,12 +800,14 @@ def ui_add_data():
             container = ui.element()
             tab_project_containers[tab_type] = container
         container.clear()
+
+        fields = config["project"][tab_type.lower()]["fields"]
+        action = config["project"][tab_type.lower()]["action"]
+
         with container:
             active_data = add_data_df[add_data_df["c_current"] == 1]
             if tab_type == "Add":
                 customer_data = active_data["customer_name"].unique().tolist()
-                fields = config["project"][tab_type.lower()]["fields"]
-                action = config["project"][tab_type.lower()]["action"]
                 assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
@@ -818,8 +816,6 @@ def ui_add_data():
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Update":
                 customer_data = active_data["customer_name"].unique().tolist()
-                fields = config["project"][tab_type.lower()]["fields"]
-                action = config["project"][tab_type.lower()]["action"]
                 assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
@@ -866,8 +862,6 @@ def ui_add_data():
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Disable":
                 customer_data = active_data["customer_name"].unique().tolist()
-                fields = config["project"][tab_type.lower()]["fields"]
-                action = config["project"][tab_type.lower()]["action"]
                 assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
@@ -893,8 +887,6 @@ def ui_add_data():
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Reenable":
                 customer_data = active_data["customer_name"].unique().tolist()
-                fields = config["project"][tab_type.lower()]["fields"]
-                action = config["project"][tab_type.lower()]["action"]
                 assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
@@ -926,14 +918,14 @@ def ui_add_data():
             tab_bonus_containers[tab_type] = container
         container.clear()
 
+        fields = config["bonus"][tab_type.lower()]["fields"]
+        action = config["bonus"][tab_type.lower()]["action"]
+
         with container:
-            with ui.card().classes("w-full max-w-2xl mx-auto my-0 p-4"):
-                if tab_type == "Add":
-                    fields = config["bonus"][tab_type.lower()]["fields"]
-                    action = config["bonus"][tab_type.lower()]["action"]
-                    widgets = make_input_row(fields)
-                    save_data = SaveData(**action)
-                    add_save_button(save_data, fields, widgets)
+            if tab_type == "Add":
+                widgets = make_input_row(fields)
+                save_data = SaveData(**action)
+                add_save_button(save_data, fields, widgets)
 
     def build_database_compare():
         def handle_upload(e: events.UploadEventArguments):
