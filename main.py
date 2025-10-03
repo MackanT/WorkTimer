@@ -1,4 +1,4 @@
-from nicegui import ui
+from nicegui import events, ui
 from nicegui.events import KeyEventArguments
 import pandas as pd
 import helpers
@@ -8,8 +8,12 @@ from devops_new import DevOpsManager
 from datetime import datetime
 from dataclasses import dataclass
 from textwrap import dedent
+import threading
+import tempfile
+import os
 
 debug = True
+
 
 ## Globals ##
 add_data_df = None
@@ -17,6 +21,9 @@ query_df = None
 devops_manager = None
 devops_df = None
 devops_long_df = None
+# Global event loop for background tasks
+global_loop = None
+MAIN_DB = "data_dpg_copy.db"
 
 
 @dataclass
@@ -115,10 +122,6 @@ async def refresh_query_data():
     global query_df
     df = await function_db("get_query_list")
     query_df = df
-
-
-def main():
-    print("Starting WorkTimer!")
 
 
 ## DB SETUP ##
@@ -310,7 +313,10 @@ def ui_time_tracking():
                 ui.notify(
                     f"Checkbox status: {checked}, customer_id: {customer_id}, project_id: {project_id}",
                 )
-            await function_db("insert_time_row", int(customer_id), int(project_id))
+            run_async_task(
+                function_db("insert_time_row", int(customer_id), int(project_id))
+            )
+
         else:
             # Show a centered popup/modal with input and three buttons
             checkbox = event.sender
@@ -365,13 +371,17 @@ def ui_time_tracking():
                             ui.notify(
                                 f"Saved: {int(id_input.value)}, {id_checkbox.value}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}"
                             )
-                        await function_db(
-                            "insert_time_row",
-                            int(customer_id),
-                            int(project_id),
-                            git_id=int(id_input.value),
-                            comment=comment_input.value,
+
+                        run_async_task(
+                            function_db(
+                                "insert_time_row",
+                                int(customer_id),
+                                int(project_id),
+                                git_id=git_id,
+                                comment=comment_input.value,
+                            )
                         )
+
                         sql_code = f"select customer_name from customers where customer_id = {customer_id}"
                         customer_name = await query_db(sql_code)
                         if id_checkbox.value and int(id_input.value) > 0:
@@ -534,8 +544,29 @@ def ui_time_tracking():
                 total = df[df["customer_id"] == customer_id]["user_bonus"].sum()
                 label_total.text = f"{total:.2f} SEK"
 
-    # Initial render
     asyncio.run(render_ui())
+    # Initial render
+    # import threading
+    # import sys
+
+    # if threading.current_thread() is threading.main_thread():
+    #     import asyncio
+
+    #     try:
+    #         loop = asyncio.get_running_loop()
+    #     except RuntimeError:
+    #         loop = None
+    #     if loop and loop.is_running():
+    #         # Schedule initial render as a task
+    #         asyncio.create_task(render_ui())
+    #     else:
+    #         # Fallback for non-async context
+    #         asyncio.run(render_ui())
+    # else:
+    #     # Fallback for non-main thread
+    #     import asyncio
+
+    #     asyncio.run(render_ui())
 
 
 def ui_add_data():
@@ -1676,10 +1707,9 @@ def handle_key(e: KeyEventArguments):
     1
 
 
-if __name__ in {"__main__", "__mp_main__"}:
-    main()
-    setup_db("data_dpg_copy.db")
-
+def main():
+    print("Starting WorkTimer!")
+    setup_db(MAIN_DB)
     ui.add_head_html("""
     <script>
     document.addEventListener('keydown', function(e) {
@@ -1690,7 +1720,36 @@ if __name__ in {"__main__", "__mp_main__"}:
     </script>
     """)
 
-    asyncio.run(setup_devops())
-    # asyncio.run(update_devops())
+    # Use a background thread to avoid blocking UI startup
+    def preload_devops():
+        global global_loop
+        loop = asyncio.new_event_loop()
+        global_loop = loop
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(setup_devops())
+            loop.run_until_complete(get_devops_df())
+            loop.run_forever()
+        except Exception as e:
+            print(f"Error during DevOps preload: {e}")
+        finally:
+            loop.close()
+
+    threading.Thread(target=preload_devops, daemon=True).start()
+
     setup_ui()
     ui.run()
+
+
+def run_async_task(coro):
+    """Run a coroutine in the global background loop if available, else in the local event loop."""
+    if "global_loop" in globals() and global_loop and global_loop.is_running():
+        print("Running in global loop")
+        asyncio.run_coroutine_threadsafe(coro, global_loop)
+    else:
+        print("Running in local loop")
+        asyncio.create_task(coro)
+
+
+if __name__ in {"__main__", "__mp_main__"}:
+    main()
