@@ -12,6 +12,7 @@ import threading
 import tempfile
 import os
 import yaml
+import logging
 
 debug = True
 
@@ -25,6 +26,15 @@ devops_long_df = None
 # Global event loop for background tasks
 global_loop = None
 MAIN_DB = "data_dpg_copy.db"
+
+
+LOGFORMAT = "%(asctime)s | %(levelname)-8s | %(name).35s :: %(message)s"
+formatter = logging.Formatter(fmt=LOGFORMAT, datefmt="%Y-%m-%d %H:%M:%S")
+handler = logging.StreamHandler()
+handler.setFormatter(formatter)
+logger = logging.getLogger("WorkTimer")
+logger.setLevel(logging.DEBUG if debug else logging.INFO)
+logger.addHandler(handler)
 
 
 @dataclass
@@ -99,14 +109,14 @@ async def query_db(query: str):
 async def update_devops():
     global devops_df
     if not devops_manager:
-        print("No DevOps connections available")
+        log_msg("WARNING", "No DevOps connections available")
         return None
-    print("Getting latest devops data")
+    log_msg("INFO", "Getting latest devops data")
     status, devops_df = devops_manager.get_epics_feature_df()
     if status:
         await function_db("update_devops_data", df=devops_df)
     else:
-        print("Error when updating the devops data:", devops_df)
+        log_msg("ERROR", f"Error when updating the devops data: {devops_df}")
 
 
 async def get_devops_df():
@@ -114,9 +124,9 @@ async def get_devops_df():
     df = await query_db("select * from devops")
     devops_df = df if not df.empty else None
     if devops_df.empty:
-        print("DevOps dataframe is empty")
+        log_msg("WARNING", "DevOps dataframe is empty")
     else:
-        print("DevOps dataframe loaded with", len(devops_df), "rows")
+        log_msg("INFO", f"DevOps dataframe loaded with {len(devops_df)} rows")
         devops_long_df = get_devops_long_df(devops_df)
 
 
@@ -177,7 +187,7 @@ async def setup_devops():
 
 def devops_helper(func_name: str, customer_name: str, *args, **kwargs):
     if not devops_manager:
-        print("No DevOps connections available")
+        log_msg("WARNING", "No DevOps connections available")
         return None
     msg = None
     if func_name == "save_comment":
@@ -194,7 +204,7 @@ def devops_helper(func_name: str, customer_name: str, *args, **kwargs):
             level=kwargs.get("level"),
         )
     if not status:
-        print(msg)
+        log_msg("ERROR", msg)
     return status, msg
 
 
@@ -240,20 +250,17 @@ def ui_time_tracking():
     ui.separator().classes("my-2")
 
     def set_custom_radio(e):
-        if debug:
-            ui.notify(f"Date picker selected: {date_input.value}")
+        log_msg("DEBUG", f"Date picker selected: {date_input.value}")
         selected_time.value = "Custom"
         asyncio.create_task(update_ui())
 
     def on_radio_time_change(e):
-        if debug:
-            ui.notify(f"Radio Date selected: {selected_time.value}")
+        log_msg("DEBUG", f"Radio Date selected: {selected_time.value}")
         date_input.value = helpers.get_range_for(selected_time.value)
         asyncio.create_task(update_ui())
 
     def on_radio_type_change(e):
-        if debug:
-            ui.notify(f"Radio Type selected: {radio_display_selection.value}")
+        log_msg("DEBUG", f"Radio Type selected: {radio_display_selection.value}")
         asyncio.create_task(update_ui())
 
     date_input.value = helpers.get_range_for(selected_time.value)
@@ -267,10 +274,10 @@ def ui_time_tracking():
     async def on_checkbox_change(event, checked, customer_id, project_id):
         global devops_manager
         if checked:
-            if debug:
-                ui.notify(
-                    f"Checkbox status: {checked}, customer_id: {customer_id}, project_id: {project_id}",
-                )
+            log_msg(
+                "DEBUG",
+                f"Checkbox status: {checked}, customer_id: {customer_id}, project_id: {project_id}",
+            )
             run_async_task(
                 function_db("insert_time_row", int(customer_id), int(project_id))
             )
@@ -336,10 +343,10 @@ def ui_time_tracking():
                                 except ValueError:
                                     git_id = None
 
-                        if debug:
-                            ui.notify(
-                                f"Saved: {git_id}, {id_checkbox.value}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}"
-                            )
+                        log_msg(
+                            "DEBUG",
+                            f"Saved: {git_id}, {id_checkbox.value}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}",
+                        )
 
                         run_async_task(
                             function_db(
@@ -375,10 +382,10 @@ def ui_time_tracking():
                         popup.close()
 
                     async def delete_popup():
-                        if debug:
-                            ui.notify(
-                                f"Deleted customer_id: {customer_id}, project_id: {project_id}"
-                            )
+                        log_msg(
+                            "DEBUG",
+                            f"Deleted customer_id: {customer_id}, project_id: {project_id}",
+                        )
                         await function_db(
                             "delete_time_row", int(customer_id), int(project_id)
                         )
@@ -1042,7 +1049,13 @@ def devops_settings():
             markdown=markdown_info.value,
             parent=parent_id,
         )
-        print(success, message)
+        log_msg(
+            "INFO",
+            "User story created successfully"
+            if success
+            else "Failed to create user story",
+            message,
+        )
 
     async def set_epic_list(e):
         customer_name = e.args["label"]
@@ -1477,8 +1490,62 @@ def ui_query_editor():
     # ui.label().bind_text(editor, "theme")
 
 
+# --- In-program Log ---
+LOG_BUFFER = []
+LOG_TEXTAREA = None
+LOG_COLORS = {
+    "INFO": "white",
+    "WARNING": "orange",
+    "ERROR": "red",
+}
+
+
+def log_msg(level="INFO", msg=""):
+    global LOG_BUFFER, LOG_TEXTAREA, debug
+    level = level.upper()
+    # Always print to terminal
+    getattr(logger, level.lower(), logger.info)(msg)
+
+    # Format for web log using the same formatter
+    record = logging.LogRecord(
+        name=logger.name,
+        level=getattr(logging, level, logging.INFO),
+        pathname=__file__,
+        lineno=0,
+        msg=msg,
+        args=(),
+        exc_info=None,
+    )
+    formatted = formatter.format(record)
+    # Only add DEBUG to web log if debug==True; all other levels always added
+    LOG_BUFFER.append({"level": level, "msg": formatted})
+    if LOG_TEXTAREA:
+        update_log_textarea()
+
+
+def update_log_textarea():
+    global LOG_BUFFER, LOG_TEXTAREA, LOG_COLORS
+    if LOG_TEXTAREA:
+        lines = []
+        for entry in LOG_BUFFER:
+            color = LOG_COLORS.get(entry["level"], "white")
+            # Use HTML for color
+            line = f'<span style="color:{color};"> {entry["msg"]}</span>'
+            lines.append(line)
+        LOG_TEXTAREA.set_content("<br>".join(lines))
+        LOG_TEXTAREA.update()
+        # Scroll to bottom using run_method
+        LOG_TEXTAREA.run_method("scrollTo", 0, 99999)
+
+
 def ui_log():
-    ui.label("Log")
+    global LOG_TEXTAREA
+    with ui.card().classes("w-full max-w-2xl mx-auto my-8 p-4"):
+        ui.label("Application Log").classes("text-h5 mb-4")
+        LOG_TEXTAREA = ui.html().classes(
+            "w-full h-96 overflow-auto bg-black text-white p-2 rounded"
+        )
+        update_log_textarea()
 
 
 def setup_ui():
@@ -1537,7 +1604,7 @@ def handle_key(e: KeyEventArguments):
 
 
 def main():
-    print("Starting WorkTimer!")
+    log_msg("INFO", "Starting WorkTimer!")
 
     setup_config()
 
@@ -1563,7 +1630,7 @@ def main():
             loop.run_until_complete(get_devops_df())
             loop.run_forever()
         except Exception as e:
-            print(f"Error during DevOps preload: {e}")
+            log_msg("ERROR", f"Error during DevOps preload: {e}")
         finally:
             loop.close()
 
@@ -1576,10 +1643,10 @@ def main():
 def run_async_task(coro):
     """Run a coroutine in the global background loop if available, else in the local event loop."""
     if "global_loop" in globals() and global_loop and global_loop.is_running():
-        print("Running in global loop")
+        log_msg("INFO", "Running in global loop")
         asyncio.run_coroutine_threadsafe(coro, global_loop)
     else:
-        print("Running in local loop")
+        log_msg("INFO", "Running in local loop")
         asyncio.create_task(coro)
 
 
