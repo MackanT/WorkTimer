@@ -1149,6 +1149,7 @@ def ui_add_data():
                 tab_customers = ui.tab("Customers", icon="business")
                 tab_projects = ui.tab("Projects", icon="assignment")
                 tab_bonuses = ui.tab("Bonuses", icon="attach_money")
+                tab_database = ui.tab("Database", icon="storage")
         with splitter.after:
             with (
                 ui.tab_panels(main_tabs, value=tab_customers)
@@ -1175,54 +1176,58 @@ def ui_add_data():
                     build_bonus_tab_panel(tab_type)
 
                 # Customers
+                customer_tab_names = ["Add", "Update", "Disable", "Reenable"]
+                customer_tab_list = []
                 with ui.tab_panel(tab_customers):
                     with ui.tabs().classes("mb-2") as customer_tabs:
-                        tab_add = ui.tab("Add")
-                        tab_update = ui.tab("Update")
-                        tab_disable = ui.tab("Disable")
-                        tab_reenable = ui.tab("Reenable")
-                    with ui.tab_panels(customer_tabs, value=tab_add):
-                        with ui.tab_panel(tab_add):
-                            build_customer_tab_panel("Add")
-                        with ui.tab_panel(tab_update):
-                            build_customer_tab_panel("Update")
-                        with ui.tab_panel(tab_disable):
-                            build_customer_tab_panel("Disable")
-                        with ui.tab_panel(tab_reenable):
-                            build_customer_tab_panel("Reenable")
+                        for name in customer_tab_names:
+                            customer_tab_list.append(ui.tab(name))
+                    with ui.tab_panels(customer_tabs, value=customer_tab_list[0]):
+                        for i, name in enumerate(customer_tab_names):
+                            make_tab_panel(
+                                customer_tab_list[i],
+                                f"{name} Customer",
+                                lambda: build_customer_tab_panel(name),
+                            )
+
                 # Projects
+                project_tab_names = ["Add", "Update", "Disable", "Reenable"]
+                project_tab_list = []
                 with ui.tab_panel(tab_projects):
                     with ui.tabs().classes("mb-2") as project_tabs:
-                        tab_add = ui.tab("Add")
-                        tab_update = ui.tab("Update")
-                        tab_disable = ui.tab("Disable")
-                        tab_reenable = ui.tab("Reenable")
-                    with ui.tab_panels(project_tabs, value=tab_add):
-                        with ui.tab_panel(tab_add):
-                            build_project_tab_panel("Add")
-                        with ui.tab_panel(tab_update):
-                            build_project_tab_panel("Update")
-                        with ui.tab_panel(tab_disable):
-                            build_project_tab_panel("Disable")
-                        with ui.tab_panel(tab_reenable):
-                            build_project_tab_panel("Reenable")
+                        for name in project_tab_names:
+                            project_tab_list.append(ui.tab(name))
+                    with ui.tab_panels(project_tabs, value=project_tab_list[0]):
+                        for i, name in enumerate(project_tab_names):
+                            make_tab_panel(
+                                project_tab_list[i],
+                                f"{name} Project",
+                                lambda: build_project_tab_panel(name),
+                            )
 
                 # Bonuses
+                bonus_tab_names = ["Add"]
+                bonus_tab_list = []
                 with ui.tab_panel(tab_bonuses):
                     with ui.tabs().classes("mb-2") as bonus_tabs:
-                        tab_add = ui.tab("Add")
-                        # tab_update = ui.tab("Update")
-                        # tab_disable = ui.tab("Disable")
-                        # tab_reenable = ui.tab("Reenable")
-                    with ui.tab_panels(bonus_tabs, value=tab_add):
+                        for name in bonus_tab_names:
+                            bonus_tab_list.append(ui.tab(name))
+                    with ui.tab_panels(bonus_tabs, value=bonus_tab_list[0]):
+                        for i, name in enumerate(bonus_tab_names):
+                            make_tab_panel(
+                                bonus_tab_list[i],
+                                f"{name} Bonus",
+                                lambda: build_bonus_tab_panel(name),
+                            )
+
+                # Database
+                with ui.tab_panel(tab_database):
+                    with ui.tabs().classes("mb-2") as database_tabs:
+                        tab_add = ui.tab("Schema Compare")
+
+                    with ui.tab_panels(database_tabs, value=tab_add):
                         with ui.tab_panel(tab_add):
-                            build_bonus_tab_panel("Add")
-                        with ui.tab_panel(tab_update):
-                            build_bonus_tab_panel("Update")
-                        with ui.tab_panel(tab_disable):
-                            build_bonus_tab_panel("Disable")
-                        with ui.tab_panel(tab_reenable):
-                            build_bonus_tab_panel("Reenable")
+                            build_database_compare()
 
             customer_tabs.on("update:model-value", on_customer_tab_change)
             project_tabs.on("update:model-value", on_project_tab_change)
@@ -1314,7 +1319,7 @@ def devops_settings():
                 )
 
             with ui.column():
-                ui.label("Assignment & Tags").classes("text-h6 mb-2")
+                ui.label("Assignments & Tags").classes("text-h6 mb-2")
                 assigned_to_input = ui.input("Assigned To (email)").classes("mb-4 w-96")
                 assigned_to_input.value = "marcus.toftas@rowico.com"
 
