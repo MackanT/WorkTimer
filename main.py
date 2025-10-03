@@ -657,14 +657,11 @@ def ui_add_data():
                 is_ok = False
         return is_ok
 
-    def assign_field_data(
-        fields, field_name=None, field_type=None, key="options", value=None
-    ):
+    def assign_dynamic_options(fields, data_sources):
         for field in fields:
-            if (field_name and field.get("name") == field_name) or (
-                field_type and field.get("type") == field_type
-            ):
-                field[key] = value
+            if field.get("type") == "select" and "options_source" in field:
+                source = field["options_source"]
+                field["options"] = data_sources.get(source, [])
 
     def print_success(
         table: str, main_param: str, action_type: str, widgets: dict = None
@@ -730,11 +727,8 @@ def ui_add_data():
                 )
                 fields = config["customer"][tab_type.lower()]["fields"]
                 action = config["customer"][tab_type.lower()]["action"]
-                assign_field_data(
-                    fields,
-                    field_name="customer_name",
-                    key="options",
-                    value=customer_data,
+                assign_dynamic_options(
+                    fields, data_sources={"customer_data": customer_data}
                 )
 
                 widgets = make_input_row(fields)
@@ -775,11 +769,8 @@ def ui_add_data():
                 )
                 fields = config["customer"][tab_type.lower()]["fields"]
                 action = config["customer"][tab_type.lower()]["action"]
-                assign_field_data(
-                    fields,
-                    field_name="customer_name",
-                    key="options",
-                    value=customer_data,
+                assign_dynamic_options(
+                    fields, data_sources={"customer_data": customer_data}
                 )
 
                 save_data = SaveData(**action)
@@ -800,11 +791,8 @@ def ui_add_data():
                 reenable_names = sorted(list(candidate_names - all_current_names))
                 fields = config["customer"][tab_type.lower()]["fields"]
                 action = config["customer"][tab_type.lower()]["action"]
-                assign_field_data(
-                    fields,
-                    field_name="customer_name",
-                    key="options",
-                    value=reenable_names,
+                assign_dynamic_options(
+                    fields, data_sources={"customer_data": reenable_names}
                 )
                 save_data = SaveData(**action)
                 widgets = make_input_row(fields)
@@ -822,11 +810,8 @@ def ui_add_data():
                 customer_data = active_data["customer_name"].unique().tolist()
                 fields = config["project"][tab_type.lower()]["fields"]
                 action = config["project"][tab_type.lower()]["action"]
-                assign_field_data(
-                    fields,
-                    field_name="customer_name",
-                    key="options",
-                    value=customer_data,
+                assign_dynamic_options(
+                    fields, data_sources={"customer_data": customer_data}
                 )
                 widgets = make_input_row(fields)
                 save_data = SaveData(**action)
@@ -835,11 +820,8 @@ def ui_add_data():
                 customer_data = active_data["customer_name"].unique().tolist()
                 fields = config["project"][tab_type.lower()]["fields"]
                 action = config["project"][tab_type.lower()]["action"]
-                assign_field_data(
-                    fields,
-                    field_name="customer_name",
-                    key="options",
-                    value=customer_data,
+                assign_dynamic_options(
+                    fields, data_sources={"customer_data": customer_data}
                 )
                 widgets = make_input_row(fields)
                 save_data = SaveData(**action)
@@ -886,11 +868,8 @@ def ui_add_data():
                 customer_data = active_data["customer_name"].unique().tolist()
                 fields = config["project"][tab_type.lower()]["fields"]
                 action = config["project"][tab_type.lower()]["action"]
-                assign_field_data(
-                    fields,
-                    field_name="customer_name",
-                    key="options",
-                    value=customer_data,
+                assign_dynamic_options(
+                    fields, data_sources={"customer_data": customer_data}
                 )
                 widgets = make_input_row(fields)
                 save_data = SaveData(**action)
@@ -916,11 +895,8 @@ def ui_add_data():
                 customer_data = active_data["customer_name"].unique().tolist()
                 fields = config["project"][tab_type.lower()]["fields"]
                 action = config["project"][tab_type.lower()]["action"]
-                assign_field_data(
-                    fields,
-                    field_name="customer_name",
-                    key="options",
-                    value=customer_data,
+                assign_dynamic_options(
+                    fields, data_sources={"customer_data": customer_data}
                 )
                 widgets = make_input_row(fields)
                 save_data = SaveData(**action)

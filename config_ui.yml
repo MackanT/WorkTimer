@@ -34,6 +34,7 @@ customer:
         label: Name
         type: select
         options: []
+        options_source: customer_data
         optional: false
       - name: new_customer_name
         label: New Name
@@ -59,6 +60,7 @@ customer:
         label: Name
         type: select
         options: []
+        options_source: customer_data
         optional: False
     action:
       function: "disable_customer"
@@ -72,6 +74,7 @@ customer:
         label: Name
         type: select
         options: []
+        options_source: customer_data
         optional: False
     action:
       function: "reenable_customer"
@@ -88,6 +91,7 @@ project:
         label: Customer
         type: select
         options: []
+        options_source: customer_data
         optional: False
       - name: project_name
         label: Project Name
@@ -109,6 +113,7 @@ project:
         label: Customer
         type: select
         options: []
+        options_source: customer_data
         optional: False
       - name: project_name
         label: Project Name
@@ -135,6 +140,7 @@ project:
         label: Customer
         type: select
         options: []
+        options_source: customer_data
         optional: False
       - name: project_name
         label: Project
@@ -153,6 +159,7 @@ project:
         label: Customer
         type: select
         options: []
+        options_source: customer_data
         optional: False
       - name: project_name
         label: Project
