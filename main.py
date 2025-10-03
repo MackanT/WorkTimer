@@ -1077,31 +1077,33 @@ def ui_add_data():
             container = ui.element()
             tab_bonus_containers[tab_type] = container
         container.clear()
+
         with container:
-            if tab_type == "Add":
-                fields = [
-                    {
-                        "name": "bonus_percent",
-                        "label": "Bonus Percentage (%)",
-                        "type": "number",
-                        "optional": False,
-                    },
-                    {
-                        "name": "start_date",
-                        "label": "Start Date",
-                        "type": "date",
-                        "optional": False,
-                    },
-                ]
-                widgets = make_input_row(fields)
-                save_data = SaveData(
-                    function="insert_bonus",
-                    main_action="Bonus",
-                    main_param="bonus_percent",
-                    secondary_action="added",
-                    button_name="Add",
-                )
-                add_save_button(save_data, fields, widgets)
+            with ui.card().classes("w-full max-w-2xl mx-auto my-0 p-4"):
+                if tab_type == "Add":
+                    fields = [
+                        {
+                            "name": "bonus_percent",
+                            "label": "Bonus Percentage (%)",
+                            "type": "number",
+                            "optional": False,
+                        },
+                        {
+                            "name": "start_date",
+                            "label": "Start Date",
+                            "type": "date",
+                            "optional": False,
+                        },
+                    ]
+                    widgets = make_input_row(fields)
+                    save_data = SaveData(
+                        function="insert_bonus",
+                        main_action="Bonus",
+                        main_param="bonus_percent",
+                        secondary_action="added",
+                        button_name="Add",
+                    )
+                    add_save_button(save_data, fields, widgets)
 
     input_width = "w-64"
 
