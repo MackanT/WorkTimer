@@ -224,7 +224,11 @@ def ui_time_tracking():
                     .props("range")
                     .bind_value(
                         date_input,
-                        forward=lambda x: f"{x['from']} - {x['to']}" if x else None,
+                        forward=lambda x: f"{x['from']} - {x['to']}"
+                        if isinstance(x, dict) and x
+                        else x
+                        if isinstance(x, str)
+                        else None,
                         backward=lambda x: {
                             "from": x.split(" - ")[0],
                             "to": x.split(" - ")[1],
