@@ -367,9 +367,20 @@ def ui_time_tracking():
                         checkbox.value = True
 
                     async def save_popup():
+                        git_id_str = id_input.value
+                        git_id = None
+                        if git_id_str and isinstance(git_id_str, str):
+                            ind_1 = git_id_str.find(":")
+                            ind_2 = git_id_str.find(" - ")
+                            if ind_1 != -1 and ind_2 != -1 and ind_2 > ind_1:
+                                try:
+                                    git_id = int(git_id_str[ind_1 + 1 : ind_2].strip())
+                                except ValueError:
+                                    git_id = None
+
                         if debug:
                             ui.notify(
-                                f"Saved: {int(id_input.value)}, {id_checkbox.value}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}"
+                                f"Saved: {git_id}, {id_checkbox.value}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}"
                             )
 
                         run_async_task(
