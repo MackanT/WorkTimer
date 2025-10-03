@@ -577,28 +577,6 @@ def ui_time_tracking():
                 label_total.text = f"{total:.2f} SEK"
 
     asyncio.run(render_ui())
-    # Initial render
-    # import threading
-    # import sys
-
-    # if threading.current_thread() is threading.main_thread():
-    #     import asyncio
-
-    #     try:
-    #         loop = asyncio.get_running_loop()
-    #     except RuntimeError:
-    #         loop = None
-    #     if loop and loop.is_running():
-    #         # Schedule initial render as a task
-    #         asyncio.create_task(render_ui())
-    #     else:
-    #         # Fallback for non-async context
-    #         asyncio.run(render_ui())
-    # else:
-    #     # Fallback for non-main thread
-    #     import asyncio
-
-    #     asyncio.run(render_ui())
 
 
 def ui_add_data():
