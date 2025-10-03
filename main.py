@@ -463,72 +463,84 @@ def ui_time_tracking():
         df = await get_ui_data()
 
         container.clear()
+
         customers = df.groupby(["customer_id", "customer_name"])
         with container:
             with (
                 ui.row()
-                .classes("justify-between overflow-x-auto")
+                .classes("px-4 justify-between overflow-x-auto")
                 .style("flex-wrap:nowrap; width:100%; max-width:1800px; margin:0 auto;")
             ):
                 for (customer_id, customer_name), group in customers:
-                    with (
-                        ui.column()
-                        .classes("items-start")
-                        .style(
-                            "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
-                        )
-                    ):
-                        total_string = (
-                            f"{df[df['customer_id'] == customer_id]['total_time'].sum():.2f} h"
-                            if "time" in radio_display_selection.value.lower()
-                            else f"{df[df['customer_id'] == customer_id]['user_bonus'].sum():.2f} SEK"
-                        )
+                    with ui.card().classes("w-full max-w-2xl mx-auto mx-6 my-4 p-6"):
                         with (
-                            ui.row()
-                            .classes("w-full justify-between")
-                            .style("display:flex; align-items:center;")
-                        ):
-                            ui.label(str(customer_name)).classes("text-lg text-right")
-                            label_total = ui.label(total_string).classes(
-                                "text-base text-grey text-right"
+                            ui.column()
+                            .classes("items-start")
+                            .style(
+                                "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
                             )
-                            customer_total_labels.append((label_total, customer_id))
-                        for _, project in group.iterrows():
+                        ):
+                            total_string = (
+                                f"{df[df['customer_id'] == customer_id]['total_time'].sum():.2f} h"
+                                if "time" in radio_display_selection.value.lower()
+                                else f"{df[df['customer_id'] == customer_id]['user_bonus'].sum():.2f} SEK"
+                            )
                             with (
                                 ui.row()
-                                .classes("items-center w-full")
-                                .style(
-                                    "display: grid; grid-template-columns: 20px 1fr 100px; align-items: center; margin-bottom:2px; min-height:20px;"
-                                )
+                                .classes("w-full justify-between")
+                                .style("display:flex; align-items:center;")
                             ):
-                                sql_query = f"select * from time where customer_id = {customer_id} and project_id = {project['project_id']} and end_time is null"
-                                df_counts = await query_db(sql_query)
-                                initial_state = True if len(df_counts) > 0 else False
-
-                                ui.checkbox(
-                                    on_change=make_callback(
-                                        project["customer_id"], project["project_id"]
-                                    ),
-                                    value=initial_state,
+                                ui.label(str(customer_name)).classes(
+                                    "text-lg text-right"
                                 )
-                                ui.label(str(project["project_name"])).classes(
-                                    "ml-2 truncate"
+                                label_total = ui.label(total_string).classes(
+                                    "text-base text-grey text-right"
                                 )
-                                total_string = (
-                                    f"{project['total_time']} h"
-                                    if "time" in radio_display_selection.value.lower()
-                                    else f"{project['user_bonus']} SEK"
-                                )
-                                value_label = (
-                                    ui.label(f"{total_string}")
-                                    .classes(
-                                        "text-grey text-right whitespace-nowrap w-full"
+                                customer_total_labels.append((label_total, customer_id))
+                            for _, project in group.iterrows():
+                                with (
+                                    ui.row()
+                                    .classes("items-center w-full")
+                                    .style(
+                                        "display: grid; grid-template-columns: 20px 1fr 100px; align-items: center; margin-bottom:2px; min-height:20px;"
                                     )
-                                    .style("max-width:100px; overflow-x:auto;")
-                                )
-                                value_labels.append(
-                                    (value_label, customer_id, project["project_id"])
-                                )
+                                ):
+                                    sql_query = f"select * from time where customer_id = {customer_id} and project_id = {project['project_id']} and end_time is null"
+                                    df_counts = await query_db(sql_query)
+                                    initial_state = (
+                                        True if len(df_counts) > 0 else False
+                                    )
+
+                                    ui.checkbox(
+                                        on_change=make_callback(
+                                            project["customer_id"],
+                                            project["project_id"],
+                                        ),
+                                        value=initial_state,
+                                    )
+                                    ui.label(str(project["project_name"])).classes(
+                                        "ml-2 truncate"
+                                    )
+                                    total_string = (
+                                        f"{project['total_time']} h"
+                                        if "time"
+                                        in radio_display_selection.value.lower()
+                                        else f"{project['user_bonus']} SEK"
+                                    )
+                                    value_label = (
+                                        ui.label(f"{total_string}")
+                                        .classes(
+                                            "text-grey text-right whitespace-nowrap w-full"
+                                        )
+                                        .style("max-width:100px; overflow-x:auto;")
+                                    )
+                                    value_labels.append(
+                                        (
+                                            value_label,
+                                            customer_id,
+                                            project["project_id"],
+                                        )
+                                    )
 
     async def update_ui():
         df = await get_ui_data()
