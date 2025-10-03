@@ -1105,6 +1105,42 @@ def ui_add_data():
                     )
                     add_save_button(save_data, fields, widgets)
 
+    def build_database_compare():
+        def handle_upload(e: events.UploadEventArguments):
+            ui.notify(f"File uploaded: {e.name}", color="positive")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+                tmp.write(e.content.read())
+                uploaded_path = tmp.name
+
+            sync_sql = Database.generate_sync_sql(MAIN_DB, uploaded_path)
+            db_deltas.set_content(sync_sql)
+            db_deltas.update()
+            os.remove(uploaded_path)  # Clean up temp file
+
+        with ui.card().classes("w-full max-w-2xl mx-auto my-0 p-4"):
+            ui.label("Upload a .db file to compare with the main database.").classes(
+                "text-h5 mb-0 dense"
+            )
+            ui.label(
+                "Ensure you backup the original db-file before running the generated code on it!"
+            ).classes("text-caption text-red mb-0 dense")
+            ui.upload(on_upload=handle_upload).props("accept=.db").classes(
+                "q-pa-xs q-ma-xs"
+            )
+            ui.separator().classes("my-4")
+            ui.label("SQL to synchronize uploaded DB:").classes("text-subtitle1 mb-2")
+            db_deltas = (
+                ui.code("--temp location of sql-changes...", language="sql")
+                .props("readonly")
+                .classes("w-full min-w-0 h-96")
+            )
+
+    def make_tab_panel(tab_name, title, build_fn):
+        with ui.tab_panel(tab_name):
+            with ui.card().classes("w-full max-w-2xl mx-auto my-0 p-4"):
+                ui.label(title).classes("text-h5 mb-2")
+                build_fn()
+
     input_width = "w-64"
 
     with ui.splitter(value=30).classes("w-full h-full") as splitter:
