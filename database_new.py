@@ -868,6 +868,140 @@ class Database:
         result = self.fetch_query(query, (project_id,))
         return result
 
+    @staticmethod
+    def get_schema_info(db_path):
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        # Get tables
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = set(row[0] for row in cursor.fetchall())
+        # Get triggers
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='trigger';")
+        triggers = set(row[0] for row in cursor.fetchall())
+        # Get indexes
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='index';")
+        indexes = set(row[0] for row in cursor.fetchall())
+        # Get columns per table
+        columns = {}
+        for table in tables:
+            cursor.execute(f"PRAGMA table_info('{table}')")
+            columns[table] = [row[1] for row in cursor.fetchall()]
+        conn.close()
+        return {
+            "tables": tables,
+            "triggers": triggers,
+            "indexes": indexes,
+            "columns": columns,
+        }
+
+    @staticmethod
+    def compare_schemas(schema1, schema2):
+        result = []
+        # Tables
+        only_in_1 = schema1["tables"] - schema2["tables"]
+        only_in_2 = schema2["tables"] - schema1["tables"]
+        if only_in_1:
+            result.append(f"Tables only in main DB: {only_in_1}")
+        if only_in_2:
+            result.append(f"Tables only in uploaded DB: {only_in_2}")
+        # Triggers
+        trig_1 = schema1["triggers"] - schema2["triggers"]
+        trig_2 = schema2["triggers"] - schema1["triggers"]
+        if trig_1:
+            result.append(f"Triggers only in main DB: {trig_1}")
+        if trig_2:
+            result.append(f"Triggers only in uploaded DB: {trig_2}")
+        # Indexes
+        idx_1 = schema1["indexes"] - schema2["indexes"]
+        idx_2 = schema2["indexes"] - schema1["indexes"]
+        if idx_1:
+            result.append(f"Indexes only in main DB: {idx_1}")
+        if idx_2:
+            result.append(f"Indexes only in uploaded DB: {idx_2}")
+        # Columns
+        for table in schema1["tables"] & schema2["tables"]:
+            cols1 = set(schema1["columns"].get(table, []))
+            cols2 = set(schema2["columns"].get(table, []))
+            if cols1 != cols2:
+                result.append(
+                    f"Column difference in table '{table}': main={cols1}, uploaded={cols2}"
+                )
+        return "\n".join(result) if result else "Schemas are identical!"
+
+    @staticmethod
+    def generate_sync_sql(main_db_path, uploaded_db_path):
+        conn_main = sqlite3.connect(main_db_path)
+        conn_uploaded = sqlite3.connect(uploaded_db_path)
+        cursor_main = conn_main.cursor()
+        cursor_uploaded = conn_uploaded.cursor()
+        sql_statements = []
+
+        # Tables
+        cursor_main.execute("SELECT name, sql FROM sqlite_master WHERE type='table';")
+        main_tables = {row[0]: row[1] for row in cursor_main.fetchall()}
+        cursor_uploaded.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        uploaded_tables = set(row[0] for row in cursor_uploaded.fetchall())
+        missing_tables = set(main_tables.keys()) - uploaded_tables
+        for table in missing_tables:
+            sql_statements.append(main_tables[table])
+
+        # Columns
+        for table in set(main_tables.keys()) & uploaded_tables:
+            cursor_main.execute(f"PRAGMA table_info('{table}')")
+            main_cols = {row[1]: row for row in cursor_main.fetchall()}
+            cursor_uploaded.execute(f"PRAGMA table_info('{table}')")
+            uploaded_cols = {row[1]: row for row in cursor_uploaded.fetchall()}
+            missing_cols = set(main_cols.keys()) - set(uploaded_cols.keys())
+            for col in missing_cols:
+                col_type = main_cols[col][2]
+                sql_statements.append(
+                    f"ALTER TABLE {table} ADD COLUMN {col} {col_type};"
+                )
+            # For changed column types, you may want to warn or handle manually
+
+        # Triggers
+        cursor_main.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger';")
+        main_triggers = {row[0]: row[1] for row in cursor_main.fetchall()}
+        cursor_uploaded.execute("SELECT name FROM sqlite_master WHERE type='trigger';")
+        uploaded_triggers = set(row[0] for row in cursor_uploaded.fetchall())
+        missing_triggers = set(main_triggers.keys()) - uploaded_triggers
+        for trigger in missing_triggers:
+            sql_statements.append(main_triggers[trigger])
+
+        # Indexes
+        cursor_main.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL;"
+        )
+        main_indexes = {row[0]: row[1] for row in cursor_main.fetchall()}
+        cursor_uploaded.execute("SELECT name FROM sqlite_master WHERE type='index';")
+        uploaded_indexes = set(row[0] for row in cursor_uploaded.fetchall())
+        missing_indexes = set(main_indexes.keys()) - uploaded_indexes
+        for idx in missing_indexes:
+            sql_statements.append(main_indexes[idx])
+
+        # Remove extra tables
+        extra_tables = uploaded_tables - set(main_tables.keys())
+        for table in extra_tables:
+            sql_statements.append(f"DROP TABLE IF EXISTS {table};")
+
+        # Remove extra triggers
+        cursor_uploaded.execute("SELECT name FROM sqlite_master WHERE type='trigger';")
+        uploaded_triggers = set(row[0] for row in cursor_uploaded.fetchall())
+        extra_triggers = uploaded_triggers - set(main_triggers.keys())
+        for trigger in extra_triggers:
+            sql_statements.append(f"DROP TRIGGER IF EXISTS {trigger};")
+
+        # Remove extra indexes
+        cursor_uploaded.execute("SELECT name FROM sqlite_master WHERE type='index';")
+        uploaded_indexes = set(row[0] for row in cursor_uploaded.fetchall())
+        extra_indexes = uploaded_indexes - set(main_indexes.keys())
+        for idx in extra_indexes:
+            sql_statements.append(f"DROP INDEX IF EXISTS {idx};")
+
+        conn_main.close()
+        conn_uploaded.close()
+        return "\n\n".join(sql_statements) if sql_statements else "-- No changes needed"
+
     # def process_queue(self):
     #     """
     #     Process tasks in the queue.
