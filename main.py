@@ -1458,7 +1458,7 @@ def ui_query_editor():
             ui.notify("Query is invalid", color="negative")
 
     async def delete_custom_query():
-        if len(query_df[query_df["is_default"] != 1]["query_name"]) <= 1:
+        if len(query_df[query_df["is_default"] != 1]["query_name"]) == 0:
             ui.notify("At least one custom query must exist", color="negative")
             return
 
