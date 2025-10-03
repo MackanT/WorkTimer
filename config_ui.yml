@@ -1,0 +1,186 @@
+### Customer Information ###
+customer:
+  add:
+    fields:
+      - name: customer_name
+        label: Name
+        type: input
+        optional: false
+      - name: wage
+        label: Wage
+        type: number
+        optional: false
+      - name: start_date
+        label: Start Date
+        type: date
+        optional: false
+      - name: org_url
+        label: DevOps Org. URL
+        type: input
+        optional: true
+      - name: pat_token
+        label: DevOps PAT
+        type: input
+        optional: true
+    action:
+      function: "insert_customer"
+      main_action: "Customer"
+      main_param: "customer_name"
+      secondary_action: "added"
+      button_name: "Add"
+  update:
+    fields:
+      - name: customer_name
+        label: Name
+        type: select
+        options: []
+        optional: false
+      - name: new_customer_name
+        label: New Name
+        type: input
+        optional: false
+      - name: "org_url"
+        label: "DevOps Org. URL"
+        type: input
+        optional: true
+      - name: "pat_token"
+        label: "DevOps PAT"
+        type: input
+        optional: true
+    action:
+      function: "update_customer"
+      main_action: "Customer"
+      main_param: "customer_name"
+      secondary_action: "updated"
+      button_name: "Update"
+  disable:
+    fields:
+      - name: customer_name
+        label: Name
+        type: select
+        options: []
+        optional: False
+    action:
+      function: "disable_customer"
+      main_action: "Customer"
+      main_param: "customer_name"
+      secondary_action: "disabled"
+      button_name: "Disable"
+  reenable:
+    fields:
+      - name: customer_name
+        label: Name
+        type: select
+        options: []
+        optional: False
+    action:
+      function: "reenable_customer"
+      main_action: "Customer"
+      main_param: "customer_name"
+      secondary_action: "reenabled"
+      button_name: "Re-enable"
+
+### Project Information ###
+project:
+  add:
+    fields:
+      - name: customer_name
+        label: Customer
+        type: select
+        options: []
+        optional: False
+      - name: project_name
+        label: Project Name
+        type: input
+        optional: False
+      - name: "git_id"
+        label: "Git ID"
+        type: number
+        optional: True
+    action:
+      function: "insert_project"
+      main_action: "Project"
+      main_param: "project_name"
+      secondary_action: "added"
+      button_name: "Add"
+  update:
+    fields:
+      - name: customer_name
+        label: Customer
+        type: select
+        options: []
+        optional: False
+      - name: project_name
+        label: Project Name
+        type: select
+        options: []
+        optional: False
+      - name: new_project_name
+        label: New Project Name
+        type: input
+        optional: False
+      - name: "new_git_id"
+        label: "New Git ID"
+        type: number
+        optional: True
+    action:
+      function: "update_project"
+      main_action: "Project"
+      main_param: "project_name"
+      secondary_action: "updated"
+      button_name: "Update"
+  disable:
+    fields:
+      - name: customer_name
+        label: Customer
+        type: select
+        options: []
+        optional: False
+      - name: project_name
+        label: Project
+        type: select
+        options: []
+        optional: False
+    action:
+      function: "disable_project"
+      main_action: "Project"
+      main_param: "project_name"
+      secondary_action: "disabled"
+      button_name: "Disable"
+  reenable:
+    fields:
+      - name: customer_name
+        label: Customer
+        type: select
+        options: []
+        optional: False
+      - name: project_name
+        label: Project
+        type: select
+        options: []
+        optional: False
+    action:
+      function: "enable_project"
+      main_action: "Project"
+      main_param: "project_name"
+      secondary_action: "enabled"
+      button_name: "Re-enable"
+
+### Bonus Information ###
+bonus:
+  add:
+    fields:
+      - name: bonus_percent
+        label: Bonus Percentage (%)
+        type: number
+        optional: false
+      - name: start_date
+        label: Start Date
+        type: date
+        optional: false
+    action:
+      function: "insert_bonus"
+      main_action: "Bonus"
+      main_param: "bonus_percent"
+      secondary_action: "added"
+      button_name: "Add"

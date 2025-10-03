@@ -11,6 +11,7 @@ from textwrap import dedent
 import threading
 import tempfile
 import os
+import yaml
 
 debug = True
 
@@ -122,6 +123,14 @@ async def refresh_query_data():
     global query_df
     df = await function_db("get_query_list")
     query_df = df
+
+
+## Config Setup ##
+def setup_config():
+    global config
+    with open("config_ui.yml") as f:
+        fields = yaml.safe_load(f)
+    config = fields
 
 
 ## DB SETUP ##
@@ -648,6 +657,15 @@ def ui_add_data():
                 is_ok = False
         return is_ok
 
+    def assign_field_data(
+        fields, field_name=None, field_type=None, key="options", value=None
+    ):
+        for field in fields:
+            if (field_name and field.get("name") == field_name) or (
+                field_type and field.get("type") == field_type
+            ):
+                field[key] = value
+
     def print_success(
         table: str, main_param: str, action_type: str, widgets: dict = None
     ):
@@ -699,46 +717,10 @@ def ui_add_data():
         container.clear()
         with container:
             if tab_type == "Add":
-                fields = [
-                    {
-                        "name": "customer_name",
-                        "label": "Name",
-                        "type": "input",
-                        "optional": False,
-                    },
-                    {
-                        "name": "wage",
-                        "label": "Wage",
-                        "type": "number",
-                        "optional": False,
-                    },
-                    {
-                        "name": "start_date",
-                        "label": "Start Date",
-                        "type": "date",
-                        "optional": False,
-                    },
-                    {
-                        "name": "org_url",
-                        "label": "DevOps Org. URL",
-                        "type": "input",
-                        "optional": True,
-                    },
-                    {
-                        "name": "pat_token",
-                        "label": "DevOps PAT",
-                        "type": "input",
-                        "optional": True,
-                    },
-                ]
+                fields = config["customer"][tab_type.lower()]["fields"]
+                action = config["customer"][tab_type.lower()]["action"]
                 widgets = make_input_row(fields)
-                save_data = SaveData(
-                    function="insert_customer",
-                    main_action="Customer",
-                    main_param="customer_name",
-                    secondary_action="added",
-                    button_name="Add",
-                )
+                save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Update":
                 customer_data = (
@@ -746,41 +728,17 @@ def ui_add_data():
                     .unique()
                     .tolist()
                 )
-                fields = [
-                    {
-                        "name": "customer_name",
-                        "label": "Name",
-                        "type": "select",
-                        "options": customer_data,
-                        "optional": False,
-                    },
-                    {
-                        "name": "new_customer_name",
-                        "label": "New Name",
-                        "type": "input",
-                        "optional": False,
-                    },
-                    {
-                        "name": "org_url",
-                        "label": "DevOps Org. URL",
-                        "type": "input",
-                        "optional": True,
-                    },
-                    {
-                        "name": "pat_token",
-                        "label": "DevOps PAT",
-                        "type": "input",
-                        "optional": True,
-                    },
-                ]
-                widgets = make_input_row(fields)
-                save_data = SaveData(
-                    function="update_customer",
-                    main_action="Customer",
-                    main_param="customer_name",
-                    secondary_action="updated",
-                    button_name="Update",
+                fields = config["customer"][tab_type.lower()]["fields"]
+                action = config["customer"][tab_type.lower()]["action"]
+                assign_field_data(
+                    fields,
+                    field_name="customer_name",
+                    key="options",
+                    value=customer_data,
                 )
+
+                widgets = make_input_row(fields)
+                save_data = SaveData(**action)
 
                 def on_name_change(e):
                     filtered = filter_df(
@@ -815,22 +773,16 @@ def ui_add_data():
                     .unique()
                     .tolist()
                 )
-                fields = [
-                    {
-                        "name": "customer_name",
-                        "label": "Name",
-                        "type": "select",
-                        "options": customer_data,
-                        "optional": False,
-                    },
-                ]
-                save_data = SaveData(
-                    function="disable_customer",
-                    main_action="Customer",
-                    main_param="customer_name",
-                    secondary_action="disabled",
-                    button_name="Disable",
+                fields = config["customer"][tab_type.lower()]["fields"]
+                action = config["customer"][tab_type.lower()]["action"]
+                assign_field_data(
+                    fields,
+                    field_name="customer_name",
+                    key="options",
+                    value=customer_data,
                 )
+
+                save_data = SaveData(**action)
                 widgets = make_input_row(fields)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Reenable":
@@ -846,22 +798,15 @@ def ui_add_data():
                     .tolist()
                 )
                 reenable_names = sorted(list(candidate_names - all_current_names))
-                fields = [
-                    {
-                        "name": "customer_name",
-                        "label": "Name",
-                        "type": "select",
-                        "options": reenable_names,
-                        "optional": False,
-                    },
-                ]
-                save_data = SaveData(
-                    function="enable_customer",
-                    main_action="Customer",
-                    main_param="customer_name",
-                    secondary_action="enabled",
-                    button_name="Re-enable",
+                fields = config["customer"][tab_type.lower()]["fields"]
+                action = config["customer"][tab_type.lower()]["action"]
+                assign_field_data(
+                    fields,
+                    field_name="customer_name",
+                    key="options",
+                    value=reenable_names,
                 )
+                save_data = SaveData(**action)
                 widgets = make_input_row(fields)
                 add_save_button(save_data, fields, widgets)
 
@@ -875,74 +820,29 @@ def ui_add_data():
             active_data = add_data_df[add_data_df["c_current"] == 1]
             if tab_type == "Add":
                 customer_data = active_data["customer_name"].unique().tolist()
-                fields = [
-                    {
-                        "name": "customer_name",
-                        "label": "Customer",
-                        "type": "select",
-                        "options": customer_data,
-                        "optional": False,
-                    },
-                    {
-                        "name": "project_name",
-                        "label": "Project Name",
-                        "type": "input",
-                        "optional": False,
-                    },
-                    {
-                        "name": "git_id",
-                        "label": "Git ID",
-                        "type": "number",
-                        "optional": True,
-                    },
-                ]
-                widgets = make_input_row(fields)
-                save_data = SaveData(
-                    function="insert_project",
-                    main_action="Project",
-                    main_param="project_name",
-                    secondary_action="added",
-                    button_name="Add",
+                fields = config["project"][tab_type.lower()]["fields"]
+                action = config["project"][tab_type.lower()]["action"]
+                assign_field_data(
+                    fields,
+                    field_name="customer_name",
+                    key="options",
+                    value=customer_data,
                 )
+                widgets = make_input_row(fields)
+                save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Update":
                 customer_data = active_data["customer_name"].unique().tolist()
-                fields = [
-                    {
-                        "name": "customer_name",
-                        "label": "Customer",
-                        "type": "select",
-                        "options": customer_data,
-                        "optional": False,
-                    },
-                    {
-                        "name": "project_name",
-                        "label": "Project",
-                        "type": "select",
-                        "options": [],
-                        "optional": False,
-                    },
-                    {
-                        "name": "new_project_name",
-                        "label": "New Project Name",
-                        "type": "input",
-                        "optional": False,
-                    },
-                    {
-                        "name": "new_git_id",
-                        "label": "New Git ID",
-                        "type": "number",
-                        "optional": True,
-                    },
-                ]
-                widgets = make_input_row(fields)
-                save_data = SaveData(
-                    function="update_project",
-                    main_action="Project",
-                    main_param="project_name",
-                    secondary_action="updated",
-                    button_name="Update",
+                fields = config["project"][tab_type.lower()]["fields"]
+                action = config["project"][tab_type.lower()]["action"]
+                assign_field_data(
+                    fields,
+                    field_name="customer_name",
+                    key="options",
+                    value=customer_data,
                 )
+                widgets = make_input_row(fields)
+                save_data = SaveData(**action)
 
                 def on_customer_change(e):
                     filtered = (
@@ -984,30 +884,16 @@ def ui_add_data():
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Disable":
                 customer_data = active_data["customer_name"].unique().tolist()
-                fields = [
-                    {
-                        "name": "customer_name",
-                        "label": "Customer",
-                        "type": "select",
-                        "options": customer_data,
-                        "optional": False,
-                    },
-                    {
-                        "name": "project_name",
-                        "label": "Project",
-                        "type": "select",
-                        "options": [],
-                        "optional": False,
-                    },
-                ]
-                widgets = make_input_row(fields)
-                save_data = SaveData(
-                    function="disable_project",
-                    main_action="Project",
-                    main_param="project_name",
-                    secondary_action="disabled",
-                    button_name="Disable",
+                fields = config["project"][tab_type.lower()]["fields"]
+                action = config["project"][tab_type.lower()]["action"]
+                assign_field_data(
+                    fields,
+                    field_name="customer_name",
+                    key="options",
+                    value=customer_data,
                 )
+                widgets = make_input_row(fields)
+                save_data = SaveData(**action)
 
                 def on_customer_change(e):
                     filtered = (
@@ -1028,30 +914,16 @@ def ui_add_data():
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Reenable":
                 customer_data = active_data["customer_name"].unique().tolist()
-                fields = [
-                    {
-                        "name": "customer_name",
-                        "label": "Customer",
-                        "type": "select",
-                        "options": customer_data,
-                        "optional": False,
-                    },
-                    {
-                        "name": "project_name",
-                        "label": "Project",
-                        "type": "select",
-                        "options": [],
-                        "optional": False,
-                    },
-                ]
-                widgets = make_input_row(fields)
-                save_data = SaveData(
-                    function="enable_project",
-                    main_action="Project",
-                    main_param="project_name",
-                    secondary_action="enabled",
-                    button_name="Re-Enable",
+                fields = config["project"][tab_type.lower()]["fields"]
+                action = config["project"][tab_type.lower()]["action"]
+                assign_field_data(
+                    fields,
+                    field_name="customer_name",
+                    key="options",
+                    value=customer_data,
                 )
+                widgets = make_input_row(fields)
+                save_data = SaveData(**action)
 
                 def on_customer_change(e):
                     filtered = (
@@ -1081,28 +953,10 @@ def ui_add_data():
         with container:
             with ui.card().classes("w-full max-w-2xl mx-auto my-0 p-4"):
                 if tab_type == "Add":
-                    fields = [
-                        {
-                            "name": "bonus_percent",
-                            "label": "Bonus Percentage (%)",
-                            "type": "number",
-                            "optional": False,
-                        },
-                        {
-                            "name": "start_date",
-                            "label": "Start Date",
-                            "type": "date",
-                            "optional": False,
-                        },
-                    ]
+                    fields = config["bonus"][tab_type.lower()]["fields"]
+                    action = config["bonus"][tab_type.lower()]["action"]
                     widgets = make_input_row(fields)
-                    save_data = SaveData(
-                        function="insert_bonus",
-                        main_action="Bonus",
-                        main_param="bonus_percent",
-                        secondary_action="added",
-                        button_name="Add",
-                    )
+                    save_data = SaveData(**action)
                     add_save_button(save_data, fields, widgets)
 
     def build_database_compare():
@@ -1775,6 +1629,9 @@ def handle_key(e: KeyEventArguments):
 
 def main():
     print("Starting WorkTimer!")
+
+    setup_config()
+
     setup_db(MAIN_DB)
     ui.add_head_html("""
     <script>
