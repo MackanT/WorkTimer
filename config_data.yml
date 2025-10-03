@@ -1,0 +1,63 @@
+devops_tags:
+  - name: Bug
+    icon: bug_report
+    color: "#b71c1c"
+  - name: Feature
+    icon: star
+    color: "#ffb300"
+  - name: Estimate
+    icon: assignment
+    color: "#e57399"
+  - name: Change Request
+    icon: edit
+    color: "#1976d2"
+  - name: New
+    icon: new_releases
+    color: "#388e3c"
+table_ids:
+  time:
+    time_id: { pk: true, type: int }
+    customer_id: { type: int }
+    customer_name: {}
+    project_id: { editable: true, type: project_id }
+    project_name: {}
+    start_time: { editable: true, type: datetime }
+    end_time: { editable: true, type: datetime }
+    date_key: { type: int }
+    total_time: { type: float }
+    cost: { type: float }
+    bonus: { type: float }
+    wage: { type: int }
+    comment: { editable: true, type: long_str }
+    git_id: { editable: true, type: int }
+    user_bonus: { type: float }
+  customers:
+    customer_id: { pk: true, type: int }
+    customer_name: {}
+    start_date: { type: date }
+    wage: { type: int }
+    valid_from: { type: date }
+    valid_to: { type: date }
+    is_current: { type: bool }
+    inserted_at: { type: datetime }
+    pat_token: { editable: true }
+    org_url: { editable: true }
+    sort_order: { editable: false, type: int }
+  projects:
+    project_id: { pk: true, type: int }
+    project_name: {}
+    customer_id: { type: int }
+    is_current: { type: bool }
+    git_id: { editable: true, type: str }
+  bonus:
+    bonus_id: { pk: true, type: int }
+    bonus_percent: { type: float }
+    start_date: { type: date }
+    end_date: { type: date }
+  dates:
+    date_key: { pk: true, type: int }
+    date: { type: date }
+    year: { type: int }
+    month: { type: int }
+    week: { type: int }
+    day: { type: int }

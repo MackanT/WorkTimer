@@ -50,69 +50,6 @@ class DevOpsTag:
     color: str = "green"
 
 
-TABLE_IDS = {
-    "time": {
-        "time_id": TableColumn(pk=True, type="int"),
-        "customer_id": TableColumn(type="int"),
-        "customer_name": TableColumn(),
-        "project_id": TableColumn(editable=True, type="project_id"),  # Special
-        "project_name": TableColumn(),
-        "start_time": TableColumn(editable=True, type="datetime"),
-        "end_time": TableColumn(editable=True, type="datetime"),
-        "date_key": TableColumn(type="int"),
-        "total_time": TableColumn(type="float"),
-        "cost": TableColumn(type="float"),
-        "bonus": TableColumn(type="float"),
-        "wage": TableColumn(type="int"),
-        "comment": TableColumn(editable=True, type="long_str"),
-        "git_id": TableColumn(editable=True, type="int"),
-        "user_bonus": TableColumn(type="float"),
-    },
-    "customers": {
-        "customer_id": TableColumn(pk=True, type="int"),
-        "customer_name": TableColumn(),
-        "start_date": TableColumn(type="date"),
-        "wage": TableColumn(type="int"),
-        "valid_from": TableColumn(type="date"),
-        "valid_to": TableColumn(type="date"),
-        "is_current": TableColumn(type="bool"),
-        "inserted_at": TableColumn(type="datetime"),
-        "pat_token": TableColumn(editable=True),
-        "org_url": TableColumn(editable=True),
-        "sort_order": TableColumn(editable=False, type="int"),
-    },
-    "projects": {
-        "project_id": TableColumn(pk=True, type="int"),
-        "project_name": TableColumn(),
-        "customer_id": TableColumn(type="int"),
-        "is_current": TableColumn(type="bool"),
-        "git_id": TableColumn(editable=True, type="str"),
-    },
-    "bonus": {
-        "bonus_id": TableColumn(pk=True, type="int"),
-        "bonus_percent": TableColumn(type="float"),
-        "start_date": TableColumn(type="date"),
-        "end_date": TableColumn(type="date"),
-    },
-    "dates": {
-        "date_key": TableColumn(pk=True, type="int"),
-        "date": TableColumn(type="date"),
-        "year": TableColumn(type="int"),
-        "month": TableColumn(type="int"),
-        "week": TableColumn(type="int"),
-        "day": TableColumn(type="int"),
-    },
-}
-
-DEVOPS_TAGS = [
-    DevOpsTag(name="Bug", icon="bug_report", color="#b71c1c"),
-    DevOpsTag(name="Feature", icon="star", color="#ffb300"),
-    DevOpsTag(name="Estimate", icon="assignment", color="#e57399"),
-    DevOpsTag(name="Change Request", icon="edit", color="#1976d2"),
-    DevOpsTag(name="New", icon="new_releases", color="#388e3c"),
-]
-
-
 async def refresh_add_data():
     global add_data_df
     df = await function_db("get_data_input_list")
@@ -127,10 +64,22 @@ async def refresh_query_data():
 
 ## Config Setup ##
 def setup_config():
-    global config
+    global config_ui, config_data, DEVOPS_TAGS, TABLE_IDS
     with open("config_ui.yml") as f:
         fields = yaml.safe_load(f)
-    config = fields
+    config_ui = fields
+    with open("config_data.yml") as f:
+        fields = yaml.safe_load(f)
+    config_data = fields
+
+    DEVOPS_TAGS = []
+    for f in config_data["devops_tags"]:
+        DEVOPS_TAGS.append(DevOpsTag(**f))
+    TABLE_IDS = {}
+    for table_name, columns in config_data["table_ids"].items():
+        TABLE_IDS[table_name] = {
+            col_name: TableColumn(**(columns[col_name] or {})) for col_name in columns
+        }
 
 
 ## DB SETUP ##
@@ -701,8 +650,8 @@ def ui_add_data():
             tab_customer_containers[tab_type] = container
         container.clear()
 
-        fields = config["customer"][tab_type.lower()]["fields"]
-        action = config["customer"][tab_type.lower()]["action"]
+        fields = config_ui["customer"][tab_type.lower()]["fields"]
+        action = config_ui["customer"][tab_type.lower()]["action"]
 
         with container:
             if tab_type == "Add":
@@ -793,8 +742,8 @@ def ui_add_data():
             tab_project_containers[tab_type] = container
         container.clear()
 
-        fields = config["project"][tab_type.lower()]["fields"]
-        action = config["project"][tab_type.lower()]["action"]
+        fields = config_ui["project"][tab_type.lower()]["fields"]
+        action = config_ui["project"][tab_type.lower()]["action"]
 
         with container:
             active_data = filter_df(
@@ -910,8 +859,8 @@ def ui_add_data():
             tab_bonus_containers[tab_type] = container
         container.clear()
 
-        fields = config["bonus"][tab_type.lower()]["fields"]
-        action = config["bonus"][tab_type.lower()]["action"]
+        fields = config_ui["bonus"][tab_type.lower()]["fields"]
+        action = config_ui["bonus"][tab_type.lower()]["action"]
 
         with container:
             if tab_type == "Add":
