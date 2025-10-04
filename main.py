@@ -543,37 +543,6 @@ def ui_add_data():
     global add_data_df
     asyncio.run(refresh_add_data())
 
-    def date_input(label):
-        with ui.input(label).props("readonly").classes(input_width) as date:
-            with ui.menu().props("no-parent-event") as menu:
-                with ui.date().bind_value(date):
-                    with ui.row().classes("justify-end"):
-                        ui.button("Close", on_click=menu.close).props("flat")
-            with date.add_slot("append"):
-                ui.icon("edit_calendar").on("click", menu.open).classes(
-                    "cursor-pointer"
-                )
-        return date
-
-    def make_input_row(fields):
-        widgets = {}
-        for field in fields:
-            label = field["label"]
-            if field.get("optional", True):
-                label += " (optional)"
-
-            if field["type"] == "input":
-                widgets[field["name"]] = ui.input(label).classes(input_width)
-            elif field["type"] == "number":
-                widgets[field["name"]] = ui.number(label, min=0).classes(input_width)
-            elif field["type"] == "date":
-                widgets[field["name"]] = date_input(label)
-            elif field["type"] == "select":
-                widgets[field["name"]] = ui.select(
-                    field["options"], label=label
-                ).classes(input_width)
-        return widgets
-
     def autofill_widgets(widgets, row, field_map):
         for widget_name, col_name in field_map.items():
             widgets[widget_name].value = row.get(col_name, "")
@@ -595,12 +564,6 @@ def ui_add_data():
                 is_ok = False
         return is_ok
 
-    def assign_dynamic_options(fields, data_sources):
-        for field in fields:
-            if field.get("type") == "select" and "options_source" in field:
-                source = field["options_source"]
-                field["options"] = data_sources.get(source, [])
-
     def print_success(
         table: str, main_param: str, action_type: str, widgets: dict = None
     ):
@@ -614,25 +577,6 @@ def ui_add_data():
                 print_msg += f"{field}: {widgets[field].value}, "
             print_msg = print_msg.rstrip(", ")
             ui.notify(print_msg)
-
-    def filter_df(df, filters, return_as="df", column=None):
-        mask = None
-        for col, val in filters.items():
-            if mask is None:
-                mask = df[col] == val
-            else:
-                mask &= df[col] == val
-        filtered = df.loc[mask] if mask is not None else df
-        if return_as == "list" and column:
-            return filtered[column].tolist()
-        elif return_as == "distinct_list" and column:
-            return filtered[column].unique().tolist()
-        return filtered
-
-    def get_unique_list(df, column):
-        if column in df.columns:
-            return df[column].dropna().unique().tolist()
-        return []
 
     # --- Modular Tab Panel Builder ---
     def add_save_button(save_data, fields, widgets):
@@ -666,26 +610,26 @@ def ui_add_data():
 
         with container:
             if tab_type == "Add":
-                widgets = make_input_row(fields)
+                widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Update":
-                customer_data = filter_df(
+                customer_data = helpers.filter_df(
                     add_data_df,
                     {"c_current": 1},
                     return_as="distinct_list",
                     column="customer_name",
                 )
 
-                assign_dynamic_options(
+                helpers.assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
 
-                widgets = make_input_row(fields)
+                widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
 
                 def on_name_change(e):
-                    filtered = filter_df(
+                    filtered = helpers.filter_df(
                         add_data_df,
                         {
                             "c_current": 1,
@@ -711,39 +655,39 @@ def ui_add_data():
 
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Disable":
-                customer_data = filter_df(
+                customer_data = helpers.filter_df(
                     add_data_df,
                     {"c_current": 1},
                     return_as="distinct_list",
                     column="customer_name",
                 )
-                assign_dynamic_options(
+                helpers.assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
 
                 save_data = SaveData(**action)
-                widgets = make_input_row(fields)
+                widgets = helpers.make_input_row(fields)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Reenable":
                 # Only show customer_name where c_current == 0 and NOT present in any row where c_current == 1
-                customer_data = filter_df(
+                customer_data = helpers.filter_df(
                     add_data_df,
                     {"c_current": 1},
                     return_as="distinct_list",
                     column="customer_name",
                 )
-                candidate_names = filter_df(
+                candidate_names = helpers.filter_df(
                     add_data_df,
                     {"c_current": 0},
                     return_as="distinct_list",
                     column="customer_name",
                 )
                 reenable_names = sorted(list(set(candidate_names) - set(customer_data)))
-                assign_dynamic_options(
+                helpers.assign_dynamic_options(
                     fields, data_sources={"customer_data": reenable_names}
                 )
                 save_data = SaveData(**action)
-                widgets = make_input_row(fields)
+                widgets = helpers.make_input_row(fields)
                 add_save_button(save_data, fields, widgets)
 
     def build_project_tab_panel(tab_type):
@@ -757,28 +701,28 @@ def ui_add_data():
         action = config_ui["project"][tab_type.lower()]["action"]
 
         with container:
-            active_data = filter_df(
+            active_data = helpers.filter_df(
                 add_data_df,
                 {"c_current": 1},
             )
             if tab_type == "Add":
-                customer_data = get_unique_list(active_data, "customer_name")
-                assign_dynamic_options(
+                customer_data = helpers.get_unique_list(active_data, "customer_name")
+                helpers.assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
-                widgets = make_input_row(fields)
+                widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Update":
-                customer_data = get_unique_list(active_data, "customer_name")
-                assign_dynamic_options(
+                customer_data = helpers.get_unique_list(active_data, "customer_name")
+                helpers.assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
-                widgets = make_input_row(fields)
+                widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
 
                 def on_customer_change(e):
-                    filtered = filter_df(
+                    filtered = helpers.filter_df(
                         active_data,
                         {"customer_name": widgets["customer_name"].value},
                         column="project_name",
@@ -790,7 +734,7 @@ def ui_add_data():
                 widgets["customer_name"].on("update:model-value", on_customer_change)
 
                 def on_project_change(e):
-                    filtered = filter_df(
+                    filtered = helpers.filter_df(
                         active_data,
                         {
                             "customer_name": widgets["customer_name"].value,
@@ -817,15 +761,15 @@ def ui_add_data():
 
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Disable":
-                customer_data = get_unique_list(active_data, "customer_name")
-                assign_dynamic_options(
+                customer_data = helpers.get_unique_list(active_data, "customer_name")
+                helpers.assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
-                widgets = make_input_row(fields)
+                widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
 
                 def on_customer_change(e):
-                    filtered = filter_df(
+                    filtered = helpers.filter_df(
                         active_data,
                         {
                             "customer_name": widgets["customer_name"].value,
@@ -840,15 +784,15 @@ def ui_add_data():
                 widgets["customer_name"].on("update:model-value", on_customer_change)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Reenable":
-                customer_data = get_unique_list(active_data, "customer_name")
-                assign_dynamic_options(
+                customer_data = helpers.get_unique_list(active_data, "customer_name")
+                helpers.assign_dynamic_options(
                     fields, data_sources={"customer_data": customer_data}
                 )
-                widgets = make_input_row(fields)
+                widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
 
                 def on_customer_change(e):
-                    filtered = filter_df(
+                    filtered = helpers.filter_df(
                         active_data,
                         {
                             "customer_name": widgets["customer_name"].value,
@@ -875,7 +819,7 @@ def ui_add_data():
 
         with container:
             if tab_type == "Add":
-                widgets = make_input_row(fields)
+                widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)
 
