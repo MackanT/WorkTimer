@@ -82,6 +82,10 @@ customer:
       main_param: "customer_name"
       secondary_action: "reenabled"
       button_name: "Re-enable"
+  meta:
+    icon: business
+    friendly_name: Customers
+    build_function: build_customer_tab_panel
 
 ### Project Information ###
 project:
@@ -172,6 +176,10 @@ project:
       main_param: "project_name"
       secondary_action: "enabled"
       button_name: "Re-enable"
+  meta:
+    icon: assignment
+    friendly_name: Projects
+    build_function: build_project_tab_panel
 
 ### Bonus Information ###
 bonus:
@@ -191,3 +199,7 @@ bonus:
       main_param: "bonus_percent"
       secondary_action: "added"
       button_name: "Add"
+  meta:
+    icon: attach_money
+    friendly_name: Bonus
+    build_function: build_bonus_tab_panel
