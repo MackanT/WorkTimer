@@ -557,42 +557,17 @@ def ui_add_data():
             widget.value = ""
             widget.update()
 
-    def check_input(widgets, required_fields) -> bool:
-        is_ok = True
-        for field in required_fields:
-            if not widgets[field].value:
-                ui.notify(
-                    f"{field.replace('_', ' ').title()} is required!",
-                    color="negative",
-                )
-                is_ok = False
-        return is_ok
-
-    def print_success(
-        table: str, main_param: str, action_type: str, widgets: dict = None
-    ):
-        ui.notify(
-            f"{table} {main_param} {action_type}!",
-            color="positive",
-        )
-        if debug and widgets:
-            print_msg = ""
-            for field in widgets:
-                print_msg += f"{field}: {widgets[field].value}, "
-            print_msg = print_msg.rstrip(", ")
-            ui.notify(print_msg)
-
     # --- Modular Tab Panel Builder ---
     def add_save_button(save_data, fields, widgets):
         async def on_save():
             required_fields = [
                 f["name"] for f in fields if not f.get("optional", False)
             ]
-            if not check_input(widgets, required_fields):
+            if not helpers.check_input(widgets, required_fields):
                 return
             kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
             await function_db(save_data.function, **kwargs)
-            print_success(
+            helpers.print_success(
                 save_data.main_action,
                 widgets[save_data.main_param].value,
                 save_data.secondary_action,
@@ -602,11 +577,11 @@ def ui_add_data():
 
         ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
 
-    def build_customer_tab_panel(tab_type):
-        container = tab_customer_containers.get(tab_type)
+    def build_customer_tab_panel(tab_type, container_dict):
+        container = container_dict.get(tab_type)
         if container is None:
             container = ui.element()
-            tab_customer_containers[tab_type] = container
+            container_dict[tab_type] = container
         container.clear()
 
         fields = config_ui["customer"][tab_type.lower()]["fields"]
@@ -694,11 +669,11 @@ def ui_add_data():
                 widgets = helpers.make_input_row(fields)
                 add_save_button(save_data, fields, widgets)
 
-    def build_project_tab_panel(tab_type):
-        container = tab_project_containers.get(tab_type)
+    def build_project_tab_panel(tab_type, container_dict):
+        container = container_dict.get(tab_type)
         if container is None:
             container = ui.element()
-            tab_project_containers[tab_type] = container
+            container_dict[tab_type] = container
         container.clear()
 
         fields = config_ui["project"][tab_type.lower()]["fields"]
@@ -811,11 +786,11 @@ def ui_add_data():
                 widgets["customer_name"].on("update:model-value", on_customer_change)
                 add_save_button(save_data, fields, widgets)
 
-    def build_bonus_tab_panel(tab_type):
-        container = tab_bonus_containers.get(tab_type)
+    def build_bonus_tab_panel(tab_type, container_dict):
+        container = container_dict.get(tab_type)
         if container is None:
             container = ui.element()
-            tab_bonus_containers[tab_type] = container
+            container_dict[tab_type] = container
         container.clear()
 
         fields = config_ui["bonus"][tab_type.lower()]["fields"]
@@ -857,90 +832,75 @@ def ui_add_data():
                 .classes("w-full min-w-0 h-96")
             )
 
-    def make_tab_panel(tab_name, title, build_fn):
-        with ui.tab_panel(tab_name):
-            with ui.card().classes("w-full max-w-2xl mx-auto my-0 p-4"):
-                ui.label(title).classes("text-h5 mb-2")
-                build_fn()
-
-    input_width = "w-64"
-
+    tab_list = {}
+    vertical_tab_entries = [i for i in config_ui]
+    function_map = {
+        "build_customer_tab_panel": build_customer_tab_panel,
+        "build_project_tab_panel": build_project_tab_panel,
+        "build_bonus_tab_panel": build_bonus_tab_panel,
+    }
     with ui.splitter(value=30).classes("w-full h-full") as splitter:
         with splitter.before:
             with ui.tabs().props("vertical").classes("w-full") as main_tabs:
-                tab_customers = ui.tab("Customers", icon="business")
-                tab_projects = ui.tab("Projects", icon="assignment")
-                tab_bonuses = ui.tab("Bonuses", icon="attach_money")
+                for tab in vertical_tab_entries:
+                    meta_data = config_ui[tab].get("meta", {})
+                    tab_list[tab] = {
+                        "tab": ui.tab(
+                            meta_data.get("friendly_name", tab.capitalize()),
+                            icon=meta_data.get("icon", "folder"),
+                        ),
+                        "name": tab,
+                        "tab_list": [],
+                        "tab_container": {},
+                        "build_function": meta_data.get("build_function", None),
+                        "friendly_name": meta_data.get(
+                            "friendly_name", tab.capitalize()
+                        ),
+                    }
                 tab_database = ui.tab("Database", icon="storage")
         with splitter.after:
             with (
-                ui.tab_panels(main_tabs, value=tab_customers)
+                ui.tab_panels(
+                    main_tabs, value=tab_list[vertical_tab_entries[0]]["friendly_name"]
+                )
                 .props("vertical")
                 .classes("w-full h-full")
             ):
-                tab_customer_containers = {}
-                tab_project_containers = {}
-                tab_bonus_containers = {}
 
-                async def on_customer_tab_change(e):
+                async def on_tab_change(e, function, container):
                     tab_type = e.args
                     await refresh_add_data()
-                    build_customer_tab_panel(tab_type)
+                    function(tab_type, container)
 
-                async def on_project_tab_change(e):
-                    tab_type = e.args
-                    await refresh_add_data()
-                    build_project_tab_panel(tab_type)
+                for tab_dict in tab_list.values():
+                    tab_names = [
+                        i.capitalize()
+                        for i in helpers.get_ui_elements(config_ui[tab_dict["name"]])
+                    ]
 
-                async def on_bonus_tab_change(e):
-                    tab_type = e.args
-                    await refresh_add_data()
-                    build_bonus_tab_panel(tab_type)
-
-                # Customers
-                customer_tab_names = ["Add", "Update", "Disable", "Reenable"]
-                customer_tab_list = []
-                with ui.tab_panel(tab_customers):
-                    with ui.tabs().classes("mb-2") as customer_tabs:
-                        for name in customer_tab_names:
-                            customer_tab_list.append(ui.tab(name))
-                    with ui.tab_panels(customer_tabs, value=customer_tab_list[0]):
-                        for i, name in enumerate(customer_tab_names):
-                            make_tab_panel(
-                                customer_tab_list[i],
-                                f"{name} Customer",
-                                lambda: build_customer_tab_panel(name),
-                            )
-
-                # Projects
-                project_tab_names = ["Add", "Update", "Disable", "Reenable"]
-                project_tab_list = []
-                with ui.tab_panel(tab_projects):
-                    with ui.tabs().classes("mb-2") as project_tabs:
-                        for name in project_tab_names:
-                            project_tab_list.append(ui.tab(name))
-                    with ui.tab_panels(project_tabs, value=project_tab_list[0]):
-                        for i, name in enumerate(project_tab_names):
-                            make_tab_panel(
-                                project_tab_list[i],
-                                f"{name} Project",
-                                lambda: build_project_tab_panel(name),
-                            )
-
-                # Bonuses
-                bonus_tab_names = ["Add"]
-                bonus_tab_list = []
-                with ui.tab_panel(tab_bonuses):
-                    with ui.tabs().classes("mb-2") as bonus_tabs:
-                        for name in bonus_tab_names:
-                            bonus_tab_list.append(ui.tab(name))
-                    with ui.tab_panels(bonus_tabs, value=bonus_tab_list[0]):
-                        for i, name in enumerate(bonus_tab_names):
-                            make_tab_panel(
-                                bonus_tab_list[i],
-                                f"{name} Bonus",
-                                lambda: build_bonus_tab_panel(name),
-                            )
+                    with ui.tab_panel(tab_dict["tab"]):
+                        with ui.tabs().classes("mb-2") as temp_tab:
+                            for name in tab_names:
+                                tab_dict["tab_list"].append(ui.tab(name))
+                        with ui.tab_panels(temp_tab, value=tab_dict["tab_list"][0]):
+                            for i, name in enumerate(tab_names):
+                                helpers.make_tab_panel(
+                                    tab_dict["tab_list"][i],
+                                    f"{name} {tab_dict['name']}",
+                                    lambda: function_map[tab_dict["build_function"]](
+                                        name, tab_dict["tab_container"]
+                                    ),
+                                )
+                        temp_tab.on(
+                            "update:model-value",
+                            lambda e,
+                            function=function_map[tab_dict["build_function"]],
+                            container=tab_dict["tab_container"]: on_tab_change(
+                                e,
+                                function,
+                                container,
+                            ),
+                        )
 
                 # Database
                 with ui.tab_panel(tab_database):
@@ -950,10 +910,6 @@ def ui_add_data():
                     with ui.tab_panels(database_tabs, value=tab_add):
                         with ui.tab_panel(tab_add):
                             build_database_compare()
-
-            customer_tabs.on("update:model-value", on_customer_tab_change)
-            project_tabs.on("update:model-value", on_project_tab_change)
-            bonus_tabs.on("update:model-value", on_bonus_tab_change)
 
 
 def ui_devops_settings_entrypoint():

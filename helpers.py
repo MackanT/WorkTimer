@@ -45,11 +45,43 @@ def parse_date_range(date_range_str):
     return None, None
 
 
+def check_input(widgets, required_fields) -> bool:
+    is_ok = True
+    for field in required_fields:
+        if not widgets[field].value:
+            ui.notify(
+                f"{field.replace('_', ' ').title()} is required!",
+                color="negative",
+            )
+            is_ok = False
+    return is_ok
+
+
+def print_success(table: str, main_param: str, action_type: str, widgets: dict = None):
+    ui.notify(
+        f"{table} {main_param} {action_type}!",
+        color="positive",
+    )
+    if widgets:
+        print_msg = ""
+        for field in widgets:
+            print_msg += f"{field}: {widgets[field].value}, "
+        print_msg = print_msg.rstrip(", ")
+        ui.notify(print_msg)
+
+
 def extract_table_name(query_text: str) -> str:
     match = re.search(r"from\s+([^\s;]+)", query_text, re.IGNORECASE)
     if match:
         return match.group(1).strip()
     return "unknown_table"
+
+
+def extract_devops_id(text):
+    match = re.search(r":\s*(\d+)\s*-", text)
+    if match:
+        return int(match.group(1))
+    return None
 
 
 def date_input(label, input_width: str = "w-64"):
@@ -84,9 +116,11 @@ def make_input_row(fields, input_width: str = "w-64"):
             if "default" in field:
                 widgets[fname].value = field["default"]
         elif ftype == "select":
-            select_widget = ui.select(field["options"], label=label).classes(
-                input_width
-            )
+            if "parent" in field:
+                options = []
+            else:
+                options = field.get("options", {})
+            select_widget = ui.select(options, label=label).classes(input_width)
             if "options_default" in field:
                 select_widget.value = field["options_default"]
             widgets[fname] = select_widget
@@ -107,6 +141,60 @@ def make_input_row(fields, input_width: str = "w-64"):
                         )
                     )
             widgets[fname] = chips
+
+    # Generalize parent-child relation for any widget type
+    for field in fields:
+        if "parent" in field:
+            child = field["name"]
+            parent = field["parent"]
+
+            def update_child(e, child=child, parent=parent):
+                field_config = next((f for f in fields if f["name"] == child), None)
+                options_map = field_config.get("options", {}) if field_config else {}
+                parent_val = widgets[parent].value
+                # Update child widget based on its type
+                widget = widgets[child]
+                ftype = field_config.get("type") if field_config else None
+                if ftype == "select":
+                    if isinstance(options_map, dict):
+                        widget.options = options_map.get(parent_val, [])
+                    elif isinstance(options_map, list):
+                        widget.options = options_map
+                    else:
+                        widget.options = []
+                    widget.update()
+                elif ftype == "input":
+                    # For input, set value if options_map is dict/list
+                    if isinstance(options_map, dict):
+                        widget.value = options_map.get(parent_val, "")
+                    elif isinstance(options_map, list):
+                        widget.value = options_map[0] if options_map else ""
+                    widget.update()
+                elif ftype == "chip_group":
+                    # For chip_group, update chips if options_map is dict/list
+                    chips = []
+                    options = []
+                    if isinstance(options_map, dict):
+                        options = options_map.get(parent_val, [])
+                    elif isinstance(options_map, list):
+                        options = options_map
+                    # Rebuild chips
+                    with widget[0].parent:
+                        for chip in widget:
+                            chip.delete()
+                        for tag in options:
+                            chips.append(
+                                ui.chip(
+                                    tag.name,
+                                    selectable=True,
+                                    icon=tag.icon,
+                                    color=tag.color,
+                                )
+                            )
+                    widgets[child] = chips
+                # Add more widget types as needed
+
+            widgets[parent].on("update:model-value", update_child)
     return widgets
 
 
@@ -140,3 +228,38 @@ def assign_dynamic_options(fields, data_sources):
             default = field["options_default"]
             if default == "today":
                 field["default"] = str(date.today())
+
+
+def make_tab_panel(tab_name, title, build_fn, width: str = "2"):
+    with ui.tab_panel(tab_name):
+        with ui.card().classes(f"w-full max-w-{width}xl mx-auto my-0 p-4"):
+            ui.label(title).classes("text-h5 mb-2")
+            build_fn()
+
+
+def parse_widget_values(widgets):
+    result = {}
+    for key, widget in widgets.items():
+        # Chip group: list of chips, get selected ones
+        if isinstance(widget, list) and widget and hasattr(widget[0], "selected"):
+            result[key] = [
+                chip.text for chip in widget if getattr(chip, "selected", False)
+            ]
+        # Switch
+        elif hasattr(widget, "value") and hasattr(widget, "set_value"):
+            result[key] = widget.value
+        # Select/Input/Textarea
+        elif hasattr(widget, "value"):
+            result[key] = widget.value
+        else:
+            result[key] = None
+    return result
+
+
+def get_ui_elements(config: dict) -> list[str]:
+    elements = []
+    for key, value in config.items():
+        if isinstance(value, dict) and "fields" in value and "action" in value:
+            elements.append(key)
+
+    return elements
