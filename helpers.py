@@ -121,8 +121,8 @@ def make_input_row(fields, input_width: str = "w-64"):
             else:
                 options = field.get("options", {})
             select_widget = ui.select(options, label=label).classes(input_width)
-            if "options_default" in field:
-                select_widget.value = field["options_default"]
+            if "default" in field:
+                select_widget.value = field["default"]
             widgets[fname] = select_widget
         elif ftype == "switch":
             widgets[fname] = ui.switch(text=label).classes(input_width)
@@ -221,11 +221,11 @@ def get_unique_list(df, column):
 
 def assign_dynamic_options(fields, data_sources):
     for field in fields:
-        if field.get("type") in ["select", "chip_group"] and "options_source" in field:
+        if "options" in field and "options_source" in field:
             source = field["options_source"]
             field["options"] = data_sources.get(source, [])
-        elif field.get("type") in ["date"] and "options_default" in field:
-            default = field["options_default"]
+        elif field.get("type") in ["date"] and "default" in field:
+            default = field["default"]
             if default == "today":
                 field["default"] = str(date.today())
 
