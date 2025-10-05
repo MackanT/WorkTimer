@@ -70,19 +70,43 @@ def make_input_row(fields, input_width: str = "w-64"):
         if field.get("optional", True):
             label += " (optional)"
 
-        if field["type"] == "input":
-            widgets[field["name"]] = ui.input(label).classes(input_width)
-        elif field["type"] == "number":
-            widgets[field["name"]] = ui.number(label, min=0).classes(input_width)
-        elif field["type"] == "date":
-            widgets[field["name"]] = date_input(label, input_width=input_width)
-        elif field["type"] == "select":
+        ftype = field["type"]
+        fname = field["name"]
+
+        if ftype == "input":
+            widgets[fname] = ui.input(label).classes(input_width)
+        elif ftype == "text":
+            widgets[fname] = ui.textarea(label).classes(input_width)
+        elif ftype == "number":
+            widgets[fname] = ui.number(label, min=0).classes(input_width)
+        elif ftype == "date":
+            widgets[fname] = date_input(label, input_width=input_width)
+            if "default" in field:
+                widgets[fname].value = field["default"]
+        elif ftype == "select":
             select_widget = ui.select(field["options"], label=label).classes(
                 input_width
             )
             if "options_default" in field:
                 select_widget.value = field["options_default"]
-            widgets[field["name"]] = select_widget
+            widgets[fname] = select_widget
+        elif ftype == "switch":
+            widgets[fname] = ui.switch(text=label).classes(input_width)
+            if "default" in field:
+                widgets[fname].value = field["default"]
+        elif ftype == "chip_group":
+            chips = []
+            with ui.row().classes(f"mb-4 {input_width} gap-1"):
+                for tag in field["options"]:
+                    chips.append(
+                        ui.chip(
+                            tag.name,
+                            selectable=True,
+                            icon=tag.icon,
+                            color=tag.color,
+                        )
+                    )
+            widgets[fname] = chips
     return widgets
 
 
