@@ -87,7 +87,7 @@ customer:
         options_source: customer_data
         optional: False
     action:
-      function: "reenable_customer"
+      function: "enable_customer"
       main_action: "Customer"
       main_param: "customer_name"
       secondary_action: "reenabled"

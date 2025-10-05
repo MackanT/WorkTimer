@@ -13,7 +13,6 @@ import tempfile
 import os
 import yaml
 import logging
-import time
 
 debug = True
 
@@ -27,8 +26,9 @@ devops_long_df = None
 # Global event loop for background tasks
 global_loop = None
 MAIN_DB = "data_dpg_copy.db"
+CONFIG_FOLDER = "config"
 
-
+## Logging Setup ##
 LOGFORMAT = "%(asctime)s | %(levelname)-8s | %(name).35s :: %(message)s"
 formatter = logging.Formatter(fmt=LOGFORMAT, datefmt="%Y-%m-%d %H:%M:%S")
 handler = logging.StreamHandler()
@@ -76,13 +76,14 @@ async def refresh_query_data():
 ## Config Setup ##
 def setup_config():
     global config_ui, config_devops_ui, config_data, DEVOPS_TAGS, TABLE_IDS
-    with open("config_ui.yml") as f:
+
+    with open(f"{CONFIG_FOLDER}/config_ui.yml") as f:
         fields = yaml.safe_load(f)
     config_ui = fields
-    with open("config_devops_ui.yml") as f:
+    with open(f"{CONFIG_FOLDER}/config_devops_ui.yml") as f:
         fields = yaml.safe_load(f)
     config_devops_ui = fields
-    with open("config_data.yml") as f:
+    with open(f"{CONFIG_FOLDER}/config_data.yml") as f:
         fields = yaml.safe_load(f)
     config_data = fields
 
@@ -130,7 +131,9 @@ async def get_devops_df():
     if devops_df.empty:
         log_msg("WARNING", "DevOps dataframe is empty")
     else:
-        log_msg("INFO", f"DevOps dataframe loaded with {len(devops_df)} rows")
+        log_msg(
+            "INFO", f"DevOps dataframe loaded with {len(devops_df)} rows"
+        )  # TODO add some date when it was last collected
         devops_long_df = get_devops_long_df(devops_df)
 
 
@@ -574,12 +577,14 @@ def ui_add_data():
                 return
             kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
             await function_db(save_data.function, **kwargs)
-            helpers.print_success(
+            msg_1, msg_2 = helpers.print_success(
                 save_data.main_action,
                 widgets[save_data.main_param].value,
                 save_data.secondary_action,
                 widgets=widgets,
             )
+            log_msg("INFO", msg_1)
+            log_msg("INFO", msg_2)
             await refresh_add_data()
 
         ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
@@ -1098,23 +1103,11 @@ async def ui_devops_settings():
                 .classes("w-full h-full")
             ):
                 tab_user_story_containers = {}
-                # tab_feature_containers = {}
-                # tab_epic_containers = {}
 
                 async def on_user_story_tab_change(e):
                     tab_type = e.args
                     await refresh_add_data()
                     build_user_story_tab_panel(tab_type)
-
-                # async def on_feature_tab_change(e):
-                #     tab_type = e.args
-                #     await refresh_add_data()
-                #     build_feature_tab_panel(tab_type)
-
-                # async def on_epic_tab_change(e):
-                #     tab_type = e.args
-                #     await refresh_add_data()
-                #     build_epic_tab_panel(tab_type)
 
                 # User Stories
                 user_story_tab_names = [
@@ -1133,49 +1126,6 @@ async def ui_devops_settings():
                                 lambda: build_user_story_tab_panel(name),
                                 width="4",
                             )
-
-    #     # Projects
-    #     project_tab_names = ["Add", "Update", "Disable", "Reenable"]
-    #     project_tab_list = []
-    #     with ui.tab_panel(tab_projects):
-    #         with ui.tabs().classes("mb-2") as project_tabs:
-    #             for name in project_tab_names:
-    #                 project_tab_list.append(ui.tab(name))
-    #         with ui.tab_panels(project_tabs, value=project_tab_list[0]):
-    #             for i, name in enumerate(project_tab_names):
-    #                 make_tab_panel(
-    #                     project_tab_list[i],
-    #                     f"{name} Project",
-    #                     lambda: build_project_tab_panel(name),
-    #                 )
-
-    #     # Bonuses
-    #     bonus_tab_names = ["Add"]
-    #     bonus_tab_list = []
-    #     with ui.tab_panel(tab_bonuses):
-    #         with ui.tabs().classes("mb-2") as bonus_tabs:
-    #             for name in bonus_tab_names:
-    #                 bonus_tab_list.append(ui.tab(name))
-    #         with ui.tab_panels(bonus_tabs, value=bonus_tab_list[0]):
-    #             for i, name in enumerate(bonus_tab_names):
-    #                 make_tab_panel(
-    #                     bonus_tab_list[i],
-    #                     f"{name} Bonus",
-    #                     lambda: build_bonus_tab_panel(name),
-    #                 )
-
-    #     # Database
-    #     with ui.tab_panel(tab_database):
-    #         with ui.tabs().classes("mb-2") as database_tabs:
-    #             tab_add = ui.tab("Schema Compare")
-
-    #         with ui.tab_panels(database_tabs, value=tab_add):
-    #             with ui.tab_panel(tab_add):
-    #                 build_database_compare()
-
-    # customer_tabs.on("update:model-value", on_customer_tab_change)
-    # project_tabs.on("update:model-value", on_project_tab_change)
-    # bonus_tabs.on("update:model-value", on_bonus_tab_change)
 
 
 def ui_query_editor():

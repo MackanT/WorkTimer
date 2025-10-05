@@ -58,16 +58,18 @@ def check_input(widgets, required_fields) -> bool:
 
 
 def print_success(table: str, main_param: str, action_type: str, widgets: dict = None):
+    msg_1 = f"{table} {main_param} {action_type}!"
     ui.notify(
-        f"{table} {main_param} {action_type}!",
+        msg_1,
         color="positive",
     )
     if widgets:
-        print_msg = ""
+        print_msg = "Parameters: "
         for field in widgets:
             print_msg += f"{field}: {widgets[field].value}, "
         print_msg = print_msg.rstrip(", ")
-        ui.notify(print_msg)
+        return msg_1, print_msg
+    return msg_1, "No data to display."
 
 
 def extract_table_name(query_text: str) -> str:
