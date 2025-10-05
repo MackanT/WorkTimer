@@ -109,6 +109,10 @@ def get_unique_list(df, column):
 
 def assign_dynamic_options(fields, data_sources):
     for field in fields:
-        if field.get("type") == "select" and "options_source" in field:
+        if field.get("type") in ["select", "chip_group"] and "options_source" in field:
             source = field["options_source"]
             field["options"] = data_sources.get(source, [])
+        elif field.get("type") in ["date"] and "options_default" in field:
+            default = field["options_default"]
+            if default == "today":
+                field["default"] = str(date.today())
