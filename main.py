@@ -149,6 +149,7 @@ def get_devops_long_df(devops_df):
                     "title": row["epic_title"],
                     "state": row["epic_state"],
                     "name": f"Epic: {int(row['epic_id'])} - {row['epic_title']}",
+                    "parent_id": None,
                 }
             )
         # Feature
@@ -161,6 +162,9 @@ def get_devops_long_df(devops_df):
                     "title": row["feature_title"],
                     "state": row["feature_state"],
                     "name": f"Feature: {int(row['feature_id'])} - {row['feature_title']}",
+                    "parent_id": int(row["epic_id"])
+                    if pd.notna(row.get("epic_id"))
+                    else None,
                 }
             )
         # User Story
@@ -173,6 +177,9 @@ def get_devops_long_df(devops_df):
                     "title": row["user_story_title"],
                     "state": row["user_story_state"],
                     "name": f"User Story: {int(row['user_story_id'])} - {row['user_story_title']}",
+                    "parent_id": int(row["feature_id"])
+                    if pd.notna(row.get("feature_id"))
+                    else None,
                 }
             )
     long_df = pd.DataFrame(records)
