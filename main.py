@@ -13,6 +13,7 @@ import tempfile
 import os
 import yaml
 import logging
+import time
 
 debug = True
 
@@ -952,13 +953,44 @@ def ui_add_data():
             bonus_tabs.on("update:model-value", on_bonus_tab_change)
 
 
-def devops_settings():
+def ui_devops_settings_entrypoint():
+    """Checks if the data needed for the DevOps settings UI is ready. If not, shows a loading UI and polls for data readiness.
+    Once the data is ready, it calls the ui_devops_settings() function to render the actual settings UI.
+    """
+    global devops_settings_container
+    if (
+        "devops_settings_container" not in globals()
+        or devops_settings_container is None
+    ):
+        devops_settings_container = ui.element()
+    devops_settings_container.clear()
+
+    # Show loading UI
+    with devops_settings_container:
+        with ui.card().classes("w-full max-w-2xl mx-auto my-8 p-4"):
+            ui.label("Loading DevOps data...").classes("text-h5 mb-4")
+            ui.skeleton().classes("w-full")
+
+    called = {"done": False}
+
+    async def check_data_ready():
+        if not called["done"] and devops_df is not None and devops_long_df is not None:
+            called["done"] = True
+            devops_settings_container.clear()
+            await ui_devops_settings()
+            return False  # Stop timer
+        return not called["done"]
+
+    ui.timer(callback=check_data_ready, interval=0.5)
+
+
+async def ui_devops_settings():
     async def get_devops_customers():
         sql_query = "select customer_name from customers where is_current = 1 and org_url is not Null and org_url <> '' and pat_token is not null and pat_token <> ''"
         df = await query_db(sql_query)
         return df
 
-    customer_df = asyncio.run(get_devops_customers())
+    customer_df = await get_devops_customers()
 
     def add_user_story():
         description = f"""
@@ -1524,7 +1556,7 @@ def setup_ui():
         with ui.tab_panel(tab_data_input):
             ui_add_data()
         with ui.tab_panel(tab_ui_edits):
-            devops_settings()
+            ui_devops_settings_entrypoint()
         with ui.tab_panel(tab_query_editors):
             ui_query_editor()
         with ui.tab_panel(tab_log):
