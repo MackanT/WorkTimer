@@ -992,134 +992,304 @@ async def ui_devops_settings():
 
     customer_df = await get_devops_customers()
 
-    def add_user_story():
-        description = f"""
-            **Source:** {source_input.value}
-            **Contact:** {contact_info_input.value}
-            **Received Date:** {date_input.value}
+    # def add_user_story():
+    #     description = f"""
+    #         **Source:** {source_input.value}
+    #         **Contact:** {contact_info_input.value}
+    #         **Received Date:** {date_input.value}
 
-            **Problem:**
-            {problem_input.value}
+    #         **Problem:**
+    #         {problem_input.value}
 
-            **More Info:**
-            {more_info_input.value}
+    #         **More Info:**
+    #         {more_info_input.value}
 
-            **Solution:**
-            {solution_input.value}
+    #         **Solution:**
+    #         {solution_input.value}
 
-            **Validation:**
-            {validation_input.value}
+    #         **Validation:**
+    #         {validation_input.value}
 
-        """
+    #     """
 
-        additional_fields = {
-            "System.State": state_input.value,
-            "System.Tags": ", ".join([t.text for t in tag_input if t.selected]),
-            "Microsoft.VSTS.Common.Priority": int(priority_input.value),
-            "System.AssignedTo": assigned_to_input.value,
-        }
+    #     additional_fields = {
+    #         "System.State": state_input.value,
+    #         "System.Tags": ", ".join([t.text for t in tag_input if t.selected]),
+    #         "Microsoft.VSTS.Common.Priority": int(priority_input.value),
+    #         "System.AssignedTo": assigned_to_input.value,
+    #     }
 
-        parent_val = parent_input.value.strip()
-        parent_id = int(parent_val) if parent_val else None
-        success, message = devops_manager.create_user_story(
-            customer_name=customer_input.value,
-            title=title_input.value,
-            description=dedent(description),
-            additional_fields=additional_fields,
-            markdown=markdown_info.value,
-            parent=parent_id,
-        )
-        log_msg(
-            "INFO",
-            "User story created successfully"
-            if success
-            else "Failed to create user story",
-            message,
-        )
+    #     parent_val = parent_input.value.strip()
+    #     parent_id = int(parent_val) if parent_val else None
+    #     success, message = devops_manager.create_user_story(
+    #         customer_name=customer_input.value,
+    #         title=title_input.value,
+    #         description=dedent(description),
+    #         additional_fields=additional_fields,
+    #         markdown=markdown_info.value,
+    #         parent=parent_id,
+    #     )
+    #     log_msg(
+    #         "INFO",
+    #         "User story created successfully"
+    #         if success
+    #         else "Failed to create user story",
+    #         message,
+    #     )
 
-    async def set_epic_list(e):
-        customer_name = e.args["label"]
-        sql_code = f"select distinct epic_title from devops where customer_name = '{customer_name}'"
-        epic_df = await query_db(sql_code)
-        epic_input.options = epic_df["epic_title"].tolist()
-        epic_input.update()
+    # async def set_epic_list(e):
+    #     customer_name = e.args["label"]
+    #     sql_code = f"select distinct epic_title from devops where customer_name = '{customer_name}'"
+    #     epic_df = await query_db(sql_code)
+    #     epic_input.options = epic_df["epic_title"].tolist()
+    #     epic_input.update()
 
-    async def set_feature_list(e):
-        epic_title = e.args["label"]
-        sql_code = f"select distinct feature_title from devops where customer_name = '{customer_input.value}' and epic_title = '{epic_title}'"
-        feature_df = await query_db(sql_code)
-        feature_input.options = feature_df["feature_title"].tolist()
-        feature_input.update()
+    # async def set_feature_list(e):
+    #     epic_title = e.args["label"]
+    #     sql_code = f"select distinct feature_title from devops where customer_name = '{customer_input.value}' and epic_title = '{epic_title}'"
+    #     feature_df = await query_db(sql_code)
+    # feature_input.options = feature_df["feature_title"].tolist()
+    # feature_input.update()
 
-    with ui.card().classes("w-full mx-auto my-8 p-4"):
-        ui.label("Create DevOps User Story").classes("text-h5 mb-4")
+    def build_user_story_tab_panel(tab_type):
+        container = tab_user_story_containers.get(tab_type)
+        if container is None:
+            container = ui.element()
+            tab_user_story_containers[tab_type] = container
+        container.clear()
 
-        with ui.row().classes("gap-8 mb-4"):
-            with ui.column():
-                ui.label("General Info").classes("text-h6 mb-2")
-                customer_input = (
-                    ui.select(customer_df["customer_name"].tolist(), label="Customer")
-                    .classes("mb-4 w-96")
-                    .on("update:model-value", lambda e: set_epic_list(e))
+        fields = config_ui["devops_user_story"][tab_type.lower()]["fields"]
+        columns = config_ui["devops_user_story"][tab_type.lower()].get("columns", [])
+        # action = config_ui["devops_user_story"][tab_type.lower()]["action"]
+
+        with container:
+            if tab_type == "Add":
+                # Collect all customer names, epic names, and feature names for parent-child select logic
+                customer_data = helpers.get_unique_list(customer_df, "customer_name")
+                epic_names = (
+                    helpers.get_unique_list(devops_long_df, "epic_title")
+                    if devops_long_df is not None
+                    and "epic_title" in devops_long_df.columns
+                    else []
                 )
-                title_input = ui.input("User Story Title").classes("mb-4 w-96")
-                state_input = ui.select(
-                    ["New", "Active", "Resolved", "Closed"], label="State"
-                ).classes("mb-4 w-96")
-                source_input = ui.select(
-                    ["Teams", "Email", "Call", "In Person", "Other"], label="Source"
-                ).classes("mb-4 w-96")
-                source_input.value = "Other"
-                contact_info_input = ui.input("Contact Information").classes(
-                    "mb-4 w-96"
+                feature_names = (
+                    helpers.get_unique_list(devops_long_df, "feature_title")
+                    if devops_long_df is not None
+                    and "feature_title" in devops_long_df.columns
+                    else []
                 )
 
-            with ui.column():
-                ui.label("Assignments & Tags").classes("text-h6 mb-2")
-                assigned_to_input = ui.input("Assigned To (email)").classes("mb-4 w-96")
-                assigned_to_input.value = "marcus.toftas@rowico.com"
+                # Pass these lists to assign_dynamic_options for parent-child select logic
+                helpers.assign_dynamic_options(
+                    fields,
+                    data_sources={
+                        "customer_data": customer_data,
+                        "epic_names": epic_names,
+                        "feature_names": feature_names,
+                        "devops_tags": DEVOPS_TAGS,
+                    },
+                )
+                widgets = {}
+                with ui.row().classes("gap-8 mb-4"):
+                    for col_fields in columns:
+                        with ui.column():
+                            for fname in col_fields:
+                                field = next(
+                                    (f for f in fields if f["name"] == fname), None
+                                )
+                                if field:
+                                    widget = helpers.make_input_row([field])[
+                                        field["name"]
+                                    ]
+                                    widgets[field["name"]] = widget
+                # save_data = SaveData(**action)
+                # print(save_data)
+                # add_save_button(save_data, fields, widgets)
 
-                tag_input = []
-                with ui.row().classes("mb-4 w-96 gap-1"):
-                    for row in DEVOPS_TAGS:
-                        tag_input.append(
-                            ui.chip(
-                                row.name,
-                                selectable=True,
-                                icon=row.icon,
-                                color=row.color,
+                ## TODO add save button in yaml and in here
+                ## normalize so only use make_tab_panel in helper class, send it input on "max-width" of card
+                ## Look into custom select boxes class that can be auto-filled by a parent?
+            elif tab_type == "Update":
+                customer_data = helpers.get_unique_list(customer_df, "customer_name")
+                helpers.assign_dynamic_options(
+                    fields,
+                    data_sources={
+                        "customer_data": customer_data,
+                    },
+                )
+                print(customer_df)
+                widgets = {}
+                with ui.row().classes("gap-8 mb-4"):
+                    for col_fields in columns:
+                        with ui.column():
+                            for fname in col_fields:
+                                field = next(
+                                    (f for f in fields if f["name"] == fname), None
+                                )
+                                if field:
+                                    widget = helpers.make_input_row([field])[
+                                        field["name"]
+                                    ]
+                                    widgets[field["name"]] = widget
+
+    with ui.splitter(value=30).classes("w-full h-full") as splitter:
+        with splitter.before:
+            with ui.tabs().props("vertical").classes("w-full") as main_tabs:
+                tab_user_story = ui.tab("User Story", icon="business")
+                tab_feature = ui.tab("Feature", icon="assignment")
+                tab_epic = ui.tab("Epic", icon="attach_money")
+        with splitter.after:
+            with (
+                ui.tab_panels(main_tabs, value=tab_user_story)
+                .props("vertical")
+                .classes("w-full h-full")
+            ):
+                tab_user_story_containers = {}
+                # tab_feature_containers = {}
+                # tab_epic_containers = {}
+
+                async def on_user_story_tab_change(e):
+                    tab_type = e.args
+                    await refresh_add_data()
+                    build_user_story_tab_panel(tab_type)
+
+                # async def on_feature_tab_change(e):
+                #     tab_type = e.args
+                #     await refresh_add_data()
+                #     build_feature_tab_panel(tab_type)
+
+                # async def on_epic_tab_change(e):
+                #     tab_type = e.args
+                #     await refresh_add_data()
+                #     build_epic_tab_panel(tab_type)
+
+                # User Stories
+                user_story_tab_names = ["Add", "Update"]
+                user_story_tab_list = []
+                with ui.tab_panel(tab_user_story):
+                    with ui.tabs().classes("mb-2") as user_story_tabs:
+                        for name in user_story_tab_names:
+                            user_story_tab_list.append(ui.tab(name))
+                    with ui.tab_panels(user_story_tabs, value=user_story_tab_list[0]):
+                        for i, name in enumerate(user_story_tab_names):
+                            helpers.make_tab_panel2(
+                                user_story_tab_list[i],
+                                f"{name} User Story",
+                                lambda: build_user_story_tab_panel(name),
                             )
-                        )
 
-                parent_input = ui.input("Parent ID").classes("mb-4 w-96")
-                parent_input.value = "841"
+    #     # Projects
+    #     project_tab_names = ["Add", "Update", "Disable", "Reenable"]
+    #     project_tab_list = []
+    #     with ui.tab_panel(tab_projects):
+    #         with ui.tabs().classes("mb-2") as project_tabs:
+    #             for name in project_tab_names:
+    #                 project_tab_list.append(ui.tab(name))
+    #         with ui.tab_panels(project_tabs, value=project_tab_list[0]):
+    #             for i, name in enumerate(project_tab_names):
+    #                 make_tab_panel(
+    #                     project_tab_list[i],
+    #                     f"{name} Project",
+    #                     lambda: build_project_tab_panel(name),
+    #                 )
 
-                epic_input = (
-                    ui.select([], label="Epic")
-                    .classes("mb-4 w-96")
-                    .on("update:model-value", lambda e: set_feature_list(e))
-                )
-                feature_input = ui.select([], label="Feature").classes("mb-4 w-96")
+    #     # Bonuses
+    #     bonus_tab_names = ["Add"]
+    #     bonus_tab_list = []
+    #     with ui.tab_panel(tab_bonuses):
+    #         with ui.tabs().classes("mb-2") as bonus_tabs:
+    #             for name in bonus_tab_names:
+    #                 bonus_tab_list.append(ui.tab(name))
+    #         with ui.tab_panels(bonus_tabs, value=bonus_tab_list[0]):
+    #             for i, name in enumerate(bonus_tab_names):
+    #                 make_tab_panel(
+    #                     bonus_tab_list[i],
+    #                     f"{name} Bonus",
+    #                     lambda: build_bonus_tab_panel(name),
+    #                 )
 
-                state_input.value = "New"
-                priority_input = ui.select(
-                    ["1", "2", "3", "4"], label="Priority"
-                ).classes("mb-4 w-96")
-                priority_input.value = "2"
-                date_input = ui.input("Received Date (yyyy-mm-dd)").classes("mb-4 w-96")
-                date_input.value = datetime.now().strftime("%Y-%m-%d")
+    #     # Database
+    #     with ui.tab_panel(tab_database):
+    #         with ui.tabs().classes("mb-2") as database_tabs:
+    #             tab_add = ui.tab("Schema Compare")
 
-            with ui.column():
-                ui.label("Task Description").classes("text-h6 mb-2")
-                problem_input = ui.textarea("Problem Description").classes("mb-4 w-96")
-                more_info_input = ui.textarea("More Information").classes("mb-4 w-96")
-                solution_input = ui.textarea("Solution").classes("mb-4 w-96")
-                validation_input = ui.textarea("Validation").classes("mb-4 w-96")
-                markdown_info = ui.switch("Use Markdown", value=True).classes(
-                    "mb-4 w-96"
-                )
+    #         with ui.tab_panels(database_tabs, value=tab_add):
+    #             with ui.tab_panel(tab_add):
+    #                 build_database_compare()
 
-        ui.button("Add User Story", on_click=add_user_story).classes("mt-4")
+    # customer_tabs.on("update:model-value", on_customer_tab_change)
+    # project_tabs.on("update:model-value", on_project_tab_change)
+    # bonus_tabs.on("update:model-value", on_bonus_tab_change)
+
+    # with ui.card().classes("w-full mx-auto my-8 p-4"):
+    #     ui.label("Create DevOps User Story").classes("text-h5 mb-4")
+
+    #     with ui.row().classes("gap-8 mb-4"):
+    #         with ui.column():
+    #             ui.label("General Info").classes("text-h6 mb-2")
+    #             customer_input = (
+    #                 ui.select(customer_df["customer_name"].tolist(), label="Customer")
+    #                 .classes("mb-4 w-96")
+    #                 .on("update:model-value", lambda e: set_epic_list(e))
+    #             )
+    #             title_input = ui.input("User Story Title").classes("mb-4 w-96")
+    #             state_input = ui.select(
+    #                 ["New", "Active", "Resolved", "Closed"], label="State"
+    #             ).classes("mb-4 w-96")
+    #             source_input = ui.select(
+    #                 ["Teams", "Email", "Call", "In Person", "Other"], label="Source"
+    #             ).classes("mb-4 w-96")
+    #             source_input.value = "Other"
+    #             contact_info_input = ui.input("Contact Information").classes(
+    #                 "mb-4 w-96"
+    #             )
+
+    #         with ui.column():
+    #             ui.label("Assignments & Tags").classes("text-h6 mb-2")
+    #             assigned_to_input = ui.input("Assigned To (email)").classes("mb-4 w-96")
+    #             assigned_to_input.value = "marcus.toftas@rowico.com"
+
+    #             tag_input = []
+    #             with ui.row().classes("mb-4 w-96 gap-1"):
+    #                 for row in DEVOPS_TAGS:
+    #                     tag_input.append(
+    #                         ui.chip(
+    #                             row.name,
+    #                             selectable=True,
+    #                             icon=row.icon,
+    #                             color=row.color,
+    #                         )
+    #                     )
+
+    #             parent_input = ui.input("Parent ID").classes("mb-4 w-96")
+    #             parent_input.value = "841"
+
+    #             epic_input = (
+    #                 ui.select([], label="Epic")
+    #                 .classes("mb-4 w-96")
+    #                 .on("update:model-value", lambda e: set_feature_list(e))
+    #             )
+    #             feature_input = ui.select([], label="Feature").classes("mb-4 w-96")
+
+    #             state_input.value = "New"
+    #             priority_input = ui.select(
+    #                 ["1", "2", "3", "4"], label="Priority"
+    #             ).classes("mb-4 w-96")
+    #             priority_input.value = "2"
+    #             date_input = ui.input("Received Date (yyyy-mm-dd)").classes("mb-4 w-96")
+    #             date_input.value = datetime.now().strftime("%Y-%m-%d")
+
+    #         with ui.column():
+    #             ui.label("Task Description").classes("text-h6 mb-2")
+    #             problem_input = ui.textarea("Problem Description").classes("mb-4 w-96")
+    #             more_info_input = ui.textarea("More Information").classes("mb-4 w-96")
+    #             solution_input = ui.textarea("Solution").classes("mb-4 w-96")
+    #             validation_input = ui.textarea("Validation").classes("mb-4 w-96")
+    #             markdown_info = ui.switch("Use Markdown", value=True).classes(
+    #                 "mb-4 w-96"
+    #             )
+
+    #     ui.button("Add User Story", on_click=add_user_story).classes("mt-4")
 
     # ui.button("Add User Story", on_click=add_user_story).classes("mb-4")
 
