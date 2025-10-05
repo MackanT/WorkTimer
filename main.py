@@ -75,10 +75,13 @@ async def refresh_query_data():
 
 ## Config Setup ##
 def setup_config():
-    global config_ui, config_data, DEVOPS_TAGS, TABLE_IDS
+    global config_ui, config_devops_ui, config_data, DEVOPS_TAGS, TABLE_IDS
     with open("config_ui.yml") as f:
         fields = yaml.safe_load(f)
     config_ui = fields
+    with open("config_devops_ui.yml") as f:
+        fields = yaml.safe_load(f)
+    config_devops_ui = fields
     with open("config_data.yml") as f:
         fields = yaml.safe_load(f)
     config_data = fields
@@ -985,71 +988,96 @@ def ui_devops_settings_entrypoint():
 
 
 async def ui_devops_settings():
-    async def get_devops_customers():
-        sql_query = "select customer_name from customers where is_current = 1 and org_url is not Null and org_url <> '' and pat_token is not null and pat_token <> ''"
-        df = await query_db(sql_query)
-        return df
+    customer_names = helpers.get_unique_list(devops_df, "customer_name")
 
-    customer_df = await get_devops_customers()
+    epic_names = {}
+    for customer in customer_names:
+        filtered = helpers.filter_df(
+            devops_long_df, {"customer_name": customer, "type": "Epic"}
+        )
+        # Temporary storing id and name - will drop id later
+        epic_names[customer] = [
+            (row["name"], row["id"]) for _, row in filtered.iterrows()
+        ]
 
-    # def add_user_story():
-    #     description = f"""
-    #         **Source:** {source_input.value}
-    #         **Contact:** {contact_info_input.value}
-    #         **Received Date:** {date_input.value}
+    feature_names = {}
+    for customer in customer_names:
+        for epic_name, epic_id in epic_names[customer]:
+            filtered = helpers.filter_df(
+                devops_long_df, {"customer_name": customer, "parent_id": epic_id}
+            )
+            feature_names[epic_name] = helpers.get_unique_list(filtered, "name")
 
-    #         **Problem:**
-    #         {problem_input.value}
+    # Drop id from epic_names, only need the names now
+    for customer in epic_names:
+        epic_names[customer] = [name for name, _ in epic_names[customer]]
 
-    #         **More Info:**
-    #         {more_info_input.value}
+    def add_user_story(widgets):
+        wid = helpers.parse_widget_values(widgets)
 
-    #         **Solution:**
-    #         {solution_input.value}
+        description = f"""
+            **Source:** {wid["source"]}
+            **Contact:** {wid["contact_person"]}
+            **Received Date:** {wid["item_date"]}
 
-    #         **Validation:**
-    #         {validation_input.value}
+            **Problem:**
+            {wid["problem_description"]}
 
-    #     """
+            **More Info:**
+            {wid["more_info"]}
 
-    #     additional_fields = {
-    #         "System.State": state_input.value,
-    #         "System.Tags": ", ".join([t.text for t in tag_input if t.selected]),
-    #         "Microsoft.VSTS.Common.Priority": int(priority_input.value),
-    #         "System.AssignedTo": assigned_to_input.value,
-    #     }
+            **Solution:**
+            {wid["solution"]}
 
-    #     parent_val = parent_input.value.strip()
-    #     parent_id = int(parent_val) if parent_val else None
-    #     success, message = devops_manager.create_user_story(
-    #         customer_name=customer_input.value,
-    #         title=title_input.value,
-    #         description=dedent(description),
-    #         additional_fields=additional_fields,
-    #         markdown=markdown_info.value,
-    #         parent=parent_id,
-    #     )
-    #     log_msg(
-    #         "INFO",
-    #         "User story created successfully"
-    #         if success
-    #         else "Failed to create user story",
-    #         message,
-    #     )
+            **Validation:**
+            {wid["validation"]}
 
-    # async def set_epic_list(e):
-    #     customer_name = e.args["label"]
-    #     sql_code = f"select distinct epic_title from devops where customer_name = '{customer_name}'"
-    #     epic_df = await query_db(sql_code)
-    #     epic_input.options = epic_df["epic_title"].tolist()
-    #     epic_input.update()
+        """
 
-    # async def set_feature_list(e):
-    #     epic_title = e.args["label"]
-    #     sql_code = f"select distinct feature_title from devops where customer_name = '{customer_input.value}' and epic_title = '{epic_title}'"
-    #     feature_df = await query_db(sql_code)
-    # feature_input.options = feature_df["feature_title"].tolist()
-    # feature_input.update()
+        additional_fields = {
+            "System.State": wid["state"],
+            "System.Tags": ", ".join([t for t in wid["tags"]]),
+            "Microsoft.VSTS.Common.Priority": int(wid["priority"]),
+            "System.AssignedTo": wid["assigned_to"],
+        }
+        parent_id = int(helpers.extract_devops_id(wid["feature_name"]))
+
+        success, message = devops_manager.create_user_story(
+            customer_name=wid["customer_name"],
+            title=wid["user_story_name"],
+            description=dedent(description),
+            additional_fields=additional_fields,
+            markdown=wid["use_markdown"],
+            parent=parent_id,
+        )
+        state = "INFO" if success else "ERROR"
+        log_msg(
+            state,
+            message,
+        )
+        return success, message
+
+    def add_save_button(save_data, fields, widgets):
+        async def on_save():
+            required_fields = [
+                f["name"] for f in fields if not f.get("optional", False)
+            ]
+            if not helpers.check_input(widgets, required_fields):
+                return
+
+            func_name = save_data.function
+            if func_name == "add_user_story":
+                state, msg = add_user_story(widgets=widgets)
+            else:
+                log_msg("WARNING", f"Function {func_name} not implemented yet")
+
+            col = "positive" if state else "negative"
+            ui.notify(
+                msg,
+                color=col,
+            )
+
+        ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
 
     def build_user_story_tab_panel(tab_type):
         container = tab_user_story_containers.get(tab_type)
@@ -1058,32 +1086,18 @@ async def ui_devops_settings():
             tab_user_story_containers[tab_type] = container
         container.clear()
 
-        fields = config_ui["devops_user_story"][tab_type.lower()]["fields"]
-        columns = config_ui["devops_user_story"][tab_type.lower()].get("columns", [])
-        # action = config_ui["devops_user_story"][tab_type.lower()]["action"]
+        fields = config_devops_ui["devops_user_story"][tab_type.lower()]["fields"]
+        columns = config_devops_ui["devops_user_story"][tab_type.lower()].get(
+            "columns", []
+        )
+        action = config_devops_ui["devops_user_story"][tab_type.lower()]["action"]
 
         with container:
             if tab_type == "Add":
-                # Collect all customer names, epic names, and feature names for parent-child select logic
-                customer_data = helpers.get_unique_list(customer_df, "customer_name")
-                epic_names = (
-                    helpers.get_unique_list(devops_long_df, "epic_title")
-                    if devops_long_df is not None
-                    and "epic_title" in devops_long_df.columns
-                    else []
-                )
-                feature_names = (
-                    helpers.get_unique_list(devops_long_df, "feature_title")
-                    if devops_long_df is not None
-                    and "feature_title" in devops_long_df.columns
-                    else []
-                )
-
-                # Pass these lists to assign_dynamic_options for parent-child select logic
                 helpers.assign_dynamic_options(
                     fields,
                     data_sources={
-                        "customer_data": customer_data,
+                        "customer_data": customer_names,
                         "epic_names": epic_names,
                         "feature_names": feature_names,
                         "devops_tags": DEVOPS_TAGS,
@@ -1093,51 +1107,23 @@ async def ui_devops_settings():
                 with ui.row().classes("gap-8 mb-4"):
                     for col_fields in columns:
                         with ui.column():
-                            for fname in col_fields:
-                                field = next(
-                                    (f for f in fields if f["name"] == fname), None
-                                )
-                                if field:
-                                    widget = helpers.make_input_row([field])[
-                                        field["name"]
-                                    ]
-                                    widgets[field["name"]] = widget
-                # save_data = SaveData(**action)
-                # print(save_data)
-                # add_save_button(save_data, fields, widgets)
+                            col_fields_objs = [
+                                next(f for f in fields if f["name"] == fname)
+                                for fname in col_fields
+                                if any(f["name"] == fname for f in fields)
+                            ]
+                            col_widgets = helpers.make_input_row(col_fields_objs)
+                            widgets.update(col_widgets)
 
-                ## TODO add save button in yaml and in here
-                ## normalize so only use make_tab_panel in helper class, send it input on "max-width" of card
-                ## Look into custom select boxes class that can be auto-filled by a parent?
-            elif tab_type == "Update":
-                customer_data = helpers.get_unique_list(customer_df, "customer_name")
-                helpers.assign_dynamic_options(
-                    fields,
-                    data_sources={
-                        "customer_data": customer_data,
-                    },
-                )
-                print(customer_df)
-                widgets = {}
-                with ui.row().classes("gap-8 mb-4"):
-                    for col_fields in columns:
-                        with ui.column():
-                            for fname in col_fields:
-                                field = next(
-                                    (f for f in fields if f["name"] == fname), None
-                                )
-                                if field:
-                                    widget = helpers.make_input_row([field])[
-                                        field["name"]
-                                    ]
-                                    widgets[field["name"]] = widget
+                save_data = SaveData(**action)
+                add_save_button(save_data, fields, widgets)
 
     with ui.splitter(value=30).classes("w-full h-full") as splitter:
         with splitter.before:
             with ui.tabs().props("vertical").classes("w-full") as main_tabs:
                 tab_user_story = ui.tab("User Story", icon="business")
-                tab_feature = ui.tab("Feature", icon="assignment")
-                tab_epic = ui.tab("Epic", icon="attach_money")
+                # tab_feature = ui.tab("Feature", icon="assignment")
+                # tab_epic = ui.tab("Epic", icon="attach_money")
         with splitter.after:
             with (
                 ui.tab_panels(main_tabs, value=tab_user_story)
@@ -1164,7 +1150,9 @@ async def ui_devops_settings():
                 #     build_epic_tab_panel(tab_type)
 
                 # User Stories
-                user_story_tab_names = ["Add", "Update"]
+                user_story_tab_names = [
+                    i.capitalize() for i in config_devops_ui["devops_user_story"]
+                ]
                 user_story_tab_list = []
                 with ui.tab_panel(tab_user_story):
                     with ui.tabs().classes("mb-2") as user_story_tabs:
@@ -1172,10 +1160,11 @@ async def ui_devops_settings():
                             user_story_tab_list.append(ui.tab(name))
                     with ui.tab_panels(user_story_tabs, value=user_story_tab_list[0]):
                         for i, name in enumerate(user_story_tab_names):
-                            helpers.make_tab_panel2(
+                            helpers.make_tab_panel(
                                 user_story_tab_list[i],
                                 f"{name} User Story",
                                 lambda: build_user_story_tab_panel(name),
+                                width="4",
                             )
 
     #     # Projects
@@ -1220,78 +1209,6 @@ async def ui_devops_settings():
     # customer_tabs.on("update:model-value", on_customer_tab_change)
     # project_tabs.on("update:model-value", on_project_tab_change)
     # bonus_tabs.on("update:model-value", on_bonus_tab_change)
-
-    # with ui.card().classes("w-full mx-auto my-8 p-4"):
-    #     ui.label("Create DevOps User Story").classes("text-h5 mb-4")
-
-    #     with ui.row().classes("gap-8 mb-4"):
-    #         with ui.column():
-    #             ui.label("General Info").classes("text-h6 mb-2")
-    #             customer_input = (
-    #                 ui.select(customer_df["customer_name"].tolist(), label="Customer")
-    #                 .classes("mb-4 w-96")
-    #                 .on("update:model-value", lambda e: set_epic_list(e))
-    #             )
-    #             title_input = ui.input("User Story Title").classes("mb-4 w-96")
-    #             state_input = ui.select(
-    #                 ["New", "Active", "Resolved", "Closed"], label="State"
-    #             ).classes("mb-4 w-96")
-    #             source_input = ui.select(
-    #                 ["Teams", "Email", "Call", "In Person", "Other"], label="Source"
-    #             ).classes("mb-4 w-96")
-    #             source_input.value = "Other"
-    #             contact_info_input = ui.input("Contact Information").classes(
-    #                 "mb-4 w-96"
-    #             )
-
-    #         with ui.column():
-    #             ui.label("Assignments & Tags").classes("text-h6 mb-2")
-    #             assigned_to_input = ui.input("Assigned To (email)").classes("mb-4 w-96")
-    #             assigned_to_input.value = "marcus.toftas@rowico.com"
-
-    #             tag_input = []
-    #             with ui.row().classes("mb-4 w-96 gap-1"):
-    #                 for row in DEVOPS_TAGS:
-    #                     tag_input.append(
-    #                         ui.chip(
-    #                             row.name,
-    #                             selectable=True,
-    #                             icon=row.icon,
-    #                             color=row.color,
-    #                         )
-    #                     )
-
-    #             parent_input = ui.input("Parent ID").classes("mb-4 w-96")
-    #             parent_input.value = "841"
-
-    #             epic_input = (
-    #                 ui.select([], label="Epic")
-    #                 .classes("mb-4 w-96")
-    #                 .on("update:model-value", lambda e: set_feature_list(e))
-    #             )
-    #             feature_input = ui.select([], label="Feature").classes("mb-4 w-96")
-
-    #             state_input.value = "New"
-    #             priority_input = ui.select(
-    #                 ["1", "2", "3", "4"], label="Priority"
-    #             ).classes("mb-4 w-96")
-    #             priority_input.value = "2"
-    #             date_input = ui.input("Received Date (yyyy-mm-dd)").classes("mb-4 w-96")
-    #             date_input.value = datetime.now().strftime("%Y-%m-%d")
-
-    #         with ui.column():
-    #             ui.label("Task Description").classes("text-h6 mb-2")
-    #             problem_input = ui.textarea("Problem Description").classes("mb-4 w-96")
-    #             more_info_input = ui.textarea("More Information").classes("mb-4 w-96")
-    #             solution_input = ui.textarea("Solution").classes("mb-4 w-96")
-    #             validation_input = ui.textarea("Validation").classes("mb-4 w-96")
-    #             markdown_info = ui.switch("Use Markdown", value=True).classes(
-    #                 "mb-4 w-96"
-    #             )
-
-    #     ui.button("Add User Story", on_click=add_user_story).classes("mt-4")
-
-    # ui.button("Add User Story", on_click=add_user_story).classes("mb-4")
 
 
 def ui_query_editor():

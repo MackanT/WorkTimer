@@ -1,0 +1,148 @@
+## DevOps Information ###
+devops_user_story:
+  add:
+    fields:
+      - name: customer_name
+        label: Customer
+        type: select
+        options: []
+        options_source: customer_data
+        optional: False
+      - name: user_story_name
+        label: User Story Title
+        type: input
+        optional: False
+      - name: state
+        label: State
+        type: select
+        options:
+          - New
+          - Active
+          - Resolved
+          - Closed
+          - Removed
+        options_default: New
+        optional: False
+      - name: source
+        label: Source
+        type: select
+        options:
+          - Teams
+          - Email
+          - Call
+          - In person
+          - Other
+        options_default: Other
+        optional: False
+      - name: contact_person
+        label: Contact Person
+        type: input
+        optional: True
+      - name: assigned_to
+        label: Assigned To
+        type: input
+        optional: True
+      - name: tags
+        label: Tags
+        type: chip_group
+        options: []
+        options_source: devops_tags
+        optional: True
+      - name: epic_name
+        label: Epic
+        type: select
+        options: []
+        options_source: epic_names
+        optional: False
+        parent: customer_name
+      - name: feature_name
+        label: Feature
+        type: select
+        options: []
+        options_source: feature_names
+        optional: False
+        parent: epic_name
+      - name: priority
+        label: Priority
+        type: select
+        options:
+          - 1
+          - 2
+          - 3
+          - 4
+        options_default: 2
+        optional: False
+      - name: item_date
+        label: Recieved Date
+        type: date
+        default: ""
+        optional: true
+        options_default: today
+      - name: problem_description
+        label: Problem Description
+        type: text
+        optional: True
+      - name: more_info
+        label: More Information
+        type: text
+        optional: True
+      - name: solution
+        label: Solution
+        type: text
+        optional: True
+      - name: validation
+        label: Validation
+        type: text
+        optional: True
+      - name: use_markdown
+        label: Use Markdown
+        type: switch
+        optional: False
+        default: True
+    columns:
+      - [
+          customer_name,
+          epic_name,
+          feature_name,
+          user_story_name,
+          contact_person,
+          assigned_to,
+        ]
+      - [tags, state, source, priority, item_date]
+      - [problem_description, more_info, solution, validation, use_markdown]
+    action:
+      function: add_user_story
+      main_action: User Story
+      main_param: user_story_name
+      secondary_action: added
+      button_name: "Add"
+  # update:
+  #   fields:
+  #     - name: customer_name
+  #       label: Customer
+  #       type: select
+  #       options: []
+  #       options_source: customer_data
+  #       optional: True
+  #     - name: epic_name
+  #       label: Epic
+  #       type: select
+  #       options: []
+  #       options_source: epic_names
+  #       optional: True
+  #       parent: customer_name
+  #     - name: feature_name
+  #       label: Feature
+  #       type: select
+  #       options: []
+  #       options_source: feature_names
+  #       optional: True
+  #       parent: epic_name
+  #   columns:
+  #     - [customer_name, epic_name, feature_name]
+  #   action:
+  #     function: update_user_story
+  #     main_action: User Story
+  #     main_param: user_story_name
+  #     secondary_action: added
+  #     button_name: "Add"
