@@ -40,15 +40,24 @@ customer:
       - name: new_customer_name
         label: New Name
         type: input
+        options: []
+        options_source: new_customer_name
         optional: false
+        parent: customer_name
       - name: "org_url"
         label: "DevOps Org. URL"
         type: input
+        options: []
+        options_source: org_url
         optional: true
+        parent: customer_name
       - name: "pat_token"
         label: "DevOps PAT"
         type: input
+        options: []
+        options_source: pat_token
         optional: true
+        parent: customer_name
     action:
       function: "update_customer"
       main_action: "Customer"
@@ -124,14 +133,22 @@ project:
         label: Project Name
         type: select
         options: []
+        options_source: project_names
+        parent: customer_name
         optional: False
       - name: new_project_name
         label: New Project Name
         type: input
+        options: []
+        options_source: new_project_name
+        parent: project_name
         optional: False
       - name: "new_git_id"
         label: "New Git ID"
         type: number
+        options: []
+        options_source: new_git_id
+        parent: project_name
         optional: True
     action:
       function: "update_project"
@@ -151,6 +168,8 @@ project:
         label: Project
         type: select
         options: []
+        options_source: project_names
+        parent: customer_name
         optional: False
     action:
       function: "disable_project"
@@ -170,6 +189,8 @@ project:
         label: Project
         type: select
         options: []
+        options_source: project_names
+        parent: customer_name
         optional: False
     action:
       function: "enable_project"

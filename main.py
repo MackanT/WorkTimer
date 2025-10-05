@@ -594,81 +594,64 @@ def ui_add_data():
         fields = config_ui["customer"][tab_type.lower()]["fields"]
         action = config_ui["customer"][tab_type.lower()]["action"]
 
+        active_data = helpers.filter_df(add_data_df, {"c_current": 1})
+
         with container:
             if tab_type == "Add":
+                helpers.assign_dynamic_options(fields, data_sources={"date": None})
                 widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Update":
-                customer_data = helpers.filter_df(
-                    add_data_df,
-                    {"c_current": 1},
-                    return_as="distinct_list",
-                    column="customer_name",
-                )
+                customer_names = helpers.get_unique_list(active_data, "customer_name")
+
+                org_urls = {}
+                pat_tokens = {}
+                new_customer_names = {}
+
+                for customer in customer_names:
+                    filtered = helpers.filter_df(
+                        add_data_df, {"customer_name": customer}
+                    )
+                    org_urls[customer] = helpers.get_unique_list(filtered, "org_url")
+                    pat_tokens[customer] = helpers.get_unique_list(
+                        filtered, "pat_token"
+                    )
+                    new_customer_names[customer] = [customer]
 
                 helpers.assign_dynamic_options(
-                    fields, data_sources={"customer_data": customer_data}
+                    fields,
+                    data_sources={
+                        "customer_data": customer_names,
+                        "new_customer_name": new_customer_names,
+                        "org_url": org_urls,
+                        "pat_token": pat_tokens,
+                    },
                 )
 
                 widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
-
-                def on_name_change(e):
-                    filtered = helpers.filter_df(
-                        add_data_df,
-                        {
-                            "c_current": 1,
-                            "customer_name": widgets["customer_name"].value,
-                        },
-                    )
-                    if filtered.empty:
-                        clear_widgets(
-                            {k: v for k, v in widgets.items() if k != "customer_name"}
-                        )
-                        return
-                    autofill_widgets(
-                        widgets,
-                        filtered.iloc[0],
-                        {
-                            "new_customer_name": "customer_name",
-                            "org_url": "org_url",
-                            "pat_token": "pat_token",
-                        },
-                    )
-
-                widgets["customer_name"].on("update:model-value", on_name_change)
-
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Disable":
-                customer_data = helpers.filter_df(
-                    add_data_df,
-                    {"c_current": 1},
-                    return_as="distinct_list",
-                    column="customer_name",
-                )
+                customer_names = helpers.get_unique_list(active_data, "customer_name")
                 helpers.assign_dynamic_options(
-                    fields, data_sources={"customer_data": customer_data}
+                    fields, data_sources={"customer_data": customer_names}
                 )
-
                 save_data = SaveData(**action)
                 widgets = helpers.make_input_row(fields)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Reenable":
                 # Only show customer_name where c_current == 0 and NOT present in any row where c_current == 1
-                customer_data = helpers.filter_df(
-                    add_data_df,
-                    {"c_current": 1},
-                    return_as="distinct_list",
-                    column="customer_name",
-                )
+                customer_names = helpers.get_unique_list(active_data, "customer_name")
                 candidate_names = helpers.filter_df(
                     add_data_df,
                     {"c_current": 0},
                     return_as="distinct_list",
                     column="customer_name",
                 )
-                reenable_names = sorted(list(set(candidate_names) - set(customer_data)))
+                reenable_names = sorted(
+                    list(set(candidate_names) - set(customer_names))
+                )
                 helpers.assign_dynamic_options(
                     fields, data_sources={"customer_data": reenable_names}
                 )
@@ -686,111 +669,132 @@ def ui_add_data():
         fields = config_ui["project"][tab_type.lower()]["fields"]
         action = config_ui["project"][tab_type.lower()]["action"]
 
+        active_data = helpers.filter_df(
+            add_data_df,
+            {"c_current": 1},
+        )
+        active_customer_names = helpers.get_unique_list(active_data, "customer_name")
+
         with container:
-            active_data = helpers.filter_df(
-                add_data_df,
-                {"c_current": 1},
-            )
             if tab_type == "Add":
-                customer_data = helpers.get_unique_list(active_data, "customer_name")
                 helpers.assign_dynamic_options(
-                    fields, data_sources={"customer_data": customer_data}
+                    fields, data_sources={"customer_data": active_customer_names}
                 )
                 widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Update":
-                customer_data = helpers.get_unique_list(active_data, "customer_name")
+                project_names = {}
+                new_project_name = {}
+                new_git_id = {}
+
+                for customer in active_customer_names:
+                    filtered = helpers.filter_df(
+                        active_data, {"customer_name": customer, "p_current": 1}
+                    )
+                    project_names[customer] = helpers.get_unique_list(
+                        filtered, "project_name"
+                    )
+                    for project in project_names[customer]:
+                        filtered_cust = helpers.filter_df(
+                            filtered, {"project_name": project}
+                        )
+
+                        new_project_name[project] = [project]
+                        new_git_id[project] = helpers.get_unique_list(
+                            filtered_cust, "git_id"
+                        )
+
                 helpers.assign_dynamic_options(
-                    fields, data_sources={"customer_data": customer_data}
+                    fields,
+                    data_sources={
+                        "customer_data": active_customer_names,
+                        "project_names": project_names,
+                        "new_project_name": new_project_name,
+                        "new_git_id": new_git_id,
+                    },
                 )
                 widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
 
-                def on_customer_change(e):
-                    filtered = helpers.filter_df(
-                        active_data,
-                        {"customer_name": widgets["customer_name"].value},
-                        column="project_name",
-                        return_as="distinct_list",
-                    )
-                    widgets["project_name"].options = filtered
-                    widgets["project_name"].update()
+                # def on_customer_change(e):
+                #     filtered = helpers.filter_df(
+                #         active_data,
+                #         {"customer_name": widgets["customer_name"].value},
+                #         column="project_name",
+                #         return_as="distinct_list",
+                #     )
+                #     widgets["project_name"].options = filtered
+                #     widgets["project_name"].update()
 
-                widgets["customer_name"].on("update:model-value", on_customer_change)
+                # widgets["customer_name"].on("update:model-value", on_customer_change)
 
-                def on_project_change(e):
-                    filtered = helpers.filter_df(
-                        active_data,
-                        {
-                            "customer_name": widgets["customer_name"].value,
-                            "project_name": widgets["project_name"].value,
-                        },
-                    )
+                # def on_project_change(e):
+                #     filtered = helpers.filter_df(
+                #         active_data,
+                #         {
+                #             "customer_name": widgets["customer_name"].value,
+                #             "project_name": widgets["project_name"].value,
+                #         },
+                #     )
 
-                    if filtered.empty:
-                        clear_widgets(
-                            {
-                                k: v
-                                for k, v in widgets.items()
-                                if k not in ["customer_name", "project_name"]
-                            }
-                        )
-                        return
-                    autofill_widgets(
-                        widgets,
-                        filtered.iloc[0],
-                        {"new_project_name": "project_name", "new_git_id": "git_id"},
-                    )
+                #     if filtered.empty:
+                #         clear_widgets(
+                #             {
+                #                 k: v
+                #                 for k, v in widgets.items()
+                #                 if k not in ["customer_name", "project_name"]
+                #             }
+                #         )
+                #         return
+                #     autofill_widgets(
+                #         widgets,
+                #         filtered.iloc[0],
+                #         {"new_project_name": "project_name", "new_git_id": "git_id"},
+                #     )
 
-                widgets["project_name"].on("update:model-value", on_project_change)
+                # widgets["project_name"].on("update:model-value", on_project_change)
 
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Disable":
-                customer_data = helpers.get_unique_list(active_data, "customer_name")
+                project_names = {}
+                for customer in active_customer_names:
+                    filtered = helpers.filter_df(
+                        active_data, {"customer_name": customer, "p_current": 1}
+                    )
+                    project_names[customer] = helpers.get_unique_list(
+                        filtered, "project_name"
+                    )
+
                 helpers.assign_dynamic_options(
-                    fields, data_sources={"customer_data": customer_data}
+                    fields,
+                    data_sources={
+                        "customer_data": active_customer_names,
+                        "project_names": project_names,
+                    },
                 )
                 widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
-
-                def on_customer_change(e):
-                    filtered = helpers.filter_df(
-                        active_data,
-                        {
-                            "customer_name": widgets["customer_name"].value,
-                            "p_current": 1,
-                        },
-                        column="project_name",
-                        return_as="distinct_list",
-                    )
-                    widgets["project_name"].options = filtered
-                    widgets["project_name"].update()
-
-                widgets["customer_name"].on("update:model-value", on_customer_change)
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Reenable":
-                customer_data = helpers.get_unique_list(active_data, "customer_name")
+                project_names = {}
+                for customer in active_customer_names:
+                    filtered = helpers.filter_df(
+                        active_data, {"customer_name": customer, "p_current": 0}
+                    )
+                    project_names[customer] = helpers.get_unique_list(
+                        filtered, "project_name"
+                    )
+
                 helpers.assign_dynamic_options(
-                    fields, data_sources={"customer_data": customer_data}
+                    fields,
+                    data_sources={
+                        "customer_data": active_customer_names,
+                        "project_names": project_names,
+                    },
                 )
                 widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
-
-                def on_customer_change(e):
-                    filtered = helpers.filter_df(
-                        active_data,
-                        {
-                            "customer_name": widgets["customer_name"].value,
-                            "p_current": 0,
-                        },
-                        column="project_name",
-                        return_as="distinct_list",
-                    )
-                    widgets["project_name"].options = filtered
-                    widgets["project_name"].update()
-
-                widgets["customer_name"].on("update:model-value", on_customer_change)
                 add_save_button(save_data, fields, widgets)
 
     def build_bonus_tab_panel(tab_type, container_dict):

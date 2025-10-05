@@ -21,7 +21,7 @@ devops_user_story:
           - Resolved
           - Closed
           - Removed
-        options_default: New
+        default: New
         optional: False
       - name: source
         label: Source
@@ -32,7 +32,7 @@ devops_user_story:
           - Call
           - In person
           - Other
-        options_default: Other
+        default: Other
         optional: False
       - name: contact_person
         label: Contact Person
@@ -70,14 +70,13 @@ devops_user_story:
           - 2
           - 3
           - 4
-        options_default: 2
+        default: 2
         optional: False
       - name: item_date
         label: Recieved Date
         type: date
-        default: ""
+        default: today
         optional: true
-        options_default: today
       - name: problem_description
         label: Problem Description
         type: text

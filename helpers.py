@@ -169,6 +169,29 @@ def make_input_row(fields, input_width: str = "w-64"):
                         widget.value = options_map.get(parent_val, "")
                     elif isinstance(options_map, list):
                         widget.value = options_map[0] if options_map else ""
+                    else:
+                        print("If we are ever here, something is wrong!")
+                    widget.update()
+                elif ftype == "number":
+                    # For number, set value if options_map is dict/list
+                    if isinstance(options_map, dict):
+                        val = options_map.get(parent_val, 0)
+                        if isinstance(val, list):
+                            widget.value = (
+                                val[0]
+                                if val and isinstance(val[0], (int, float))
+                                else 0
+                            )
+                        else:
+                            widget.value = val if isinstance(val, (int, float)) else 0
+                    elif isinstance(options_map, list):
+                        widget.value = (
+                            options_map[0]
+                            if options_map and isinstance(options_map[0], (int, float))
+                            else 0
+                        )
+                    else:
+                        widget.value = 0
                     widget.update()
                 elif ftype == "chip_group":
                     # For chip_group, update chips if options_map is dict/list
