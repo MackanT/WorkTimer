@@ -1542,11 +1542,32 @@ def handle_key(e: KeyEventArguments):
     1
 
 
+## Utility to run any function (sync or async) in a separate thread
+def run_async_task(func, *args, **kwargs):
+    def runner():
+        if asyncio.iscoroutinefunction(func):
+            asyncio.run(func(*args, **kwargs))
+        else:
+            func(*args, **kwargs)
+
+    t = threading.Thread(target=runner, daemon=True)
+    t.start()
+    return t
+
+
+async def preload_devops():
+    try:
+        await setup_devops()
+        await get_devops_df()
+        log_msg("INFO", "DevOps preload complete.")
+    except Exception as e:
+        log_msg("ERROR", f"Error during DevOps preload: {e}")
+
+
 def main():
     log_msg("INFO", "Starting WorkTimer!")
-
     setup_config()
-
+    run_async_task(preload_devops)
     setup_db(MAIN_DB)
     ui.add_head_html("""
     <script>
@@ -1557,35 +1578,7 @@ def main():
     });
     </script>
     """)
-
-    # Use a background thread to avoid blocking UI startup
-    def preload_devops():
-        global global_loop
-        loop = asyncio.new_event_loop()
-        global_loop = loop
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(setup_devops())
-            loop.run_until_complete(get_devops_df())
-            loop.run_forever()
-        except Exception as e:
-            log_msg("ERROR", f"Error during DevOps preload: {e}")
-        finally:
-            loop.close()
-
-    threading.Thread(target=preload_devops, daemon=True).start()
-
     setup_ui()
-
-
-def run_async_task(coro):
-    """Run a coroutine in the global background loop if available, else in the local event loop."""
-    if "global_loop" in globals() and global_loop and global_loop.is_running():
-        log_msg("INFO", "Running in global loop")
-        asyncio.run_coroutine_threadsafe(coro, global_loop)
-    else:
-        log_msg("INFO", "Running in local loop")
-        asyncio.create_task(coro)
 
 
 if __name__ in {"__main__", "__mp_main__"}:
