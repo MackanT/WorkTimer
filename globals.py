@@ -5,6 +5,10 @@ import asyncio
 import logging
 
 
+def generate_sync_sql(main_db, uploaded_path):
+    return Database.generate_sync_sql(main_db, uploaded_path)
+
+
 class LogData:
     def __init__(self, debug: bool = False):
         self.debug = debug

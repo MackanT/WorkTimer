@@ -2,8 +2,7 @@ from nicegui import events, ui
 from nicegui.events import KeyEventArguments
 import helpers
 import asyncio
-from database_new import Database
-from globals import LogData, AddData, QueryData, DevopsData
+from globals import LogData, AddData, QueryData, DevopsData, generate_sync_sql
 from datetime import datetime
 from dataclasses import dataclass
 from textwrap import dedent
@@ -12,8 +11,7 @@ import tempfile
 import os
 import yaml
 
-debug = True
-
+DEBUG_MODE = True
 MAIN_DB = "data_dpg_copy.db"
 CONFIG_FOLDER = "config"
 
@@ -619,7 +617,7 @@ def ui_add_data():
                 tmp.write(e.content.read())
                 uploaded_path = tmp.name
 
-            sync_sql = Database.generate_sync_sql(MAIN_DB, uploaded_path)
+            sync_sql = generate_sync_sql(MAIN_DB, uploaded_path)
             db_deltas.set_content(sync_sql)
             db_deltas.update()
             os.remove(uploaded_path)  # Clean up temp file
@@ -1342,7 +1340,7 @@ def run_async_task(func, *args, **kwargs):
 def main():
     global LOG, QE, AD, DO
 
-    LOG = LogData()
+    LOG = LogData(debug=DEBUG_MODE)
     LOG.log_msg("INFO", "Starting WorkTimer!")
 
     QE = QueryData(file_name=MAIN_DB, log_engine=LOG)
