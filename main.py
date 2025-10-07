@@ -1621,7 +1621,6 @@ def main():
     threading.Thread(target=preload_devops, daemon=True).start()
 
     setup_ui()
-    ui.run()
 
 
 def run_async_task(coro):
@@ -1636,3 +1635,4 @@ def run_async_task(coro):
 
 if __name__ in {"__main__", "__mp_main__"}:
     main()
+    ui.run(host="0.0.0.0", port=8080)

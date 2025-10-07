@@ -1,0 +1,13 @@
+version: "3.8"
+services:
+  worktimer:
+    build: .
+    image: worktimer-app:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data_dpg_copy.db:/app/data_dpg_copy.db
+    # environment:
+    # Add any environment variables here if needed
+    # EXAMPLE_VAR: value
+    restart: unless-stopped
