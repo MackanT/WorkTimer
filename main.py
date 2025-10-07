@@ -3,7 +3,7 @@ from nicegui.events import KeyEventArguments
 import helpers
 import asyncio
 from database_new import Database
-from globals import AddData, QueryData, DevopsData
+from globals import LogData, AddData, QueryData, DevopsData
 from datetime import datetime
 from dataclasses import dataclass
 from textwrap import dedent
@@ -11,21 +11,11 @@ import threading
 import tempfile
 import os
 import yaml
-import logging
 
 debug = True
 
 MAIN_DB = "data_dpg_copy.db"
 CONFIG_FOLDER = "config"
-
-## Logging Setup ##
-LOGFORMAT = "%(asctime)s | %(levelname)-8s | %(name).35s :: %(message)s"
-formatter = logging.Formatter(fmt=LOGFORMAT, datefmt="%Y-%m-%d %H:%M:%S")
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logger = logging.getLogger("WorkTimer")
-logger.setLevel(logging.DEBUG if debug else logging.INFO)
-logger.addHandler(handler)
 
 
 @dataclass
@@ -121,17 +111,17 @@ def ui_time_tracking():
     ui.separator().classes("my-2")
 
     def set_custom_radio(e):
-        log_msg("DEBUG", f"Date picker selected: {date_input.value}")
+        LOG.log_msg("DEBUG", f"Date picker selected: {date_input.value}")
         selected_time.value = "Custom"
         asyncio.create_task(update_ui())
 
     def on_radio_time_change(e):
-        log_msg("DEBUG", f"Radio Date selected: {selected_time.value}")
+        LOG.log_msg("DEBUG", f"Radio Date selected: {selected_time.value}")
         date_input.value = helpers.get_range_for(selected_time.value)
         asyncio.create_task(update_ui())
 
     def on_radio_type_change(e):
-        log_msg("DEBUG", f"Radio Type selected: {radio_display_selection.value}")
+        LOG.log_msg("DEBUG", f"Radio Type selected: {radio_display_selection.value}")
         asyncio.create_task(update_ui())
 
     date_input.value = helpers.get_range_for(selected_time.value)
@@ -144,7 +134,7 @@ def ui_time_tracking():
 
     async def on_checkbox_change(event, checked, customer_id, project_id):
         if checked:
-            log_msg(
+            LOG.log_msg(
                 "DEBUG",
                 f"Checkbox status: {checked}, customer_id: {customer_id}, project_id: {project_id}",
             )
@@ -215,7 +205,7 @@ def ui_time_tracking():
                                 except ValueError:
                                     git_id = None
 
-                        log_msg(
+                        LOG.log_msg(
                             "DEBUG",
                             f"Saved: {git_id}, {id_checkbox.value}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}",
                         )
@@ -256,7 +246,7 @@ def ui_time_tracking():
                         popup.close()
 
                     async def delete_popup():
-                        log_msg(
+                        LOG.log_msg(
                             "DEBUG",
                             f"Deleted customer_id: {customer_id}, project_id: {project_id}",
                         )
@@ -428,8 +418,8 @@ def ui_add_data():
                 save_data.secondary_action,
                 widgets=widgets,
             )
-            log_msg("INFO", msg_1)
-            log_msg("INFO", msg_2)
+            LOG.log_msg("INFO", msg_1)
+            LOG.log_msg("INFO", msg_2)
             await AD.refresh()
 
         ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
@@ -827,7 +817,7 @@ async def ui_devops_settings():
             parent=parent_id,
         )
         state = "INFO" if success else "ERROR"
-        log_msg(
+        LOG.log_msg(
             state,
             message,
         )
@@ -845,7 +835,7 @@ async def ui_devops_settings():
             if func_name == "add_user_story":
                 state, msg = add_user_story(widgets=widgets)
             else:
-                log_msg("WARNING", f"Function {func_name} not implemented yet")
+                LOG.log_msg("WARNING", f"Function {func_name} not implemented yet")
 
             col = "positive" if state else "negative"
             ui.notify(
@@ -974,7 +964,7 @@ def ui_query_editor():
             popup.open()
         except Exception as e:
             ui.notify("Query is invalid", color="negative")
-            log_msg("ERROR", f"Error: {e}")
+            LOG.log_msg("ERROR", f"Error: {e}")
 
     async def update_custom_query():
         if len(QE.df[QE.df["is_default"] != 1]["query_name"]) <= 1:
@@ -1019,7 +1009,7 @@ def ui_query_editor():
             popup.open()
         except Exception as e:
             ui.notify("Query is invalid", color="negative")
-            log_msg("ERROR", f"Error: {e}")
+            LOG.log_msg("ERROR", f"Error: {e}")
 
     async def delete_custom_query():
         if len(QE.df[QE.df["is_default"] != 1]["query_name"]) == 0:
@@ -1061,7 +1051,7 @@ def ui_query_editor():
             popup.open()
         except Exception as e:
             ui.notify("You should not see this!", color="negative")
-            log_msg("ERROR", f"Error: {e}")
+            LOG.log_msg("ERROR", f"Error: {e}")
 
     with ui.row().classes("justify-between items-center w-full"):
         preset_queries = ui.element()
@@ -1257,7 +1247,7 @@ def ui_query_editor():
         except Exception as e:
             with grid_box:
                 ui.notify(f"Error: {e}")
-            log_msg("ERROR", f"Error: {e}")
+            LOG.log_msg("ERROR", f"Error: {e}")
 
     asyncio.run(run_code())
 
@@ -1278,62 +1268,13 @@ def ui_query_editor():
     # ui.label().bind_text(editor, "theme")
 
 
-# --- In-program Log ---
-LOG_BUFFER = []
-LOG_TEXTAREA = None
-LOG_COLORS = {
-    "INFO": "white",
-    "WARNING": "orange",
-    "ERROR": "red",
-}
-
-
-def log_msg(level="INFO", msg=""):
-    global LOG_BUFFER, LOG_TEXTAREA, debug
-    level = level.upper()
-    # Always print to terminal
-    getattr(logger, level.lower(), logger.info)(msg)
-
-    # Format for web log using the same formatter
-    record = logging.LogRecord(
-        name=logger.name,
-        level=getattr(logging, level, logging.INFO),
-        pathname=__file__,
-        lineno=0,
-        msg=msg,
-        args=(),
-        exc_info=None,
-    )
-    formatted = formatter.format(record)
-    # Only add DEBUG to web log if debug==True; all other levels always added
-    LOG_BUFFER.append({"level": level, "msg": formatted})
-    if LOG_TEXTAREA:
-        update_log_textarea()
-
-
-def update_log_textarea():
-    global LOG_BUFFER, LOG_TEXTAREA, LOG_COLORS
-    if LOG_TEXTAREA:
-        lines = []
-        for entry in LOG_BUFFER:
-            color = LOG_COLORS.get(entry["level"], "white")
-            # Use HTML for color
-            line = f'<span style="color:{color};"> {entry["msg"]}</span>'
-            lines.append(line)
-        LOG_TEXTAREA.set_content("<br>".join(lines))
-        LOG_TEXTAREA.update()
-        # Scroll to bottom using run_method
-        LOG_TEXTAREA.run_method("scrollTo", 0, 99999)
-
-
 def ui_log():
-    global LOG_TEXTAREA
     with ui.card().classes("w-full max-w-2xl mx-auto my-8 p-4"):
         ui.label("Application Log").classes("text-h5 mb-4")
-        LOG_TEXTAREA = ui.html(content="").classes(
+        LOG.LOG_TEXTAREA = ui.html(content="").classes(
             "w-full h-96 overflow-auto bg-black text-white p-2 rounded"
         )
-        update_log_textarea()
+        LOG.update_log_textarea()
 
 
 def setup_ui():
@@ -1382,12 +1323,6 @@ def handle_key(e: KeyEventArguments):
     # if e.modifiers.shift and e.action.keydown:
     #     if e.key.arrow_left:
     #         ui.notify("going left")
-    #     elif e.key.arrow_right:
-    #         ui.notify("going right")
-    #     elif e.key.arrow_up:
-    #         ui.notify("going up")
-    #     elif e.key.arrow_down:
-    #         ui.notify("going down")
     1
 
 
@@ -1405,17 +1340,20 @@ def run_async_task(func, *args, **kwargs):
 
 
 def main():
-    global QE, AD, DO
-    log_msg("INFO", "Starting WorkTimer!")
-    QE = QueryData(MAIN_DB)
+    global LOG, QE, AD, DO
+
+    LOG = LogData()
+    LOG.log_msg("INFO", "Starting WorkTimer!")
+
+    QE = QueryData(file_name=MAIN_DB, log_engine=LOG)
     QE.refresh()  # Initial load of queries
 
-    AD = AddData(query_engine=QE)
+    AD = AddData(query_engine=QE, log_engine=LOG)
     AD.refresh()
 
     setup_config()
 
-    DO = DevopsData(query_engine=QE)
+    DO = DevopsData(query_engine=QE, log_engine=LOG)
     run_async_task(DO.initialize)
 
     ui.add_head_html("""

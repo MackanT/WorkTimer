@@ -2,14 +2,74 @@ import pandas as pd
 from devops_new import DevOpsManager
 from database_new import Database
 import asyncio
+import logging
+
+
+class LogData:
+    def __init__(self, debug: bool = False):
+        self.debug = debug
+        self.logger, self.formatter = self.setup_logging()
+
+        self.LOG_BUFFER = []
+        self.LOG_TEXTAREA = None
+        self.LOG_COLORS = {
+            "INFO": "white",
+            "WARNING": "orange",
+            "ERROR": "red",
+        }
+
+    def setup_logging(self):
+        LOGFORMAT = "%(asctime)s | %(levelname)-8s | %(name).35s :: %(message)s"
+        formatter = logging.Formatter(fmt=LOGFORMAT, datefmt="%Y-%m-%d %H:%M:%S")
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        logger = logging.getLogger("WorkTimer")
+        logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
+        logger.addHandler(handler)
+        return logger, formatter
+
+    def log_msg(self, level="INFO", msg=""):
+        level = level.upper()
+        # Always print to terminal
+        getattr(self.logger, level.lower(), self.logger.info)(msg)
+
+        # Format for web log using the same formatter
+        record = logging.LogRecord(
+            name=self.logger.name,
+            level=getattr(logging, level, logging.INFO),
+            pathname=__file__,
+            lineno=0,
+            msg=msg,
+            args=(),
+            exc_info=None,
+        )
+        formatted = self.formatter.format(record)
+        # Only add DEBUG to web log if debug==True; all other levels always added
+        self.LOG_BUFFER.append({"level": level, "msg": formatted})
+        if self.LOG_TEXTAREA:
+            self.update_log_textarea()
+
+    def update_log_textarea(self):
+        if self.LOG_TEXTAREA:
+            lines = []
+            for entry in self.LOG_BUFFER:
+                color = self.LOG_COLORS.get(entry["level"], "white")
+                # Use HTML for color
+                line = f'<span style="color:{color};"> {entry["msg"]}</span>'
+                lines.append(line)
+            self.LOG_TEXTAREA.set_content("<br>".join(lines))
+            self.LOG_TEXTAREA.update()
+            # Scroll to bottom using run_method
+            self.LOG_TEXTAREA.run_method("scrollTo", 0, 99999)
 
 
 class QueryData:
-    def __init__(self, file_name: str):
+    def __init__(self, file_name: str, log_engine: LogData):
         self.file_name = file_name
         self.db = Database(file_name)
         self.db.initialize_db()
         self.df = None
+        self.log = log_engine
 
     async def function_db(self, func_name: str, *args, **kwargs):
         func = getattr(self.db, func_name)
@@ -23,30 +83,30 @@ class QueryData:
 
 
 class AddData:
-    def __init__(self, query_engine: QueryData):
+    def __init__(self, query_engine: QueryData, log_engine: LogData):
         self.df = None
         self.query_engine = query_engine
+        self.log = log_engine
 
     async def refresh(self):
         self.df = await self.query_engine.function_db("get_data_input_list")
 
 
 class DevopsData:
-    def __init__(self, query_engine: QueryData):
+    def __init__(self, query_engine: QueryData, log_engine: LogData):
         self.manager = None
         self.df = None
         self.long_df = None
         self.query_engine = query_engine
-
-        self.log = []
+        self.log = log_engine
 
     async def initialize(self):
         try:
             await self.setup_manager()
             await self.load_df()
-            self.log.append(("INFO", "DevOps preload complete."))
+            self.log.log_msg("INFO", "DevOps preload complete.")
         except Exception as e:
-            self.log.append(("ERROR", f"Error during DevOps preload: {e}"))
+            self.log.log_msg("ERROR", f"Error during DevOps preload: {e}")
 
     async def setup_manager(self):
         df = await self.query_engine.query_db(
@@ -56,26 +116,26 @@ class DevopsData:
 
     async def update_devops(self):
         if not self.manager:
-            self.log.append(("WARNING", "No DevOps connections available"))
+            self.log.log_msg("WARNING", "No DevOps connections available")
             return None
-        self.log.append(("INFO", "Getting latest devops data"))
+        self.log.log_msg("INFO", "Getting latest devops data")
         status, devops_df = self.manager.get_epics_feature_df()
         if status:
             await self.query_engine.function_db("update_devops_data", df=devops_df)
         else:
-            self.log.append(
-                ("ERROR", f"Error when updating the devops data: {devops_df}")
+            self.log.log_msg(
+                "ERROR", f"Error when updating the devops data: {devops_df}"
             )
 
     async def load_df(self):
         df = await self.query_engine.query_db("select * from devops")
         self.df = df if not df.empty else None
         if self.df is None or self.df.empty:
-            self.log.append(("WARNING", "DevOps dataframe is empty"))
+            self.log.log_msg("WARNING", "DevOps dataframe is empty")
         else:
             self._get_long_df()
-            self.log.append(
-                ("INFO", f"DevOps dataframe loaded with {len(self.df)} rows")
+            self.log.log_msg(
+                "INFO", f"DevOps dataframe loaded with {len(self.df)} rows"
             )
             # TODO add some date when it was last collected
 
@@ -131,7 +191,7 @@ class DevopsData:
 
     def devops_helper(self, func_name: str, customer_name: str, *args, **kwargs):
         if not self.manager:
-            self.log.append(("WARNING", "No DevOps connections available"))
+            self.log.log_msg("WARNING", "No DevOps connections available")
             return None
         msg = None
         if func_name == "save_comment":
@@ -148,5 +208,5 @@ class DevopsData:
                 level=kwargs.get("level"),
             )
         if not status:
-            self.log.append(("ERROR", msg))
+            self.log.log_msg("ERROR", msg)
         return status, msg
