@@ -131,10 +131,10 @@ async def get_devops_df():
     if devops_df.empty:
         log_msg("WARNING", "DevOps dataframe is empty")
     else:
+        devops_long_df = get_devops_long_df(devops_df)
         log_msg(
             "INFO", f"DevOps dataframe loaded with {len(devops_df)} rows"
         )  # TODO add some date when it was last collected
-        devops_long_df = get_devops_long_df(devops_df)
 
 
 def get_devops_long_df(devops_df):
@@ -557,16 +557,6 @@ def ui_add_data():
     global add_data_df
     asyncio.run(refresh_add_data())
 
-    def autofill_widgets(widgets, row, field_map):
-        for widget_name, col_name in field_map.items():
-            widgets[widget_name].value = row.get(col_name, "")
-            widgets[widget_name].update()
-
-    def clear_widgets(widgets):
-        for widget in widgets.values():
-            widget.value = ""
-            widget.update()
-
     # --- Modular Tab Panel Builder ---
     def add_save_button(save_data, fields, widgets):
         async def on_save():
@@ -721,45 +711,6 @@ def ui_add_data():
                 )
                 widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
-
-                # def on_customer_change(e):
-                #     filtered = helpers.filter_df(
-                #         active_data,
-                #         {"customer_name": widgets["customer_name"].value},
-                #         column="project_name",
-                #         return_as="distinct_list",
-                #     )
-                #     widgets["project_name"].options = filtered
-                #     widgets["project_name"].update()
-
-                # widgets["customer_name"].on("update:model-value", on_customer_change)
-
-                # def on_project_change(e):
-                #     filtered = helpers.filter_df(
-                #         active_data,
-                #         {
-                #             "customer_name": widgets["customer_name"].value,
-                #             "project_name": widgets["project_name"].value,
-                #         },
-                #     )
-
-                #     if filtered.empty:
-                #         clear_widgets(
-                #             {
-                #                 k: v
-                #                 for k, v in widgets.items()
-                #                 if k not in ["customer_name", "project_name"]
-                #             }
-                #         )
-                #         return
-                #     autofill_widgets(
-                #         widgets,
-                #         filtered.iloc[0],
-                #         {"new_project_name": "project_name", "new_git_id": "git_id"},
-                #     )
-
-                # widgets["project_name"].on("update:model-value", on_project_change)
-
                 add_save_button(save_data, fields, widgets)
             elif tab_type == "Disable":
                 project_names = {}
@@ -1526,7 +1477,7 @@ def ui_log():
     global LOG_TEXTAREA
     with ui.card().classes("w-full max-w-2xl mx-auto my-8 p-4"):
         ui.label("Application Log").classes("text-h5 mb-4")
-        LOG_TEXTAREA = ui.html().classes(
+        LOG_TEXTAREA = ui.html(content="").classes(
             "w-full h-96 overflow-auto bg-black text-white p-2 rounded"
         )
         update_log_textarea()
