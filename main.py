@@ -296,7 +296,9 @@ def ui_time_tracking():
                 f"Checkbox status: {checked}, customer_id: {customer_id}, project_id: {project_id}",
             )
             run_async_task(
-                function_db("insert_time_row", int(customer_id), int(project_id))
+                lambda: asyncio.run(
+                    function_db("insert_time_row", int(customer_id), int(project_id))
+                )
             )
 
         else:
@@ -366,12 +368,14 @@ def ui_time_tracking():
                         )
 
                         run_async_task(
-                            function_db(
-                                "insert_time_row",
-                                int(customer_id),
-                                int(project_id),
-                                git_id=git_id,
-                                comment=comment_input.value,
+                            lambda: asyncio.run(
+                                function_db(
+                                    "insert_time_row",
+                                    int(customer_id),
+                                    int(project_id),
+                                    git_id=git_id,
+                                    comment=comment_input.value,
+                                )
                             )
                         )
 
