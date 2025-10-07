@@ -1,10 +1,9 @@
 from nicegui import events, ui
 from nicegui.events import KeyEventArguments
-import pandas as pd
 import helpers
 import asyncio
 from database_new import Database
-from devops_new import DevOpsManager
+from globals import AddData, QueryData, DevopsData
 from datetime import datetime
 from dataclasses import dataclass
 from textwrap import dedent
@@ -15,14 +14,6 @@ import yaml
 import logging
 
 debug = True
-
-
-## Globals ##
-add_data_df = None
-query_df = None
-devops_manager = None
-devops_df = None
-devops_long_df = None
 
 MAIN_DB = "data_dpg_copy.db"
 CONFIG_FOLDER = "config"
@@ -60,18 +51,6 @@ class DevOpsTag:
     color: str = "green"
 
 
-async def refresh_add_data():
-    global add_data_df
-    df = await function_db("get_data_input_list")
-    add_data_df = df
-
-
-async def refresh_query_data():
-    global query_df
-    df = await function_db("get_query_list")
-    query_df = df
-
-
 ## Config Setup ##
 def setup_config():
     global config_ui, config_devops_ui, config_data, DEVOPS_TAGS, TABLE_IDS
@@ -94,131 +73,6 @@ def setup_config():
         TABLE_IDS[table_name] = {
             col_name: TableColumn(**(columns[col_name] or {})) for col_name in columns
         }
-
-
-## DB SETUP ##
-def setup_db(db_file: str):
-    Database(db_file).initialize_db()
-
-
-async def function_db(func_name: str, *args, **kwargs):
-    func = getattr(Database.db, func_name)
-    return await asyncio.to_thread(func, *args, **kwargs)
-
-
-async def query_db(query: str):
-    return await asyncio.to_thread(Database.db.smart_query, query)
-
-
-async def update_devops():
-    global devops_df
-    if not devops_manager:
-        log_msg("WARNING", "No DevOps connections available")
-        return None
-    log_msg("INFO", "Getting latest devops data")
-    status, devops_df = devops_manager.get_epics_feature_df()
-    if status:
-        await function_db("update_devops_data", df=devops_df)
-    else:
-        log_msg("ERROR", f"Error when updating the devops data: {devops_df}")
-
-
-async def get_devops_df():
-    global devops_df, devops_long_df
-    df = await query_db("select * from devops")
-    devops_df = df if not df.empty else None
-    if devops_df.empty:
-        log_msg("WARNING", "DevOps dataframe is empty")
-    else:
-        devops_long_df = get_devops_long_df(devops_df)
-        log_msg(
-            "INFO", f"DevOps dataframe loaded with {len(devops_df)} rows"
-        )  # TODO add some date when it was last collected
-
-
-def get_devops_long_df(devops_df):
-    if devops_df is None or devops_df.empty:
-        return None
-    records = []
-    for _, row in devops_df.iterrows():
-        # Epic
-        if pd.notna(row.get("epic_id")):
-            records.append(
-                {
-                    "customer_name": row["customer_name"],
-                    "type": "Epic",
-                    "id": int(row["epic_id"]),
-                    "title": row["epic_title"],
-                    "state": row["epic_state"],
-                    "name": f"Epic: {int(row['epic_id'])} - {row['epic_title']}",
-                    "parent_id": None,
-                }
-            )
-        # Feature
-        if pd.notna(row.get("feature_id")):
-            records.append(
-                {
-                    "customer_name": row["customer_name"],
-                    "type": "Feature",
-                    "id": int(row["feature_id"]),
-                    "title": row["feature_title"],
-                    "state": row["feature_state"],
-                    "name": f"Feature: {int(row['feature_id'])} - {row['feature_title']}",
-                    "parent_id": int(row["epic_id"])
-                    if pd.notna(row.get("epic_id"))
-                    else None,
-                }
-            )
-        # User Story
-        if pd.notna(row.get("user_story_id")):
-            records.append(
-                {
-                    "customer_name": row["customer_name"],
-                    "type": "User Story",
-                    "id": int(row["user_story_id"]),
-                    "title": row["user_story_title"],
-                    "state": row["user_story_state"],
-                    "name": f"User Story: {int(row['user_story_id'])} - {row['user_story_title']}",
-                    "parent_id": int(row["feature_id"])
-                    if pd.notna(row.get("feature_id"))
-                    else None,
-                }
-            )
-    long_df = pd.DataFrame(records)
-    long_df = long_df[long_df["state"].isin(["New", "Active"])].drop_duplicates()
-    return long_df
-
-
-## DEVOPS SETUP ##
-async def setup_devops():
-    global devops_manager
-    df = await query_db(
-        "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and pat_token is not '' and org_url is not null and org_url is not '' and is_current = 1"
-    )
-    devops_manager = DevOpsManager(df)
-
-
-def devops_helper(func_name: str, customer_name: str, *args, **kwargs):
-    if not devops_manager:
-        log_msg("WARNING", "No DevOps connections available")
-        return None
-    msg = None
-    if func_name == "save_comment":
-        status, msg = devops_manager.save_comment(
-            customer_name=customer_name,
-            comment=kwargs.get("comment"),
-            git_id=int(kwargs.get("git_id")),
-        )
-    elif func_name == "get_workitem_level":
-        git_id_raw = kwargs.get("git_id")
-        status, msg = devops_manager.get_workitem_level(
-            customer_name=customer_name,
-            work_item_id=int(git_id_raw) if str(git_id_raw).isnumeric() else None,
-            level=kwargs.get("level"),
-        )
-    if not status:
-        log_msg("ERROR", msg)
-    return status, msg
 
 
 ## UI SETUP ##
@@ -289,7 +143,6 @@ def ui_time_tracking():
     container = ui.element()
 
     async def on_checkbox_change(event, checked, customer_id, project_id):
-        global devops_manager
         if checked:
             log_msg(
                 "DEBUG",
@@ -297,7 +150,7 @@ def ui_time_tracking():
             )
             run_async_task(
                 lambda: asyncio.run(
-                    function_db("insert_time_row", int(customer_id), int(project_id))
+                    QE.function_db("insert_time_row", int(customer_id), int(project_id))
                 )
             )
 
@@ -312,7 +165,7 @@ def ui_time_tracking():
                     where t.customer_id = {customer_id}
                     and t.project_id = {project_id}
                     """
-                    df = await query_db(sql_query)
+                    df = await QE.query_db(sql_query)
                     c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
                     p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
                     git_id = df.iloc[0]["git_id"] if not df.empty else 0
@@ -320,9 +173,9 @@ def ui_time_tracking():
 
                     ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
 
-                    id_options = devops_long_df[
-                        (devops_long_df["customer_name"] == c_name)
-                    ][["name", "id"]].dropna()
+                    id_options = DO.long_df[(DO.long_df["customer_name"] == c_name)][
+                        ["name", "id"]
+                    ].dropna()
 
                     id_input = ui.select(
                         id_options["name"].tolist(), with_input=True, label="DevOps-ID"
@@ -369,7 +222,7 @@ def ui_time_tracking():
 
                         run_async_task(
                             lambda: asyncio.run(
-                                function_db(
+                                QE.function_db(
                                     "insert_time_row",
                                     int(customer_id),
                                     int(project_id),
@@ -380,10 +233,10 @@ def ui_time_tracking():
                         )
 
                         sql_code = f"select customer_name from customers where customer_id = {customer_id}"
-                        customer_name = await query_db(sql_code)
+                        customer_name = await QE.query_db(sql_code)
                         if id_checkbox.value and int(id_input.value) > 0:
-                            if devops_manager:
-                                msg = devops_manager.save_comment(
+                            if DO.manager:
+                                msg = DO.manager.save_comment(
                                     customer_name=customer_name.iloc[0][
                                         "customer_name"
                                     ],
@@ -407,7 +260,7 @@ def ui_time_tracking():
                             "DEBUG",
                             f"Deleted customer_id: {customer_id}, project_id: {project_id}",
                         )
-                        await function_db(
+                        await QE.function_db(
                             "delete_time_row", int(customer_id), int(project_id)
                         )
                         ui.notify("Entry deleted", color="negative")
@@ -436,7 +289,7 @@ def ui_time_tracking():
         if not start_date or not end_date:  # Fallback to today if not set
             today = datetime.now().strftime("%Y%m%d")
             start_date = end_date = today
-        df = await function_db(
+        df = await QE.function_db(
             "get_customer_ui_list", start_date=start_date, end_date=end_date
         )
         return df
@@ -492,7 +345,7 @@ def ui_time_tracking():
                                     )
                                 ):
                                     sql_query = f"select * from time where customer_id = {customer_id} and project_id = {project['project_id']} and end_time is null"
-                                    df_counts = await query_db(sql_query)
+                                    df_counts = await QE.query_db(sql_query)
                                     initial_state = (
                                         True if len(df_counts) > 0 else False
                                     )
@@ -557,8 +410,7 @@ def ui_time_tracking():
 
 
 def ui_add_data():
-    global add_data_df
-    asyncio.run(refresh_add_data())
+    asyncio.run(AD.refresh())
 
     # --- Modular Tab Panel Builder ---
     def add_save_button(save_data, fields, widgets):
@@ -569,7 +421,7 @@ def ui_add_data():
             if not helpers.check_input(widgets, required_fields):
                 return
             kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
-            await function_db(save_data.function, **kwargs)
+            await QE.function_db(save_data.function, **kwargs)
             msg_1, msg_2 = helpers.print_success(
                 save_data.main_action,
                 widgets[save_data.main_param].value,
@@ -578,7 +430,7 @@ def ui_add_data():
             )
             log_msg("INFO", msg_1)
             log_msg("INFO", msg_2)
-            await refresh_add_data()
+            await AD.refresh()
 
         ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
 
@@ -592,7 +444,7 @@ def ui_add_data():
         fields = config_ui["customer"][tab_type.lower()]["fields"]
         action = config_ui["customer"][tab_type.lower()]["action"]
 
-        active_data = helpers.filter_df(add_data_df, {"c_current": 1})
+        active_data = helpers.filter_df(AD.df, {"c_current": 1})
 
         with container:
             if tab_type == "Add":
@@ -608,9 +460,7 @@ def ui_add_data():
                 new_customer_names = {}
 
                 for customer in customer_names:
-                    filtered = helpers.filter_df(
-                        add_data_df, {"customer_name": customer}
-                    )
+                    filtered = helpers.filter_df(AD.df, {"customer_name": customer})
                     org_urls[customer] = helpers.get_unique_list(filtered, "org_url")
                     pat_tokens[customer] = helpers.get_unique_list(
                         filtered, "pat_token"
@@ -642,7 +492,7 @@ def ui_add_data():
                 # Only show customer_name where c_current == 0 and NOT present in any row where c_current == 1
                 customer_names = helpers.get_unique_list(active_data, "customer_name")
                 candidate_names = helpers.filter_df(
-                    add_data_df,
+                    AD.df,
                     {"c_current": 0},
                     return_as="distinct_list",
                     column="customer_name",
@@ -668,7 +518,7 @@ def ui_add_data():
         action = config_ui["project"][tab_type.lower()]["action"]
 
         active_data = helpers.filter_df(
-            add_data_df,
+            AD.df,
             {"c_current": 1},
         )
         active_customer_names = helpers.get_unique_list(active_data, "customer_name")
@@ -839,7 +689,7 @@ def ui_add_data():
 
                 async def on_tab_change(e, function, container):
                     tab_type = e.args
-                    await refresh_add_data()
+                    await AD.refresh()
                     function(tab_type, container)
 
                 for tab_dict in tab_list.values():
@@ -903,7 +753,7 @@ def ui_devops_settings_entrypoint():
     called = {"done": False}
 
     async def check_data_ready():
-        if not called["done"] and devops_df is not None and devops_long_df is not None:
+        if not called["done"] and DO.df is not None and DO.long_df is not None:
             called["done"] = True
             devops_settings_container.clear()
             await ui_devops_settings()
@@ -914,12 +764,12 @@ def ui_devops_settings_entrypoint():
 
 
 async def ui_devops_settings():
-    customer_names = helpers.get_unique_list(devops_df, "customer_name")
+    customer_names = helpers.get_unique_list(DO.df, "customer_name")
 
     epic_names = {}
     for customer in customer_names:
         filtered = helpers.filter_df(
-            devops_long_df, {"customer_name": customer, "type": "Epic"}
+            DO.long_df, {"customer_name": customer, "type": "Epic"}
         )
         # Temporary storing id and name - will drop id later
         epic_names[customer] = [
@@ -930,7 +780,7 @@ async def ui_devops_settings():
     for customer in customer_names:
         for epic_name, epic_id in epic_names[customer]:
             filtered = helpers.filter_df(
-                devops_long_df, {"customer_name": customer, "parent_id": epic_id}
+                DO.long_df, {"customer_name": customer, "parent_id": epic_id}
             )
             feature_names[epic_name] = helpers.get_unique_list(filtered, "name")
 
@@ -968,7 +818,7 @@ async def ui_devops_settings():
         }
         parent_id = int(helpers.extract_devops_id(wid["feature_name"]))
 
-        success, message = devops_manager.create_user_story(
+        success, message = DO.manager.create_user_story(
             customer_name=wid["customer_name"],
             title=wid["user_story_name"],
             description=dedent(description),
@@ -1060,7 +910,7 @@ async def ui_devops_settings():
 
                 async def on_user_story_tab_change(e):
                     tab_type = e.args
-                    await refresh_add_data()
+                    await AD.refresh()
                     build_user_story_tab_panel(tab_type)
 
                 # User Stories
@@ -1083,12 +933,12 @@ async def ui_devops_settings():
 
 
 def ui_query_editor():
-    asyncio.run(refresh_query_data())
+    asyncio.run(QE.refresh())
 
     async def save_custom_query():
         query = editor.value
         try:
-            await query_db(query)
+            await QE.query_db(query)
 
             with ui.dialog() as popup:
                 with ui.card().classes("w-64"):
@@ -1102,18 +952,18 @@ def ui_query_editor():
                         if not name:
                             ui.notify("Query name required", color="negative")
                             return
-                        if name in query_df["query_name"].tolist():
+                        if name in QE.df["query_name"].tolist():
                             ui.notify("Query name already exists", color="negative")
                             return
                         # Save to queries table
-                        await function_db(
+                        await QE.function_db(
                             "execute_query",
                             "insert into queries (query_name, query_sql) values (?, ?)",
                             (name, query),
                         )
                         ui.notify(f"Query '{name}' saved!", color="positive")
                         popup.close()
-                        await refresh_query_data()
+                        await QE.refresh()
                         render_query_buttons()
 
                     with ui.row().classes("justify-between items-center w-full"):
@@ -1127,20 +977,18 @@ def ui_query_editor():
             log_msg("ERROR", f"Error: {e}")
 
     async def update_custom_query():
-        if len(query_df[query_df["is_default"] != 1]["query_name"]) <= 1:
+        if len(QE.df[QE.df["is_default"] != 1]["query_name"]) <= 1:
             ui.notify("At least one custom query must exist", color="negative")
             return
 
         query = editor.value
         try:
-            await query_db(query)
+            await QE.query_db(query)
 
             with ui.dialog() as popup:
                 with ui.card().classes("w-64"):
                     name_input = ui.select(
-                        options=query_df[query_df["is_default"] != 1][
-                            "query_name"
-                        ].tolist(),
+                        options=QE.df[QE.df["is_default"] != 1]["query_name"].tolist(),
                         label="Existing Query",
                     ).classes("w-full")
 
@@ -1153,14 +1001,14 @@ def ui_query_editor():
                             ui.notify("Select a existing query", color="negative")
                             return
                         # Save to queries table
-                        await function_db(
+                        await QE.function_db(
                             "execute_query",
                             "update queries set query_sql = ? where query_name = ?",
                             (query, name),
                         )
                         ui.notify(f"Query '{name}' updated!", color="positive")
                         popup.close()
-                        await refresh_query_data()
+                        await QE.refresh()
                         render_query_buttons()
 
                     with ui.row().classes("justify-between items-center w-full"):
@@ -1174,7 +1022,7 @@ def ui_query_editor():
             log_msg("ERROR", f"Error: {e}")
 
     async def delete_custom_query():
-        if len(query_df[query_df["is_default"] != 1]["query_name"]) == 0:
+        if len(QE.df[QE.df["is_default"] != 1]["query_name"]) == 0:
             ui.notify("At least one custom query must exist", color="negative")
             return
 
@@ -1182,9 +1030,7 @@ def ui_query_editor():
             with ui.dialog() as popup:
                 with ui.card().classes("w-64"):
                     name_input = ui.select(
-                        options=query_df[query_df["is_default"] != 1][
-                            "query_name"
-                        ].tolist(),
+                        options=QE.df[QE.df["is_default"] != 1]["query_name"].tolist(),
                         label="Existing Query",
                     ).classes("w-full")
 
@@ -1197,14 +1043,14 @@ def ui_query_editor():
                             ui.notify("Select a existing query", color="negative")
                             return
                         # Save to queries table
-                        await function_db(
+                        await QE.function_db(
                             "execute_query",
                             "delete from queries where query_name = ?",
                             (name,),
                         )
                         ui.notify(f"Query '{name}' deleted!", color="positive")
                         popup.close()
-                        await refresh_query_data()
+                        await QE.refresh()
                         render_query_buttons()
 
                     with ui.row().classes("justify-between items-center w-full"):
@@ -1224,7 +1070,7 @@ def ui_query_editor():
             preset_queries.clear()
             with preset_queries:
                 with ui.button_group().classes("gap-1"):
-                    for _, row in query_df.iterrows():
+                    for _, row in QE.df.iterrows():
                         ui.button(
                             row["query_name"],
                             on_click=lambda r=row: editor.set_value(r["query_sql"]),
@@ -1302,7 +1148,7 @@ def ui_query_editor():
                                 placeholder="YYYY-MM-DD",
                             ).classes("w-full")
                         elif meta.type == "project_id" and table_name == "time":
-                            proj_df = await function_db(
+                            proj_df = await QE.function_db(
                                 "get_project_list_from_project_id",
                                 row_data.get(field, 0),
                             )
@@ -1364,7 +1210,7 @@ def ui_query_editor():
                 sql_query += f"{col} = {escape}{data}{escape}, "
             sql_query = sql_query[:-2] + f" where {key_table} = {key}"
 
-            await query_db(sql_query)
+            await QE.query_db(sql_query)
             ui.notify(
                 f"Updating row: {key_table} = {key} in {table_name} with command:\n{sql_query}"
             )
@@ -1373,7 +1219,7 @@ def ui_query_editor():
 
     ui.label("Query Editors")
 
-    initial_query = query_df[query_df["query_name"] == "time"]["query_sql"].values[0]
+    initial_query = QE.df[QE.df["query_name"] == "time"]["query_sql"].values[0]
     editor = ui.codemirror(
         initial_query,
         language="SQLite",
@@ -1397,7 +1243,7 @@ def ui_query_editor():
     async def run_code():
         query = editor.value
         try:
-            df = await query_db(query)
+            df = await QE.query_db(query)
             if df is not None:
                 grid_box.options["columnDefs"] = [
                     {"field": str(col).lower(), "headerName": str(col).lower()}
@@ -1558,20 +1404,20 @@ def run_async_task(func, *args, **kwargs):
     return t
 
 
-async def preload_devops():
-    try:
-        await setup_devops()
-        await get_devops_df()
-        log_msg("INFO", "DevOps preload complete.")
-    except Exception as e:
-        log_msg("ERROR", f"Error during DevOps preload: {e}")
-
-
 def main():
+    global QE, AD, DO
     log_msg("INFO", "Starting WorkTimer!")
+    QE = QueryData(MAIN_DB)
+    QE.refresh()  # Initial load of queries
+
+    AD = AddData(query_engine=QE)
+    AD.refresh()
+
     setup_config()
-    run_async_task(preload_devops)
-    setup_db(MAIN_DB)
+
+    DO = DevopsData(query_engine=QE)
+    run_async_task(DO.initialize)
+
     ui.add_head_html("""
     <script>
     document.addEventListener('keydown', function(e) {
