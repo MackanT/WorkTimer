@@ -1121,6 +1121,7 @@ def ui_query_editor():
             popup.open()
         except Exception as e:
             ui.notify("Query is invalid", color="negative")
+            log_msg("ERROR", f"Error: {e}")
 
     async def update_custom_query():
         if len(query_df[query_df["is_default"] != 1]["query_name"]) <= 1:
@@ -1167,6 +1168,7 @@ def ui_query_editor():
             popup.open()
         except Exception as e:
             ui.notify("Query is invalid", color="negative")
+            log_msg("ERROR", f"Error: {e}")
 
     async def delete_custom_query():
         if len(query_df[query_df["is_default"] != 1]["query_name"]) == 0:
@@ -1210,6 +1212,7 @@ def ui_query_editor():
             popup.open()
         except Exception as e:
             ui.notify("You should not see this!", color="negative")
+            log_msg("ERROR", f"Error: {e}")
 
     with ui.row().classes("justify-between items-center w-full"):
         preset_queries = ui.element()
@@ -1405,6 +1408,7 @@ def ui_query_editor():
         except Exception as e:
             with grid_box:
                 ui.notify(f"Error: {e}")
+            log_msg("ERROR", f"Error: {e}")
 
     asyncio.run(run_code())
 
