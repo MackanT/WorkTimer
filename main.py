@@ -23,8 +23,7 @@ query_df = None
 devops_manager = None
 devops_df = None
 devops_long_df = None
-# Global event loop for background tasks
-global_loop = None
+
 MAIN_DB = "data_dpg_copy.db"
 CONFIG_FOLDER = "config"
 
@@ -1387,7 +1386,7 @@ def ui_query_editor():
         .classes("h-96 w-full")
         .on(
             "cellClicked",
-            on_cell_clicked,  # lambda event: ui.notify(f"Cell value: {event.args['value']}"
+            on_cell_clicked,
         )
     )
 
