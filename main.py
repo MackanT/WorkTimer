@@ -1425,18 +1425,18 @@ def run_async_task(func, *args, **kwargs):
 def main():
     global LOG, QE, AD, DO
 
-    LOG = LogData(debug=DEBUG_MODE)
-    LOG.log_msg("INFO", "Starting WorkTimer!")
-
-    QE = QueryData(file_name=MAIN_DB, log_engine=LOG)
-    QE.refresh()  # Initial load of queries
-
-    AD = AddData(query_engine=QE, log_engine=LOG)
-    AD.refresh()
-
     setup_config()
 
-    DO = DevopsData(query_engine=QE, log_engine=LOG)
+    LOG = Logger(debug=DEBUG_MODE)
+    LOG.log_msg("INFO", "Starting WorkTimer!")
+
+    QE = QueryEngine(file_name=MAIN_DB, log_engine=LOG)
+    asyncio.run(QE.refresh())  # Initial load of queries
+
+    AD = AddData(query_engine=QE, log_engine=LOG)
+    asyncio.run(AD.refresh())
+
+    DO = DevOpsEngine(query_engine=QE, log_engine=LOG)
     run_async_task(DO.initialize)
 
     ui.add_head_html("""

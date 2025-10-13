@@ -90,8 +90,8 @@ class Logger:
             self.LOG_TEXTAREA.run_method("scrollTo", 0, 99999)
 
 
-class QueryData:
-    def __init__(self, file_name: str, log_engine: LogData):
+class QueryEngine:
+    def __init__(self, file_name: str, log_engine: Logger):
         self.file_name = file_name
         self.db = Database(file_name)
         self.db.initialize_db()
@@ -110,7 +110,7 @@ class QueryData:
 
 
 class AddData:
-    def __init__(self, query_engine: QueryData, log_engine: LogData):
+    def __init__(self, query_engine: QueryEngine, log_engine: Logger):
         self.df = None
         self.query_engine = query_engine
         self.log = log_engine
@@ -119,8 +119,8 @@ class AddData:
         self.df = await self.query_engine.function_db("get_data_input_list")
 
 
-class DevopsData:
-    def __init__(self, query_engine: QueryData, log_engine: LogData):
+class DevOpsEngine:
+    def __init__(self, query_engine: QueryEngine, log_engine: Logger):
         self.manager = None
         self.df = None
         self.long_df = None
