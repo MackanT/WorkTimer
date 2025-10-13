@@ -1352,10 +1352,10 @@ def ui_query_editor():
 
 
 def ui_log():
-    with ui.card().classes("w-full max-w-2xl mx-auto my-8 p-4"):
+    with ui.card().classes("w-full max-w-[98vw] mx-auto my-8 p-2 h-[76vh]"):
         ui.label("Application Log").classes("text-h5 mb-4")
         LOG.LOG_TEXTAREA = ui.html(content="").classes(
-            "w-full h-96 overflow-auto bg-black text-white p-2 rounded"
+            "w-full h-full overflow-auto bg-black text-white p-2 rounded"
         )
         LOG.update_log_textarea()
 
