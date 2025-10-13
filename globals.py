@@ -1,6 +1,7 @@
 import pandas as pd
 from devops import DevOpsManager
 from database import Database
+from dataclasses import dataclass
 import asyncio
 import logging
 
@@ -9,7 +10,30 @@ def generate_sync_sql(main_db, uploaded_path):
     return Database.generate_sync_sql(main_db, uploaded_path)
 
 
-class LogData:
+@dataclass
+class SaveData:
+    function: str
+    main_action: str
+    main_param: str
+    secondary_action: str
+    button_name: str = "Save"
+
+
+@dataclass
+class TableColumn:
+    editable: bool = False
+    pk: bool = False
+    type: str = "str"
+
+
+@dataclass
+class DevOpsTag:
+    name: str = ""
+    icon: str = "bookmark"
+    color: str = "green"
+
+
+class Logger:
     def __init__(self, debug: bool = False):
         self.debug = debug
         self.logger, self.formatter = self.setup_logging()
@@ -63,7 +87,6 @@ class LogData:
                 lines.append(line)
             self.LOG_TEXTAREA.set_content("<br>".join(lines))
             self.LOG_TEXTAREA.update()
-            # Scroll to bottom using run_method
             self.LOG_TEXTAREA.run_method("scrollTo", 0, 99999)
 
 

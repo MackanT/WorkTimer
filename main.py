@@ -2,41 +2,24 @@ from nicegui import events, ui
 from nicegui.events import KeyEventArguments
 import helpers
 import asyncio
-from globals import LogData, AddData, QueryData, DevopsData, generate_sync_sql
+from globals import (
+    Logger,
+    AddData,
+    QueryEngine,
+    DevOpsEngine,
+    DevOpsTag,
+    TableColumn,
+    SaveData,
+    generate_sync_sql,
+)
 from datetime import datetime
-from dataclasses import dataclass
 from textwrap import dedent
 import threading
 import tempfile
 import os
 import yaml
 
-DEBUG_MODE = True
-MAIN_DB = "data_dpg_copy.db"
 CONFIG_FOLDER = "config"
-
-
-@dataclass
-class SaveData:
-    function: str
-    main_action: str
-    main_param: str
-    secondary_action: str
-    button_name: str = "Save"
-
-
-@dataclass
-class TableColumn:
-    editable: bool = False
-    pk: bool = False
-    type: str = "str"
-
-
-@dataclass
-class DevOpsTag:
-    name: str = ""
-    icon: str = "bookmark"
-    color: str = "green"
 
 
 ## Config Setup ##
