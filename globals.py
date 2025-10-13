@@ -1,6 +1,6 @@
 import pandas as pd
-from devops_new import DevOpsManager
-from database_new import Database
+from devops import DevOpsManager
+from database import Database
 import asyncio
 import logging
 

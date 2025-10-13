@@ -937,9 +937,9 @@ class Database:
         sql_statements = []
 
         # Tables
-        cursor_main.execute("SELECT name, sql FROM sqlite_master WHERE type='table';")
+        cursor_main.execute("select name, sql from sqlite_master where type='table';")
         main_tables = {row[0]: row[1] for row in cursor_main.fetchall()}
-        cursor_uploaded.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        cursor_uploaded.execute("select name from sqlite_master where type='table';")
         uploaded_tables = set(row[0] for row in cursor_uploaded.fetchall())
         missing_tables = set(main_tables.keys()) - uploaded_tables
         for table in missing_tables:
@@ -947,22 +947,30 @@ class Database:
 
         # Columns
         for table in set(main_tables.keys()) & uploaded_tables:
-            cursor_main.execute(f"PRAGMA table_info('{table}')")
+            cursor_main.execute(f"pragma table_info('{table}')")
             main_cols = {row[1]: row for row in cursor_main.fetchall()}
-            cursor_uploaded.execute(f"PRAGMA table_info('{table}')")
+            cursor_uploaded.execute(f"pragma table_info('{table}')")
             uploaded_cols = {row[1]: row for row in cursor_uploaded.fetchall()}
             missing_cols = set(main_cols.keys()) - set(uploaded_cols.keys())
             for col in missing_cols:
                 col_type = main_cols[col][2]
                 sql_statements.append(
-                    f"ALTER TABLE {table} ADD COLUMN {col} {col_type};"
+                    f"alter table {table} add column {col} {col_type};"
                 )
-            # For changed column types, you may want to warn or handle manually
+            # Detect columns with different datatypes
+            common_cols = set(main_cols.keys()) & set(uploaded_cols.keys())
+            for col in common_cols:
+                main_type = main_cols[col][2]
+                uploaded_type = uploaded_cols[col][2]
+                if main_type.lower() != uploaded_type.lower():
+                    sql_statements.append(
+                        f"-- WARNING: Column '{col}' in table '{table}' has type '{uploaded_type}' in uploaded DB but '{main_type}' in main DB. Manual review required."
+                    )
 
         # Triggers
-        cursor_main.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger';")
+        cursor_main.execute("select name, sql from sqlite_master where type='trigger';")
         main_triggers = {row[0]: row[1] for row in cursor_main.fetchall()}
-        cursor_uploaded.execute("SELECT name FROM sqlite_master WHERE type='trigger';")
+        cursor_uploaded.execute("select name from sqlite_master where type='trigger';")
         uploaded_triggers = set(row[0] for row in cursor_uploaded.fetchall())
         missing_triggers = set(main_triggers.keys()) - uploaded_triggers
         for trigger in missing_triggers:
@@ -970,10 +978,10 @@ class Database:
 
         # Indexes
         cursor_main.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL;"
+            "select name, sql from sqlite_master where type='index' and sql is not null;"
         )
         main_indexes = {row[0]: row[1] for row in cursor_main.fetchall()}
-        cursor_uploaded.execute("SELECT name FROM sqlite_master WHERE type='index';")
+        cursor_uploaded.execute("select name from sqlite_master where type='index';")
         uploaded_indexes = set(row[0] for row in cursor_uploaded.fetchall())
         missing_indexes = set(main_indexes.keys()) - uploaded_indexes
         for idx in missing_indexes:
@@ -982,228 +990,25 @@ class Database:
         # Remove extra tables
         extra_tables = uploaded_tables - set(main_tables.keys())
         for table in extra_tables:
-            sql_statements.append(f"DROP TABLE IF EXISTS {table};")
+            sql_statements.append(f"drop table if exists {table};")
 
         # Remove extra triggers
-        cursor_uploaded.execute("SELECT name FROM sqlite_master WHERE type='trigger';")
+        cursor_uploaded.execute("select name from sqlite_master where type='trigger';")
         uploaded_triggers = set(row[0] for row in cursor_uploaded.fetchall())
         extra_triggers = uploaded_triggers - set(main_triggers.keys())
         for trigger in extra_triggers:
-            sql_statements.append(f"DROP TRIGGER IF EXISTS {trigger};")
+            sql_statements.append(f"drop trigger if exists {trigger};")
 
         # Remove extra indexes
-        cursor_uploaded.execute("SELECT name FROM sqlite_master WHERE type='index';")
+        cursor_uploaded.execute("select name from sqlite_master where type='index';")
         uploaded_indexes = set(row[0] for row in cursor_uploaded.fetchall())
         extra_indexes = uploaded_indexes - set(main_indexes.keys())
         for idx in extra_indexes:
-            sql_statements.append(f"DROP INDEX IF EXISTS {idx};")
+            sql_statements.append(f"drop index if exists {idx};")
 
         conn_main.close()
         conn_uploaded.close()
         return "\n\n".join(sql_statements) if sql_statements else "-- No changes needed"
-
-    # def process_queue(self):
-    #     """
-    #     Process tasks in the queue.
-    #     """
-    #     while not self.queue.empty():
-    #         task = self.queue.get()
-    #         action = task["action"]
-    #         data = task["data"]
-    #         response = task["response"]
-
-    #         try:
-    #             if action == "insert_customer":
-    #                 self.insert_customer(
-    #                     customer_name=data["customer_name"],
-    #                     start_date=data["start_date"],
-    #                     wage=int(data["wage"]),
-    #                     pat_token=data.get("pat_token"),
-    #                     org_url=data.get("org_url"),
-    #                 )
-    #             elif action == "update_customer":
-    #                 self.update_customer(
-    #                     customer_name=data["customer_name"],
-    #                     new_customer_name=data["new_customer_name"],
-    #                     wage=int(data["wage"]),
-    #                     org_url=data.get("org_url"),
-    #                     pat_token=data.get("pat_token"),
-    #                 )
-    #             elif action == "remove_customer":
-    #                 self.remove_customer(data["customer_name"])
-    #             elif action == "enable_customer":
-    #                 self.enable_customer(data["customer_name"])
-    #             elif action == "insert_project":
-    #                 self.insert_project(
-    #                     data["customer_name"], data["project_name"], data["git_id"]
-    #                 )
-    #             elif action == "update_project":
-    #                 self.update_project(
-    #                     data["customer_name"],
-    #                     data["project_name"],
-    #                     data["new_project_name"],
-    #                     data["new_git_id"],
-    #                 )
-    #             elif action == "delete_project":
-    #                 self.remove_project(data["customer_name"], data["project_name"])
-    #             elif action == "enable_project":
-    #                 self.enable_project(data["customer_name"], data["project_name"])
-    #             elif action == "insert_bonus":
-    #                 self.insert_bonus(data["start_date"], data["amount"])
-    #             elif action == "get_customer_update":
-    #                 result = self.fetch_query(
-    #                     "select wage, org_url, pat_token from customers where customer_name = ? and is_current = 1",
-    #                     (data["customer_name"],),
-    #                 )
-    #                 if response:
-    #                     response.put(result)
-    #             elif action == "get_bonus":
-    #                 result = self._get_value_from_db(
-    #                     "select bonus_percent from bonus where ? between start_date and ifnull(end_date, '2099-12-31')",
-    #                     (data["date"],),
-    #                     data_type="float",
-    #                 )
-    #                 if response:
-    #                     response.put(result)
-    #             elif action == "get_customer_name_from_cid":
-    #                 result = self._get_value_from_db(
-    #                     "select customer_name from customers where customer_id = ?",
-    #                     (data["customer_id"],),
-    #                 )
-    #                 if response:
-    #                     response.put(result)
-    #             elif action == "get_project_name_from_pid":
-    #                 result = self._get_value_from_db(
-    #                     "select project_name from projects where project_id = ?",
-    #                     (data["project_id"],),
-    #                 )
-    #                 if response:
-    #                     response.put(result)
-    #             elif action == "get_active_customers":
-    #                 result = self.fetch_query("""
-    #                     select distinct c.customer_name
-    #                     from projects p
-    #                     left join customers c on c.customer_id = p.customer_id and p.is_current = 1
-    #                     where c.is_current = 1
-    #                 """)
-    #                 if response:
-    #                     response.put(result["customer_name"].unique().tolist())
-    #             elif action == "get_inactive_customers":
-    #                 result = self.fetch_query("""
-    #                     select c.customer_name
-    #                     from customers c
-    #                     group by c.customer_name
-    #                     having sum(c.is_current) = 0
-    #                 """)
-    #                 if response:
-    #                     response.put(result["customer_name"].unique().tolist())
-    #             elif action == "get_customers_with_inactive_projects":
-    #                 result = self.fetch_query("""
-    #                     select c.customer_name
-    #                     from projects p
-    #                     left join customers c on c.customer_id = p.customer_id
-    #                     where p.is_current = 0
-    #                 """)
-    #                 if response:
-    #                     response.put(result["customer_name"].unique().tolist())
-    #             elif action == "get_customer_names":
-    #                 result = self.fetch_query(
-    #                     "select customer_name from customers where is_current = 1"
-    #                 )
-    #                 if response:
-    #                     response.put(result["customer_name"].unique().tolist())
-    #             elif action == "get_customer_ui_list":
-    #                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    #                 query = f"""
-    #                     with calculated_time as (
-    #                         select
-    #                             p.customer_id,
-    #                             c.customer_name,
-    #                             p.project_id,
-    #                             p.project_name,
-    #                             ifnull(sum(
-    #                                 ifnull(t.total_time, (julianday('{now}') - julianday(start_time)) * 24)
-    #                             ), 0) as total_time,
-    #                             ifnull(sum(
-    #                                 ifnull(t.total_time, (julianday('{now}') - julianday(start_time)) * 24)
-    #                                 * ifnull(t.wage, 0)
-    #                                 * ifnull(t.bonus, 0)
-    #                             ), 0) as user_bonus
-    #                             ,min(coalesce(c.sort_order, 0)) as sort_order
-    #                         from projects p
-    #                         join customers c on c.customer_id = p.customer_id and c.is_current = 1
-    #                         left join time t on t.customer_id = p.customer_id and t.project_id = p.project_id
-    #                             and t.date_key between {data["start_date"]} and {data["end_date"]}
-    #                         where p.is_current = 1
-    #                         group by
-    #                             p.customer_id,
-    #                             c.customer_name,
-    #                             p.project_id,
-    #                             p.project_name
-    #                     )
-    #                     select
-    #                         ct.customer_id,
-    #                         ct.customer_name,
-    #                         ct.project_id,
-    #                         ct.project_name,
-    #                         round(ct.total_time, 2) as total_time,
-    #                         round(ct.user_bonus, 2) as user_bonus,
-    #                         sort_order
-    #                     from calculated_time ct
-    #                     order by sort_order asc;
-    #                 """
-    #                 result = self.fetch_query(query)
-    #                 if response:
-    #                     response.put(result)
-    #             elif action == "get_project_names":
-    #                 result = self.fetch_query(
-    #                     """
-    #                     select p.project_name
-    #                     from projects p
-    #                     left join customers c on c.customer_id = p.customer_id
-    #                     where c.customer_name = ? and p.is_current = 1
-    #                 """,
-    #                     (data["customer_name"],),
-    #                 )
-    #                 if response:
-    #                     response.put(result["project_name"].unique().tolist())
-    #             elif action == "get_inactive_project_names":
-    #                 result = self.fetch_query(
-    #                     """
-    #                     select p.project_name
-    #                     from projects p
-    #                     left join customers c on c.customer_id = p.customer_id
-    #                     where c.customer_name = ? and p.is_current = 0
-    #                 """,
-    #                     (data["customer_name"],),
-    #                 )
-    #                 if response:
-    #                     response.put(result["project_name"].unique().tolist())
-    #             elif action == "get_df":
-    #                 result = self.fetch_query(data["query"])
-    #                 if response:
-    #                     response.put(result)
-    #             elif action == "run_query":
-    #                 query = data["query"].strip()
-    #                 if query.lower().startswith("select") or query.lower().startswith(
-    #                     "with"
-    #                 ):
-    #                     result = self.fetch_query(query)
-    #                 else:
-    #                     self.execute_query(query)
-    #                     result = []
-    #                 if response:
-    #                     response.put(result)
-    #             elif action == "run_cursor":
-    #                 query = data["query"]
-    #                 params = data.get("params", ())
-    #                 cursor = self.conn.execute(query, params)
-    #                 result = cursor.fetchall()
-    #                 if response:
-    #                     response.put(result)
-    #         except Exception as e:
-    #             if response:
-    #                 response.put(e)
 
     def execute_query(self, query: str, params: tuple = ()):
         try:
