@@ -24,7 +24,20 @@ CONFIG_FOLDER = "config"
 
 ## Config Setup ##
 def setup_config():
-    global config_ui, config_devops_ui, config_data, DEVOPS_TAGS, TABLE_IDS
+    global \
+        config_ui, \
+        config_devops_ui, \
+        config_data, \
+        DEVOPS_TAGS, \
+        TABLE_IDS, \
+        DEBUG_MODE, \
+        MAIN_DB
+
+    with open(f"{CONFIG_FOLDER}/config_settings.yml") as f:
+        fields = yaml.safe_load(f)
+    DEBUG_MODE = fields.get("debug_mode", False)
+    MAIN_DB = fields.get("db_name", "data_dpg.db")
+    print(f"Config loaded: DB={MAIN_DB}, Debug={DEBUG_MODE}")
 
     with open(f"{CONFIG_FOLDER}/config_ui.yml") as f:
         fields = yaml.safe_load(f)
