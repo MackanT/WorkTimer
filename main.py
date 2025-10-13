@@ -636,6 +636,92 @@ def ui_add_data():
                 .classes("w-full min-w-0 h-96")
             )
 
+    def build_database_update():
+        uploaded_db_path = None
+        original_db_filename = None
+
+        def handle_upload(e: events.UploadEventArguments):
+            nonlocal uploaded_db_path, original_db_filename
+            ui.notify(f"File uploaded: {e.name}", color="positive")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+                tmp.write(e.content.read())
+                uploaded_db_path = tmp.name
+                original_db_filename = e.name if hasattr(e, "name") else "database.db"
+            result_box.set_content(f"-- Uploaded DB: {uploaded_db_path}")
+            result_box.update()
+
+        def run_sql():
+            if not uploaded_db_path:
+                ui.notify("No uploaded DB!", color="negative")
+                return
+            import sqlite3
+
+            try:
+                conn = sqlite3.connect(uploaded_db_path)
+
+                cursor = conn.cursor()
+                query = (
+                    sql_input.value if hasattr(sql_input, "value") else sql_input.text
+                )
+                cursor.executescript(query)
+                conn.commit()
+
+                # Try to fetch results if it's a SELECT
+                if query.strip().lower().startswith("select"):
+                    cursor.execute(query)
+                    rows = cursor.fetchall()
+                    columns = [desc[0] for desc in cursor.description]
+                    result = (
+                        "\t".join(columns)
+                        + "\n"
+                        + "\n".join(
+                            ["\t".join(str(cell) for cell in row) for row in rows]
+                        )
+                    )
+                else:
+                    result = "Query executed successfully."
+                    ui.notify("Query executed successfully.", color="positive")
+                conn.close()
+                result_box.set_content(result)
+                result_box.update()
+            except Exception as e:
+                result_box.set_content(f"Error: {e}")
+                result_box.update()
+
+        with ui.card().classes("w-full max-w-2xl mx-auto my-0 p-4"):
+            ui.label("Upload a .db file to run SQL queries on.").classes(
+                "text-h5 mb-0 dense"
+            )
+            ui.upload(on_upload=handle_upload).props("accept=.db").classes(
+                "q-pa-xs q-ma-xs mb-2"
+            )
+            with ui.row().classes("w-full mb-2"):
+                ui.button("Run SQL", on_click=run_sql).classes("mr-2")
+
+                def download_db():
+                    if not uploaded_db_path:
+                        ui.notify("No uploaded DB!", color="negative")
+                        return
+                    # Serve the file for download with the original filename
+                    filename = (
+                        original_db_filename
+                        if original_db_filename
+                        else os.path.basename(uploaded_db_path)
+                    )
+                    ui.download(uploaded_db_path, filename)
+
+                ui.button("Download DB", on_click=download_db)
+
+        sql_input = ui.codemirror(
+            "-- Enter SQL query here --",
+            language="SQLite",
+            theme="dracula",
+        ).classes("w-full min-w-0 h-40 mt-2")
+
+        result_box = ui.code("-- Results will appear here --", language="sql").classes(
+            "w-full min-w-0 h-64 mt-4"
+        )
+
     tab_list = {}
     vertical_tab_entries = [i for i in config_ui]
     function_map = {
@@ -710,10 +796,13 @@ def ui_add_data():
                 with ui.tab_panel(tab_database):
                     with ui.tabs().classes("mb-2") as database_tabs:
                         tab_add = ui.tab("Schema Compare")
+                        tab_update = ui.tab("Update DB")
 
                     with ui.tab_panels(database_tabs, value=tab_add):
                         with ui.tab_panel(tab_add):
                             build_database_compare()
+                        with ui.tab_panel(tab_update):
+                            build_database_update()
 
 
 def ui_devops_settings_entrypoint():
