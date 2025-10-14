@@ -157,28 +157,47 @@ def ui_time_tracking():
 
                     ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
 
-                    id_options = DO.long_df[(DO.long_df["customer_name"] == c_name)][
-                        ["name", "id"]
-                    ].dropna()
+                    # Check if customer has DevOps connection
+                    has_devops = False
+                    if (
+                        hasattr(DO, "manager")
+                        and DO.manager
+                        and hasattr(DO.manager, "clients")
+                    ):
+                        has_devops = c_name in DO.manager.clients
 
-                    id_input = ui.select(
-                        id_options["name"].tolist(), with_input=True, label="DevOps-ID"
-                    ).classes("w-full -mb-2")
-                    if has_git_id:
-                        id_input.value = id_options[id_options["id"] == git_id][
-                            "name"
-                        ].iloc[0]
+                    id_input = None
+                    id_checkbox = None
+                    if has_devops:
+                        id_options = DO.long_df[
+                            (DO.long_df["customer_name"] == c_name)
+                        ][["name", "id"]].dropna()
 
-                    with ui.row().classes("w-full items-center justify-between -mt-2"):
+                        id_input = ui.select(
+                            id_options["name"].tolist(),
+                            with_input=True,
+                            label="DevOps-ID",
+                        ).classes("w-full -mb-2")
+                        if has_git_id:
+                            match = id_options[id_options["id"] == git_id]
+                            if not match.empty:
+                                id_input.value = match["name"].iloc[0]
+                            else:
+                                id_input.value = None
 
-                        def toggle_switch():
-                            id_checkbox.value = not id_checkbox.value
-                            id_checkbox.update()
+                        with ui.row().classes(
+                            "w-full items-center justify-between -mt-2"
+                        ):
 
-                        ui.label("Store to DevOps").on("click", toggle_switch).classes(
-                            "cursor-pointer"
-                        )
-                        id_checkbox = ui.switch(value=has_git_id).props("dense")
+                            def toggle_switch():
+                                id_checkbox.value = not id_checkbox.value
+                                id_checkbox.update()
+
+                            ui.label("Store to DevOps").on(
+                                "click", toggle_switch
+                            ).classes("cursor-pointer")
+                            id_checkbox = ui.switch(value=has_git_id).props("dense")
+                    # Always show comment input
                     comment_input = ui.textarea(
                         label="Comment", placeholder="What work was done?"
                     ).classes("w-full -mt-2")
