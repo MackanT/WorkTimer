@@ -674,6 +674,11 @@ class Database:
     ### DevOps Operations ###
 
     def update_devops_data(self, df: pd.DataFrame):
+        if df.empty or len(df.columns) == 0:
+            self.pre_run_log.append(  ## TODO have this be logged correctly
+                "Warning: No DevOps data to update. Table not created."
+            )
+            return
         df.to_sql("devops", self.conn, if_exists="replace", index=False)
         self.conn.commit()
 
