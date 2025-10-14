@@ -188,20 +188,27 @@ def ui_time_tracking():
                         checkbox.value = True
 
                     async def save_popup():
-                        git_id_str = id_input.value
                         git_id = None
-                        if git_id_str and isinstance(git_id_str, str):
-                            ind_1 = git_id_str.find(":")
-                            ind_2 = git_id_str.find(" - ")
-                            if ind_1 != -1 and ind_2 != -1 and ind_2 > ind_1:
-                                try:
-                                    git_id = int(git_id_str[ind_1 + 1 : ind_2].strip())
-                                except ValueError:
-                                    git_id = None
+                        store_to_devops = False
+                        if has_devops and id_input is not None:
+                            git_id_str = id_input.value
+                            if git_id_str and isinstance(git_id_str, str):
+                                ind_1 = git_id_str.find(":")
+                                ind_2 = git_id_str.find(" - ")
+                                if ind_1 != -1 and ind_2 != -1 and ind_2 > ind_1:
+                                    try:
+                                        git_id = int(
+                                            git_id_str[ind_1 + 1 : ind_2].strip()
+                                        )
+                                    except ValueError:
+                                        git_id = None
+                            store_to_devops = (
+                                id_checkbox.value if id_checkbox is not None else False
+                            )
 
                         LOG.log_msg(
                             "DEBUG",
-                            f"Saved: {git_id}, {id_checkbox.value}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}",
+                            f"Saved: {git_id}, {store_to_devops}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}",
                         )
 
                         run_async_task(
@@ -218,25 +225,20 @@ def ui_time_tracking():
 
                         sql_code = f"select customer_name from customers where customer_id = {customer_id}"
                         customer_name = await QE.query_db(sql_code)
-                        if id_checkbox.value and int(id_input.value) > 0:
+                        if has_devops and store_to_devops and git_id and git_id > 0:
                             if DO.manager:
-                                msg = DO.manager.save_comment(
+                                status, msg = DO.manager.save_comment(
                                     customer_name=customer_name.iloc[0][
                                         "customer_name"
                                     ],
                                     comment=comment_input.value,
-                                    git_id=int(id_input.value),
+                                    git_id=git_id,
                                 )
-                                if msg:
-                                    ui.notify(
-                                        "No valid DevOps connection",
-                                        color="negative",
-                                    )
-                                else:
-                                    ui.notify(
-                                        "Comment stored successfully",
-                                        color="positive",
-                                    )
+                                col = "positive" if status else "negative"
+                                ui.notify(
+                                    msg,
+                                    color=col,
+                                )
                         popup.close()
 
                     async def delete_popup():
