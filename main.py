@@ -642,9 +642,6 @@ def ui_add_data():
             ui.label("Upload a .db file to compare with the main database.").classes(
                 "text-h5 mb-0 dense"
             )
-            ui.label(
-                "Ensure you backup the original db-file before running the generated code on it!"
-            ).classes("text-caption text-red mb-0 dense")
             ui.upload(on_upload=handle_upload).props("accept=.db").classes(
                 "q-pa-xs q-ma-xs"
             )
