@@ -729,7 +729,7 @@ def ui_add_data():
         "build_project_tab_panel": build_project_tab_panel,
         "build_bonus_tab_panel": build_bonus_tab_panel,
     }
-    with ui.splitter(value=30).classes("w-full h-full") as splitter:
+    with ui.splitter(value=20).classes("w-full h-full") as splitter:
         with splitter.before:
             with ui.tabs().props("vertical").classes("w-full") as main_tabs:
                 for tab in vertical_tab_entries:
@@ -967,7 +967,7 @@ async def ui_devops_settings():
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)
 
-    with ui.splitter(value=30).classes("w-full h-full") as splitter:
+    with ui.splitter(value=20).classes("w-full h-full") as splitter:
         with splitter.before:
             with ui.tabs().props("vertical").classes("w-full") as main_tabs:
                 tab_user_story = ui.tab("User Story", icon="business")
