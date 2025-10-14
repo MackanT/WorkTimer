@@ -405,7 +405,25 @@ def ui_add_data():
             if not helpers.check_input(widgets, required_fields):
                 return
             kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
+            # Convert any single-item list in kwargs to a string
+            for k, v in kwargs.items():
+                if isinstance(v, list):
+                    if len(v) == 1:
+                        kwargs[k] = v[0]
+                    elif len(v) > 1:  ## TODO make nicer
+                        raise ValueError(
+                            f"Field '{k}' has multiple values: {v}. Only one value is allowed."
+                        )
             await QE.function_db(save_data.function, **kwargs)
+            # If customer add/update, regenerate DevOps table
+            if save_data.function in ["insert_customer", "update_customer"]:
+                if "DO" in globals():
+                    LOG.log_msg("INFO", "Regenerating DevOps data...")
+                    ui.notify(
+                        "Regenerating DevOps data... This may take a few moments.",
+                        color="info",
+                    )
+                    await DO.initialize()
             msg_1, msg_2 = helpers.print_success(
                 save_data.main_action,
                 widgets[save_data.main_param].value,
