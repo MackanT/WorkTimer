@@ -130,22 +130,23 @@ class DevOpsEngine:
     async def initialize(self):
         try:
             await self.setup_manager()
-            # Check if 'devops' table exists
-            table_check_query = (
-                "select name from sqlite_master where type='table' and name='devops'"
-            )
-            table_exists = await self.query_engine.query_db(table_check_query)
-            if table_exists is not None and (
-                table_exists.empty or len(table_exists) == 0
-            ):
+
+            if not getattr(self.manager, "clients", None) or self.manager.clients == {}:
                 self.log.log_msg(
-                    "WARNING", "Table 'devops' does not exist, generating it."
+                    "WARNING",
+                    "No customers with DevOps credentials. Skipping devops table generation.",
                 )
-                await self.update_devops()
+                return
+
+            # Always update/rebuild devops data to reflect latest customer info
+            self.log.log_msg(
+                "INFO", "Regenerating DevOps table with latest customer data."
+            )
+            await self.update_devops()
             await self.load_df()
             self.log.log_msg("INFO", "DevOps preload complete.")
         except Exception as e:
-            self.log.log_msg("WARNING", f"Error during DevOps preload: {e}")
+            self.log.log_msg("ERROR", f"Error during DevOps preload: {e}")
 
     async def setup_manager(self):
         df = await self.query_engine.query_db(
