@@ -1360,6 +1360,20 @@ def ui_log():
         LOG.update_log_textarea()
 
 
+def ui_info():
+    with ui.splitter(value=20).classes("w-full h-full") as splitter:
+        with splitter.before:
+            with ui.tabs().props("vertical").classes("w-full") as info_tabs:
+                tab_readme = ui.tab("README", icon="description")
+                tab_info = ui.tab("Info", icon="info")
+        with splitter.after:
+            with ui.tab_panels(info_tabs, value=tab_readme).classes("w-full h-full"):
+                with ui.tab_panel(tab_readme):
+                    helpers.render_markdown_card("README.md")
+                with ui.tab_panel(tab_info):
+                    helpers.render_markdown_card("INFO.md")
+
+
 def setup_ui():
     dark = ui.dark_mode()
     dark.enable()
@@ -1370,6 +1384,7 @@ def setup_ui():
         tab_ui_edits = ui.tab("DevOps Settings")
         tab_query_editors = ui.tab("Query Editors")
         tab_log = ui.tab("Log")
+        tab_info = ui.tab("Info")
 
     def on_tab_change(e):
         tab_value = (
@@ -1393,6 +1408,8 @@ def setup_ui():
             ui_query_editor()
         with ui.tab_panel(tab_log):
             ui_log()
+        with ui.tab_panel(tab_info):
+            ui_info()
 
     ui.keyboard(on_key=handle_key)
 

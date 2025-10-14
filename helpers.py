@@ -1,3 +1,4 @@
+import os
 from nicegui import ui
 from datetime import date, timedelta
 import re
@@ -288,3 +289,14 @@ def get_ui_elements(config: dict) -> list[str]:
             elements.append(key)
 
     return elements
+
+
+def render_markdown_card(filename):
+    file_path = os.path.join(os.path.dirname(__file__), filename)
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        content = f"Error reading {filename}: {e}"
+    with ui.card().classes("w-full h-full my-4 p-0 flex flex-col"):
+        ui.markdown(content).classes("flex-1 w-full h-full p-6 overflow-auto")
