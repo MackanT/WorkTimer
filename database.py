@@ -161,7 +161,7 @@ class Database:
 
         try:
             # Log the initialization process
-            self.log_engine.log("INFO", "Initializing database...")
+            self.log_engine.log_msg("INFO", "Initializing database...")
 
             ## Time Table
             df_temp = self.fetch_query(
@@ -187,7 +187,7 @@ class Database:
                     comment text
                 )
                 """)
-                self.log_engine.log("INFO", "Table 'time' created successfully.")
+                self.log_engine.log_msg("INFO", "Table 'time' created successfully.")
 
                 ## Trigger for Time Table
                 self.execute_query("""
@@ -203,7 +203,7 @@ class Database:
                     where time_id = new.time_id;
                 end;
                 """)
-                self.log_engine.log(
+                self.log_engine.log_msg(
                     "INFO", "Trigger 'trigger_time_after_update' created successfully."
                 )
 
@@ -247,7 +247,7 @@ class Database:
                     where time_id = new.time_id;
                 end;
                 """)
-                self.log_engine.log(
+                self.log_engine.log_msg(
                     "INFO",
                     "Triggers for customer_name, project_name, wage and bonus created successfully.",
                 )
@@ -272,7 +272,9 @@ class Database:
                     inserted_at datetime
                 )
                 """)
-                self.log_engine.log("INFO", "Table 'customers' created successfully.")
+                self.log_engine.log_msg(
+                    "INFO", "Table 'customers' created successfully."
+                )
 
             ## Projects Table
             df_time = self.fetch_query(
@@ -288,7 +290,9 @@ class Database:
                     is_current boolean
                 )
                 """)
-                self.log_engine.log("INFO", "Table 'projects' created successfully.")
+                self.log_engine.log_msg(
+                    "INFO", "Table 'projects' created successfully."
+                )
 
             ## Bonus Table
             df_time = self.fetch_query(
@@ -303,7 +307,7 @@ class Database:
                     end_date text
                 )
                 """)
-                self.log_engine.log("INFO", "Table 'bonus' created successfully.")
+                self.log_engine.log_msg("INFO", "Table 'bonus' created successfully.")
 
             ## Dates Table
             df_time = self.fetch_query(
@@ -320,14 +324,18 @@ class Database:
                     day integer
                 )
                 """)
-                self.log_engine.log("INFO", "Table 'dates' created successfully.")
+                self.log_engine.log_msg("INFO", "Table 'dates' created successfully.")
 
                 # Populate the dates table
                 try:
                     add_dates(s_date="2020-01-01", e_date="2030-12-31")
-                    self.log_engine.log("INFO", "Dates table populated successfully.")
+                    self.log_engine.log_msg(
+                        "INFO", "Dates table populated successfully."
+                    )
                 except Exception as e:
-                    self.log_engine.log("ERROR", f"Error populating dates table: {e}")
+                    self.log_engine.log_msg(
+                        "ERROR", f"Error populating dates table: {e}"
+                    )
 
             ## Query Snippets table
             df_time = self.fetch_query(
@@ -341,19 +349,23 @@ class Database:
                     is_default boolean
                 )
                 """)
-                self.log_engine.log("INFO", "Table 'queries' created successfully.")
+                self.log_engine.log_msg("INFO", "Table 'queries' created successfully.")
 
                 try:
                     add_default_queries()
-                    self.log_engine.log("INFO", "Queries table populated successfully.")
+                    self.log_engine.log_msg(
+                        "INFO", "Queries table populated successfully."
+                    )
                 except Exception as e:
-                    self.log_engine.log("ERROR", f"Error populating queries table: {e}")
+                    self.log_engine.log_msg(
+                        "ERROR", f"Error populating queries table: {e}"
+                    )
 
         except Exception as e:
-            self.log_engine.log("ERROR", f"Error initializing database: {e}")
+            self.log_engine.log_msg("ERROR", f"Error initializing database: {e}")
         finally:
             self.conn.commit()
-            self.log_engine.log("INFO", "Database loaded without errors!")
+            self.log_engine.log_msg("INFO", "Database loaded without errors!")
 
     ### Time Table Operations ###
 
