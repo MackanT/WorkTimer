@@ -463,6 +463,17 @@ class Database:
             data_type="int",
         )
 
+        if old_customer_id:
+            self.execute_query(
+                """
+                update customers
+                set
+                    is_current = 0,
+                    valid_to = ?
+                where customer_name = ? and is_current = 1
+            """,
+                (valid_to, customer_name),
+            )
             self.log_engine.log_msg(
                 "INFO",
                 f"Disabled '{customer_name}' old id: {old_customer_id}",
