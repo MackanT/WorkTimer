@@ -815,6 +815,8 @@ class Database:
         result = self.fetch_query(query, (project_id,))
         return result
 
+    ### Schema Comparison Operations ###
+
     @staticmethod
     def get_schema_info(db_path):
         conn = sqlite3.connect(db_path)
@@ -956,6 +958,22 @@ class Database:
         conn_main.close()
         conn_uploaded.close()
         return "\n\n".join(sql_statements) if sql_statements else "-- No changes needed"
+
+    ### General DB Operations ###
+
+    def get_customer_name(self, customer_id: int) -> str:
+        return self._get_value_from_db(
+            "select customer_name from customers where customer_id = ?",
+            (customer_id,),
+            data_type="str",
+        )
+
+    def get_project_name(self, project_id: int) -> str:
+        return self._get_value_from_db(
+            "select project_name from projects where project_id = ?",
+            (project_id,),
+            data_type="str",
+        )
 
     def execute_query(self, query: str, params: tuple = ()):
         try:
