@@ -1086,7 +1086,7 @@ def ui_query_editor():
             LOG.log_msg("ERROR", f"Error: {e}")
 
     async def update_custom_query():
-        if len(QE.df[QE.df["is_default"] != 1]["query_name"]) <= 1:
+        if len(QE.df[QE.df["is_default"] != 1]["query_name"]) == 0:
             ui.notify("At least one custom query must exist", color="negative")
             return
 
