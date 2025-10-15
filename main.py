@@ -134,10 +134,6 @@ def ui_time_tracking():
             return
 
         if checked:
-            LOG.log_msg(
-                "DEBUG",
-                f"Checkbox status: {checked}, customer_id: {customer_id}, project_id: {project_id}",
-            )
             run_async_task(
                 lambda: asyncio.run(
                     QE.function_db("insert_time_row", int(customer_id), int(project_id))
@@ -269,10 +265,6 @@ def ui_time_tracking():
                         popup.close()
 
                     async def delete_popup():
-                        LOG.log_msg(
-                            "DEBUG",
-                            f"Deleted customer_id: {customer_id}, project_id: {project_id}",
-                        )
                         await QE.function_db(
                             "delete_time_row", int(customer_id), int(project_id)
                         )
