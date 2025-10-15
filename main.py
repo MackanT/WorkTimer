@@ -125,8 +125,14 @@ def ui_time_tracking():
     radio_display_selection.on("update:model-value", on_radio_type_change)
 
     container = ui.element()
+    ignore_next_checkbox_event = False
 
     async def on_checkbox_change(event, checked, customer_id, project_id):
+        nonlocal ignore_next_checkbox_event
+        if ignore_next_checkbox_event:
+            ignore_next_checkbox_event = False
+            return
+
         if checked:
             LOG.log_msg(
                 "DEBUG",
@@ -203,8 +209,10 @@ def ui_time_tracking():
                     ).classes("w-full -mt-2")
 
                     def close_popup():
+                        nonlocal ignore_next_checkbox_event
+                        ignore_next_checkbox_event = True
+                        checkbox.set_value(True)
                         popup.close()
-                        checkbox.value = True
 
                     async def save_popup():
                         git_id = None
