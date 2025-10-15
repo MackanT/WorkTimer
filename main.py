@@ -1175,17 +1175,22 @@ def ui_query_editor():
     with ui.row().classes("justify-between items-center w-full"):
         preset_queries = ui.element()
 
+        def render_query_buttons_group(queries):
+            for _, row in queries.iterrows():
+                ui.button(
+                    row["query_name"],
+                    on_click=lambda r=row: editor.set_value(r["query_sql"]),
+                ).props("flat dense").classes(
+                    "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
+                )
+
         def render_query_buttons():
             preset_queries.clear()
             with preset_queries:
                 with ui.button_group().classes("gap-1"):
-                    for _, row in QE.df.iterrows():
-                        ui.button(
-                            row["query_name"],
-                            on_click=lambda r=row: editor.set_value(r["query_sql"]),
-                        ).props("flat dense").classes(
-                            "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
-                        )
+                    render_query_buttons_group(QE.df[QE.df["is_default"] == 1])
+                    ui.separator().props("vertical").classes("mx-2")
+                    render_query_buttons_group(QE.df[QE.df["is_default"] != 1])
 
         render_query_buttons()
 
