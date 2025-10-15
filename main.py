@@ -1390,9 +1390,10 @@ def ui_query_editor():
 def ui_log():
     with ui.card().classes("w-full max-w-[98vw] mx-auto my-8 p-2 h-[76vh]"):
         ui.label("Application Log").classes("text-h5 mb-4")
-        LOG.LOG_TEXTAREA = ui.html(content="").classes(
+        log_textarea = ui.html(content="").classes(
             "w-full h-full overflow-auto bg-black text-white p-2 rounded"
         )
+        Logger.set_log_textarea(log_textarea)
         LOG.update_log_textarea()
 
 
@@ -1479,17 +1480,18 @@ def main():
     global LOG, QE, AD, DO
 
     setup_config()
-
-    LOG = Logger(debug=DEBUG_MODE)
+    LOG = Logger.get_logger("WorkTimer", debug=DEBUG_MODE)
     LOG.log_msg("INFO", "Starting WorkTimer!")
+    DB_LOG = Logger.get_logger("Database", debug=DEBUG_MODE)
+    DO_LOG = Logger.get_logger("DevOps", debug=DEBUG_MODE)
 
-    QE = QueryEngine(file_name=MAIN_DB, log_engine=LOG)
+    QE = QueryEngine(file_name=MAIN_DB, log_engine=DB_LOG)
     asyncio.run(QE.refresh())  # Initial load of queries
 
     AD = AddData(query_engine=QE, log_engine=LOG)
     asyncio.run(AD.refresh())
 
-    DO = DevOpsEngine(query_engine=QE, log_engine=LOG)
+    DO = DevOpsEngine(query_engine=QE, log_engine=DO_LOG)
     run_async_task(DO.initialize)
 
     ui.add_head_html("""

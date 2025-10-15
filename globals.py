@@ -34,26 +34,42 @@ class DevOpsTag:
 
 
 class Logger:
-    def __init__(self, debug: bool = False):
+    LOGGERS = {}
+    LOG_BUFFER = []
+    LOG_TEXTAREA = None
+    LOG_COLORS = {
+        "INFO": "white",
+        "WARNING": "orange",
+        "ERROR": "red",
+    }
+
+    def __init__(self, name="WorkTimer", debug=False):
+        self.name = name
         self.debug = debug
-        self.logger, self.formatter = self.setup_logging()
+        self.logger, self.formatter = self.setup_logging(name)
 
-        self.LOG_BUFFER = []
-        self.LOG_TEXTAREA = None
-        self.LOG_COLORS = {
-            "INFO": "white",
-            "WARNING": "orange",
-            "ERROR": "red",
-        }
+    @classmethod
+    def get_logger(cls, name="WorkTimer", debug=False):
+        if name not in cls.LOGGERS:
+            cls.LOGGERS[name] = cls(name=name, debug=debug)
+        return cls.LOGGERS[name]
 
-    def setup_logging(self):
-        LOGFORMAT = "%(asctime)s | %(levelname)-8s | %(name).35s :: %(message)s"
+    @classmethod
+    def set_log_textarea(cls, textarea):
+        cls.LOG_TEXTAREA = textarea
+        # Update all loggers' LOG_TEXTAREA reference
+        for logger in cls.LOGGERS.values():
+            logger.LOG_TEXTAREA = textarea
+
+    def setup_logging(self, name):
+        LOGFORMAT = "%(asctime)s | %(levelname)-8s | %(name)-9s :: %(message)s"
         formatter = logging.Formatter(fmt=LOGFORMAT, datefmt="%Y-%m-%d %H:%M:%S")
         handler = logging.StreamHandler()
         handler.setFormatter(formatter)
-        logger = logging.getLogger("WorkTimer")
+        logger = logging.getLogger(name)
         logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
-        logger.addHandler(handler)
+        if not logger.hasHandlers():
+            logger.addHandler(handler)
         return logger, formatter
 
     def log_msg(self, level="INFO", msg=""):
@@ -72,28 +88,26 @@ class Logger:
             exc_info=None,
         )
         formatted = self.formatter.format(record)
-        # Only add DEBUG to web log if debug==True; all other levels always added
-        self.LOG_BUFFER.append({"level": level, "msg": formatted})
-        if self.LOG_TEXTAREA:
+        self.__class__.LOG_BUFFER.append({"level": level, "msg": formatted})
+        if self.__class__.LOG_TEXTAREA:
             self.update_log_textarea()
 
     def update_log_textarea(self):
-        if self.LOG_TEXTAREA:
+        if self.__class__.LOG_TEXTAREA:
             lines = []
-            for entry in self.LOG_BUFFER:
-                color = self.LOG_COLORS.get(entry["level"], "white")
-                # Use HTML for color
-                line = f'<span style="color:{color};"> {entry["msg"]}</span>'
+            for entry in self.__class__.LOG_BUFFER:
+                color = self.__class__.LOG_COLORS.get(entry["level"], "white")
+                line = f'<span style="color:{color}; font-family:monospace; white-space:pre;">{entry["msg"]}</span>'
                 lines.append(line)
-            self.LOG_TEXTAREA.set_content("<br>".join(lines))
-            self.LOG_TEXTAREA.update()
-            self.LOG_TEXTAREA.run_method("scrollTo", 0, 99999)
+            self.__class__.LOG_TEXTAREA.set_content("<br>".join(lines))
+            self.__class__.LOG_TEXTAREA.update()
+            self.__class__.LOG_TEXTAREA.run_method("scrollTo", 0, 99999)
 
 
 class QueryEngine:
     def __init__(self, file_name: str, log_engine: Logger):
         self.file_name = file_name
-        self.db = Database(file_name)
+        self.db = Database(file_name, log_engine)
         self.db.initialize_db()
         self.df = None
         self.log = log_engine
@@ -152,7 +166,7 @@ class DevOpsEngine:
         df = await self.query_engine.query_db(
             "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and pat_token != '' and org_url is not null and org_url != '' and is_current = 1"
         )
-        self.manager = DevOpsManager(df)
+        self.manager = DevOpsManager(df, self.log)
 
     async def update_devops(self):
         if not self.manager:

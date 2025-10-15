@@ -6,30 +6,39 @@ import pandas as pd
 
 
 class DevOpsManager:
-    def __init__(self, df):
+    def __init__(self, df, log):
         self.clients = {}
+        self.log = log
         for _, row in df.iterrows():
             if row["org_url"].lower() in ["", "none", "null"] or row[
                 "pat_token"
             ].lower() in ["", "none", "null"]:
                 continue
             org_url = f"https://dev.azure.com/{row['org_url']}"
-            client = DevOpsClient(row["pat_token"], org_url)
+            client = DevOpsClient(row["pat_token"], org_url, self.log)
             try:
                 client.connect()
                 self.clients[row["customer_name"]] = client
+                self.log.log_msg(
+                    "INFO", f"Connected to DevOps for customer {row['customer_name']}"
+                )
             except Exception as e:
-                print(f"DevOps connection failed for {row['customer_name']}: {e}")
+                self.log.log_msg(
+                    "Error",
+                    f"DevOps connection failed for {row['customer_name']}:\n{e}",
+                )
 
     def save_comment(self, customer_name, comment, git_id):
         client = self.clients.get(customer_name)
         if not client:
+            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return f"No DevOps connection for {customer_name}"
         return client.add_comment_to_work_item(git_id, comment)
 
     def get_workitem_level(self, customer_name, level=None, work_item_id=None):
         client = self.clients.get(customer_name)
         if not client:
+            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return f"No DevOps connection for {customer_name}"
         return client.get_workitem_level(level, work_item_id)
 
@@ -44,6 +53,7 @@ class DevOpsManager:
     ):
         client = self.clients.get(customer_name)
         if not client:
+            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return (False, f"No DevOps connection for {customer_name}")
         return client.create_user_story(
             title, description, additional_fields, markdown, parent
@@ -155,9 +165,10 @@ class DevOpsManager:
 
 
 class DevOpsClient:
-    def __init__(self, personal_access_token, organization_url):
+    def __init__(self, personal_access_token, organization_url, log):
         self.personal_access_token = personal_access_token
         self.organization_url = organization_url
+        self.log = log
 
     def connect(self):
         # Create a connection to the Azure DevOps organization
@@ -177,14 +188,22 @@ class DevOpsClient:
         except Exception as e:
             msg = str(e).lower()
             if "expired" in msg or "revoked" in msg or "unauthorized" in msg:
+                self.log.log_msg(
+                    "ERROR",
+                    "Your Personal Access Token has expired or been revoked. Please renew it.",
+                )
                 raise Exception(
                     "Your Personal Access Token has expired or been revoked. Please renew it."
                 )
             else:
+                self.log.log_msg("ERROR", f"Failed to connect to Azure DevOps: {e}")
                 raise Exception(f"Failed to connect to Azure DevOps: {e}")
 
     def get_work_item_tracking_client(self):
         if not self.connection:
+            self.log.log_msg(
+                "ERROR", "Connection not established. Call connect() first."
+            )
             raise Exception("Connection not established. Call connect() first.")
         return self.connection.clients.get_work_item_tracking_client()
 
@@ -202,8 +221,12 @@ class DevOpsClient:
                 hasattr(e, "inner_exception")
                 and getattr(e.inner_exception, "status_code", None) == 404
             ):
+                self.log.log_msg(
+                    "WARNING", f"Work item with ID {work_item_id} does not exist."
+                )
                 return (False, f"Work item with ID {work_item_id} does not exist.")
             else:
+                self.log.log_msg("ERROR", f"Azure DevOps error occurred: {e}")
                 return (False, f"Azure DevOps error occurred: {e}")
         return (True, "Comment added successfully.")
 
@@ -248,6 +271,7 @@ class DevOpsClient:
                 ]
                 return (True, epic_list)
         except Exception as e:
+            self.log.log_msg("ERROR", f"Error fetching work items: {e}")
             return (False, f"Error fetching work items: {e}")
 
     def create_user_story(
@@ -300,8 +324,11 @@ class DevOpsClient:
             work_item = self.wit_client.create_work_item(
                 patch_document, project=self.project_name, type="User Story"
             )
+            self.log.log_msg("INFO", f"Created User Story with ID {work_item.id}")
             return (True, f"Created User Story with ID {work_item.id}")
         except AzureDevOpsServiceError as e:
+            self.log.log_msg("ERROR", f"Azure DevOps error occurred: {e}")
             return (False, f"Azure DevOps error occurred: {e}")
         except Exception as e:
+            self.log.log_msg("ERROR", f"Error creating user story: {e}")
             return (False, f"Error creating user story: {e}")
