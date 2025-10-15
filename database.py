@@ -450,9 +450,7 @@ class Database:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if not valid_from:
-            valid_from = datetime.now().strftime("%Y-%m-%d")
-            if valid_from > start_date:
-                valid_from = start_date
+            valid_from = min(start_date, datetime.now().strftime("%Y-%m-%d"))
 
         date_obj = datetime.strptime(start_date, "%Y-%m-%d")
         day_before = date_obj - timedelta(days=1)
