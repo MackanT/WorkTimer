@@ -22,11 +22,14 @@
   - Added support to create user-story directly from the program
 - Added database compare feature
   - Schema compare current db-file with old db-file. Simplifies future migration
-  - Added option to run code in any db file and save results. Used in conjunction with compare to make changes
+  - Added option to run code in any db file and save results. Used in conjunction with compare to migrate old db to new format
 - Docker support
   - Added support for running file via docker for a fully independent solution
+- Info
+  - Added FAQ and readme as visible items in the program
 - Bug fixes
   - Fixed many minor issues with add-data not setting column values correctly in some cases
+  - Updating customers (so they get new customer-id) now propogates and updates existing projects
 
 ### 3.0.1 (2025-09-15)
 - Added total counts on time in weekly and monthly selects

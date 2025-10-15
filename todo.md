@@ -4,21 +4,17 @@
 - update customer/project should also update times values!
 - Devops connector
 - Make PAT-tokens etc masked
-- Add custom quick selections
 - Defaults to first project available per organisationurl
-- Easy way to schema merge old db struct to new.
-- If loading db with wrong schema, print out errors and allow for fixing instead of crash
-- FAQ
-- adding new customer with same customer_name does not update projects customer_id  (Think it is fixed now?)
-- "error" command completed successfully (after for ex update query) (not needed anymore)
-- clean up of customer sort order (not needed anymore)
-- color coded in sql input (Done)
+- Git id dropdown currently only exists in project close. missing in query-view and add-data view
+- add divider between base queries and custom queries in query editor?
+
 
 ### Buggar
 
-- comment not wraping text -- Not possible yet 2025-06-26: https://github.com/hoffstadt/DearPyGui/issues/1504
-
 ### Completed -- Old from before ReadMe
+- clean up of customer sort order (not needed anymore)
+- "error" command completed successfully (after for ex update query) (not needed anymore)
+- color coded in sql input (Done)
 - ~when minimizing and opening window all customer projects are minimized~
 - ~customer tab to tall, moving log to bottom~
 - ~Amount shows incorrect wage. I.e project_name = Förvaltning date_key = 20250502 is 133.31, shows 99.99~
