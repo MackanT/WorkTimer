@@ -514,6 +514,13 @@ class Database:
                 where customer_id = ?
             """,
                 (new_customer_id, old_customer_id),
+            )
+            df = self.fetch_query(
+                "select project_name from projects where customer_id = ?",
+                (new_customer_id,),
+            )
+            if not df.empty:
+                project_list = df["project_name"].tolist()
                 self.log_engine.log_msg(
                     "INFO",
                     f"Updated projects {project_list} to use {customer_name} new id: {new_customer_id}",
