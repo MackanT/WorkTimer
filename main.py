@@ -8,7 +8,6 @@ from globals import (
     QueryEngine,
     DevOpsEngine,
     DevOpsTag,
-    TableColumn,
     SaveData,
     generate_sync_sql,
 )
@@ -18,6 +17,7 @@ import threading
 import tempfile
 import os
 import yaml
+import re
 
 CONFIG_FOLDER = "config"
 
@@ -126,6 +126,9 @@ def ui_time_tracking():
     ignore_next_checkbox_event = False
 
     async def on_checkbox_change(event, checked, customer_id, project_id):
+        """
+        Handle checkbox change for time/project row. If checked, insert row; if unchecked, show popup for comment/devops/delete.
+        """
         nonlocal ignore_next_checkbox_event
         if ignore_next_checkbox_event:
             ignore_next_checkbox_event = False
@@ -137,12 +140,13 @@ def ui_time_tracking():
                     QE.function_db("insert_time_row", int(customer_id), int(project_id))
                 )
             )
+            return
 
-        else:
-            # Show a centered popup/modal with input and three buttons
+        async def show_uncheck_popup():
             checkbox = event.sender
             with ui.dialog().props("persistent") as popup:
                 with ui.card().classes("w-112"):
+                    # Query project/customer info
                     sql_query = f"""
                     select distinct t.customer_name, t.project_name, p.git_id from time t
                     left join projects p on p.project_id = t.project_id
@@ -157,22 +161,19 @@ def ui_time_tracking():
 
                     ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
 
-                    # Check if customer has DevOps connection
-                    has_devops = False
-                    if (
+                    # DevOps connection check
+                    has_devops = bool(
                         hasattr(DO, "manager")
                         and DO.manager
                         and hasattr(DO.manager, "clients")
-                    ):
-                        has_devops = c_name in DO.manager.clients
-
+                        and c_name in DO.manager.clients
+                    )
                     id_input = None
                     id_checkbox = None
                     if has_devops:
                         id_options = DO.long_df[
                             (DO.long_df["customer_name"] == c_name)
                         ][["name", "id"]].dropna()
-
                         id_input = ui.select(
                             id_options["name"].tolist(),
                             with_input=True,
@@ -180,10 +181,9 @@ def ui_time_tracking():
                         ).classes("w-full -mb-2")
                         if has_git_id:
                             match = id_options[id_options["id"] == git_id]
-                            if not match.empty:
-                                id_input.value = match["name"].iloc[0]
-                            else:
-                                id_input.value = None
+                            id_input.value = (
+                                match["name"].iloc[0] if not match.empty else None
+                            )
 
                         with ui.row().classes(
                             "w-full items-center justify-between -mt-2"
@@ -197,7 +197,7 @@ def ui_time_tracking():
                                 "click", toggle_switch
                             ).classes("cursor-pointer")
                             id_checkbox = ui.switch(value=has_git_id).props("dense")
-                    # Always show comment input
+
                     comment_input = ui.textarea(
                         label="Comment", placeholder="What work was done?"
                     ).classes("w-full -mt-2")
@@ -209,36 +209,32 @@ def ui_time_tracking():
                         popup.close()
 
                     async def save_popup():
-                        git_id = None
+                        git_id_val = None
                         store_to_devops = False
                         if has_devops and id_input is not None:
                             git_id_str = id_input.value
                             if git_id_str and isinstance(git_id_str, str):
-                                ind_1 = git_id_str.find(":")
-                                ind_2 = git_id_str.find(" - ")
-                                if ind_1 != -1 and ind_2 != -1 and ind_2 > ind_1:
+                                match = re.search(r":\s*(\d+)\s*-", git_id_str)
+                                if match:
                                     try:
-                                        git_id = int(
-                                            git_id_str[ind_1 + 1 : ind_2].strip()
-                                        )
+                                        git_id_val = int(match.group(1))
                                     except ValueError:
-                                        git_id = None
+                                        git_id_val = None
                             store_to_devops = (
                                 id_checkbox.value if id_checkbox is not None else False
                             )
 
                         LOG.log_msg(
                             "DEBUG",
-                            f"Saved: {git_id}, {store_to_devops}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}",
+                            f"Saved: {git_id_val}, {store_to_devops}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}",
                         )
-
                         run_async_task(
                             lambda: asyncio.run(
                                 QE.function_db(
                                     "insert_time_row",
                                     int(customer_id),
                                     int(project_id),
-                                    git_id=git_id,
+                                    git_id=git_id_val,
                                     comment=comment_input.value,
                                 )
                             )
@@ -246,20 +242,22 @@ def ui_time_tracking():
 
                         sql_code = f"select customer_name from customers where customer_id = {customer_id}"
                         customer_name = await QE.query_db(sql_code)
-                        if has_devops and store_to_devops and git_id and git_id > 0:
+                        if (
+                            has_devops
+                            and store_to_devops
+                            and git_id_val
+                            and git_id_val > 0
+                        ):
                             if DO.manager:
                                 status, msg = DO.manager.save_comment(
                                     customer_name=customer_name.iloc[0][
                                         "customer_name"
                                     ],
                                     comment=comment_input.value,
-                                    git_id=git_id,
+                                    git_id=git_id_val,
                                 )
                                 col = "positive" if status else "negative"
-                                ui.notify(
-                                    msg,
-                                    color=col,
-                                )
+                                ui.notify(msg, color=col)
                         popup.close()
 
                     async def delete_popup():
@@ -279,6 +277,8 @@ def ui_time_tracking():
                             btn_classes
                         )
             popup.open()
+
+        await show_uncheck_popup()
 
     def make_callback(customer_id, project_id):
         return lambda e: on_checkbox_change(e, e.value, customer_id, project_id)
@@ -300,11 +300,76 @@ def ui_time_tracking():
     global render_ui
 
     async def render_ui():
+        """Render the main time tracking UI, grouped by customer and project."""
         value_labels.clear()
         customer_total_labels.clear()
         df = await get_ui_data()
-
         container.clear()
+
+        def get_total_string(customer_id):
+            if "time" in radio_display_selection.value.lower():
+                total = df[df["customer_id"] == customer_id]["total_time"].sum()
+                return f"{total:.2f} h"
+            else:
+                total = df[df["customer_id"] == customer_id]["user_bonus"].sum()
+                return f"{total:.2f} SEK"
+
+        async def make_project_row(project, customer_id):
+            sql_query = (
+                f"select * from time where customer_id = {customer_id} "
+                f"and project_id = {project['project_id']} and end_time is null"
+            )
+            df_counts = await QE.query_db(sql_query)
+            initial_state = bool(len(df_counts) > 0)
+
+            with (
+                ui.row()
+                .classes("items-center w-full")
+                .style(
+                    "display: grid; grid-template-columns: 20px 1fr 100px; align-items: center; margin-bottom:2px; min-height:20px;"
+                )
+            ):
+                ui.checkbox(
+                    on_change=make_callback(
+                        project["customer_id"], project["project_id"]
+                    ),
+                    value=initial_state,
+                )
+                ui.label(str(project["project_name"])).classes("ml-2 truncate")
+                total_string = (
+                    f"{project['total_time']} h"
+                    if "time" in radio_display_selection.value.lower()
+                    else f"{project['user_bonus']} SEK"
+                )
+                value_label = (
+                    ui.label(f"{total_string}")
+                    .classes("text-grey text-right whitespace-nowrap w-full")
+                    .style("max-width:100px; overflow-x:auto;")
+                )
+                value_labels.append((value_label, customer_id, project["project_id"]))
+
+        async def make_customer_card(customer_id, customer_name, group):
+            with ui.card().classes("w-full max-w-2xl mx-auto mx-6 my-4 p-6"):
+                with (
+                    ui.column()
+                    .classes("items-start")
+                    .style(
+                        "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
+                    )
+                ):
+                    total_string = get_total_string(customer_id)
+                    with (
+                        ui.row()
+                        .classes("w-full justify-between")
+                        .style("display:flex; align-items:center;")
+                    ):
+                        ui.label(str(customer_name)).classes("text-lg text-right")
+                        label_total = ui.label(total_string).classes(
+                            "text-base text-grey text-right"
+                        )
+                        customer_total_labels.append((label_total, customer_id))
+                    for _, project in group.iterrows():
+                        await make_project_row(project, customer_id)
 
         customers = df.groupby(["customer_id", "customer_name"])
         with container:
@@ -313,92 +378,30 @@ def ui_time_tracking():
                 .classes("px-4 justify-between overflow-x-auto")
                 .style("flex-wrap:nowrap; width:100%; max-width:1800px; margin:0 auto;")
             ):
+                # Run customer cards in series for UI consistency
                 for (customer_id, customer_name), group in customers:
-                    with ui.card().classes("w-full max-w-2xl mx-auto mx-6 my-4 p-6"):
-                        with (
-                            ui.column()
-                            .classes("items-start")
-                            .style(
-                                "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
-                            )
-                        ):
-                            total_string = (
-                                f"{df[df['customer_id'] == customer_id]['total_time'].sum():.2f} h"
-                                if "time" in radio_display_selection.value.lower()
-                                else f"{df[df['customer_id'] == customer_id]['user_bonus'].sum():.2f} SEK"
-                            )
-                            with (
-                                ui.row()
-                                .classes("w-full justify-between")
-                                .style("display:flex; align-items:center;")
-                            ):
-                                ui.label(str(customer_name)).classes(
-                                    "text-lg text-right"
-                                )
-                                label_total = ui.label(total_string).classes(
-                                    "text-base text-grey text-right"
-                                )
-                                customer_total_labels.append((label_total, customer_id))
-                            for _, project in group.iterrows():
-                                with (
-                                    ui.row()
-                                    .classes("items-center w-full")
-                                    .style(
-                                        "display: grid; grid-template-columns: 20px 1fr 100px; align-items: center; margin-bottom:2px; min-height:20px;"
-                                    )
-                                ):
-                                    sql_query = f"select * from time where customer_id = {customer_id} and project_id = {project['project_id']} and end_time is null"
-                                    df_counts = await QE.query_db(sql_query)
-                                    initial_state = (
-                                        True if len(df_counts) > 0 else False
-                                    )
-
-                                    ui.checkbox(
-                                        on_change=make_callback(
-                                            project["customer_id"],
-                                            project["project_id"],
-                                        ),
-                                        value=initial_state,
-                                    )
-                                    ui.label(str(project["project_name"])).classes(
-                                        "ml-2 truncate"
-                                    )
-                                    total_string = (
-                                        f"{project['total_time']} h"
-                                        if "time"
-                                        in radio_display_selection.value.lower()
-                                        else f"{project['user_bonus']} SEK"
-                                    )
-                                    value_label = (
-                                        ui.label(f"{total_string}")
-                                        .classes(
-                                            "text-grey text-right whitespace-nowrap w-full"
-                                        )
-                                        .style("max-width:100px; overflow-x:auto;")
-                                    )
-                                    value_labels.append(
-                                        (
-                                            value_label,
-                                            customer_id,
-                                            project["project_id"],
-                                        )
-                                    )
+                    await make_customer_card(customer_id, customer_name, group)
 
     async def update_ui():
+        """Update the UI labels for project and customer totals based on the latest data."""
         df = await get_ui_data()
+
+        def get_time_string(row):
+            if "time" in radio_display_selection.value.lower():
+                return f"{row['total_time']} h"
+            else:
+                return f"{row['user_bonus']} SEK"
+
         # Build a lookup for (customer_id, project_id) to row
         df_lookup = {
             (row["customer_id"], row["project_id"]): row for _, row in df.iterrows()
         }
+
+        # Update project value labels
         for value_label, customer_id, project_id in value_labels:
             row = df_lookup.get((customer_id, project_id))
             if row is not None:
-                time_string = (
-                    f"{row['total_time']} h"
-                    if "time" in radio_display_selection.value.lower()
-                    else f"{row['user_bonus']} SEK"
-                )
-                value_label.text = time_string
+                value_label.text = get_time_string(row)
 
         # Update customer total labels
         for label_total, customer_id in customer_total_labels:
@@ -1306,7 +1309,7 @@ def ui_query_editor():
         )
 
         with ui.dialog() as popup:
-            with ui.card().classes("w-96"):
+            with ui.card().classes("w-76"):
                 widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets, table_name, pk_data, popup)
