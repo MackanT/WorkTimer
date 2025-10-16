@@ -1481,7 +1481,8 @@ def main():
     asyncio.run(AD.refresh())
 
     DO = DevOpsEngine(query_engine=QE, log_engine=DO_LOG)
-    run_async_task(DO.initialize)
+    # run_async_task(DO.initialize)
+    asyncio.run(DO.initialize())
 
     ui.add_head_html("""
     <script>
