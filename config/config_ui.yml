@@ -13,7 +13,8 @@ customer:
       - name: start_date
         label: Start Date
         type: date
-        default: today
+        options: []
+        options_source: today
         optional: false
       - name: org_url
         label: DevOps Org. URL

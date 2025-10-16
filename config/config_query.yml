@@ -1,0 +1,75 @@
+query:
+  time:
+    fields:
+      - name: project_name
+        label: Project
+        type: select
+        options: []
+        options_source: project_names
+        default: []
+        default_source: default_project
+        optional: false
+      - name: start_time
+        label: Start Time
+        type: datetime
+        options: []
+        options_source: start_time
+        optional: false
+      - name: end_time
+        label: End Time
+        type: datetime
+        options: []
+        options_source: end_time
+        optional: false
+      - name: comment
+        label: Comment
+        type: text
+        options: []
+        options_source: comment
+        optional: false
+      - name: git_id
+        label: Git ID
+        type: number
+        options: []
+        options_source: git_id
+        optional: true
+    action:
+      function: update_data_from_query
+      main_action: Updating time
+      main_param: None
+      secondary_action: None
+      button_name: "Update"
+  customers:
+    fields:
+      - name: pat_token
+        label: PAT Token
+        type: input
+        options: []
+        options_source: pat_token
+        optional: true
+      - name: org_url
+        label: Organization URL
+        type: input
+        options: []
+        options_source: org_url
+        optional: true
+    action:
+      function: update_data_from_query
+      main_action: Updating customers
+      main_param: None
+      secondary_action: None
+      button_name: Update
+  projects:
+    fields:
+      - name: git_id
+        label: Git ID
+        type: number
+        options: []
+        options_source: git_id
+        optional: true
+    action:
+      function: update_data_from_query
+      main_action: Updating projects
+      main_param: None
+      secondary_action: None
+      button_name: Update

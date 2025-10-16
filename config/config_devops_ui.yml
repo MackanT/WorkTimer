@@ -75,7 +75,8 @@ devops_user_story:
       - name: item_date
         label: Recieved Date
         type: date
-        default: today
+        options: []
+        options_source: today
         optional: true
       - name: problem_description
         label: Problem Description
