@@ -147,7 +147,9 @@ def make_input_row(fields, input_width: str = "w-64"):
                 options = field.get("options", {})
             if options is None:
                 options = []
-            select_widget = ui.select(options, label=label).classes(input_width)
+            select_widget = ui.select(options, label=label, with_input=True).classes(
+                input_width
+            )
             if "default" in field:
                 select_widget.value = field["default"]
             widgets[fname] = select_widget
