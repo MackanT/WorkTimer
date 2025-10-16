@@ -1043,3 +1043,67 @@ class Database:
 
     def close(self):
         self.conn.close()
+
+    def update_data_from_query(self, *args, **kwargs):
+        table_name = kwargs.get("table_name")
+        pk_data = kwargs.get("pk_data")
+        pk_col = pk_data[0]
+        pk = pk_data[1]
+
+        ## Specific logic for 'time' table to get project_id from project_name and customer_id
+        if table_name == "time":
+            customer_id = self._get_value_from_db(
+                "select customer_id from time where time_id = ?",
+                (pk,),
+                data_type="int",
+            )
+            project_id = self._get_value_from_db(
+                "select project_id from projects where project_name = ? and customer_id = ?",
+                (kwargs.get("project_name"), customer_id),
+                data_type="int",
+            )
+            kwargs.pop("project_name")
+            kwargs["project_id"] = project_id
+
+        update_fields = [k for k in kwargs if k not in ("table_name", "pk_data")]
+        set_clause = ", ".join([f"{field} = ?" for field in update_fields])
+        values = [kwargs[field] for field in update_fields]
+        values.append(pk)
+        query = f"update {table_name} set {set_clause} where {pk_col} = ?"
+        self.execute_query(query, tuple(values))
+
+    def get_query_edit_data(self, table_name: str, pk: int):
+        if table_name == "time":
+            query = """
+                select 
+                     customer_id
+                    ,project_id
+                    ,project_name
+                    ,start_time
+                    ,end_time
+                    ,comment
+                    ,git_id
+                from time
+                where time_id = ?
+            """
+            result = self.fetch_query(query, (pk,))
+            return result
+        elif table_name == "projects":
+            query = """
+                select 
+                    git_id
+                from projects
+                where project_id = ?
+            """
+            result = self.fetch_query(query, (pk,))
+            return result
+        elif table_name == "customers":
+            query = """
+                select 
+                     pat_token
+                    ,org_url
+                from customers
+                where customer_id = ?
+            """
+            result = self.fetch_query(query, (pk,))
+            return result

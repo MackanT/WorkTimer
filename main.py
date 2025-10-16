@@ -28,8 +28,8 @@ def setup_config():
         config_ui, \
         config_devops_ui, \
         config_data, \
+        config_query, \
         DEVOPS_TAGS, \
-        TABLE_IDS, \
         DEBUG_MODE, \
         MAIN_DB
 
@@ -48,15 +48,13 @@ def setup_config():
     with open(f"{CONFIG_FOLDER}/config_data.yml") as f:
         fields = yaml.safe_load(f)
     config_data = fields
+    with open(f"{CONFIG_FOLDER}/config_query.yml") as f:
+        fields = yaml.safe_load(f)
+    config_query = fields
 
     DEVOPS_TAGS = []
     for f in config_data["devops_tags"]:
         DEVOPS_TAGS.append(DevOpsTag(**f))
-    TABLE_IDS = {}
-    for table_name, columns in config_data["table_ids"].items():
-        TABLE_IDS[table_name] = {
-            col_name: TableColumn(**(columns[col_name] or {})) for col_name in columns
-        }
 
 
 ## UI SETUP ##
@@ -1176,6 +1174,56 @@ def ui_query_editor():
                     )
         popup.open()
 
+    def add_save_button(save_data, fields, widgets, table_name, pk_data, popup):
+        async def on_save():
+            required_fields = [
+                f["name"] for f in fields if not f.get("optional", False)
+            ]
+            if not helpers.check_input(widgets, required_fields):
+                return
+            kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
+            # Convert any single-item list in kwargs to a string
+            for k, v in kwargs.items():
+                if isinstance(v, list):
+                    if len(v) == 1:
+                        kwargs[k] = v[0]
+                    elif len(v) > 1:  ## TODO make nicer
+                        raise ValueError(
+                            f"Field '{k}' has multiple values: {v}. Only one value is allowed."
+                        )
+
+            kwargs["table_name"] = table_name
+            kwargs["pk_data"] = pk_data
+
+            await QE.function_db(save_data.function, **kwargs)
+
+            val = (
+                ""
+                if save_data.main_param == "None"
+                else widgets[save_data.main_param].value
+            )
+            sec_action = (
+                ""
+                if save_data.secondary_action == "None"
+                else save_data.secondary_action
+            )
+            msg_1, msg_2 = helpers.print_success(
+                save_data.main_action,
+                val,
+                sec_action,
+                widgets=widgets,
+            )
+            LOG.log_msg("INFO", msg_1)
+            LOG.log_msg("INFO", msg_2)
+            close_popup()
+
+        def close_popup():
+            popup.close()
+
+        with ui.row().classes("justify-end gap-2"):
+            ui.button(save_data.button_name, on_click=on_save).classes("w-24")
+            ui.button("Cancel", on_click=close_popup).props("flat").classes("w-24")
+
     with ui.row().classes("justify-between items-center w-full"):
         preset_queries = ui.element()
 
@@ -1211,129 +1259,62 @@ def ui_query_editor():
                     "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
                 )
 
-    async def show_row_edit_popup(row_data, on_save_callback):
+    async def show_row_edit_popup(row_data):
         table_name = helpers.extract_table_name(editor.value)
-        table_data = TABLE_IDS.get(table_name)
-        if table_data is None:
-            ui.notify(f"Cannot register which table is being edited: {table_name}!")
+
+        if table_name not in ["time", "customers", "projects"]:
+            ui.notify(f"Table {table_name} is not registered for editing!")
             return
 
-        has_seen_pk = False
-        pk_data = None
-        proj_df = None
+        base_name = table_name[:-1] if table_name.endswith("s") else table_name
+        key_col = f"{base_name}_id"
+
+        if key_col not in row_data:
+            ui.notify(
+                f"Cannot find {table_name}'s primary key: {key_col} in your query!",
+                color="negative",
+            )
+            return
+
+        pk_data = (key_col, row_data[key_col])
+
+        table_row = await QE.function_db("get_query_edit_data", table_name, pk_data[1])
+        table_row = (
+            table_row.iloc[0] if not table_row.empty else {}
+        )  ## TODO return with error
+        projects = await QE.query_db(
+            f"select project_name from projects where customer_id = {table_row.get('customer_id', 0)} and is_current = 1"
+        )
+
+        fields = config_query["query"][table_name]["fields"]
+        action = config_query["query"][table_name]["action"]
+
+        data_sources = {}
+        for field in fields:
+            # Special handling for project_names in time table
+            if table_name == "time":
+                data_sources["project_names"] = projects["project_name"].tolist()
+                data_sources["default_project"] = table_row.get("project_name", None)
+
+            options_source = field.get("options_source")
+            if options_source:
+                data_sources[options_source] = table_row.get(options_source, None)
+
+        helpers.assign_dynamic_options(
+            fields,
+            data_sources=data_sources,
+        )
+
         with ui.dialog() as popup:
             with ui.card().classes("w-96"):
-                inputs = {}
-                for field in row_data:
-                    if field in table_data:
-                        meta = table_data[field]
-
-                        if meta.pk:
-                            has_seen_pk = True
-                            pk_data = (field, row_data.get(field, None))
-
-                        if not meta.editable:
-                            continue
-
-                        if meta.type == "int":
-                            inputs[field] = ui.number(
-                                field, value=int(row_data.get(field) or 0), step=1
-                            ).classes("w-full")
-                        elif meta.type == "float":
-                            inputs[field] = ui.number(
-                                field, value=float(row_data.get(field) or 0.0), step=0.1
-                            ).classes("w-full")
-                        elif meta.type == "str":
-                            inputs[field] = ui.input(
-                                field,
-                                value=str(row_data.get(field, "")),
-                            ).classes("w-full")
-                        elif meta.type == "long_str":
-                            inputs[field] = ui.textarea(
-                                field,
-                                value=str(row_data.get(field, "")),
-                            ).classes("w-full")
-                        elif meta.type == "datetime":
-                            inputs[field] = ui.input(
-                                field,
-                                value=str(row_data.get(field, "")),
-                                placeholder="YYYY-MM-DD HH:MM:SS",
-                            ).classes("w-full")
-                        elif meta.type == "date":
-                            inputs[field] = ui.input(
-                                field,
-                                value=str(row_data.get(field, "")),
-                                placeholder="YYYY-MM-DD",
-                            ).classes("w-full")
-                        elif meta.type == "project_id" and table_name == "time":
-                            proj_df = await QE.function_db(
-                                "get_project_list_from_project_id",
-                                row_data.get(field, 0),
-                            )
-                            p_name = proj_df[
-                                proj_df["project_id"] == row_data.get(field, 0)
-                            ]
-                            inputs[field] = ui.select(
-                                label=field,
-                                options=proj_df["project_name"].tolist(),
-                                value=p_name["project_name"].iloc[0]
-                                if (hasattr(p_name, "empty") and not p_name.empty)
-                                else None,
-                            ).classes("w-full")
-
-                def close_popup():
-                    popup.close()
-
-                async def save_popup():
-                    updated_data = {field: inp.value for field, inp in inputs.items()}
-                    await on_save_callback(
-                        row_data, updated_data, table_name, pk_data, table_data, proj_df
-                    )
-                    popup.close()
-
-                with ui.row().classes("justify-end gap-2"):
-                    ui.button("Save", on_click=save_popup).classes("w-24")
-                    ui.button("Cancel", on_click=close_popup).props("flat").classes(
-                        "w-24"
-                    )
-        if has_seen_pk:
+                widgets = helpers.make_input_row(fields)
+                save_data = SaveData(**action)
+                add_save_button(save_data, fields, widgets, table_name, pk_data, popup)
             popup.open()
-        else:
-            ui.notify(
-                "Ensure  the tables primary key is in your query!", color="negative"
-            )
 
     async def on_cell_clicked(event):
         row_data = event.args["data"]
-
-        async def save_row_callback(
-            original_row, updated_data, table_name, pk_data, table_data, proj_df
-        ):
-            key_table, key = pk_data
-            sql_query = f"update {table_name} set "
-            for col, data in updated_data.items():
-                if col == "project_id" and table_name == "time":
-                    if proj_df is not None:
-                        data = proj_df[proj_df["project_name"] == data][
-                            "project_id"
-                        ].values[0]
-                    else:
-                        ui.notify("Project data not found!", color="negative")
-                        return
-
-                data_type = table_data[col].type
-                escape = (
-                    "'" if data_type in ["date", "datetime", "str", "long_str"] else ""
-                )
-                sql_query += f"{col} = {escape}{data}{escape}, "
-            sql_query = sql_query[:-2] + f" where {key_table} = {key}"
-
-            await QE.query_db(sql_query)
-            ui.notify(
-                f"Updating row: {key_table} = {key} in {table_name} with command:\n{sql_query}"
-            )
-
-        await show_row_edit_popup(row_data, save_row_callback)
+        await show_row_edit_popup(row_data)
 
     ui.label("Query Editors")
 

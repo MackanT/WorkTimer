@@ -2,6 +2,7 @@ import os
 from nicegui import ui
 from datetime import date, timedelta
 import re
+import numpy as np
 
 
 def get_range_for(option):
@@ -108,21 +109,44 @@ def make_input_row(fields, input_width: str = "w-64"):
         ftype = field["type"]
         fname = field["name"]
 
+        default_val = field.get("default")
+        options_val = field.get("options")
+        # Use options for default if present and not None
+        if options_val is not None:
+            if isinstance(options_val, list) and options_val:
+                default_val = options_val[0]
+            elif isinstance(options_val, (str, int, float)):
+                default_val = options_val
+
         if ftype == "input":
             widgets[fname] = ui.input(label).classes(input_width)
+            if default_val is not None:
+                widgets[fname].value = default_val
         elif ftype == "text":
             widgets[fname] = ui.textarea(label).classes(input_width)
+            if default_val is not None:
+                widgets[fname].value = default_val
         elif ftype == "number":
             widgets[fname] = ui.number(label, min=0).classes(input_width)
+            if default_val is not None:
+                widgets[fname].value = default_val
         elif ftype == "date":
             widgets[fname] = date_input(label, input_width=input_width)
-            if "default" in field:
-                widgets[fname].value = field["default"]
+            if default_val is not None:
+                widgets[fname].value = default_val
+        elif ftype == "datetime":
+            widgets[fname] = ui.input(label, placeholder="YYYY-MM-DD HH:MM:SS").classes(
+                input_width
+            )
+            if default_val is not None:
+                widgets[fname].value = default_val
         elif ftype == "select":
             if "parent" in field:
                 options = []
             else:
                 options = field.get("options", {})
+            if options is None:
+                options = []
             select_widget = ui.select(options, label=label).classes(input_width)
             if "default" in field:
                 select_widget.value = field["default"]
@@ -247,13 +271,26 @@ def get_unique_list(df, column):
 
 def assign_dynamic_options(fields, data_sources):
     for field in fields:
-        if "options" in field and "options_source" in field:
+        if field.get("type") in ["date"] and "options_source" in field:
+            options_source = field["options_source"]
+            if options_source == "today":
+                field["options"] = [str(date.today())]
+        elif "options" in field and "options_source" in field:
             source = field["options_source"]
             field["options"] = data_sources.get(source, [])
-        elif field.get("type") in ["date"] and "default" in field:
-            default = field["default"]
-            if default == "today":
-                field["default"] = str(date.today())
+
+        if field.get("type") in ["number"]:
+            val = field.get("options", 0)
+            if isinstance(val, (np.integer, float)):
+                field["options"] = int(val)
+            elif isinstance(val, int):
+                field["options"] = val
+            elif val is None:
+                field["options"] = 0
+
+        if "default_source" in field:
+            default_source = field["default_source"]
+            field["default"] = data_sources.get(default_source, None)
 
 
 def make_tab_panel(tab_name, title, build_fn, width: str = "2"):
