@@ -20,13 +20,6 @@ class SaveData:
 
 
 @dataclass
-class TableColumn:
-    editable: bool = False
-    pk: bool = False
-    type: str = "str"
-
-
-@dataclass
 class DevOpsTag:
     name: str = ""
     icon: str = "bookmark"
