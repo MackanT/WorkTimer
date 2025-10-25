@@ -116,33 +116,55 @@ devops_user_story:
       main_param: user_story_name
       secondary_action: added
       button_name: "Add"
-  # update:
-  #   fields:
-  #     - name: customer_name
-  #       label: Customer
-  #       type: select
-  #       options: []
-  #       options_source: customer_data
-  #       optional: True
-  #     - name: epic_name
-  #       label: Epic
-  #       type: select
-  #       options: []
-  #       options_source: epic_names
-  #       optional: True
-  #       parent: customer_name
-  #     - name: feature_name
-  #       label: Feature
-  #       type: select
-  #       options: []
-  #       options_source: feature_names
-  #       optional: True
-  #       parent: epic_name
-  #   columns:
-  #     - [customer_name, epic_name, feature_name]
-  #   action:
-  #     function: update_user_story
-  #     main_action: User Story
-  #     main_param: user_story_name
-  #     secondary_action: added
-  #     button_name: "Add"
+  update:
+    fields:
+      - name: customer_name
+        label: Customer
+        type: select
+        options: []
+        options_source: customer_data
+        optional: False
+      - name: user_story
+        label: User Story
+        type: select
+        options: []
+        options_source: user_stories
+        optional: False
+        parent: customer_name
+      - name: devops_input
+        label: Use Input Form
+        type: codemirror
+        type_language: markdown
+        optional: False
+      - name: devops_test
+        label: Description
+        type: markdown
+        optional: False
+        parent: devops_input
+        parent_update: True
+        default: |
+          **Source:** 
+          **Contact:** 
+          **Received Date:** 
+
+          **Problem:**
+
+          **More Info:**
+
+          **Solution:**
+
+          **Validation:**
+    columns:
+      - [customer_name, user_story]
+      - [devops_input]
+      - [devops_test]
+    rows:
+      - [customer_name, user_story]
+      - [devops_input]
+      - [devops_test]
+    action:
+      function: 1 #add_user_story
+      main_action: User Story
+      main_param: 1 #user_story_name
+      secondary_action: updated
+      button_name: Update

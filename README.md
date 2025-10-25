@@ -27,6 +27,7 @@
   - Added support for running file via docker for a fully independent solution
 - Info
   - Added FAQ and readme as visible items in the program
+  - Added much more powerful logging, different engines (devops, queryengine, worktimer now have separate logs with info on what code causes what log message)
 - Bug fixes
   - Fixed many minor issues with add-data not setting column values correctly in some cases
   - Updating customers (so they get new customer-id) now propogates and updates existing projects
