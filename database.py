@@ -744,13 +744,49 @@ class Database:
 
     ### DevOps Operations ###
 
-    def update_devops_data(self, df: pd.DataFrame):
+    def update_devops_data(self, df: pd.DataFrame, mode: str = "replace"):
+        """Update devops table with different modes.
+
+        Args:
+            df: DataFrame containing devops data
+            mode: One of 'replace', 'append', or 'merge'
+                - 'replace': Drop and recreate the table
+                - 'append': Add new rows to existing table
+                - 'merge': Update existing rows and add new ones (upsert)
+        """
         if df.empty or len(df.columns) == 0:
             self.log_engine.log_msg(
-                "WARNING", "No DevOps data to update. Table not created."
+                "WARNING", "No DevOps data to update. No changes made."
             )
             return
-        df.to_sql("devops", self.conn, if_exists="replace", index=False)
+
+        if mode not in ["replace", "append", "merge"]:
+            self.log_engine.log_msg(
+                "ERROR",
+                f"Invalid mode '{mode}'. Must be 'replace', 'append', or 'merge'.",
+            )
+            return
+
+        if mode == "replace":
+            self.log_engine.log_msg(
+                "INFO", f"Replacing devops table with {len(df)} records"
+            )
+            df.to_sql("devops", self.conn, if_exists="replace", index=False)
+        elif mode == "append":
+            self.log_engine.log_msg("INFO", f"Appending {len(df)} new devops records")
+            df.to_sql("devops", self.conn, if_exists="append", index=False)
+        elif mode == "merge":
+            self.log_engine.log_msg("INFO", f"Merging {len(df)} devops records")
+            # Delete existing records that will be updated
+            cursor = self.conn.cursor()
+            for _, row in df.iterrows():
+                cursor.execute(
+                    "DELETE FROM devops WHERE customer_name = ? AND id = ?",
+                    (row["customer_name"], row["id"]),
+                )
+            # Append the new/updated records
+            df.to_sql("devops", self.conn, if_exists="append", index=False)
+
         self.conn.commit()
 
     ### UI Operations ###

@@ -173,18 +173,20 @@ def ui_time_tracking():
                     id_input = None
                     id_checkbox = None
                     if has_devops:
-                        id_options = DO.long_df[
-                            (DO.long_df["customer_name"] == c_name)
-                        ][["name", "id"]].dropna()
+                        id_options = DO.df[(DO.df["customer_name"] == c_name)][
+                            ["display_name", "id"]
+                        ].dropna()
                         id_input = ui.select(
-                            id_options["name"].tolist(),
+                            id_options["display_name"].tolist(),
                             with_input=True,
                             label="DevOps-ID",
                         ).classes("w-full -mb-2")
                         if has_git_id:
                             match = id_options[id_options["id"] == git_id]
                             id_input.value = (
-                                match["name"].iloc[0] if not match.empty else None
+                                match["display_name"].iloc[0]
+                                if not match.empty
+                                else None
                             )
 
                         with ui.row().classes(
@@ -447,7 +449,7 @@ def ui_add_data():
                         "Regenerating DevOps data... This may take a few moments.",
                         color="info",
                     )
-                    await DO.initialize()
+                    await DO.update_devops(incremental=True)
             msg_1, msg_2 = helpers.print_success(
                 save_data.main_action,
                 widgets[save_data.main_param].value,
@@ -865,7 +867,7 @@ def ui_devops_settings_entrypoint():
     called = {"done": False}
 
     async def check_data_ready():
-        if not called["done"] and DO.df is not None and DO.long_df is not None:
+        if not called["done"] and DO.df is not None:
             called["done"] = True
             devops_settings_container.clear()
             await ui_devops_settings()
@@ -880,28 +882,32 @@ async def ui_devops_settings():
 
     epic_names = {}
     user_stories = {}
+    parent_names = {}
     for customer in customer_names:
-        filtered = helpers.filter_df(
-            DO.long_df, {"customer_name": customer, "type": "Epic"}
-        )
+        filtered = helpers.filter_df(DO.df, {"customer_name": customer, "type": "Epic"})
         # Temporary storing id and name - will drop id later
         epic_names[customer] = [
-            (row["name"], row["id"]) for _, row in filtered.iterrows()
+            (row["display_name"], row["id"]) for _, row in filtered.iterrows()
+        ]
+
+        filtered_new = helpers.filter_df(DO.df, {"customer_name": customer})
+        parent_names[customer] = [
+            row["display_name"] for _, row in filtered_new.iterrows()
         ]
 
         filtered = helpers.filter_df(
-            DO.long_df, {"customer_name": customer, "type": "User Story"}
+            DO.df, {"customer_name": customer, "type": "User Story"}
         )
         # Temporary storing id and name - will drop id later
-        user_stories[customer] = [row["name"] for _, row in filtered.iterrows()]
+        user_stories[customer] = [row["display_name"] for _, row in filtered.iterrows()]
 
     feature_names = {}
     for customer in customer_names:
         for epic_name, epic_id in epic_names[customer]:
             filtered = helpers.filter_df(
-                DO.long_df, {"customer_name": customer, "parent_id": epic_id}
+                DO.df, {"customer_name": customer, "parent_id": epic_id}
             )
-            feature_names[epic_name] = helpers.get_unique_list(filtered, "name")
+            feature_names[epic_name] = helpers.get_unique_list(filtered, "title")
 
     # Drop id from epic_names, only need the names now
     for customer in epic_names:
@@ -935,9 +941,10 @@ async def ui_devops_settings():
             "Microsoft.VSTS.Common.Priority": int(wid["priority"]),
             "System.AssignedTo": wid["assigned_to"],
         }
-        parent_id = int(helpers.extract_devops_id(wid["feature_name"]))
+        parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
 
-        success, message = DO.manager.create_user_story(
+        success, message = DO.devops_helper(
+            "create_user_story",
             customer_name=wid["customer_name"],
             title=wid["user_story_name"],
             description=dedent(description),
@@ -994,8 +1001,9 @@ async def ui_devops_settings():
                     fields,
                     data_sources={
                         "customer_data": customer_names,
-                        "epic_names": epic_names,
-                        "feature_names": feature_names,
+                        "parent_names": parent_names,
+                        # "epic_names": epic_names,
+                        # "feature_names": feature_names,
                         "devops_tags": DEVOPS_TAGS,
                     },
                 )
@@ -1699,7 +1707,6 @@ def main():
     asyncio.run(AD.refresh())
 
     DO = DevOpsEngine(query_engine=QE, log_engine=DO_LOG)
-    # run_async_task(DO.initialize)
     asyncio.run(DO.initialize())
 
     ui.add_head_html("""

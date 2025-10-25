@@ -79,12 +79,23 @@ class DevOpsManager:
             title, description, additional_fields, markdown, parent
         )
 
-    def get_epics_feature_df(self):
+    def get_epics_feature_df(self, max_ids: dict = None):
+        """Get work items in long format with parent_id column.
+
+        Args:
+            max_ids: Dict of {customer_name: max_id} for incremental refresh
+        """
         rows = []
         for customer_name, client in self.clients.items():
-            status, items = client.get_workitem_level(level=None, return_full=True)
+            # Get customer-specific min_id for filtering
+            min_id = max_ids.get(customer_name) if max_ids else None
+
+            status, items = client.get_workitem_level(
+                level=None, return_full=True, min_id=min_id
+            )
             if not status or not items:
                 continue
+
             # Build lookup dicts for hierarchy
             epics = {
                 item.id: item
@@ -103,83 +114,49 @@ class DevOpsManager:
                 == "User Story"
             }
 
-            # Build parent relationships
-            feature_to_epic = {}
-            for feature in features.values():
-                parent_id = feature.fields.get("System.Parent")
-                if parent_id in epics:
-                    feature_to_epic[feature.id] = parent_id
-
-            user_story_to_feature = {}
-            for us in user_stories.values():
-                parent_id = us.fields.get("System.Parent")
-                if parent_id in features:
-                    user_story_to_feature[us.id] = parent_id
-
-            # Build rows for each user story, feature, epic
-            for us_id, us in user_stories.items():
-                feature_id = user_story_to_feature.get(us_id)
-                feature = features.get(feature_id)
-                epic_id = feature_to_epic.get(feature_id) if feature_id else None
-                epic = epics.get(epic_id)
+            # Add all epics
+            for epic in epics.values():
                 rows.append(
                     {
                         "customer_name": customer_name,
-                        "epic_id": epic.id if epic else None,
-                        "epic_title": epic.fields.get("System.Title") if epic else None,
-                        "epic_state": epic.fields.get("System.State") if epic else None,
-                        "feature_id": feature.id if feature else None,
-                        "feature_title": feature.fields.get("System.Title")
-                        if feature
-                        else None,
-                        "feature_state": feature.fields.get("System.State")
-                        if feature
-                        else None,
-                        "user_story_id": us.id,
-                        "user_story_title": us.fields.get("System.Title"),
-                        "user_story_state": us.fields.get("System.State"),
+                        "type": "Epic",
+                        "id": epic.id,
+                        "title": epic.fields.get("System.Title"),
+                        "state": epic.fields.get("System.State"),
+                        "parent_id": None,
                     }
                 )
-            # Add features without user stories
-            for feature_id, feature in features.items():
-                if feature_id not in user_story_to_feature.values():
-                    epic_id = feature_to_epic.get(feature_id)
-                    epic = epics.get(epic_id)
-                    rows.append(
-                        {
-                            "customer_name": customer_name,
-                            "epic_id": epic.id if epic else None,
-                            "epic_title": epic.fields.get("System.Title")
-                            if epic
-                            else None,
-                            "epic_state": epic.fields.get("System.State")
-                            if epic
-                            else None,
-                            "feature_id": feature.id,
-                            "feature_title": feature.fields.get("System.Title"),
-                            "feature_state": feature.fields.get("System.State"),
-                            "user_story_id": None,
-                            "user_story_title": None,
-                            "user_story_state": None,
-                        }
-                    )
-            # Add epics without features
-            for epic_id, epic in epics.items():
-                if epic_id not in feature_to_epic.values():
-                    rows.append(
-                        {
-                            "customer_name": customer_name,
-                            "epic_id": epic.id,
-                            "epic_title": epic.fields.get("System.Title"),
-                            "epic_state": epic.fields.get("System.State"),
-                            "feature_id": None,
-                            "feature_title": None,
-                            "feature_state": None,
-                            "user_story_id": None,
-                            "user_story_title": None,
-                            "user_story_state": None,
-                        }
-                    )
+
+            # Add all features
+            for feature in features.values():
+                parent_id = feature.fields.get("System.Parent")
+                # Store parent_id even if the parent wasn't in this fetch (for incremental updates)
+                rows.append(
+                    {
+                        "customer_name": customer_name,
+                        "type": "Feature",
+                        "id": feature.id,
+                        "title": feature.fields.get("System.Title"),
+                        "state": feature.fields.get("System.State"),
+                        "parent_id": parent_id,  # Store the parent_id regardless
+                    }
+                )
+
+            # Add all user stories
+            for us in user_stories.values():
+                parent_id = us.fields.get("System.Parent")
+                # Store parent_id even if the parent wasn't in this fetch (for incremental updates)
+                rows.append(
+                    {
+                        "customer_name": customer_name,
+                        "type": "User Story",
+                        "id": us.id,
+                        "title": us.fields.get("System.Title"),
+                        "state": us.fields.get("System.State"),
+                        "parent_id": parent_id,  # Store the parent_id regardless
+                    }
+                )
+
         df = pd.DataFrame(rows)
         return (True, df)
 
@@ -251,7 +228,11 @@ class DevOpsClient:
         return (True, "Comment added successfully.")
 
     def get_workitem_level(
-        self, level: str = None, work_item_id: int = None, return_full=False
+        self,
+        level: str = None,
+        work_item_id: int = None,
+        return_full=False,
+        min_id: int = None,
     ):
         def batched(iterable, n):
             for i in range(0, len(iterable), n):
@@ -266,6 +247,8 @@ class DevOpsClient:
             query += f" AND [System.WorkItemType] = '{level}'"
         if work_item_id:
             query += f" AND [System.Id] = {work_item_id}"
+        if min_id is not None:
+            query += f" AND [System.Id] > {min_id}"
         wiql_query = {"query": query}
         try:
             result = self.wit_client.query_by_wiql(wiql=wiql_query)

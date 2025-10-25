@@ -4,6 +4,7 @@ from database import Database
 from dataclasses import dataclass
 import asyncio
 import logging
+import datetime
 
 
 def generate_sync_sql(main_db, uploaded_path):
@@ -130,9 +131,43 @@ class DevOpsEngine:
     def __init__(self, query_engine: QueryEngine, log_engine: Logger):
         self.manager = None
         self.df = None
-        self.long_df = None
         self.query_engine = query_engine
         self.log = log_engine
+        self._scheduled_tasks = []
+
+    async def start_scheduled_updates(self):
+        """Start background tasks for scheduled DevOps updates."""
+        self.log.log_msg("INFO", "Starting scheduled DevOps update tasks")
+
+        # Hourly incremental update
+        async def hourly_incremental():
+            while True:
+                await asyncio.sleep(3600)  # 1 hour
+                self.log.log_msg("INFO", "Running scheduled hourly incremental update")
+                await self.update_devops(incremental=True)
+
+        # Daily full refresh at 2 AM
+        async def daily_full_refresh():
+            while True:
+                # Calculate seconds until 2 AM
+                tomorrow = datetime.datetime.now() + datetime.timedelta(days=1)
+                target = tomorrow.replace(hour=2, minute=0, second=0, microsecond=0)
+                seconds_until_2am = (target - datetime.datetime.now()).total_seconds()
+
+                await asyncio.sleep(seconds_until_2am)
+                self.log.log_msg("INFO", "Running scheduled daily full refresh")
+                await self.update_devops(incremental=False)
+                await asyncio.sleep(86400)  # Sleep for rest of day
+
+        # Start both tasks
+        self._scheduled_tasks.append(asyncio.create_task(hourly_incremental()))
+        self._scheduled_tasks.append(asyncio.create_task(daily_full_refresh()))
+
+    def stop_scheduled_updates(self):
+        """Stop all scheduled update tasks."""
+        for task in self._scheduled_tasks:
+            task.cancel()
+        self._scheduled_tasks.clear()
 
     async def initialize(self):
         try:
@@ -146,12 +181,12 @@ class DevOpsEngine:
                 return
 
             # Always update/rebuild devops data to reflect latest customer info
-            self.log.log_msg(
-                "INFO", "Regenerating DevOps table with latest customer data."
-            )
-            await self.update_devops()
+            self.log.log_msg("INFO", "Performing incremental DevOps update on startup.")
+            await self.update_devops(incremental=True)
             await self.load_df()
             self.log.log_msg("INFO", "DevOps preload complete.")
+
+            await self.start_scheduled_updates()
         except Exception as e:
             self.log.log_msg("ERROR", f"Error during DevOps preload: {e}")
 
@@ -161,14 +196,53 @@ class DevOpsEngine:
         )
         self.manager = DevOpsManager(df, self.log)
 
-    async def update_devops(self):
+    async def update_devops(self, incremental: bool = False):
         if not self.manager:
             self.log.log_msg("WARNING", "No DevOps connections available")
             return None
-        self.log.log_msg("INFO", "Getting latest devops data")
-        status, devops_df = self.manager.get_epics_feature_df()
+
+        if incremental:
+            self.log.log_msg("INFO", "Performing incremental update of devops data")
+            max_id_df = await self.query_engine.query_db(
+                "select customer_name, max(id) as max_id from devops group by customer_name"
+            )
+            if not max_id_df.empty:
+                max_ids = dict(
+                    zip(max_id_df["customer_name"], max_id_df["max_id"].astype(int))
+                )
+                self.log.log_msg(
+                    "INFO",
+                    f"Performing incremental refresh with max IDs per customer: {max_ids}",
+                )
+            else:
+                self.log.log_msg(
+                    "WARNING", "No existing devops data found, performing full refresh"
+                )
+                incremental = False
+        else:
+            self.log.log_msg("INFO", "Getting latest devops data (full refresh)")
+            # TODO add some date when it was last collected
+
+        status, devops_df = self.manager.get_epics_feature_df(
+            max_ids=max_ids if incremental else None
+        )
+
         if status:
-            await self.query_engine.function_db("update_devops_data", df=devops_df)
+            if incremental and not devops_df.empty:
+                self.log.log_msg(
+                    "INFO", f"Appending {len(devops_df)} new devops records"
+                )
+                await self.query_engine.function_db(
+                    "update_devops_data", df=devops_df, mode="append"
+                )
+            elif incremental and devops_df.empty:
+                self.log.log_msg("INFO", "No new devops records to append")
+            else:
+                await self.query_engine.function_db(
+                    "update_devops_data", df=devops_df, mode="replace"
+                )
+
+            await self.load_df()
         else:
             self.log.log_msg(
                 "ERROR", f"Error when updating the devops data: {devops_df}"
@@ -180,67 +254,21 @@ class DevOpsEngine:
         if self.df is None or self.df.empty:
             self.log.log_msg("WARNING", "DevOps dataframe is empty")
         else:
-            self._get_long_df()
+            self.df["display_name"] = self.df.apply(
+                lambda row: f"{row['type']}: {int(row['id'])} - {row['title']}", axis=1
+            )
             self.log.log_msg(
                 "INFO", f"DevOps dataframe loaded with {len(self.df)} rows"
             )
-            # TODO add some date when it was last collected
-
-    def _get_long_df(self):
-        if self.df is None or self.df.empty:
-            return None
-        records = []
-        for _, row in self.df.iterrows():
-            if pd.notna(row.get("epic_id")):
-                records.append(
-                    {
-                        "customer_name": row["customer_name"],
-                        "type": "Epic",
-                        "id": int(row["epic_id"]),
-                        "title": row["epic_title"],
-                        "state": row["epic_state"],
-                        "name": f"Epic: {int(row['epic_id'])} - {row['epic_title']}",
-                        "parent_id": None,
-                    }
-                )
-            if pd.notna(row.get("feature_id")):
-                records.append(
-                    {
-                        "customer_name": row["customer_name"],
-                        "type": "Feature",
-                        "id": int(row["feature_id"]),
-                        "title": row["feature_title"],
-                        "state": row["feature_state"],
-                        "name": f"Feature: {int(row['feature_id'])} - {row['feature_title']}",
-                        "parent_id": int(row["epic_id"])
-                        if pd.notna(row.get("epic_id"))
-                        else None,
-                    }
-                )
-            if pd.notna(row.get("user_story_id")):
-                records.append(
-                    {
-                        "customer_name": row["customer_name"],
-                        "type": "User Story",
-                        "id": int(row["user_story_id"]),
-                        "title": row["user_story_title"],
-                        "state": row["user_story_state"],
-                        "name": f"User Story: {int(row['user_story_id'])} - {row['user_story_title']}",
-                        "parent_id": int(row["feature_id"])
-                        if pd.notna(row.get("feature_id"))
-                        else None,
-                    }
-                )
-        long_df = pd.DataFrame(records)
-        self.long_df = long_df[
-            long_df["state"].isin(["New", "Active"])
-        ].drop_duplicates()
 
     def devops_helper(self, func_name: str, customer_name: str, *args, **kwargs):
         if not self.manager:
             self.log.log_msg("WARNING", "No DevOps connections available")
             return None
+
+        status = False
         msg = None
+
         if func_name == "save_comment":
             status, msg = self.manager.save_comment(
                 customer_name=customer_name,
@@ -254,6 +282,23 @@ class DevOpsEngine:
                 work_item_id=int(git_id_raw) if str(git_id_raw).isnumeric() else None,
                 level=kwargs.get("level"),
             )
+        elif func_name == "create_user_story":
+            status, msg = self.manager.create_user_story(
+                customer_name=customer_name,
+                title=kwargs.get("title"),
+                description=kwargs.get("description"),
+                additional_fields=kwargs.get("additional_fields"),
+                markdown=kwargs.get("markdown", False),
+                parent=kwargs.get("parent"),
+            )
+            # Trigger incremental refresh after creating work item
+            if status:
+                self.log.log_msg(
+                    "INFO",
+                    "Triggering incremental DevOps refresh after work item creation",
+                )
+                asyncio.create_task(self.update_devops(incremental=True))
+
         if not status:
             self.log.log_msg("ERROR", msg)
         return status, msg
