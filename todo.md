@@ -6,8 +6,8 @@
 - Make PAT-tokens etc masked
 - Defaults to first project available per organisationurl
 - Git id dropdown currently only exists in project close. missing in query-view and add-data view
-- add divider between base queries and custom queries in query editor?
-
+- Automatically refresh devops data daily + on command (?)
+- Option to upload file that is sent to user-story?
 
 ### Buggar
 
