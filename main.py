@@ -18,6 +18,8 @@ import tempfile
 import os
 import yaml
 import re
+import markdown as _markdown
+import bleach as _bleach
 
 CONFIG_FOLDER = "config"
 
@@ -877,6 +879,7 @@ async def ui_devops_settings():
     customer_names = helpers.get_unique_list(DO.df, "customer_name")
 
     epic_names = {}
+    user_stories = {}
     for customer in customer_names:
         filtered = helpers.filter_df(
             DO.long_df, {"customer_name": customer, "type": "Epic"}
@@ -885,6 +888,12 @@ async def ui_devops_settings():
         epic_names[customer] = [
             (row["name"], row["id"]) for _, row in filtered.iterrows()
         ]
+
+        filtered = helpers.filter_df(
+            DO.long_df, {"customer_name": customer, "type": "User Story"}
+        )
+        # Temporary storing id and name - will drop id later
+        user_stories[customer] = [row["name"] for _, row in filtered.iterrows()]
 
     feature_names = {}
     for customer in customer_names:
@@ -976,6 +985,7 @@ async def ui_devops_settings():
         columns = config_devops_ui["devops_user_story"][tab_type.lower()].get(
             "columns", []
         )
+        rows = config_devops_ui["devops_user_story"][tab_type.lower()].get("rows", [])
         action = config_devops_ui["devops_user_story"][tab_type.lower()]["action"]
 
         with container:
@@ -990,16 +1000,221 @@ async def ui_devops_settings():
                     },
                 )
                 widgets = {}
-                with ui.row().classes("gap-8 mb-4"):
+                pending_relations = []
+                with (
+                    ui.row()
+                    .classes("gap-8 mb-4 overflow-x-auto")
+                    .style("flex-wrap:nowrap; align-items:flex-start;")
+                ):
                     for col_fields in columns:
-                        with ui.column():
+                        with ui.column().classes("min-w-0 flex-1"):
                             col_fields_objs = [
                                 next(f for f in fields if f["name"] == fname)
                                 for fname in col_fields
                                 if any(f["name"] == fname for f in fields)
                             ]
-                            col_widgets = helpers.make_input_row(col_fields_objs)
-                            widgets.update(col_widgets)
+                            # Defer parent wiring so relations can span columns
+                            _, rels = helpers.make_input_row(
+                                col_fields_objs,
+                                widgets=widgets,
+                                defer_parent_wiring=True,
+                            )
+                            pending_relations.extend(rels)
+
+                # Bind any deferred parent relations now that all widgets exist
+                if pending_relations:
+                    helpers.bind_parent_relations(widgets, pending_relations)
+
+                save_data = SaveData(**action)
+                add_save_button(save_data, fields, widgets)
+            if tab_type == "Update":
+                helpers.assign_dynamic_options(
+                    fields,
+                    data_sources={
+                        "customer_data": customer_names,
+                        "user_stories": user_stories,
+                    },
+                )
+                widgets = {}
+                pending_relations = []
+                with ui.column().classes("gap-8 mb-4"):
+                    for row_fields in rows:
+                        with ui.row():
+                            row_fields_objs = [
+                                next(f for f in fields if f["name"] == fname)
+                                for fname in row_fields
+                                if any(f["name"] == fname for f in fields)
+                            ]
+                            _, rels = helpers.make_input_row(
+                                row_fields_objs,
+                                widgets=widgets,
+                                defer_parent_wiring=True,
+                            )
+                            pending_relations.extend(rels)
+
+                if pending_relations:
+                    helpers.bind_parent_relations(widgets, pending_relations)
+
+                def update_code_mirror(e):
+                    c_name = widgets["customer_name"].value
+                    us_name = widgets["user_story"].value
+                    us_id = helpers.extract_devops_id(us_name)
+
+                    if DO.manager:
+                        status, description, fmt = DO.manager.get_description(
+                            customer_name=c_name, work_item_id=us_id
+                        )
+                        # Put raw description into the editor
+                        widgets["devops_input"].value = description or ""
+
+                        # If there is a preview widget available (helpers stores preview as devops_input_preview),
+                        # render server-side to sanitized HTML before showing.
+                        preview = widgets.get("devops_input_preview") or widgets.get(
+                            "devops_test"
+                        )
+                        if preview is not None:
+                            # Convert markdown (if fmt indicates markdown) or sanitize HTML
+                            if fmt == "markdown":
+                                html_content = (
+                                    _markdown.markdown(
+                                        description or "",
+                                        extensions=[
+                                            "fenced_code",
+                                            "codehilite",
+                                            "tables",
+                                        ],
+                                    )
+                                    if description
+                                    else ""
+                                )
+                            else:
+                                html_content = description or ""
+                            # sanitize
+                            # bleach.sanitizer.ALLOWED_TAGS is a frozenset in newer
+                            # versions — convert to list before concatenating.
+                            allowed_tags = list(_bleach.sanitizer.ALLOWED_TAGS) + [
+                                "p",
+                                "pre",
+                                "span",
+                                "h1",
+                                "h2",
+                                "h3",
+                                "h4",
+                                "h5",
+                                "h6",
+                                "img",
+                                "table",
+                                "thead",
+                                "tbody",
+                                "tr",
+                                "th",
+                                "td",
+                                "code",
+                            ]
+                            allowed_attrs = {
+                                "a": ["href", "title", "target"],
+                                "img": ["src", "alt", "width", "height"],
+                                "*": ["class"],
+                            }
+                            safe = (
+                                _bleach.clean(
+                                    html_content,
+                                    tags=allowed_tags,
+                                    attributes=allowed_attrs,
+                                    protocols=["http", "https", "mailto"],
+                                )
+                                if html_content
+                                else ""
+                            )
+                            # If preview is a markdown element use set_markdown if available, otherwise set content
+                            for fn in (
+                                getattr(preview, "set_content", None),
+                                getattr(preview, "set_markdown", None),
+                                getattr(preview, "set_html", None),
+                            ):
+                                if callable(fn):
+                                    try:
+                                        fn(safe)
+                                        break
+                                    except Exception:
+                                        continue
+
+                widgets["user_story"].on(
+                    "update:model-value", lambda e: update_code_mirror(e)
+                )
+
+                # If devops_input exists, create a live sanitized preview and a Save button
+                if "devops_input" in widgets:
+                    editor_widget = widgets["devops_input"]
+                    # create an HTML preview next to the editor if not already present
+                    if "devops_input_preview" not in widgets:
+                        preview = ui.html().classes(
+                            "w-full h-full overflow-auto p-4 bg-white text-black rounded"
+                        )
+                        widgets["devops_input_preview"] = preview
+
+                    def render_and_sanitize(text: str) -> str:
+                        if not text:
+                            return ""
+                        # assume markdown input (config shows codemirror with markdown)
+                        raw_html = _markdown.markdown(
+                            text, extensions=["fenced_code", "codehilite", "tables"]
+                        )
+                        # bleach.sanitizer.ALLOWED_TAGS is a frozenset in newer
+                        # versions — convert to list before concatenating.
+                        allowed_tags = list(_bleach.sanitizer.ALLOWED_TAGS) + [
+                            "pre",
+                            "code",
+                            "table",
+                            "thead",
+                            "tbody",
+                            "tr",
+                            "th",
+                            "td",
+                            "img",
+                        ]
+                        allowed_attrs = {
+                            "a": ["href", "title", "target"],
+                            "img": ["src", "alt"],
+                        }
+                        return _bleach.clean(
+                            raw_html,
+                            tags=allowed_tags,
+                            attributes=allowed_attrs,
+                            protocols=["http", "https", "mailto"],
+                        )
+
+                    # bind editor -> preview with server-side conversion
+                    # ContentElement.bind_content_from expects a `backward`
+                    # transformer (value from target -> this element).
+                    widgets["devops_input_preview"].bind_content_from(
+                        editor_widget, "value", backward=render_and_sanitize
+                    )
+
+                    # Save button to write back to DevOps
+                    def save_description():
+                        c_name = widgets["customer_name"].value
+                        us_name = widgets["user_story"].value
+                        us_id = helpers.extract_devops_id(us_name)
+                        description = editor_widget.value or ""
+                        markdown_flag = True  # our editor uses markdown
+                        if DO and DO.manager:
+                            status, msg = DO.manager.set_description(
+                                c_name, us_id, description, markdown=markdown_flag
+                            )
+                            if status:
+                                ui.notify(
+                                    "Description saved to DevOps", color="positive"
+                                )
+                            else:
+                                ui.notify(f"Failed to save: {msg}", color="negative")
+
+                    ui.button(
+                        "Save Description",
+                        on_click=lambda: asyncio.create_task(
+                            asyncio.to_thread(save_description)
+                        ),
+                    ).classes("mt-2")
 
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)
@@ -1049,7 +1264,7 @@ def ui_query_editor():
         query = editor.value
         try:
             await QE.query_db(query)
-        except Exception as e:
+        except Exception:
             ui.notify("Query is invalid", color="negative")
             LOG.log_msg("WARNING", "Custom query is invalid and cannot be saved!")
             return
@@ -1101,7 +1316,7 @@ def ui_query_editor():
         query = editor.value
         try:
             await QE.query_db(query)
-        except Exception as e:
+        except Exception:
             ui.notify("Query is invalid", color="negative")
             LOG.log_msg("WARNING", "Custom query is invalid and cannot be updated!")
             return
