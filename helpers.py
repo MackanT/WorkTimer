@@ -99,8 +99,44 @@ def date_input(label, input_width: str = "w-64"):
     return date
 
 
-def make_input_row(fields, input_width: str = "w-64"):
-    widgets = {}
+def make_input_row(
+    fields,
+    input_width: str = "w-64",
+    widgets: dict = None,
+    defer_parent_wiring: bool = False,
+):
+    """Create UI widgets for a list of field configs.
+
+    If `widgets` is provided it will be updated with the created widgets.
+    If `defer_parent_wiring` is True the function will NOT attach parent->child
+    listeners. Instead it returns a tuple (created_widgets, pending_relations)
+    where pending_relations is a list of dicts describing relations to bind
+    later via `bind_parent_relations(widgets, pending_relations)`.
+    """
+    created = {}
+    pending_relations = []
+
+    def _double_width_class(wclass: str) -> str:
+        """Convert a 'w-<num>' class to a fixed min-width style string.
+
+        Returns a style fragment like 'min-width:512px' for numeric classes.
+        For 'w-full' or non-matching classes returns empty string so layout classes remain.
+        """
+        if not wclass:
+            return ""
+        if wclass.strip() == "w-full":
+            return ""
+        m = __import__("re").match(r"w-(\d+)$", wclass)
+        if m:
+            try:
+                val = int(m.group(1))
+                # heuristic mapping: 8px per unit to create a readable min-width
+                px = val * 8
+                return f"min-width:{px}px"
+            except Exception:
+                return ""
+        return ""
+
     for field in fields:
         label = field["label"]
         if field.get("optional", True):
@@ -119,27 +155,27 @@ def make_input_row(fields, input_width: str = "w-64"):
                 default_val = options_val
 
         if ftype == "input":
-            widgets[fname] = ui.input(label).classes(input_width)
+            created[fname] = ui.input(label).classes(input_width)
             if default_val is not None:
-                widgets[fname].value = default_val
+                created[fname].value = default_val
         elif ftype == "text":
-            widgets[fname] = ui.textarea(label).classes(input_width)
+            created[fname] = ui.textarea(label).classes(input_width)
             if default_val is not None:
-                widgets[fname].value = default_val
+                created[fname].value = default_val
         elif ftype == "number":
-            widgets[fname] = ui.number(label, min=0).classes(input_width)
+            created[fname] = ui.number(label, min=0).classes(input_width)
             if default_val is not None:
-                widgets[fname].value = default_val
+                created[fname].value = default_val
         elif ftype == "date":
-            widgets[fname] = date_input(label, input_width=input_width)
+            created[fname] = date_input(label, input_width=input_width)
             if default_val is not None:
-                widgets[fname].value = default_val
+                created[fname].value = default_val
         elif ftype == "datetime":
-            widgets[fname] = ui.input(label, placeholder="YYYY-MM-DD HH:MM:SS").classes(
+            created[fname] = ui.input(label, placeholder="YYYY-MM-DD HH:MM:SS").classes(
                 input_width
             )
             if default_val is not None:
-                widgets[fname].value = default_val
+                created[fname].value = default_val
         elif ftype == "select":
             if "parent" in field:
                 options = []
@@ -152,11 +188,11 @@ def make_input_row(fields, input_width: str = "w-64"):
             )
             if "default" in field:
                 select_widget.value = field["default"]
-            widgets[fname] = select_widget
+            created[fname] = select_widget
         elif ftype == "switch":
-            widgets[fname] = ui.switch(text=label).classes(input_width)
+            created[fname] = ui.switch(text=label).classes(input_width)
             if "default" in field:
-                widgets[fname].value = field["default"]
+                created[fname].value = field["default"]
         elif ftype == "chip_group":
             chips = []
             with ui.row().classes(f"mb-4 {input_width} gap-1"):
@@ -169,21 +205,80 @@ def make_input_row(fields, input_width: str = "w-64"):
                             color=tag.color,
                         )
                     )
-            widgets[fname] = chips
+            created[fname] = chips
+        elif ftype == "codemirror":
+            editor = ui.codemirror(
+                default_val or "",
+                language=field.get("type_language", "markdown"),
+                theme="dracula",
+            )
+            # Keep layout classes so the parent row can control placement, but add a
+            # min-width inline style so the editor doesn't expand indefinitely.
+            editor.classes(input_width)
+            width_style = _double_width_class(input_width)
+            if width_style:
+                editor.style(width_style)
+            created[fname] = editor
+        elif ftype == "markdown":
+            # Keep layout classes for row placement and add a min-width style so preview
+            # remains a readable fixed width but still participates in flex layout.
+            width_style = _double_width_class(input_width)
+            if width_style:
+                preview = (
+                    ui.markdown(default_val or "")
+                    .classes(input_width)
+                    .style(width_style)
+                )
+            else:
+                preview = ui.markdown(default_val or "").classes(input_width)
+            created[fname] = preview
+            created[f"{fname}_preview"] = preview
 
-    # Generalize parent-child relation for any widget type
+    # Merge created into provided widgets (if any)
+    out_widgets = widgets if widgets is not None else {}
+    # If widgets was None, ensure it's a new dict
+    if widgets is None:
+        out_widgets = created
+    else:
+        out_widgets.update(created)
+
+    # Collect pending parent relations
     for field in fields:
         if "parent" in field:
-            child = field["name"]
-            parent = field["parent"]
+            pending_relations.append(
+                {
+                    "child": field["name"],
+                    "parent": field["parent"],
+                    "field_config": field,
+                }
+            )
 
-            def update_child(e, child=child, parent=parent):
-                field_config = next((f for f in fields if f["name"] == child), None)
-                options_map = field_config.get("options", {}) if field_config else {}
-                parent_val = widgets[parent].value
-                # Update child widget based on its type
-                widget = widgets[child]
-                ftype = field_config.get("type") if field_config else None
+    if defer_parent_wiring:
+        return out_widgets, pending_relations
+
+    # Otherwise bind relations immediately (backwards compatible behavior)
+    bind_parent_relations(out_widgets, pending_relations)
+    return out_widgets
+
+
+def bind_parent_relations(widgets: dict, pending_relations: list):
+    """Bind parent->child update handlers for pending relations.
+
+    `pending_relations` is a list of dicts with keys: child, parent, field_config
+    """
+    for rel in pending_relations:
+        child = rel["child"]
+        parent = rel["parent"]
+        field_config = rel.get("field_config", {})
+
+        def make_update_child(child=child, parent=parent, field_config=field_config):
+            def update_child(e):
+                options_map = field_config.get("options", {})
+                parent_val = widgets[parent].value if parent in widgets else None
+                widget = widgets.get(child)
+                ftype = field_config.get("type")
+                if widget is None:
+                    return
                 if ftype == "select":
                     if isinstance(options_map, dict):
                         widget.options = options_map.get(parent_val, [])
@@ -193,16 +288,12 @@ def make_input_row(fields, input_width: str = "w-64"):
                         widget.options = []
                     widget.update()
                 elif ftype == "input":
-                    # For input, set value if options_map is dict/list
                     if isinstance(options_map, dict):
                         widget.value = options_map.get(parent_val, "")
                     elif isinstance(options_map, list):
                         widget.value = options_map[0] if options_map else ""
-                    else:
-                        print("If we are ever here, something is wrong!")
                     widget.update()
                 elif ftype == "number":
-                    # For number, set value if options_map is dict/list
                     if isinstance(options_map, dict):
                         val = options_map.get(parent_val, 0)
                         if isinstance(val, list):
@@ -223,31 +314,100 @@ def make_input_row(fields, input_width: str = "w-64"):
                         widget.value = 0
                     widget.update()
                 elif ftype == "chip_group":
-                    # For chip_group, update chips if options_map is dict/list
-                    chips = []
                     options = []
                     if isinstance(options_map, dict):
                         options = options_map.get(parent_val, [])
                     elif isinstance(options_map, list):
                         options = options_map
                     # Rebuild chips
-                    with widget[0].parent:
-                        for chip in widget:
-                            chip.delete()
-                        for tag in options:
-                            chips.append(
-                                ui.chip(
-                                    tag.name,
-                                    selectable=True,
-                                    icon=tag.icon,
-                                    color=tag.color,
+                    if isinstance(widget, list) and widget:
+                        with widget[0].parent:
+                            for chip in widget:
+                                chip.delete()
+                            chips = []
+                            for tag in options:
+                                chips.append(
+                                    ui.chip(
+                                        tag.name,
+                                        selectable=True,
+                                        icon=tag.icon,
+                                        color=tag.color,
+                                    )
                                 )
-                            )
-                    widgets[child] = chips
-                # Add more widget types as needed
+                            widgets[child] = chips
+                elif ftype == "markdown":
+                    # Update markdown preview content when parent changes.
+                    # Prefer updating the preview widget if present (stored as child + '_preview').
+                    preview_widget = widgets.get(f"{child}_preview") or widgets.get(
+                        child
+                    )
+                    if preview_widget is None:
+                        return
+                    text = str(parent_val) if parent_val is not None else ""
+                    for fn in (
+                        getattr(preview_widget, "set_content", None),
+                        getattr(preview_widget, "set_markdown", None),
+                        getattr(preview_widget, "set_text", None),
+                        # fallback: some preview widgets support .value
+                        None,
+                    ):
+                        if callable(fn):
+                            try:
+                                fn(text)
+                                return
+                            except Exception:
+                                continue
+                    # last resort: set value if available
+                    if hasattr(preview_widget, "value"):
+                        preview_widget.value = text
+                        try:
+                            preview_widget.update()
+                        except Exception:
+                            pass
 
-            widgets[parent].on("update:model-value", update_child)
-    return widgets
+            return update_child
+
+        # Attach listener if parent exists.
+        # Try several possible event names (NiceGUI components differ across versions)
+        # and fall back to a lightweight polling timer if none of them attach.
+        if parent in widgets:
+            parent_widget = widgets[parent]
+            attached = False
+            if hasattr(parent_widget, "on"):
+                for event_name in ("update:model-value", "update", "change", "input"):
+                    try:
+                        parent_widget.on(event_name, make_update_child())
+                        attached = True
+                    except Exception:
+                        # ignore and try next event name
+                        continue
+            # If we couldn't attach an event listener, consider using polling as a fallback.
+            # Only enable the polling fallback when the child explicitly allows it via
+            # 'parent_update: true' (default True). This prevents polling-based auto-updates
+            # when the field has 'parent_update: false'. Event-driven wiring is still attempted
+            # regardless of this flag.
+            if not attached:
+                if field_config.get("parent_update", False):
+                    try:
+                        last = {"value": getattr(parent_widget, "value", None)}
+
+                        def _poll_parent():
+                            try:
+                                v = getattr(parent_widget, "value", None)
+                            except Exception:
+                                v = None
+                            if v != last["value"]:
+                                last["value"] = v
+                                # call update handler (it reads current parent value from widgets)
+                                try:
+                                    make_update_child()(None)
+                                except Exception:
+                                    pass
+
+                        ui.timer(callback=_poll_parent, interval=0.25)
+                    except Exception:
+                        # If even polling fails, we can't wire this parent — leave it unbound.
+                        pass
 
 
 def filter_df(df, filters, return_as="df", column=None):
