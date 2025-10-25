@@ -3,6 +3,7 @@ from msrest.authentication import BasicAuthentication
 from azure.devops.v7_1.work_item_tracking.models import CommentCreate
 from azure.devops.exceptions import AzureDevOpsServiceError
 import pandas as pd
+import re
 
 
 class DevOpsManager:
@@ -41,6 +42,25 @@ class DevOpsManager:
             self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return f"No DevOps connection for {customer_name}"
         return client.get_workitem_level(level, work_item_id)
+
+    def get_description(self, customer_name, work_item_id):
+        """Return the work item's description (System.Description) as plain text.
+
+        Returns (True, description) on success or (False, message) on failure.
+        """
+        client = self.clients.get(customer_name)
+        if not client:
+            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.get_work_item_description(work_item_id)
+
+    def set_description(self, customer_name, work_item_id, description, markdown=False):
+        """Set (update) a work item's description. Returns (True, msg) or (False, msg)."""
+        client = self.clients.get(customer_name)
+        if not client:
+            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.update_work_item_description(work_item_id, description, markdown)
 
     def create_user_story(
         self,
@@ -332,3 +352,65 @@ class DevOpsClient:
         except Exception as e:
             self.log.log_msg("ERROR", f"Error creating user story: {e}")
             return (False, f"Error creating user story: {e}")
+
+    def get_work_item_description(self, work_item_id: int):
+        """Return the System.Description field for a single work item as plain text.
+
+        Returns (True, description) or (False, message).
+        """
+        try:
+            item = self.wit_client.get_work_item(int(work_item_id), expand="All")
+            desc = ""
+            if getattr(item, "fields", None):
+                desc = item.fields.get("System.Description", "")
+            # Detect whether the description appears to be HTML (Azure DevOps stores HTML)
+            fmt = "markdown"
+            try:
+                if isinstance(desc, str) and re.search(r"<[^>]+>", desc):
+                    fmt = "html"
+            except Exception:
+                fmt = "markdown"
+            return (True, desc, fmt)
+        except Exception as e:
+            self.log.log_msg("ERROR", f"Error fetching work item {work_item_id}: {e}")
+            return (False, f"Error fetching work item {work_item_id}: {e}")
+
+    def update_work_item_description(
+        self, work_item_id: int, description: str, markdown: bool = False
+    ):
+        """Update the System.Description field of a work item.
+
+        Returns (True, message) on success; (False, message) on failure.
+        """
+        try:
+            patch_document = [
+                {
+                    "op": "add",
+                    "path": "/fields/System.Description",
+                    "value": description,
+                }
+            ]
+            if markdown:
+                # Mark the Description field as Markdown formatted in Azure DevOps
+                patch_document.append(
+                    {
+                        "op": "add",
+                        "path": "/multilineFieldsFormat/System.Description",
+                        "value": "Markdown",
+                    }
+                )
+            self.wit_client.update_work_item(
+                patch_document, int(work_item_id), project=self.project_name
+            )
+            self.log.log_msg(
+                "INFO", f"Updated description for work item {work_item_id}"
+            )
+            return (True, f"Updated description for work item {work_item_id}")
+        except AzureDevOpsServiceError as e:
+            self.log.log_msg("ERROR", f"Azure DevOps error occurred: {e}")
+            return (False, f"Azure DevOps error occurred: {e}")
+        except Exception as e:
+            self.log.log_msg("ERROR", f"Error updating work item {work_item_id}: {e}")
+            return (False, f"Error updating work item {work_item_id}: {e}")
+
+    # DevOpsManager should not itself implement update logic; calls go to DevOpsClient
