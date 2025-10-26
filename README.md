@@ -20,6 +20,8 @@
   - Can now request and store table of all DevOps epics, features, and user stories for faster, more responsive UI
   - Ending tasks now has user-story with drop-down list instead of ID input
   - Added support to create user-story directly from the program
+  - Adding customers automatically triggers refresh of devops data
+  - Code does automatic full and incremental load from devops over time
 - Added database compare feature
   - Schema compare current db-file with old db-file. Simplifies future migration
   - Added option to run code in any db file and save results. Used in conjunction with compare to migrate old db to new format

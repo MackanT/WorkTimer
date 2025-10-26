@@ -12,7 +12,6 @@ from globals import (
     generate_sync_sql,
 )
 from datetime import datetime
-from textwrap import dedent
 import threading
 import tempfile
 import os
@@ -842,42 +841,24 @@ async def ui_devops_settings():
     def add_user_story(widgets):
         wid = helpers.parse_widget_values(widgets)
 
-        description = f"""
-            **Source:** {wid["source"]}
-            **Contact:** {wid["contact_person"]}
-            **Received Date:** {wid["item_date"]}
-
-            **Problem:**
-            {wid["problem_description"]}
-
-            **More Info:**
-            {wid["more_info"]}
-
-            **Solution:**
-            {wid["solution"]}
-
-            **Validation:**
-            {wid["validation"]}
-
-        """
+        # Use the description from the editor directly
+        description = wid.get("description_editor", "")
 
         additional_fields = {
             "System.State": wid["state"],
-            "System.Tags": ", ".join([t for t in wid["tags"]]),
+            "System.Tags": ", ".join([t for t in wid.get("tags", [])]),
             "Microsoft.VSTS.Common.Priority": int(wid["priority"]),
-            "System.AssignedTo": wid["assigned_to"],
+            "System.AssignedTo": wid.get("assigned_to", ""),
         }
-        parent_id = int(
-            helpers.extract_devops_id(wid["parent_item"])
-        )  # Changed from parent_name
+        parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
 
         success, message = DO.devops_helper(
             "create_user_story",
             customer_name=wid["customer_name"],
             title=wid["user_story_name"],
-            description=dedent(description),
+            description=description,
             additional_fields=additional_fields,
-            markdown=wid["use_markdown"],
+            markdown=wid.get("use_markdown", True),
             parent=parent_id,
         )
         state = "INFO" if success else "ERROR"
@@ -991,6 +972,91 @@ async def ui_devops_settings():
                             )
 
                 work_item_widget.on("update:model-value", load_work_item_description)
+
+        # Add special event handlers for Add tab (auto-populate source and contact)
+        if tab_type == "Add" and widgets:
+            editor_widget = widgets.get("description_editor")
+            preview_widget = widgets.get("description_preview")
+            source_widget = widgets.get("source")
+            contact_widget = widgets.get("contact_person")
+
+            # Initialize the preview with the initial editor content
+            if editor_widget and preview_widget:
+                initial_content = editor_widget.value or ""
+                preview_widget.set_content(
+                    helpers.render_and_sanitize_markdown(initial_content)
+                )
+
+            if editor_widget and (source_widget or contact_widget):
+                import re
+
+                def update_editor_field(field_name, new_value):
+                    """Update a specific field in the markdown editor."""
+                    current_text = editor_widget.value or ""
+
+                    # Debug: log the current text to see what we're working with
+                    LOG.log_msg(
+                        "DEBUG",
+                        f"Updating field '{field_name}' with value '{new_value}'",
+                    )
+                    LOG.log_msg(
+                        "DEBUG", f"Current editor content:\n{repr(current_text[:200])}"
+                    )
+
+                    # Match the field and update its value (only the content after the field name)
+                    # Pattern: **FieldName:** followed by optional spaces/content until newline
+                    # We need to match the entire line including trailing whitespace
+                    pattern = rf"^(\*\*{re.escape(field_name)}:\*\*)(.*)$"
+
+                    # Check if the pattern exists in the text (using MULTILINE flag)
+                    match = re.search(pattern, current_text, re.MULTILINE)
+                    if match:
+                        LOG.log_msg(
+                            "DEBUG", f"Pattern matched! Groups: {match.groups()}"
+                        )
+                        # Replace with the field name followed by a space and the new value
+                        replacement = rf"\1 {new_value}"
+                        updated_text = re.sub(
+                            pattern,
+                            replacement,
+                            current_text,
+                            count=1,
+                            flags=re.MULTILINE,
+                        )
+                    else:
+                        # If pattern not found, just return without updating
+                        LOG.log_msg(
+                            "WARNING", f"Pattern for '{field_name}' not found in editor"
+                        )
+                        LOG.log_msg("DEBUG", f"Searched for pattern: {pattern}")
+                        return
+
+                    editor_widget.value = updated_text
+                    editor_widget.update()
+
+                    # Also update the preview
+                    if preview_widget:
+                        preview_widget.set_content(
+                            helpers.render_and_sanitize_markdown(updated_text)
+                        )
+
+                if source_widget:
+
+                    def on_source_change(e):
+                        # Get the new value from the widget directly
+                        new_value = source_widget.value or ""
+                        update_editor_field("Source", new_value)
+
+                    source_widget.on("update:model-value", on_source_change)
+
+                if contact_widget:
+
+                    def on_contact_change(e):
+                        # Get the new value from the widget directly
+                        new_value = contact_widget.value or ""
+                        update_editor_field("Contact", new_value)
+
+                    contact_widget.on("update:model-value", on_contact_change)
 
     with ui.splitter(value=20).classes("w-full h-full") as splitter:
         with splitter.before:

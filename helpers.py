@@ -334,9 +334,13 @@ def make_input_row(
                 options = field.get("options", {})
             if options is None:
                 options = []
-            select_widget = ui.select(options, label=label, with_input=True).classes(
-                input_width
-            )
+            # Check if with_input is specified in field config, default to True
+            with_input = field.get("with_input", True)
+            select_widget = ui.select(options, label=label, with_input=with_input)
+            # If with_input is enabled, allow adding new values
+            if with_input:
+                select_widget.props('new-value-mode="add-unique"')
+            select_widget.classes(input_width)
             if "default" in field:
                 select_widget.value = field["default"]
             created[fname] = select_widget
@@ -346,7 +350,14 @@ def make_input_row(
                 created[fname].value = field["default"]
         elif ftype == "chip_group":
             chips = []
-            with ui.row().classes(f"mb-4 {input_width} gap-1"):
+            # Use flex-wrap to allow chips to wrap, and full width if input_width is w-full
+            chip_row_class = "mb-4 gap-1 flex-wrap"
+            if input_width == "w-full":
+                chip_row_class += " w-full"
+            else:
+                chip_row_class += f" {input_width}"
+            
+            with ui.row().classes(chip_row_class):
                 for tag in field["options"]:
                     chips.append(
                         ui.chip(
@@ -358,17 +369,25 @@ def make_input_row(
                     )
             created[fname] = chips
         elif ftype == "codemirror":
+            # Replace template variables in default value
+            if default_val:
+                default_val = default_val.replace("{today}", str(date.today()))
+            
             editor = ui.codemirror(
                 default_val or "",
                 language=field.get("type_language", "markdown"),
                 theme="dracula",
             )
-            # Keep layout classes so the parent row can control placement, but add a
-            # min-width inline style so the editor doesn't expand indefinitely.
-            editor.classes(input_width)
-            width_style = _double_width_class(input_width)
-            if width_style:
-                editor.style(width_style)
+            # For wide layouts (w-full), use flex-1 to take available space
+            # For fixed width layouts, use the input_width class
+            if input_width == "w-full":
+                editor.classes("flex-1 min-w-0")
+                editor.style("min-height: 400px;")
+            else:
+                editor.classes(input_width)
+                width_style = _double_width_class(input_width)
+                if width_style:
+                    editor.style(width_style)
             created[fname] = editor
         elif ftype == "markdown":
             # Keep layout classes for row placement and add a min-width style so preview
@@ -386,19 +405,27 @@ def make_input_row(
             created[f"{fname}_preview"] = preview
         elif ftype == "html":
             # HTML preview widget with dark mode styling
-            width_style = _double_width_class(input_width)
             base_style = "background-color: #1e1e1e; border-color: #444;"
-
-            if width_style:
-                combined_style = f"{base_style}; {width_style}"
+            
+            # For wide layouts (w-full), use flex-1 to take available space
+            if input_width == "w-full":
+                html_widget = (
+                    ui.html(default_val or "")
+                    .classes("flex-1 min-w-0 h-96 overflow-auto p-4 rounded border")
+                    .style(f"{base_style}; min-height: 400px;")
+                )
             else:
-                combined_style = base_style
-
-            html_widget = (
-                ui.html(default_val or "")
-                .classes(f"{input_width} h-96 overflow-auto p-4 rounded border")
-                .style(combined_style)
-            )
+                width_style = _double_width_class(input_width)
+                if width_style:
+                    combined_style = f"{base_style}; {width_style}"
+                else:
+                    combined_style = base_style
+                
+                html_widget = (
+                    ui.html(default_val or "")
+                    .classes(f"{input_width} h-96 overflow-auto p-4 rounded border")
+                    .style(combined_style)
+                )
 
             created[fname] = html_widget
 
@@ -845,15 +872,29 @@ def build_generic_tab_panel(
 
         if rows_config:
             # Layout with multiple rows
-            with ui.column():
+            with ui.column().classes("w-full gap-4"):
                 for row_fields in rows_config:
-                    with ui.row():
-                        # Get field configs for this row
-                        row_field_configs = [
-                            f for f in fields if f["name"] in row_fields
-                        ]
+                    with ui.row().classes("w-full gap-4"):
+                        # Get field configs for this row, preserving the order from row_fields
+                        row_field_configs = []
+                        for field_name in row_fields:
+                            field_config = next((f for f in fields if f["name"] == field_name), None)
+                            if field_config:
+                                row_field_configs.append(field_config)
+                        
+                        # Check if this row has wide widgets (codemirror, html, text)
+                        # or is a single-field row (which should span full width)
+                        # or contains chip_group (which should span full width)
+                        has_wide_widgets = any(
+                            f.get("type") in ["codemirror", "html", "text", "chip_group"] 
+                            for f in row_field_configs
+                        )
+                        is_single_field = len(row_field_configs) == 1
+                        # Use w-full for wide widgets or single fields, otherwise use default width
+                        widget_width = "w-full" if (has_wide_widgets or is_single_field) else "w-64"
                         _, rels = make_input_row(
                             row_field_configs, 
+                            input_width=widget_width,
                             widgets=widgets, 
                             defer_parent_wiring=True,
                             render_functions=render_functions
@@ -864,10 +905,13 @@ def build_generic_tab_panel(
             with ui.row():
                 for col_fields in columns_config:
                     with ui.column():
-                        # Get field configs for this column
-                        col_field_configs = [
-                            f for f in fields if f["name"] in col_fields
-                        ]
+                        # Get field configs for this column, preserving the order from col_fields
+                        col_field_configs = []
+                        for field_name in col_fields:
+                            field_config = next((f for f in fields if f["name"] == field_name), None)
+                            if field_config:
+                                col_field_configs.append(field_config)
+                        
                         _, rels = make_input_row(
                             col_field_configs, 
                             widgets=widgets, 
