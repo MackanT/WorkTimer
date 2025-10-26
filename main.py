@@ -421,233 +421,158 @@ def ui_time_tracking():
 def ui_add_data():
     asyncio.run(AD.refresh())
 
-    # --- Modular Tab Panel Builder ---
-    def add_save_button(save_data, fields, widgets):
-        async def on_save():
-            required_fields = [
-                f["name"] for f in fields if not f.get("optional", False)
-            ]
-            if not helpers.check_input(widgets, required_fields):
-                return
-            kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
-            # Convert any single-item list in kwargs to a string
-            for k, v in kwargs.items():
-                if isinstance(v, list):
-                    if len(v) == 1:
-                        kwargs[k] = v[0]
-                    elif len(v) > 1:  ## TODO make nicer
-                        raise ValueError(
-                            f"Field '{k}' has multiple values: {v}. Only one value is allowed."
-                        )
-            await QE.function_db(save_data.function, **kwargs)
-            # If customer add/update, regenerate DevOps table
-            if save_data.function in ["insert_customer", "update_customer"]:
-                if "DO" in globals():
-                    LOG.log_msg("INFO", "Regenerating DevOps data...")
-                    ui.notify(
-                        "Regenerating DevOps data... This may take a few moments.",
-                        color="info",
-                    )
-                    await DO.update_devops(incremental=True)
-            msg_1, msg_2 = helpers.print_success(
-                save_data.main_action,
-                widgets[save_data.main_param].value,
-                save_data.secondary_action,
-                widgets=widgets,
-            )
-            LOG.log_msg("INFO", msg_1)
-            LOG.log_msg("INFO", msg_2)
-            await AD.refresh()
+    # --- Data Preparation Functions (entity-specific logic) ---
 
-        ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
-
-    def build_customer_tab_panel(tab_type, container_dict):
-        container = container_dict.get(tab_type)
-        if container is None:
-            container = ui.element()
-            container_dict[tab_type] = container
-        container.clear()
-
-        fields = config_ui["customer"][tab_type.lower()]["fields"]
-        action = config_ui["customer"][tab_type.lower()]["action"]
-
+    def prep_customer_data(tab_type, fields):
+        """Prepare data sources for customer tabs."""
         active_data = helpers.filter_df(AD.df, {"c_current": 1})
 
-        with container:
-            if tab_type == "Add":
-                helpers.assign_dynamic_options(fields, data_sources={"date": None})
-                widgets = helpers.make_input_row(fields)
-                save_data = SaveData(**action)
-                add_save_button(save_data, fields, widgets)
-            elif tab_type == "Update":
-                customer_names = helpers.get_unique_list(active_data, "customer_name")
+        if tab_type == "Add":
+            return {"date": None}
 
-                org_urls = {}
-                pat_tokens = {}
-                new_customer_names = {}
+        elif tab_type == "Update":
+            customer_names = helpers.get_unique_list(active_data, "customer_name")
+            org_urls = {}
+            pat_tokens = {}
+            new_customer_names = {}
 
-                for customer in customer_names:
-                    filtered = helpers.filter_df(AD.df, {"customer_name": customer})
-                    org_urls[customer] = helpers.get_unique_list(filtered, "org_url")
-                    pat_tokens[customer] = helpers.get_unique_list(
-                        filtered, "pat_token"
-                    )
-                    new_customer_names[customer] = [customer]
+            for customer in customer_names:
+                filtered = helpers.filter_df(AD.df, {"customer_name": customer})
+                org_urls[customer] = helpers.get_unique_list(filtered, "org_url")
+                pat_tokens[customer] = helpers.get_unique_list(filtered, "pat_token")
+                new_customer_names[customer] = [customer]
 
-                helpers.assign_dynamic_options(
-                    fields,
-                    data_sources={
-                        "customer_data": customer_names,
-                        "new_customer_name": new_customer_names,
-                        "org_url": org_urls,
-                        "pat_token": pat_tokens,
-                    },
-                )
+            return {
+                "customer_data": customer_names,
+                "new_customer_name": new_customer_names,
+                "org_url": org_urls,
+                "pat_token": pat_tokens,
+            }
 
-                widgets = helpers.make_input_row(fields)
-                save_data = SaveData(**action)
-                add_save_button(save_data, fields, widgets)
-            elif tab_type == "Disable":
-                customer_names = helpers.get_unique_list(active_data, "customer_name")
-                helpers.assign_dynamic_options(
-                    fields, data_sources={"customer_data": customer_names}
-                )
-                save_data = SaveData(**action)
-                widgets = helpers.make_input_row(fields)
-                add_save_button(save_data, fields, widgets)
-            elif tab_type == "Reenable":
-                # Only show customer_name where c_current == 0 and NOT present in any row where c_current == 1
-                customer_names = helpers.get_unique_list(active_data, "customer_name")
-                candidate_names = helpers.filter_df(
-                    AD.df,
-                    {"c_current": 0},
-                    return_as="distinct_list",
-                    column="customer_name",
-                )
-                reenable_names = sorted(
-                    list(set(candidate_names) - set(customer_names))
-                )
-                helpers.assign_dynamic_options(
-                    fields, data_sources={"customer_data": reenable_names}
-                )
-                save_data = SaveData(**action)
-                widgets = helpers.make_input_row(fields)
-                add_save_button(save_data, fields, widgets)
+        elif tab_type == "Disable":
+            customer_names = helpers.get_unique_list(active_data, "customer_name")
+            return {"customer_data": customer_names}
 
-    def build_project_tab_panel(tab_type, container_dict):
-        container = container_dict.get(tab_type)
-        if container is None:
-            container = ui.element()
-            container_dict[tab_type] = container
-        container.clear()
+        elif tab_type == "Reenable":
+            customer_names = helpers.get_unique_list(active_data, "customer_name")
+            candidate_names = helpers.filter_df(
+                AD.df,
+                {"c_current": 0},
+                return_as="distinct_list",
+                column="customer_name",
+            )
+            reenable_names = sorted(list(set(candidate_names) - set(customer_names)))
+            return {"customer_data": reenable_names}
 
-        fields = config_ui["project"][tab_type.lower()]["fields"]
-        action = config_ui["project"][tab_type.lower()]["action"]
+        return {}
 
-        active_data = helpers.filter_df(
-            AD.df,
-            {"c_current": 1},
-        )
+    def prep_project_data(tab_type, fields):
+        """Prepare data sources for project tabs."""
+        active_data = helpers.filter_df(AD.df, {"c_current": 1})
         active_customer_names = helpers.get_unique_list(active_data, "customer_name")
 
-        with container:
-            if tab_type == "Add":
-                helpers.assign_dynamic_options(
-                    fields, data_sources={"customer_data": active_customer_names}
+        if tab_type == "Add":
+            return {"customer_data": active_customer_names}
+
+        elif tab_type == "Update":
+            project_names = {}
+            new_project_name = {}
+            new_git_id = {}
+
+            for customer in active_customer_names:
+                filtered = helpers.filter_df(
+                    active_data, {"customer_name": customer, "p_current": 1}
                 )
-                widgets = helpers.make_input_row(fields)
-                save_data = SaveData(**action)
-                add_save_button(save_data, fields, widgets)
-            elif tab_type == "Update":
-                project_names = {}
-                new_project_name = {}
-                new_git_id = {}
-
-                for customer in active_customer_names:
-                    filtered = helpers.filter_df(
-                        active_data, {"customer_name": customer, "p_current": 1}
-                    )
-                    project_names[customer] = helpers.get_unique_list(
-                        filtered, "project_name"
-                    )
-                    for project in project_names[customer]:
-                        filtered_cust = helpers.filter_df(
-                            filtered, {"project_name": project}
-                        )
-
-                        new_project_name[project] = [project]
-                        new_git_id[project] = helpers.get_unique_list(
-                            filtered_cust, "git_id"
-                        )
-
-                helpers.assign_dynamic_options(
-                    fields,
-                    data_sources={
-                        "customer_data": active_customer_names,
-                        "project_names": project_names,
-                        "new_project_name": new_project_name,
-                        "new_git_id": new_git_id,
-                    },
+                project_names[customer] = helpers.get_unique_list(
+                    filtered, "project_name"
                 )
-                widgets = helpers.make_input_row(fields)
-                save_data = SaveData(**action)
-                add_save_button(save_data, fields, widgets)
-            elif tab_type == "Disable":
-                project_names = {}
-                for customer in active_customer_names:
-                    filtered = helpers.filter_df(
-                        active_data, {"customer_name": customer, "p_current": 1}
+                for project in project_names[customer]:
+                    filtered_cust = helpers.filter_df(
+                        filtered, {"project_name": project}
                     )
-                    project_names[customer] = helpers.get_unique_list(
-                        filtered, "project_name"
+                    new_project_name[project] = [project]
+                    new_git_id[project] = helpers.get_unique_list(
+                        filtered_cust, "git_id"
                     )
 
-                helpers.assign_dynamic_options(
-                    fields,
-                    data_sources={
-                        "customer_data": active_customer_names,
-                        "project_names": project_names,
-                    },
-                )
-                widgets = helpers.make_input_row(fields)
-                save_data = SaveData(**action)
-                add_save_button(save_data, fields, widgets)
-            elif tab_type == "Reenable":
-                project_names = {}
-                for customer in active_customer_names:
-                    filtered = helpers.filter_df(
-                        active_data, {"customer_name": customer, "p_current": 0}
-                    )
-                    project_names[customer] = helpers.get_unique_list(
-                        filtered, "project_name"
-                    )
+            return {
+                "customer_data": active_customer_names,
+                "project_names": project_names,
+                "new_project_name": new_project_name,
+                "new_git_id": new_git_id,
+            }
 
-                helpers.assign_dynamic_options(
-                    fields,
-                    data_sources={
-                        "customer_data": active_customer_names,
-                        "project_names": project_names,
-                    },
+        elif tab_type == "Disable":
+            project_names = {}
+            for customer in active_customer_names:
+                filtered = helpers.filter_df(
+                    active_data, {"customer_name": customer, "p_current": 1}
                 )
-                widgets = helpers.make_input_row(fields)
-                save_data = SaveData(**action)
-                add_save_button(save_data, fields, widgets)
+                project_names[customer] = helpers.get_unique_list(
+                    filtered, "project_name"
+                )
+
+            return {
+                "customer_data": active_customer_names,
+                "project_names": project_names,
+            }
+
+        elif tab_type == "Reenable":
+            project_names = {}
+            for customer in active_customer_names:
+                filtered = helpers.filter_df(
+                    active_data, {"customer_name": customer, "p_current": 0}
+                )
+                project_names[customer] = helpers.get_unique_list(
+                    filtered, "project_name"
+                )
+
+            return {
+                "customer_data": active_customer_names,
+                "project_names": project_names,
+            }
+
+        return {}
+
+    def prep_bonus_data(tab_type, fields):
+        """Prepare data sources for bonus tabs."""
+        # Bonus tab only has "Add" and doesn't need any dynamic data sources
+        return {}
+
+    # --- Wrapper Functions (Simple Entities) ---
+
+    def build_customer_tab_panel(tab_type, container_dict):
+        """Build customer tab panel using generic builder."""
+        helpers.build_generic_tab_panel(
+            entity_name="customer",
+            tab_type=tab_type,
+            container_dict=container_dict,
+            config_source=config_ui,
+            data_prep_func=prep_customer_data,
+            on_success_callback=lambda: AD.refresh(),
+        )
+
+    def build_project_tab_panel(tab_type, container_dict):
+        """Build project tab panel using generic builder."""
+        helpers.build_generic_tab_panel(
+            entity_name="project",
+            tab_type=tab_type,
+            container_dict=container_dict,
+            config_source=config_ui,
+            data_prep_func=prep_project_data,
+            on_success_callback=lambda: AD.refresh(),
+        )
 
     def build_bonus_tab_panel(tab_type, container_dict):
-        container = container_dict.get(tab_type)
-        if container is None:
-            container = ui.element()
-            container_dict[tab_type] = container
-        container.clear()
-
-        fields = config_ui["bonus"][tab_type.lower()]["fields"]
-        action = config_ui["bonus"][tab_type.lower()]["action"]
-
-        with container:
-            if tab_type == "Add":
-                widgets = helpers.make_input_row(fields)
-                save_data = SaveData(**action)
-                add_save_button(save_data, fields, widgets)
+        """Build bonus tab panel using generic builder."""
+        helpers.build_generic_tab_panel(
+            entity_name="bonus",
+            tab_type=tab_type,
+            container_dict=container_dict,
+            config_source=config_ui,
+            data_prep_func=prep_bonus_data,
+            on_success_callback=lambda: AD.refresh(),
+        )
 
     def build_database_compare():
         def handle_upload(e: events.UploadEventArguments):
@@ -881,6 +806,7 @@ async def ui_devops_settings():
 
     user_stories = {}
     work_items = {}
+    parent_names = {}
 
     for customer in customer_names:
         filtered = helpers.filter_df(DO.df, {"customer_name": customer})
@@ -890,6 +816,28 @@ async def ui_devops_settings():
             DO.df, {"customer_name": customer, "type": "User Story"}
         )
         user_stories[customer] = [row["display_name"] for _, row in filtered.iterrows()]
+
+        # Get parent items (Epic/Feature) for each customer
+        filtered = helpers.filter_df(
+            DO.df, {"customer_name": customer, "type": ["Epic", "Feature"]}
+        )
+        parent_names[customer] = [row["display_name"] for _, row in filtered.iterrows()]
+
+    def prep_devops_data(tab_type, fields):
+        """Prepare data sources for DevOps tabs."""
+        if tab_type == "Add":
+            return {
+                "customer_data": customer_names,
+                "devops_items": work_items,
+                "parent_names": parent_names,
+                "devops_tags": DEVOPS_TAGS,
+            }
+        elif tab_type == "Update":
+            return {
+                "customer_data": customer_names,
+                "work_items": work_items,
+            }
+        return {}
 
     def add_user_story(widgets):
         wid = helpers.parse_widget_values(widgets)
@@ -964,167 +912,53 @@ async def ui_devops_settings():
                 return False, f"Failed to update: {msg}"
         return False, "DevOps manager not available"
 
-    def add_save_button(save_data, fields, widgets):
-        async def on_save():
-            required_fields = [
-                f["name"] for f in fields if not f.get("optional", False)
-            ]
-            if not helpers.check_input(widgets, required_fields):
-                return
-
-            func_name = save_data.function
-            if func_name == "add_user_story":
-                state, msg = add_user_story(widgets=widgets)
-            elif func_name == "update_work_item_description":
-                print("saving")
-                # state, msg = await update_work_item_description(widgets=widgets)
-            else:
-                LOG.log_msg("WARNING", f"Function {func_name} not implemented yet")
-                return
-
-            col = "positive" if state else "negative"
-            ui.notify(msg, color=col)
-
-        ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
-
     def build_user_story_tab_panel(tab_type):
-        container = tab_user_story_containers.get(tab_type)
-        if container is None:
-            container = ui.element()
-            tab_user_story_containers[tab_type] = container
-        container.clear()
+        """Build user story tab panel using generic builder with DevOps-specific handlers."""
 
-        fields = config_devops_ui["devops_user_story"][tab_type.lower()]["fields"]
-        action = config_devops_ui["devops_user_story"][tab_type.lower()]["action"]
-        columns = config_devops_ui["devops_user_story"][tab_type.lower()].get(
-            "columns", []
+        # Custom handlers for DevOps operations
+        custom_handlers = {
+            "add_user_story": add_user_story,
+            "update_work_item_description": update_work_item_description,
+        }
+
+        # Render functions for HTML preview
+        render_functions = {"render_and_sanitize": helpers.render_and_sanitize_markdown}
+
+        # Use generic builder and get back the widgets
+        widgets = helpers.build_generic_tab_panel(
+            entity_name="devops_user_story",
+            tab_type=tab_type,
+            container_dict=tab_user_story_containers,
+            config_source=config_devops_ui,
+            data_prep_func=prep_devops_data,
+            custom_handlers=custom_handlers,
+            render_functions=render_functions,
         )
-        rows = config_devops_ui["devops_user_story"][tab_type.lower()].get("rows", [])
 
-        with container:
-            if tab_type == "Add":
-                helpers.assign_dynamic_options(
-                    fields,
-                    data_sources={
-                        "customer_data": customer_names,
-                        "devops_items": work_items,  # Changed from parent_names
-                        "devops_tags": DEVOPS_TAGS,
-                    },
-                )
-                widgets = {}
-                pending_relations = []
-                with (
-                    ui.row()
-                    .classes("gap-8 mb-4 overflow-x-auto")
-                    .style("flex-wrap:nowrap; align-items:flex-start;")
-                ):
-                    for col_fields in columns:
-                        with ui.column().classes("min-w-0 flex-1"):
-                            col_fields_objs = [
-                                next(f for f in fields if f["name"] == fname)
-                                for fname in col_fields
-                                if any(f["name"] == fname for f in fields)
-                            ]
-                            # Defer parent wiring so relations can span columns
-                            _, rels = helpers.make_input_row(
-                                col_fields_objs,
-                                widgets=widgets,
-                                defer_parent_wiring=True,
-                            )
-                            pending_relations.extend(rels)
+        # Add special event handlers for Update tab (description editor/preview and loading)
+        if tab_type == "Update" and widgets:
+            editor_widget = widgets.get("description_editor")
+            preview_html = widgets.get("description_preview")
+            work_item_widget = widgets.get("work_item")
+            customer_widget = widgets.get("customer_name")
 
-                # Bind any deferred parent relations now that all widgets exist
-                if pending_relations:
-                    helpers.bind_parent_relations(widgets, pending_relations)
+            # Set up editor preview update
+            if editor_widget and preview_html:
 
-                save_data = SaveData(**action)
-                add_save_button(save_data, fields, widgets)
-            if tab_type == "Update":
-                helpers.assign_dynamic_options(
-                    fields,
-                    data_sources={
-                        "customer_data": customer_names,
-                        "work_items": work_items,
-                    },
-                )
-
-                widgets = {}
-                pending_relations = []
-
-                # Store render function for helpers to use
-                render_functions = {
-                    "render_and_sanitize": helpers.render_and_sanitize_markdown
-                }
-
-                if rows:
-                    # Build layout based on rows configuration
-                    with ui.column().classes("w-full gap-4"):
-                        for row_fields in rows:
-                            with ui.row().classes("w-full gap-4"):
-                                for fname in row_fields:
-                                    # Find the field config
-                                    field_obj = next(
-                                        (f for f in fields if f["name"] == fname), None
-                                    )
-                                    if field_obj:
-                                        # Calculate width based on number of fields in row
-                                        width_class = (
-                                            f"w-1/{len(row_fields)}"
-                                            if len(row_fields) > 1
-                                            else "w-full"
-                                        )
-                                        with ui.column().classes(width_class):
-                                            _, rels = helpers.make_input_row(
-                                                [field_obj],
-                                                widgets=widgets,
-                                                defer_parent_wiring=True,
-                                                render_functions=render_functions,
-                                            )
-                                            pending_relations.extend(rels)
-                else:
-                    # Fallback: use old column-based layout if no rows config
-                    columns_config = config_devops_ui["devops_user_story"][
-                        tab_type.lower()
-                    ].get("columns", [])
-                    with ui.row().classes("w-full gap-4"):
-                        for col_fields in columns_config:
-                            with ui.column().classes("w-1/2"):
-                                col_fields_objs = [
-                                    next(f for f in fields if f["name"] == fname)
-                                    for fname in col_fields
-                                    if any(f["name"] == fname for f in fields)
-                                ]
-                                _, rels = helpers.make_input_row(
-                                    col_fields_objs,
-                                    widgets=widgets,
-                                    defer_parent_wiring=True,
-                                    render_functions=render_functions,
-                                )
-                                pending_relations.extend(rels)
-
-                if pending_relations:
-                    helpers.bind_parent_relations(
-                        widgets, pending_relations, render_functions
+                def update_preview():
+                    preview_html.set_content(
+                        helpers.render_and_sanitize_markdown(editor_widget.value)
                     )
 
-                editor_widget = widgets.get("description_editor")
-                preview_html = widgets.get("description_preview")
+                editor_widget.on_value_change(update_preview)
 
-                # Bind editor to preview - use on_value_change callback
-                if editor_widget and preview_html:
-
-                    def update_preview():
-                        preview_html.set_content(
-                            helpers.render_and_sanitize_markdown(editor_widget.value)
-                        )
-
-                    # Use on_value_change which is specifically for CodeMirror
-                    editor_widget.on_value_change(update_preview)
+            # Set up work item description loader
+            if work_item_widget and customer_widget and editor_widget and preview_html:
 
                 async def load_work_item_description(e):
                     """Load description when work item is selected."""
-                    c_name = widgets["customer_name"].value
-                    work_item_display = widgets["work_item"].value
+                    c_name = customer_widget.value
+                    work_item_display = work_item_widget.value
 
                     if not c_name or not work_item_display:
                         return
@@ -1137,18 +971,12 @@ async def ui_devops_settings():
                         )
 
                         if status:
-                            # Unescape HTML entities for editing
                             description_clean = html.unescape(description or "")
-
-                            # Update editor content
                             editor_widget.value = description_clean
                             editor_widget.update()
-
-                            # Update preview immediately
                             preview_html.set_content(
                                 helpers.render_and_sanitize_markdown(description_clean)
                             )
-
                             LOG.log_msg(
                                 "INFO",
                                 f"Loaded description for work item {work_item_id} (format: {fmt})",
@@ -1162,13 +990,7 @@ async def ui_devops_settings():
                                 "ERROR", f"Failed to load description: {description}"
                             )
 
-                # Bind the work_item dropdown to load description
-                widgets["work_item"].on(
-                    "update:model-value", load_work_item_description
-                )
-
-                save_data = SaveData(**action)
-                add_save_button(save_data, fields, widgets)
+                work_item_widget.on("update:model-value", load_work_item_description)
 
     with ui.splitter(value=20).classes("w-full h-full") as splitter:
         with splitter.before:

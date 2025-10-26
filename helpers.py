@@ -6,13 +6,16 @@ import numpy as np
 import markdown as _markdown
 import bleach as _bleach
 
+import __main__
+from globals import SaveData
+
 
 def render_and_sanitize_markdown(text: str) -> str:
     """Convert markdown to sanitized HTML with dark mode styling.
-    
+
     Args:
         text: Markdown text to render
-        
+
     Returns:
         Sanitized HTML string with inline CSS for dark mode
     """
@@ -32,9 +35,33 @@ def render_and_sanitize_markdown(text: str) -> str:
     )
 
     allowed_tags = list(_bleach.sanitizer.ALLOWED_TAGS) + [
-        "p", "pre", "code", "span", "h1", "h2", "h3", "h4", "h5", "h6",
-        "table", "thead", "tbody", "tr", "th", "td", "img", "br", "hr",
-        "ul", "ol", "li", "blockquote", "strong", "em", "del", "ins",
+        "p",
+        "pre",
+        "code",
+        "span",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "table",
+        "thead",
+        "tbody",
+        "tr",
+        "th",
+        "td",
+        "img",
+        "br",
+        "hr",
+        "ul",
+        "ol",
+        "li",
+        "blockquote",
+        "strong",
+        "em",
+        "del",
+        "ins",
     ]
     allowed_attrs = {
         "a": ["href", "title", "target"],
@@ -361,16 +388,18 @@ def make_input_row(
             # HTML preview widget with dark mode styling
             width_style = _double_width_class(input_width)
             base_style = "background-color: #1e1e1e; border-color: #444;"
-            
+
             if width_style:
                 combined_style = f"{base_style}; {width_style}"
             else:
                 combined_style = base_style
-                
-            html_widget = ui.html(default_val or "").classes(
-                f"{input_width} h-96 overflow-auto p-4 rounded border"
-            ).style(combined_style)
-            
+
+            html_widget = (
+                ui.html(default_val or "")
+                .classes(f"{input_width} h-96 overflow-auto p-4 rounded border")
+                .style(combined_style)
+            )
+
             created[fname] = html_widget
 
     # Merge created into provided widgets (if any)
@@ -400,14 +429,16 @@ def make_input_row(
     return out_widgets
 
 
-def bind_parent_relations(widgets: dict, pending_relations: list, render_functions: dict = None):
+def bind_parent_relations(
+    widgets: dict, pending_relations: list, render_functions: dict = None
+):
     """Bind parent->child update handlers for pending relations.
 
     `pending_relations` is a list of dicts with keys: child, parent, field_config
     `render_functions` is an optional dict of render functions for html type fields
     """
     render_functions = render_functions or {}
-    
+
     for rel in pending_relations:
         child = rel["child"]
         parent = rel["parent"]
@@ -511,7 +542,7 @@ def bind_parent_relations(widgets: dict, pending_relations: list, render_functio
                     if widget is None:
                         return
                     text = str(parent_val) if parent_val is not None else ""
-                    
+
                     # Check if there's a render function specified
                     render_func_name = field_config.get("render_function")
                     if render_func_name and render_func_name in render_functions:
@@ -570,10 +601,16 @@ def bind_parent_relations(widgets: dict, pending_relations: list, render_functio
 def filter_df(df, filters, return_as="df", column=None):
     mask = None
     for col, val in filters.items():
-        if mask is None:
-            mask = df[col] == val
+        # Handle list values with .isin() instead of ==
+        if isinstance(val, list):
+            current_mask = df[col].isin(val)
         else:
-            mask &= df[col] == val
+            current_mask = df[col] == val
+        
+        if mask is None:
+            mask = current_mask
+        else:
+            mask &= current_mask
     filtered = df.loc[mask] if mask is not None else df
     if return_as == "list" and column:
         return filtered[column].tolist()
@@ -656,3 +693,204 @@ def render_markdown_card(filename):
         content = f"Error reading {filename}: {e}"
     with ui.card().classes("w-full h-full my-4 p-0 flex flex-col"):
         ui.markdown(content).classes("flex-1 w-full h-full p-6 overflow-auto")
+
+
+# --- Generic Tab Panel Builder Functions ---
+
+
+def add_generic_save_button(
+    save_data, fields, widgets, custom_handlers=None, on_success_callback=None
+):
+    """
+    Generic save button that handles both standard DB operations and custom handlers.
+
+    Args:
+        save_data: SaveData object with function name and display info
+        fields: List of field configs
+        widgets: Dict of widget instances
+        custom_handlers: Optional dict mapping function names to handler functions
+        on_success_callback: Optional async callback to run after successful save
+    """
+
+    async def on_save():
+        # Import globals from main module
+
+        LOG = getattr(__main__, "LOG", None)
+        QE = getattr(__main__, "QE", None)
+        DO = getattr(__main__, "DO", None)
+
+        if not QE:
+            ui.notify("Query engine not initialized", color="negative")
+            return
+
+        required_fields = [f["name"] for f in fields if not f.get("optional", False)]
+        if not check_input(widgets, required_fields):
+            return
+
+        func_name = save_data.function
+
+        # Check if this is a custom handler (e.g., DevOps operations)
+        if custom_handlers and func_name in custom_handlers:
+            handler = custom_handlers[func_name]
+            # Check if handler is async
+            import asyncio
+
+            if asyncio.iscoroutinefunction(handler):
+                state, msg = await handler(widgets=widgets)
+            else:
+                state, msg = handler(widgets=widgets)
+            col = "positive" if state else "negative"
+            ui.notify(msg, color=col)
+            if state and on_success_callback:
+                await on_success_callback()
+            return
+
+        # Standard database operation
+        kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
+        # Convert any single-item list in kwargs to a string
+        for k, v in kwargs.items():
+            if isinstance(v, list):
+                if len(v) == 1:
+                    kwargs[k] = v[0]
+                elif len(v) > 1:
+                    raise ValueError(
+                        f"Field '{k}' has multiple values: {v}. Only one value is allowed."
+                    )
+
+        await QE.function_db(func_name, **kwargs)
+
+        # If customer add/update, regenerate DevOps table
+        if func_name in ["insert_customer", "update_customer"]:
+            if DO:
+                if LOG:
+                    LOG.log_msg("INFO", "Regenerating DevOps data...")
+                ui.notify(
+                    "Regenerating DevOps data... This may take a few moments.",
+                    color="info",
+                )
+                await DO.update_devops(incremental=True)
+
+        msg_1, msg_2 = print_success(
+            save_data.main_action,
+            widgets[save_data.main_param].value,
+            save_data.secondary_action,
+            widgets=widgets,
+        )
+        if LOG:
+            LOG.log_msg("INFO", msg_1)
+            LOG.log_msg("INFO", msg_2)
+
+        if on_success_callback:
+            await on_success_callback()
+
+    ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
+
+
+def build_generic_tab_panel(
+    entity_name,
+    tab_type,
+    container_dict,
+    config_source,
+    data_prep_func=None,
+    custom_handlers=None,
+    layout_builder=None,
+    on_success_callback=None,
+    render_functions=None,
+):
+    """
+    Generic tab panel builder that handles all common logic.
+
+    Args:
+        entity_name: Name of entity in config (e.g., "customer", "project")
+        tab_type: Type of tab (e.g., "Add", "Update", "Disable")
+        container_dict: Dictionary storing tab containers
+        config_source: The config dict to use (config_ui or config_devops_ui)
+        data_prep_func: Optional function to prepare data sources
+        custom_handlers: Optional dict of custom save handlers
+        layout_builder: Optional custom layout building function
+        on_success_callback: Optional async callback after successful save
+        render_functions: Optional dict of render functions for html type fields
+    
+    Returns:
+        widgets: Dictionary of created widget instances
+    """
+
+    # Container management
+    container = container_dict.get(tab_type)
+    if container is None:
+        container = ui.element()
+        container_dict[tab_type] = container
+    container.clear()
+
+    # Load config
+    entity_config = config_source[entity_name][tab_type.lower()]
+    fields = entity_config["fields"]
+    action = entity_config["action"]
+
+    with container:
+        # Prepare data sources
+        data_sources = {}
+        if data_prep_func:
+            data_sources = data_prep_func(tab_type, fields)
+
+        # Assign dynamic options
+        if data_sources:
+            assign_dynamic_options(fields, data_sources=data_sources)
+
+        # Build layout based on YAML structure
+        widgets = {}
+        rows_config = entity_config.get("rows")
+        columns_config = entity_config.get("columns")
+        pending_relations = []
+
+        if rows_config:
+            # Layout with multiple rows
+            with ui.column():
+                for row_fields in rows_config:
+                    with ui.row():
+                        # Get field configs for this row
+                        row_field_configs = [
+                            f for f in fields if f["name"] in row_fields
+                        ]
+                        _, rels = make_input_row(
+                            row_field_configs, 
+                            widgets=widgets, 
+                            defer_parent_wiring=True,
+                            render_functions=render_functions
+                        )
+                        pending_relations.extend(rels)
+        elif columns_config:
+            # Layout with multiple columns
+            with ui.row():
+                for col_fields in columns_config:
+                    with ui.column():
+                        # Get field configs for this column
+                        col_field_configs = [
+                            f for f in fields if f["name"] in col_fields
+                        ]
+                        _, rels = make_input_row(
+                            col_field_configs, 
+                            widgets=widgets, 
+                            defer_parent_wiring=True,
+                            render_functions=render_functions
+                        )
+                        pending_relations.extend(rels)
+        elif layout_builder:
+            # Custom layout builder (fallback for complex cases)
+            widgets = layout_builder(fields, entity_config)
+        else:
+            # Default simple column layout
+            with ui.column():
+                make_input_row(fields, widgets=widgets, render_functions=render_functions)
+        
+        # Bind parent relations if we deferred them
+        if pending_relations:
+            bind_parent_relations(widgets, pending_relations, render_functions)
+
+        # Add save button
+        save_data = SaveData(**action)
+        add_generic_save_button(
+            save_data, fields, widgets, custom_handlers, on_success_callback
+        )
+    
+    return widgets
