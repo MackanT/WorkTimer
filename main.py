@@ -949,6 +949,9 @@ async def ui_devops_settings():
         # Render functions for HTML preview
         render_functions = {"render_and_sanitize": helpers.render_and_sanitize_markdown}
 
+        # Set container size based on tab type - Update tab needs more space for editor/preview
+        container_size = "xxl" if tab_type == "Update" else "lg"
+
         # Use generic builder and get back the widgets
         widgets = helpers.build_generic_tab_panel(
             entity_name="devops_user_story",
@@ -958,6 +961,7 @@ async def ui_devops_settings():
             data_prep_func=prep_devops_data,
             custom_handlers=custom_handlers,
             render_functions=render_functions,
+            container_size=container_size,
         )
 
         # Add special event handlers for Update tab (description editor/preview and loading)

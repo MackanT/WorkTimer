@@ -1,0 +1,117 @@
+# UI Styling Configuration
+# Centralized styling definitions for consistent UI appearance across the application
+
+# ===== WIDGET WIDTHS =====
+# Standard width classes for form inputs and widgets
+widget_widths:
+  # Compact: for narrow inputs like numbers, short select lists
+  compact: "w-48"
+
+  # Standard: default width for most form inputs
+  standard: "w-64"
+
+  # Wide: for longer text inputs
+  wide: "w-96"
+
+  # Full: takes full available width with flex, constrained to container
+  full: "w-full flex-1 min-w-0"
+
+  # Full no flex: takes full width without flexing
+  full_static: "w-full"
+
+# ===== CONTAINER WIDTHS =====
+# Maximum widths for cards and containers (uses Tailwind's max-w-Nxl classes)
+container_widths:
+  # Extra small: very compact forms
+  xs: "2" # max-w-2xl (672px)
+
+  # Small: compact forms with few fields
+  sm: "3" # max-w-3xl (768px)
+
+  # Medium: standard forms
+  md: "4" # max-w-4xl (896px)
+
+  # Large: forms with many fields or side-by-side layouts
+  lg: "5" # max-w-5xl (1024px)
+
+  # Extra large: wide layouts with editors/previews
+  xl: "6" # max-w-6xl (1152px)
+
+  # 2X large: very wide layouts
+  xxl: "7" # max-w-7xl (1280px)
+
+  # Full screen: no maximum width constraint
+  full: "full" # max-w-full
+
+# ===== LAYOUT CLASSES =====
+# Common layout class combinations for consistency
+layouts:
+  # Form row: horizontal layout with spacing, forced to full width
+  form_row: "w-full gap-4 min-w-0 overflow-hidden"
+
+  # Form column: vertical layout with spacing, forced to full width
+  form_column: "w-full gap-4 min-w-0 overflow-hidden"
+
+  # Card container: standard card styling with overflow control to respect max-width
+  card: "w-full mx-auto my-0 p-4 overflow-hidden"
+
+  # Button: standard button styling
+  button: "mt-2"
+
+  # Title/Header: large text
+  title: "text-h5 mb-2"
+
+# ===== WIDGET-SPECIFIC STYLES =====
+# Styles applied per widget type
+widget_styles:
+  # Code editor (CodeMirror)
+  codemirror:
+    # Standard mode classes
+    standard: "min-h-96"
+    # Full width mode classes - aggressive width constraints to prevent expansion
+    full: "min-w-0 max-w-full overflow-hidden"
+    # Inline styles - force width with !important to override component defaults
+    style: "min-height: 400px; width: 100% !important; max-width: 100% !important; overflow-x: auto; word-wrap: break-word;"
+
+  # HTML preview widget
+  html_preview:
+    # Base styling
+    base: "h-96 overflow-auto p-4 rounded border"
+    # Full width additions - prevent expansion with overflow
+    full_extra: "min-w-0 max-w-full overflow-x-auto"
+    # Dark mode inline styles - force width with !important
+    style: "background-color: #1e1e1e; border-color: #444; min-height: 400px; width: 100% !important; max-width: 100% !important; word-wrap: break-word; overflow-wrap: break-word;"
+
+  # Markdown preview
+  markdown_preview:
+    base: ""
+    style: ""
+
+  # Chip group (tags)
+  chip_group:
+    base: "mb-4 gap-1 flex-wrap"
+
+# ===== SIZE MAPPING =====
+# Map widget types to default sizes
+default_sizes:
+  input: "standard"
+  text: "full"
+  textarea: "full"
+  number: "compact"
+  date: "standard"
+  datetime: "standard"
+  select: "standard"
+  switch: "standard"
+  chip_group: "full_static"
+  codemirror: "full"
+  html: "full"
+  markdown: "full"
+
+# ===== LAYOUT MODE DETECTION =====
+# Widget types that trigger "wide layout mode" for their container
+wide_widget_types:
+  - codemirror
+  - html
+  - text
+  - textarea
+  - chip_group

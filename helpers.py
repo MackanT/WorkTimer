@@ -1,5 +1,6 @@
 import os
 import asyncio
+import yaml
 from nicegui import ui
 from datetime import date, timedelta
 import re
@@ -9,6 +10,111 @@ import bleach as _bleach
 
 import __main__
 from globals import SaveData
+
+
+# ===== UI STYLE MANAGER =====
+class UIStyles:
+    """Centralized UI styling configuration loaded from YAML."""
+
+    _instance = None
+    _styles = None
+
+    @classmethod
+    def get_instance(cls):
+        """Get singleton instance of UIStyles."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self):
+        """Load styles from config file."""
+        if UIStyles._styles is None:
+            config_path = os.path.join(
+                os.path.dirname(__file__), "config", "config_ui_styles.yml"
+            )
+            with open(config_path, "r") as f:
+                UIStyles._styles = yaml.safe_load(f)
+
+    def get_widget_width(self, size_name: str) -> str:
+        """Get widget width classes by size name.
+
+        Args:
+            size_name: Name from widget_widths config (e.g., 'standard', 'full')
+
+        Returns:
+            CSS classes string (e.g., 'w-64', 'w-full flex-1')
+        """
+        return self._styles["widget_widths"].get(
+            size_name, self._styles["widget_widths"]["standard"]
+        )
+
+    def get_container_width(self, size_name: str) -> str:
+        """Get container max-width value.
+
+        Args:
+            size_name: Name from container_widths config (e.g., 'md', 'xl')
+
+        Returns:
+            Width value for max-w-{value}xl (e.g., '4', '7')
+        """
+        return self._styles["container_widths"].get(
+            size_name, self._styles["container_widths"]["md"]
+        )
+
+    def get_layout_classes(self, layout_name: str) -> str:
+        """Get predefined layout classes.
+
+        Args:
+            layout_name: Name from layouts config (e.g., 'form_row', 'card')
+
+        Returns:
+            CSS classes string
+        """
+        return self._styles["layouts"].get(layout_name, "")
+
+    def get_widget_style(self, widget_type: str, mode: str = "standard") -> dict:
+        """Get widget-specific styling.
+
+        Args:
+            widget_type: Type of widget (e.g., 'codemirror', 'html_preview')
+            mode: Style mode ('standard' or 'full')
+
+        Returns:
+            Dict with 'classes' and 'style' keys
+        """
+        widget_config = self._styles["widget_styles"].get(widget_type, {})
+        return {
+            "classes": widget_config.get(mode, widget_config.get("base", "")),
+            "style": widget_config.get("style", ""),
+            "base": widget_config.get("base", ""),
+            "full_extra": widget_config.get("full_extra", ""),
+        }
+
+    def get_default_size(self, widget_type: str) -> str:
+        """Get default size name for a widget type.
+
+        Args:
+            widget_type: Type of widget (e.g., 'input', 'select', 'codemirror')
+
+        Returns:
+            Size name from widget_widths (e.g., 'standard', 'full')
+        """
+        return self._styles["default_sizes"].get(widget_type, "standard")
+
+    def is_wide_widget(self, widget_type: str) -> bool:
+        """Check if widget type triggers wide layout mode.
+
+        Args:
+            widget_type: Type of widget
+
+        Returns:
+            True if widget should trigger wide layout
+        """
+        return widget_type in self._styles["wide_widget_types"]
+
+
+# Global instance
+UI_STYLES = UIStyles.get_instance()
 
 
 def render_and_sanitize_markdown(text: str) -> str:
@@ -252,42 +358,26 @@ def date_input(label, input_width: str = "w-64"):
 
 def make_input_row(
     fields,
-    input_width: str = "w-64",
+    layout_mode: str = None,
     widgets: dict = None,
     defer_parent_wiring: bool = False,
     render_functions: dict = None,
 ):
     """Create UI widgets for a list of field configs.
 
-    If `widgets` is provided it will be updated with the created widgets.
-    If `defer_parent_wiring` is True the function will NOT attach parent->child
-    listeners. Instead it returns a tuple (created_widgets, pending_relations)
-    where pending_relations is a list of dicts describing relations to bind
-    later via `bind_parent_relations(widgets, pending_relations)`.
+    Args:
+        fields: List of field configuration dicts
+        layout_mode: Optional layout mode override ("full" for wide layout, None for default per-widget sizing)
+        widgets: Optional dict to update with created widgets
+        defer_parent_wiring: If True, returns pending relations instead of binding immediately
+        render_functions: Optional dict of render functions for html type fields
+
+    Returns:
+        If defer_parent_wiring: tuple (created_widgets, pending_relations)
+        Otherwise: created_widgets dict
     """
     created = {}
     pending_relations = []
-
-    def _double_width_class(wclass: str) -> str:
-        """Convert a 'w-<num>' class to a fixed min-width style string.
-
-        Returns a style fragment like 'min-width:512px' for numeric classes.
-        For 'w-full' or non-matching classes returns empty string so layout classes remain.
-        """
-        if not wclass:
-            return ""
-        if wclass.strip() == "w-full":
-            return ""
-        m = __import__("re").match(r"w-(\d+)$", wclass)
-        if m:
-            try:
-                val = int(m.group(1))
-                # heuristic mapping: 8px per unit to create a readable min-width
-                px = val * 8
-                return f"min-width:{px}px"
-            except Exception:
-                return ""
-        return ""
 
     for field in fields:
         label = field["label"]
@@ -296,6 +386,16 @@ def make_input_row(
 
         ftype = field["type"]
         fname = field["name"]
+
+        # Determine widget width using UI_STYLES
+        if layout_mode:
+            # Layout mode specified (e.g., "full" for wide layouts)
+            size_name = layout_mode
+        else:
+            # Use default size for this widget type
+            size_name = UI_STYLES.get_default_size(ftype)
+
+        widget_classes = UI_STYLES.get_widget_width(size_name)
 
         default_val = field.get("default")
         options_val = field.get("options")
@@ -307,24 +407,24 @@ def make_input_row(
                 default_val = options_val
 
         if ftype == "input":
-            created[fname] = ui.input(label).classes(input_width)
+            created[fname] = ui.input(label).classes(widget_classes)
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "text":
-            created[fname] = ui.textarea(label).classes(input_width)
+            created[fname] = ui.textarea(label).classes(widget_classes)
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "number":
-            created[fname] = ui.number(label, min=0).classes(input_width)
+            created[fname] = ui.number(label, min=0).classes(widget_classes)
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "date":
-            created[fname] = date_input(label, input_width=input_width)
+            created[fname] = date_input(label, input_width=widget_classes)
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "datetime":
             created[fname] = ui.input(label, placeholder="YYYY-MM-DD HH:MM:SS").classes(
-                input_width
+                widget_classes
             )
             if default_val is not None:
                 created[fname].value = default_val
@@ -341,22 +441,19 @@ def make_input_row(
             # If with_input is enabled, allow adding new values
             if with_input:
                 select_widget.props('new-value-mode="add-unique"')
-            select_widget.classes(input_width)
+            select_widget.classes(widget_classes)
             if "default" in field:
                 select_widget.value = field["default"]
             created[fname] = select_widget
         elif ftype == "switch":
-            created[fname] = ui.switch(text=label).classes(input_width)
+            created[fname] = ui.switch(text=label).classes(widget_classes)
             if "default" in field:
                 created[fname].value = field["default"]
         elif ftype == "chip_group":
             chips = []
-            # Use flex-wrap to allow chips to wrap, and full width if input_width is w-full
-            chip_row_class = "mb-4 gap-1 flex-wrap"
-            if input_width == "w-full":
-                chip_row_class += " w-full"
-            else:
-                chip_row_class += f" {input_width}"
+            # Get chip group specific styling
+            chip_style = UI_STYLES.get_widget_style("chip_group")
+            chip_row_class = f"{chip_style['base']} {widget_classes}"
 
             with ui.row().classes(chip_row_class):
                 for tag in field["options"]:
@@ -378,57 +475,43 @@ def make_input_row(
                 default_val or "",
                 language=field.get("type_language", "markdown"),
                 theme="dracula",
+                line_wrapping=True,
             )
-            # For wide layouts (w-full), use flex-1 to take available space
-            # For fixed width layouts, use the input_width class
-            if input_width == "w-full":
-                editor.classes("flex-1 min-w-0")
-                editor.style("min-height: 400px;")
-            else:
-                editor.classes(input_width)
-                width_style = _double_width_class(input_width)
-                if width_style:
-                    editor.style(width_style)
+
+            # Get codemirror-specific styling
+            code_style = UI_STYLES.get_widget_style(
+                "codemirror", "full" if size_name == "full" else "standard"
+            )
+            editor.classes(f"{widget_classes} {code_style['classes']}")
+            if code_style["style"]:
+                editor.style(code_style["style"])
             created[fname] = editor
         elif ftype == "markdown":
-            # Keep layout classes for row placement and add a min-width style so preview
-            # remains a readable fixed width but still participates in flex layout.
-            width_style = _double_width_class(input_width)
-            if width_style:
-                preview = (
-                    ui.markdown(default_val or "")
-                    .classes(input_width)
-                    .style(width_style)
-                )
-            else:
-                preview = ui.markdown(default_val or "").classes(input_width)
+            # Markdown preview
+            preview = ui.markdown(default_val or "").classes(widget_classes)
             created[fname] = preview
             created[f"{fname}_preview"] = preview
         elif ftype == "html":
             # HTML preview widget with dark mode styling
-            base_style = "background-color: #1e1e1e; border-color: #444;"
+            html_style = UI_STYLES.get_widget_style(
+                "html_preview", "full" if size_name == "full" else "standard"
+            )
 
-            # For wide layouts (w-full), use flex-1 to take available space
-            if input_width == "w-full":
-                html_widget = (
-                    ui.html(default_val or "")
-                    .classes("flex-1 min-w-0 h-96 overflow-auto p-4 rounded border")
-                    .style(f"{base_style}; min-height: 400px;")
-                )
-            else:
-                width_style = _double_width_class(input_width)
-                if width_style:
-                    combined_style = f"{base_style}; {width_style}"
-                else:
-                    combined_style = base_style
+            # Build classes: widget width + base styling + any mode-specific extras
+            html_classes = f"{widget_classes} {html_style['base']}"
+            if size_name == "full" and html_style["full_extra"]:
+                html_classes += f" {html_style['full_extra']}"
 
-                html_widget = (
-                    ui.html(default_val or "")
-                    .classes(f"{input_width} h-96 overflow-auto p-4 rounded border")
-                    .style(combined_style)
-                )
-
+            html_widget = ui.html(default_val or "").classes(html_classes)
+            if html_style["style"]:
+                html_widget.style(html_style["style"])
             created[fname] = html_widget
+
+        # Handle parent relationships
+        if "parent" in field:
+            pending_relations.append(
+                {"child": fname, "parent": field["parent"], "field_config": field}
+            )
 
     # Merge created into provided widgets (if any)
     out_widgets = widgets if widgets is not None else {}
@@ -857,6 +940,7 @@ def build_generic_tab_panel(
     layout_builder=None,
     on_success_callback=None,
     render_functions=None,
+    container_size="md",
 ):
     """
     Generic tab panel builder that handles all common logic.
@@ -871,6 +955,7 @@ def build_generic_tab_panel(
         layout_builder: Optional custom layout building function
         on_success_callback: Optional async callback after successful save
         render_functions: Optional dict of render functions for html type fields
+        container_size: Container size name from UI_STYLES (e.g., "xs", "sm", "md", "lg", "xl", "xxl", "full")
 
     Returns:
         widgets: Dictionary of created widget instances
@@ -888,27 +973,46 @@ def build_generic_tab_panel(
     fields = entity_config["fields"]
     action = entity_config["action"]
 
+    # Get container width from styling config
+    max_width = UI_STYLES.get_container_width(container_size)
+    card_classes = f"{UI_STYLES.get_layout_classes('card')} max-w-{max_width}xl"
+
     with container:
-        # Prepare data sources
-        data_sources = {}
-        if data_prep_func:
-            data_sources = data_prep_func(tab_type, fields)
+        with ui.card().classes(card_classes):
+            # Prepare data sources
+            data_sources = {}
+            if data_prep_func:
+                data_sources = data_prep_func(tab_type, fields)
 
-        # Assign dynamic options
-        if data_sources:
-            assign_dynamic_options(fields, data_sources=data_sources)
+            # Assign dynamic options
+            if data_sources:
+                assign_dynamic_options(fields, data_sources=data_sources)
 
-        # Build layout based on YAML structure
-        widgets = {}
-        rows_config = entity_config.get("rows")
-        columns_config = entity_config.get("columns")
-        pending_relations = []
+            # Build layout based on YAML structure
+            widgets = {}
+            rows_config = entity_config.get("rows")
+            columns_config = entity_config.get("columns")
+            pending_relations = []
 
-        if rows_config:
-            # Layout with multiple rows
-            with ui.column().classes("w-full gap-4"):
+            if rows_config:
+                # Layout with multiple rows
+                # First pass: check if ANY row has wide widgets using UI_STYLES
+                has_wide_layout = False
                 for row_fields in rows_config:
-                    with ui.row().classes("w-full gap-4"):
+                    for field_name in row_fields:
+                        field_config = next(
+                            (f for f in fields if f["name"] == field_name), None
+                        )
+                        if field_config and UI_STYLES.is_wide_widget(
+                            field_config.get("type")
+                        ):
+                            has_wide_layout = True
+                            break
+                    if has_wide_layout:
+                        break
+
+                with ui.column().classes(UI_STYLES.get_layout_classes("form_column")):
+                    for row_fields in rows_config:
                         # Get field configs for this row, preserving the order from row_fields
                         row_field_configs = []
                         for field_name in row_fields:
@@ -918,70 +1022,66 @@ def build_generic_tab_panel(
                             if field_config:
                                 row_field_configs.append(field_config)
 
-                        # Check if this row has wide widgets (codemirror, html, text)
-                        # or is a single-field row (which should span full width)
-                        # or contains chip_group (which should span full width)
-                        has_wide_widgets = any(
-                            f.get("type")
-                            in ["codemirror", "html", "text", "chip_group"]
-                            for f in row_field_configs
-                        )
                         is_single_field = len(row_field_configs) == 1
-                        # Use w-full for wide widgets or single fields, otherwise use default width
-                        widget_width = (
-                            "w-full"
-                            if (has_wide_widgets or is_single_field)
-                            else "w-64"
-                        )
-                        _, rels = make_input_row(
-                            row_field_configs,
-                            input_width=widget_width,
-                            widgets=widgets,
-                            defer_parent_wiring=True,
-                            render_functions=render_functions,
-                        )
-                        pending_relations.extend(rels)
-        elif columns_config:
-            # Layout with multiple columns
-            with ui.row():
-                for col_fields in columns_config:
-                    with ui.column():
-                        # Get field configs for this column, preserving the order from col_fields
-                        col_field_configs = []
-                        for field_name in col_fields:
-                            field_config = next(
-                                (f for f in fields if f["name"] == field_name), None
-                            )
-                            if field_config:
-                                col_field_configs.append(field_config)
 
-                        _, rels = make_input_row(
-                            col_field_configs,
-                            widgets=widgets,
-                            defer_parent_wiring=True,
-                            render_functions=render_functions,
-                        )
-                        pending_relations.extend(rels)
-        elif layout_builder:
-            # Custom layout builder (fallback for complex cases)
-            widgets = layout_builder(fields, entity_config)
-        else:
-            # Default simple column layout
-            with ui.column():
-                make_input_row(
-                    fields, widgets=widgets, render_functions=render_functions
+                        with ui.row().classes(UI_STYLES.get_layout_classes("form_row")):
+                            # Determine widget size based on layout mode
+                            if has_wide_layout or is_single_field:
+                                # Wide layout mode: all widgets use full width with flex
+                                widget_size = "full"
+                            else:
+                                # Standard layout mode: widgets use their default sizes
+                                widget_size = None  # Will be determined per widget type
+
+                            _, rels = make_input_row(
+                                row_field_configs,
+                                layout_mode=widget_size,
+                                widgets=widgets,
+                                defer_parent_wiring=True,
+                                render_functions=render_functions,
+                            )
+                            pending_relations.extend(rels)
+            elif columns_config:
+                # Layout with multiple columns
+                with ui.row():
+                    for col_fields in columns_config:
+                        with ui.column():
+                            # Get field configs for this column, preserving the order from col_fields
+                            col_field_configs = []
+                            for field_name in col_fields:
+                                field_config = next(
+                                    (f for f in fields if f["name"] == field_name), None
+                                )
+                                if field_config:
+                                    col_field_configs.append(field_config)
+
+                            _, rels = make_input_row(
+                                col_field_configs,
+                                widgets=widgets,
+                                defer_parent_wiring=True,
+                                render_functions=render_functions,
+                            )
+                            pending_relations.extend(rels)
+            elif layout_builder:
+                # Custom layout builder (fallback for complex cases)
+                widgets = layout_builder(fields, entity_config)
+            else:
+                # Default simple column layout
+                with ui.column():
+                    make_input_row(
+                        fields, widgets=widgets, render_functions=render_functions
+                    )
+
+            # Bind parent relations if we deferred them
+            if pending_relations:
+                bind_parent_relations(
+                    widgets, pending_relations, render_functions, data_sources
                 )
 
-        # Bind parent relations if we deferred them
-        if pending_relations:
-            bind_parent_relations(
-                widgets, pending_relations, render_functions, data_sources
+            # Add save button
+            save_data = SaveData(**action)
+            add_generic_save_button(
+                save_data, fields, widgets, custom_handlers, on_success_callback
             )
-
-        # Add save button
-        save_data = SaveData(**action)
-        add_generic_save_button(
-            save_data, fields, widgets, custom_handlers, on_success_callback
-        )
 
     return widgets
