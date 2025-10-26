@@ -18,8 +18,7 @@ import tempfile
 import os
 import yaml
 import re
-import markdown as _markdown
-import bleach as _bleach
+import html
 
 CONFIG_FOLDER = "config"
 
@@ -880,38 +879,17 @@ def ui_devops_settings_entrypoint():
 async def ui_devops_settings():
     customer_names = helpers.get_unique_list(DO.df, "customer_name")
 
-    epic_names = {}
     user_stories = {}
-    parent_names = {}
-    for customer in customer_names:
-        filtered = helpers.filter_df(DO.df, {"customer_name": customer, "type": "Epic"})
-        # Temporary storing id and name - will drop id later
-        epic_names[customer] = [
-            (row["display_name"], row["id"]) for _, row in filtered.iterrows()
-        ]
+    work_items = {}
 
-        filtered_new = helpers.filter_df(DO.df, {"customer_name": customer})
-        parent_names[customer] = [
-            row["display_name"] for _, row in filtered_new.iterrows()
-        ]
+    for customer in customer_names:
+        filtered = helpers.filter_df(DO.df, {"customer_name": customer})
+        work_items[customer] = [row["display_name"] for _, row in filtered.iterrows()]
 
         filtered = helpers.filter_df(
             DO.df, {"customer_name": customer, "type": "User Story"}
         )
-        # Temporary storing id and name - will drop id later
         user_stories[customer] = [row["display_name"] for _, row in filtered.iterrows()]
-
-    feature_names = {}
-    for customer in customer_names:
-        for epic_name, epic_id in epic_names[customer]:
-            filtered = helpers.filter_df(
-                DO.df, {"customer_name": customer, "parent_id": epic_id}
-            )
-            feature_names[epic_name] = helpers.get_unique_list(filtered, "title")
-
-    # Drop id from epic_names, only need the names now
-    for customer in epic_names:
-        epic_names[customer] = [name for name, _ in epic_names[customer]]
 
     def add_user_story(widgets):
         wid = helpers.parse_widget_values(widgets)
@@ -941,7 +919,9 @@ async def ui_devops_settings():
             "Microsoft.VSTS.Common.Priority": int(wid["priority"]),
             "System.AssignedTo": wid["assigned_to"],
         }
-        parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
+        parent_id = int(
+            helpers.extract_devops_id(wid["parent_item"])
+        )  # Changed from parent_name
 
         success, message = DO.devops_helper(
             "create_user_story",
@@ -953,11 +933,36 @@ async def ui_devops_settings():
             parent=parent_id,
         )
         state = "INFO" if success else "ERROR"
-        LOG.log_msg(
-            state,
-            message,
-        )
+        LOG.log_msg(state, message)
         return success, message
+
+    async def update_work_item_description(widgets):
+        """Save the updated description back to DevOps."""
+        c_name = widgets["customer_name"].value
+        work_item_display = widgets["work_item"].value
+        work_item_id = helpers.extract_devops_id(work_item_display)
+        description = widgets["description_editor"].value or ""
+
+        # Determine if it's markdown based on the editor's language
+        is_markdown = (
+            getattr(widgets.get("description_editor"), "language", "markdown")
+            == "markdown"
+        )
+
+        if DO and DO.manager:
+            status, msg = DO.manager.set_description(
+                c_name, work_item_id, description, markdown=is_markdown
+            )
+            if status:
+                LOG.log_msg("INFO", f"Description updated for work item {work_item_id}")
+                return (
+                    True,
+                    f"Description updated successfully for work item {work_item_id}",
+                )
+            else:
+                LOG.log_msg("ERROR", f"Failed to update description: {msg}")
+                return False, f"Failed to update: {msg}"
+        return False, "DevOps manager not available"
 
     def add_save_button(save_data, fields, widgets):
         async def on_save():
@@ -970,14 +975,15 @@ async def ui_devops_settings():
             func_name = save_data.function
             if func_name == "add_user_story":
                 state, msg = add_user_story(widgets=widgets)
+            elif func_name == "update_work_item_description":
+                print("saving")
+                # state, msg = await update_work_item_description(widgets=widgets)
             else:
                 LOG.log_msg("WARNING", f"Function {func_name} not implemented yet")
+                return
 
             col = "positive" if state else "negative"
-            ui.notify(
-                msg,
-                color=col,
-            )
+            ui.notify(msg, color=col)
 
         ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
 
@@ -989,11 +995,11 @@ async def ui_devops_settings():
         container.clear()
 
         fields = config_devops_ui["devops_user_story"][tab_type.lower()]["fields"]
+        action = config_devops_ui["devops_user_story"][tab_type.lower()]["action"]
         columns = config_devops_ui["devops_user_story"][tab_type.lower()].get(
             "columns", []
         )
         rows = config_devops_ui["devops_user_story"][tab_type.lower()].get("rows", [])
-        action = config_devops_ui["devops_user_story"][tab_type.lower()]["action"]
 
         with container:
             if tab_type == "Add":
@@ -1001,9 +1007,7 @@ async def ui_devops_settings():
                     fields,
                     data_sources={
                         "customer_data": customer_names,
-                        "parent_names": parent_names,
-                        # "epic_names": epic_names,
-                        # "feature_names": feature_names,
+                        "devops_items": work_items,  # Changed from parent_names
                         "devops_tags": DEVOPS_TAGS,
                     },
                 )
@@ -1040,189 +1044,128 @@ async def ui_devops_settings():
                     fields,
                     data_sources={
                         "customer_data": customer_names,
-                        "user_stories": user_stories,
+                        "work_items": work_items,
                     },
                 )
+
                 widgets = {}
                 pending_relations = []
-                with ui.column().classes("gap-8 mb-4"):
-                    for row_fields in rows:
-                        with ui.row():
-                            row_fields_objs = [
-                                next(f for f in fields if f["name"] == fname)
-                                for fname in row_fields
-                                if any(f["name"] == fname for f in fields)
-                            ]
-                            _, rels = helpers.make_input_row(
-                                row_fields_objs,
-                                widgets=widgets,
-                                defer_parent_wiring=True,
-                            )
-                            pending_relations.extend(rels)
+
+                # Store render function for helpers to use
+                render_functions = {
+                    "render_and_sanitize": helpers.render_and_sanitize_markdown
+                }
+
+                if rows:
+                    # Build layout based on rows configuration
+                    with ui.column().classes("w-full gap-4"):
+                        for row_fields in rows:
+                            with ui.row().classes("w-full gap-4"):
+                                for fname in row_fields:
+                                    # Find the field config
+                                    field_obj = next(
+                                        (f for f in fields if f["name"] == fname), None
+                                    )
+                                    if field_obj:
+                                        # Calculate width based on number of fields in row
+                                        width_class = (
+                                            f"w-1/{len(row_fields)}"
+                                            if len(row_fields) > 1
+                                            else "w-full"
+                                        )
+                                        with ui.column().classes(width_class):
+                                            _, rels = helpers.make_input_row(
+                                                [field_obj],
+                                                widgets=widgets,
+                                                defer_parent_wiring=True,
+                                                render_functions=render_functions,
+                                            )
+                                            pending_relations.extend(rels)
+                else:
+                    # Fallback: use old column-based layout if no rows config
+                    columns_config = config_devops_ui["devops_user_story"][
+                        tab_type.lower()
+                    ].get("columns", [])
+                    with ui.row().classes("w-full gap-4"):
+                        for col_fields in columns_config:
+                            with ui.column().classes("w-1/2"):
+                                col_fields_objs = [
+                                    next(f for f in fields if f["name"] == fname)
+                                    for fname in col_fields
+                                    if any(f["name"] == fname for f in fields)
+                                ]
+                                _, rels = helpers.make_input_row(
+                                    col_fields_objs,
+                                    widgets=widgets,
+                                    defer_parent_wiring=True,
+                                    render_functions=render_functions,
+                                )
+                                pending_relations.extend(rels)
 
                 if pending_relations:
-                    helpers.bind_parent_relations(widgets, pending_relations)
+                    helpers.bind_parent_relations(
+                        widgets, pending_relations, render_functions
+                    )
 
-                def update_code_mirror(e):
+                editor_widget = widgets.get("description_editor")
+                preview_html = widgets.get("description_preview")
+
+                # Bind editor to preview - use on_value_change callback
+                if editor_widget and preview_html:
+
+                    def update_preview():
+                        preview_html.set_content(
+                            helpers.render_and_sanitize_markdown(editor_widget.value)
+                        )
+
+                    # Use on_value_change which is specifically for CodeMirror
+                    editor_widget.on_value_change(update_preview)
+
+                async def load_work_item_description(e):
+                    """Load description when work item is selected."""
                     c_name = widgets["customer_name"].value
-                    us_name = widgets["user_story"].value
-                    us_id = helpers.extract_devops_id(us_name)
+                    work_item_display = widgets["work_item"].value
+
+                    if not c_name or not work_item_display:
+                        return
+
+                    work_item_id = helpers.extract_devops_id(work_item_display)
 
                     if DO.manager:
                         status, description, fmt = DO.manager.get_description(
-                            customer_name=c_name, work_item_id=us_id
+                            customer_name=c_name, work_item_id=work_item_id
                         )
-                        # Put raw description into the editor
-                        widgets["devops_input"].value = description or ""
 
-                        # If there is a preview widget available (helpers stores preview as devops_input_preview),
-                        # render server-side to sanitized HTML before showing.
-                        preview = widgets.get("devops_input_preview") or widgets.get(
-                            "devops_test"
-                        )
-                        if preview is not None:
-                            # Convert markdown (if fmt indicates markdown) or sanitize HTML
-                            if fmt == "markdown":
-                                html_content = (
-                                    _markdown.markdown(
-                                        description or "",
-                                        extensions=[
-                                            "fenced_code",
-                                            "codehilite",
-                                            "tables",
-                                        ],
-                                    )
-                                    if description
-                                    else ""
-                                )
-                            else:
-                                html_content = description or ""
-                            # sanitize
-                            # bleach.sanitizer.ALLOWED_TAGS is a frozenset in newer
-                            # versions — convert to list before concatenating.
-                            allowed_tags = list(_bleach.sanitizer.ALLOWED_TAGS) + [
-                                "p",
-                                "pre",
-                                "span",
-                                "h1",
-                                "h2",
-                                "h3",
-                                "h4",
-                                "h5",
-                                "h6",
-                                "img",
-                                "table",
-                                "thead",
-                                "tbody",
-                                "tr",
-                                "th",
-                                "td",
-                                "code",
-                            ]
-                            allowed_attrs = {
-                                "a": ["href", "title", "target"],
-                                "img": ["src", "alt", "width", "height"],
-                                "*": ["class"],
-                            }
-                            safe = (
-                                _bleach.clean(
-                                    html_content,
-                                    tags=allowed_tags,
-                                    attributes=allowed_attrs,
-                                    protocols=["http", "https", "mailto"],
-                                )
-                                if html_content
-                                else ""
+                        if status:
+                            # Unescape HTML entities for editing
+                            description_clean = html.unescape(description or "")
+
+                            # Update editor content
+                            editor_widget.value = description_clean
+                            editor_widget.update()
+
+                            # Update preview immediately
+                            preview_html.set_content(
+                                helpers.render_and_sanitize_markdown(description_clean)
                             )
-                            # If preview is a markdown element use set_markdown if available, otherwise set content
-                            for fn in (
-                                getattr(preview, "set_content", None),
-                                getattr(preview, "set_markdown", None),
-                                getattr(preview, "set_html", None),
-                            ):
-                                if callable(fn):
-                                    try:
-                                        fn(safe)
-                                        break
-                                    except Exception:
-                                        continue
 
-                widgets["user_story"].on(
-                    "update:model-value", lambda e: update_code_mirror(e)
+                            LOG.log_msg(
+                                "INFO",
+                                f"Loaded description for work item {work_item_id} (format: {fmt})",
+                            )
+                        else:
+                            ui.notify(
+                                f"Failed to load description: {description}",
+                                color="negative",
+                            )
+                            LOG.log_msg(
+                                "ERROR", f"Failed to load description: {description}"
+                            )
+
+                # Bind the work_item dropdown to load description
+                widgets["work_item"].on(
+                    "update:model-value", load_work_item_description
                 )
-
-                # If devops_input exists, create a live sanitized preview and a Save button
-                if "devops_input" in widgets:
-                    editor_widget = widgets["devops_input"]
-                    # create an HTML preview next to the editor if not already present
-                    if "devops_input_preview" not in widgets:
-                        preview = ui.html().classes(
-                            "w-full h-full overflow-auto p-4 bg-white text-black rounded"
-                        )
-                        widgets["devops_input_preview"] = preview
-
-                    def render_and_sanitize(text: str) -> str:
-                        if not text:
-                            return ""
-                        # assume markdown input (config shows codemirror with markdown)
-                        raw_html = _markdown.markdown(
-                            text, extensions=["fenced_code", "codehilite", "tables"]
-                        )
-                        # bleach.sanitizer.ALLOWED_TAGS is a frozenset in newer
-                        # versions — convert to list before concatenating.
-                        allowed_tags = list(_bleach.sanitizer.ALLOWED_TAGS) + [
-                            "pre",
-                            "code",
-                            "table",
-                            "thead",
-                            "tbody",
-                            "tr",
-                            "th",
-                            "td",
-                            "img",
-                        ]
-                        allowed_attrs = {
-                            "a": ["href", "title", "target"],
-                            "img": ["src", "alt"],
-                        }
-                        return _bleach.clean(
-                            raw_html,
-                            tags=allowed_tags,
-                            attributes=allowed_attrs,
-                            protocols=["http", "https", "mailto"],
-                        )
-
-                    # bind editor -> preview with server-side conversion
-                    # ContentElement.bind_content_from expects a `backward`
-                    # transformer (value from target -> this element).
-                    widgets["devops_input_preview"].bind_content_from(
-                        editor_widget, "value", backward=render_and_sanitize
-                    )
-
-                    # Save button to write back to DevOps
-                    def save_description():
-                        c_name = widgets["customer_name"].value
-                        us_name = widgets["user_story"].value
-                        us_id = helpers.extract_devops_id(us_name)
-                        description = editor_widget.value or ""
-                        markdown_flag = True  # our editor uses markdown
-                        if DO and DO.manager:
-                            status, msg = DO.manager.set_description(
-                                c_name, us_id, description, markdown=markdown_flag
-                            )
-                            if status:
-                                ui.notify(
-                                    "Description saved to DevOps", color="positive"
-                                )
-                            else:
-                                ui.notify(f"Failed to save: {msg}", color="negative")
-
-                    ui.button(
-                        "Save Description",
-                        on_click=lambda: asyncio.create_task(
-                            asyncio.to_thread(save_description)
-                        ),
-                    ).classes("mt-2")
 
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets)

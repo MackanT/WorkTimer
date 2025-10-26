@@ -3,6 +3,129 @@ from nicegui import ui
 from datetime import date, timedelta
 import re
 import numpy as np
+import markdown as _markdown
+import bleach as _bleach
+
+
+def render_and_sanitize_markdown(text: str) -> str:
+    """Convert markdown to sanitized HTML with dark mode styling.
+    
+    Args:
+        text: Markdown text to render
+        
+    Returns:
+        Sanitized HTML string with inline CSS for dark mode
+    """
+    if not text:
+        return "<p style='color: #999;'>No content to preview</p>"
+
+    # Render markdown with proper extensions
+    raw_html = _markdown.markdown(
+        text,
+        extensions=[
+            "fenced_code",
+            "codehilite",
+            "tables",
+            "nl2br",  # Convert newlines to <br>
+            "sane_lists",  # Better list handling
+        ],
+    )
+
+    allowed_tags = list(_bleach.sanitizer.ALLOWED_TAGS) + [
+        "p", "pre", "code", "span", "h1", "h2", "h3", "h4", "h5", "h6",
+        "table", "thead", "tbody", "tr", "th", "td", "img", "br", "hr",
+        "ul", "ol", "li", "blockquote", "strong", "em", "del", "ins",
+    ]
+    allowed_attrs = {
+        "a": ["href", "title", "target"],
+        "img": ["src", "alt", "width", "height"],
+        "code": ["class"],
+        "pre": ["class"],
+        "span": ["class"],
+        "*": ["class"],
+    }
+
+    cleaned_html = _bleach.clean(
+        raw_html,
+        tags=allowed_tags,
+        attributes=allowed_attrs,
+        protocols=["http", "https", "mailto"],
+    )
+
+    # Add comprehensive styling for markdown elements (dark mode)
+    return f"""
+    <div style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #e0e0e0;">
+        <style>
+            h1 {{ font-size: 2em; font-weight: bold; margin: 0.67em 0; border-bottom: 2px solid #555; padding-bottom: 0.3em; color: #ffffff; }}
+            h2 {{ font-size: 1.5em; font-weight: bold; margin: 0.75em 0; border-bottom: 1px solid #555; padding-bottom: 0.3em; color: #f0f0f0; }}
+            h3 {{ font-size: 1.25em; font-weight: bold; margin: 0.83em 0; color: #f0f0f0; }}
+            h4 {{ font-size: 1.1em; font-weight: bold; margin: 1em 0; color: #e8e8e8; }}
+            h5 {{ font-size: 1em; font-weight: bold; margin: 1.17em 0; color: #e8e8e8; }}
+            h6 {{ font-size: 0.9em; font-weight: bold; margin: 1.33em 0; color: #aaa; }}
+            ul, ol {{ margin: 1em 0; padding-left: 2em; color: #e0e0e0; }}
+            ul {{ list-style-type: disc; }}
+            ol {{ list-style-type: decimal; }}
+            li {{ margin: 0.25em 0; }}
+            p {{ margin: 1em 0; color: #e0e0e0; }}
+            blockquote {{ 
+                border-left: 4px solid #666; 
+                padding-left: 1em; 
+                margin: 1em 0;
+                color: #aaa;
+                font-style: italic;
+            }}
+            code {{ 
+                background-color: #2d2d2d; 
+                color: #f8f8f2;
+                padding: 2px 6px; 
+                border-radius: 3px;
+                font-family: 'Courier New', monospace;
+                font-size: 0.9em;
+            }}
+            pre {{ 
+                background-color: #2d2d2d; 
+                padding: 16px; 
+                border-radius: 6px; 
+                overflow-x: auto;
+                border: 1px solid #444;
+            }}
+            pre code {{
+                background-color: transparent;
+                padding: 0;
+            }}
+            table {{
+                border-collapse: collapse;
+                width: 100%;
+                margin: 1em 0;
+            }}
+            th, td {{
+                border: 1px solid #555;
+                padding: 8px;
+                text-align: left;
+                color: #e0e0e0;
+            }}
+            th {{
+                background-color: #2d2d2d;
+                font-weight: bold;
+            }}
+            strong {{ font-weight: bold; color: #ffffff; }}
+            em {{ font-style: italic; }}
+            hr {{ 
+                border: none; 
+                border-top: 2px solid #555; 
+                margin: 2em 0; 
+            }}
+            a {{
+                color: #64b5f6;
+                text-decoration: none;
+            }}
+            a:hover {{
+                text-decoration: underline;
+            }}
+        </style>
+        {cleaned_html}
+    </div>
+    """
 
 
 def get_range_for(option):
@@ -104,6 +227,7 @@ def make_input_row(
     input_width: str = "w-64",
     widgets: dict = None,
     defer_parent_wiring: bool = False,
+    render_functions: dict = None,
 ):
     """Create UI widgets for a list of field configs.
 
@@ -233,6 +357,21 @@ def make_input_row(
                 preview = ui.markdown(default_val or "").classes(input_width)
             created[fname] = preview
             created[f"{fname}_preview"] = preview
+        elif ftype == "html":
+            # HTML preview widget with dark mode styling
+            width_style = _double_width_class(input_width)
+            base_style = "background-color: #1e1e1e; border-color: #444;"
+            
+            if width_style:
+                combined_style = f"{base_style}; {width_style}"
+            else:
+                combined_style = base_style
+                
+            html_widget = ui.html(default_val or "").classes(
+                f"{input_width} h-96 overflow-auto p-4 rounded border"
+            ).style(combined_style)
+            
+            created[fname] = html_widget
 
     # Merge created into provided widgets (if any)
     out_widgets = widgets if widgets is not None else {}
@@ -257,15 +396,18 @@ def make_input_row(
         return out_widgets, pending_relations
 
     # Otherwise bind relations immediately (backwards compatible behavior)
-    bind_parent_relations(out_widgets, pending_relations)
+    bind_parent_relations(out_widgets, pending_relations, render_functions)
     return out_widgets
 
 
-def bind_parent_relations(widgets: dict, pending_relations: list):
+def bind_parent_relations(widgets: dict, pending_relations: list, render_functions: dict = None):
     """Bind parent->child update handlers for pending relations.
 
     `pending_relations` is a list of dicts with keys: child, parent, field_config
+    `render_functions` is an optional dict of render functions for html type fields
     """
+    render_functions = render_functions or {}
+    
     for rel in pending_relations:
         child = rel["child"]
         parent = rel["parent"]
@@ -364,6 +506,21 @@ def bind_parent_relations(widgets: dict, pending_relations: list):
                             preview_widget.update()
                         except Exception:
                             pass
+                elif ftype == "html":
+                    # Update HTML preview content when parent changes with optional render function
+                    if widget is None:
+                        return
+                    text = str(parent_val) if parent_val is not None else ""
+                    
+                    # Check if there's a render function specified
+                    render_func_name = field_config.get("render_function")
+                    if render_func_name and render_func_name in render_functions:
+                        # Use the render function to process the text
+                        rendered_html = render_functions[render_func_name](text)
+                        widget.set_content(rendered_html)
+                    else:
+                        # Direct HTML update
+                        widget.set_content(text)
 
             return update_child
 

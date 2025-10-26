@@ -116,47 +116,31 @@ devops_user_story:
         options: []
         options_source: customer_data
         optional: False
-      - name: user_story
-        label: User Story
+      - name: work_item
+        label: Work Item (Epic/Feature/User Story)
         type: select
         options: []
-        options_source: user_stories
+        options_source: work_items
         optional: False
         parent: customer_name
-      - name: devops_input
-        label: Use Input Form
+      - name: description_editor
+        label: Description Editor
         type: codemirror
         type_language: markdown
         optional: False
-      - name: devops_test
-        label: Description
-        type: markdown
+      - name: description_preview
+        label: Preview
+        type: html
         optional: False
-        parent: devops_input
+        parent: description_editor
         parent_update: True
-        default: |
-          **Source:** 
-          **Contact:** 
-          **Received Date:** 
-
-          **Problem:**
-
-          **More Info:**
-
-          **Solution:**
-
-          **Validation:**
-    columns:
-      - [customer_name, user_story]
-      - [devops_input]
-      - [devops_test]
+        render_function: render_and_sanitize
     rows:
-      - [customer_name, user_story]
-      - [devops_input]
-      - [devops_test]
+      - [customer_name, work_item]
+      - [description_editor, description_preview]
     action:
-      function: 1 #add_user_story
-      main_action: User Story
-      main_param: 1 #user_story_name
+      function: update_work_item_description
+      main_action: Work Item
+      main_param: work_item
       secondary_action: updated
-      button_name: Update
+      button_name: Save
