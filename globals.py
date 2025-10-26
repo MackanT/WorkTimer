@@ -182,7 +182,7 @@ class DevOpsEngine:
 
             # Always update/rebuild devops data to reflect latest customer info
             self.log.log_msg("INFO", "Performing incremental DevOps update on startup.")
-            await self.update_devops(incremental=True)
+            # await self.update_devops(incremental=True)
             await self.load_df()
             self.log.log_msg("INFO", "DevOps preload complete.")
 

@@ -29,6 +29,7 @@ def setup_config():
         config_devops_ui, \
         config_data, \
         config_query, \
+        config_devops_contacts, \
         DEVOPS_TAGS, \
         DEBUG_MODE, \
         MAIN_DB
@@ -51,6 +52,24 @@ def setup_config():
     with open(f"{CONFIG_FOLDER}/config_query.yml") as f:
         fields = yaml.safe_load(f)
     config_query = fields
+
+    # Load DevOps contacts config (optional - use template if not exists)
+    contacts_file = f"{CONFIG_FOLDER}/devops_contacts.yml"
+    if os.path.exists(contacts_file):
+        with open(contacts_file) as f:
+            config_devops_contacts = yaml.safe_load(f)
+        print(
+            f"DevOps contacts loaded: {len(config_devops_contacts.get('customers', {}))} customers"
+        )
+    else:
+        print(f"WARNING: {contacts_file} not found. Using empty defaults.")
+        print(
+            "Copy devops_contacts.yml.template to devops_contacts.yml and customize it."
+        )
+        config_devops_contacts = {
+            "customers": {},
+            "default": {"contacts": [], "assignees": []},
+        }
 
     DEVOPS_TAGS = []
     for f in config_data["devops_tags"]:
@@ -825,11 +844,36 @@ async def ui_devops_settings():
     def prep_devops_data(tab_type, fields):
         """Prepare data sources for DevOps tabs."""
         if tab_type == "Add":
+            # Prepare customer-specific contacts and assignees
+            contact_persons = {}
+            assignees = {}
+            default_assignee = {}
+
+            for customer in customer_names:
+                # Get customer-specific data from config
+                customer_data = config_devops_contacts.get("customers", {}).get(
+                    customer, {}
+                )
+                default_data = config_devops_contacts.get("default", {})
+
+                # Use customer-specific contacts, or fall back to defaults
+                contact_persons[customer] = customer_data.get(
+                    "contacts", default_data.get("contacts", [])
+                )
+                assignees[customer] = customer_data.get(
+                    "assignees", default_data.get("assignees", [])
+                )
+                # Get the default assignee for this customer
+                default_assignee[customer] = customer_data.get("default_assignee", None)
+
             return {
                 "customer_data": customer_names,
                 "devops_items": work_items,
                 "parent_names": parent_names,
                 "devops_tags": DEVOPS_TAGS,
+                "contact_persons": contact_persons,
+                "assignees": assignees,
+                "default_assignee": default_assignee,
             }
         elif tab_type == "Update":
             return {

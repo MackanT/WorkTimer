@@ -1,0 +1,32 @@
+# DevOps Contacts Configuration
+# This file contains customer-specific contacts and assignees
+# Copy this to 'devops_contacts.yml' and fill in your data
+# NOTE: devops_contacts.yml should be added to .gitignore to keep data private
+
+# Customer-specific data
+customers:
+  "Example Customer A":
+    contacts:
+      - "John Doe"
+      - "Jane Smith"
+      - "Bob Johnson"
+    assignees:
+      - "alice@company.com"
+      - "bob@company.com"
+      - "charlie@company.com"
+    default_assignee: "alice@company.com"  # Auto-populates assigned_to field
+  
+  "Example Customer B":
+    contacts:
+      - "Mike Wilson"
+      - "Sarah Connor"
+    assignees:
+      - "dev1@example.com"
+      - "dev2@example.com"
+    default_assignee: "dev1@example.com"  # Auto-populates assigned_to field
+
+# Default options when customer not found or no customer selected
+default:
+  contacts: []
+  assignees:
+    - "unassigned"

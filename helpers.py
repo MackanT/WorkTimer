@@ -1,4 +1,5 @@
 import os
+import asyncio
 from nicegui import ui
 from datetime import date, timedelta
 import re
@@ -356,7 +357,7 @@ def make_input_row(
                 chip_row_class += " w-full"
             else:
                 chip_row_class += f" {input_width}"
-            
+
             with ui.row().classes(chip_row_class):
                 for tag in field["options"]:
                     chips.append(
@@ -372,7 +373,7 @@ def make_input_row(
             # Replace template variables in default value
             if default_val:
                 default_val = default_val.replace("{today}", str(date.today()))
-            
+
             editor = ui.codemirror(
                 default_val or "",
                 language=field.get("type_language", "markdown"),
@@ -406,7 +407,7 @@ def make_input_row(
         elif ftype == "html":
             # HTML preview widget with dark mode styling
             base_style = "background-color: #1e1e1e; border-color: #444;"
-            
+
             # For wide layouts (w-full), use flex-1 to take available space
             if input_width == "w-full":
                 html_widget = (
@@ -420,7 +421,7 @@ def make_input_row(
                     combined_style = f"{base_style}; {width_style}"
                 else:
                     combined_style = base_style
-                
+
                 html_widget = (
                     ui.html(default_val or "")
                     .classes(f"{input_width} h-96 overflow-auto p-4 rounded border")
@@ -457,14 +458,19 @@ def make_input_row(
 
 
 def bind_parent_relations(
-    widgets: dict, pending_relations: list, render_functions: dict = None
+    widgets: dict,
+    pending_relations: list,
+    render_functions: dict = None,
+    data_sources: dict = None,
 ):
     """Bind parent->child update handlers for pending relations.
 
     `pending_relations` is a list of dicts with keys: child, parent, field_config
     `render_functions` is an optional dict of render functions for html type fields
+    `data_sources` is an optional dict of data sources for looking up default values
     """
     render_functions = render_functions or {}
+    data_sources = data_sources or {}
 
     for rel in pending_relations:
         child = rel["child"]
@@ -472,11 +478,16 @@ def bind_parent_relations(
         field_config = rel.get("field_config", {})
 
         def make_update_child(child=child, parent=parent, field_config=field_config):
-            def update_child(e):
+            async def update_child(e):
+                ftype = field_config.get("type")
+
+                # Small delay to allow parent widget value to be updated (especially for CodeMirror)
+                if ftype in ["html", "markdown"]:
+                    await asyncio.sleep(0.05)
+
                 options_map = field_config.get("options", {})
                 parent_val = widgets[parent].value if parent in widgets else None
                 widget = widgets.get(child)
-                ftype = field_config.get("type")
                 if widget is None:
                     return
                 if ftype == "select":
@@ -486,6 +497,14 @@ def bind_parent_relations(
                         widget.options = options_map
                     else:
                         widget.options = []
+
+                    # Set default value from default_source if available
+                    default_source = field_config.get("default_source")
+                    if default_source and default_source in data_sources:
+                        default_map = data_sources[default_source]
+                        if isinstance(default_map, dict) and parent_val in default_map:
+                            widget.value = default_map[parent_val]
+
                     widget.update()
                 elif ftype == "input":
                     if isinstance(options_map, dict):
@@ -568,7 +587,17 @@ def bind_parent_relations(
                     # Update HTML preview content when parent changes with optional render function
                     if widget is None:
                         return
-                    text = str(parent_val) if parent_val is not None else ""
+
+                    # Get the parent widget to read its value
+                    parent_widget = widgets.get(parent)
+                    if parent_widget is None:
+                        return
+
+                    text = (
+                        str(parent_widget.value)
+                        if parent_widget.value is not None
+                        else ""
+                    )
 
                     # Check if there's a render function specified
                     render_func_name = field_config.get("render_function")
@@ -593,6 +622,7 @@ def bind_parent_relations(
                     try:
                         parent_widget.on(event_name, make_update_child())
                         attached = True
+                        # Don't break - try to attach multiple events for better coverage
                     except Exception:
                         # ignore and try next event name
                         continue
@@ -601,12 +631,16 @@ def bind_parent_relations(
             # 'parent_update: true' (default True). This prevents polling-based auto-updates
             # when the field has 'parent_update: false'. Event-driven wiring is still attempted
             # regardless of this flag.
-            if not attached:
+            # Also use polling for html/markdown children as they may need more reliable updates
+            child_ftype = field_config.get("type")
+            needs_polling = child_ftype in ["html", "markdown"]
+
+            if not attached or needs_polling:
                 if field_config.get("parent_update", False):
                     try:
                         last = {"value": getattr(parent_widget, "value", None)}
 
-                        def _poll_parent():
+                        async def _poll_parent():
                             try:
                                 v = getattr(parent_widget, "value", None)
                             except Exception:
@@ -615,7 +649,7 @@ def bind_parent_relations(
                                 last["value"] = v
                                 # call update handler (it reads current parent value from widgets)
                                 try:
-                                    make_update_child()(None)
+                                    await make_update_child()(None)
                                 except Exception:
                                     pass
 
@@ -633,7 +667,7 @@ def filter_df(df, filters, return_as="df", column=None):
             current_mask = df[col].isin(val)
         else:
             current_mask = df[col] == val
-        
+
         if mask is None:
             mask = current_mask
         else:
@@ -837,7 +871,7 @@ def build_generic_tab_panel(
         layout_builder: Optional custom layout building function
         on_success_callback: Optional async callback after successful save
         render_functions: Optional dict of render functions for html type fields
-    
+
     Returns:
         widgets: Dictionary of created widget instances
     """
@@ -878,26 +912,33 @@ def build_generic_tab_panel(
                         # Get field configs for this row, preserving the order from row_fields
                         row_field_configs = []
                         for field_name in row_fields:
-                            field_config = next((f for f in fields if f["name"] == field_name), None)
+                            field_config = next(
+                                (f for f in fields if f["name"] == field_name), None
+                            )
                             if field_config:
                                 row_field_configs.append(field_config)
-                        
+
                         # Check if this row has wide widgets (codemirror, html, text)
                         # or is a single-field row (which should span full width)
                         # or contains chip_group (which should span full width)
                         has_wide_widgets = any(
-                            f.get("type") in ["codemirror", "html", "text", "chip_group"] 
+                            f.get("type")
+                            in ["codemirror", "html", "text", "chip_group"]
                             for f in row_field_configs
                         )
                         is_single_field = len(row_field_configs) == 1
                         # Use w-full for wide widgets or single fields, otherwise use default width
-                        widget_width = "w-full" if (has_wide_widgets or is_single_field) else "w-64"
+                        widget_width = (
+                            "w-full"
+                            if (has_wide_widgets or is_single_field)
+                            else "w-64"
+                        )
                         _, rels = make_input_row(
-                            row_field_configs, 
+                            row_field_configs,
                             input_width=widget_width,
-                            widgets=widgets, 
+                            widgets=widgets,
                             defer_parent_wiring=True,
-                            render_functions=render_functions
+                            render_functions=render_functions,
                         )
                         pending_relations.extend(rels)
         elif columns_config:
@@ -908,15 +949,17 @@ def build_generic_tab_panel(
                         # Get field configs for this column, preserving the order from col_fields
                         col_field_configs = []
                         for field_name in col_fields:
-                            field_config = next((f for f in fields if f["name"] == field_name), None)
+                            field_config = next(
+                                (f for f in fields if f["name"] == field_name), None
+                            )
                             if field_config:
                                 col_field_configs.append(field_config)
-                        
+
                         _, rels = make_input_row(
-                            col_field_configs, 
-                            widgets=widgets, 
+                            col_field_configs,
+                            widgets=widgets,
                             defer_parent_wiring=True,
-                            render_functions=render_functions
+                            render_functions=render_functions,
                         )
                         pending_relations.extend(rels)
         elif layout_builder:
@@ -925,16 +968,20 @@ def build_generic_tab_panel(
         else:
             # Default simple column layout
             with ui.column():
-                make_input_row(fields, widgets=widgets, render_functions=render_functions)
-        
+                make_input_row(
+                    fields, widgets=widgets, render_functions=render_functions
+                )
+
         # Bind parent relations if we deferred them
         if pending_relations:
-            bind_parent_relations(widgets, pending_relations, render_functions)
+            bind_parent_relations(
+                widgets, pending_relations, render_functions, data_sources
+            )
 
         # Add save button
         save_data = SaveData(**action)
         add_generic_save_button(
             save_data, fields, widgets, custom_handlers, on_success_callback
         )
-    
+
     return widgets

@@ -39,11 +39,18 @@ devops_user_story:
         type: select
         with_input: true
         options: []
+        options_source: contact_persons
         optional: True
+        parent: customer_name
       - name: assigned_to
         label: Assigned To
-        type: input
+        type: select
+        with_input: true
+        options: []
+        options_source: assignees
+        default_source: default_assignee
         optional: True
+        parent: customer_name
       - name: tags
         label: Tags
         type: chip_group
@@ -103,7 +110,7 @@ devops_user_story:
         render_function: render_and_sanitize
     rows:
       - [customer_name, parent_name, user_story_name]
-      - [contact_person, assigned_to, source]
+      - [assigned_to, contact_person, source]
       - [state, priority, use_markdown]
       - [tags]
       - [description_editor, description_preview]
