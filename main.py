@@ -1,6 +1,7 @@
 from nicegui import events, ui
 from nicegui.events import KeyEventArguments
 import helpers
+from helpers import UI_STYLES
 import asyncio
 from globals import (
     Logger,
@@ -85,7 +86,9 @@ def ui_time_tracking():
             ui.radio(time_options, value="Day").props("inline").classes("items-center")
         )
         selected_time
-        with ui.input("Date range").classes("w-50 ml-4 items-center") as date_input:
+        with ui.input("Date range").classes(
+            f"{UI_STYLES.get_widget_width('compact')} ml-4 items-center"
+        ) as date_input:
             with ui.menu().props("no-parent-event") as menu:
                 date_picker = (
                     ui.date()
@@ -164,7 +167,7 @@ def ui_time_tracking():
         async def show_uncheck_popup():
             checkbox = event.sender
             with ui.dialog().props("persistent") as popup:
-                with ui.card().classes("w-112"):
+                with ui.card().classes(UI_STYLES.get_widget_width("extra_wide")):
                     # Query project/customer info
                     sql_query = f"""
                     select distinct t.customer_name, t.project_name, p.git_id from time t
@@ -289,7 +292,7 @@ def ui_time_tracking():
                         popup.close()
 
                     with ui.row().classes("justify-end gap-2"):
-                        btn_classes = "w-28"
+                        btn_classes = UI_STYLES.get_widget_width("button")
                         ui.button("Save", on_click=save_popup).classes(btn_classes)
                         ui.button("Delete", on_click=delete_popup).props(
                             "color=negative"
@@ -370,7 +373,7 @@ def ui_time_tracking():
                 value_labels.append((value_label, customer_id, project["project_id"]))
 
         async def make_customer_card(customer_id, customer_name, group):
-            with ui.card().classes("w-full max-w-2xl mx-auto mx-6 my-4 p-6"):
+            with ui.card().classes(UI_STYLES.get_card_classes("xs", "card_padded")):
                 with (
                     ui.column()
                     .classes("items-start")
@@ -604,19 +607,21 @@ def ui_add_data():
             db_deltas.update()
             os.remove(uploaded_path)  # Clean up temp file
 
-        with ui.card().classes("w-full max-w-2xl mx-auto my-0 p-4"):
+        with ui.card().classes(UI_STYLES.get_card_classes("xs", "card")):
             ui.label("Upload a .db file to compare with the main database.").classes(
-                "text-h5 mb-0 dense"
+                UI_STYLES.get_layout_classes("title").replace("mb-4", "mb-0 dense")
             )
             ui.upload(on_upload=handle_upload).props("accept=.db").classes(
                 "q-pa-xs q-ma-xs"
             )
             ui.separator().classes("my-4")
-            ui.label("SQL to synchronize uploaded DB:").classes("text-subtitle1 mb-2")
+            ui.label("SQL to synchronize uploaded DB:").classes(
+                UI_STYLES.get_layout_classes("subtitle")
+            )
             db_deltas = (
                 ui.code("--temp location of sql-changes...", language="sql")
                 .props("readonly")
-                .classes("w-full min-w-0 h-96")
+                .classes(UI_STYLES.get_widget_style("code_display", "large")["classes"])
             )
 
     def build_database_update():
@@ -671,9 +676,9 @@ def ui_add_data():
                 result_box.set_content(f"Error: {e}")
                 result_box.update()
 
-        with ui.card().classes("w-full max-w-2xl mx-auto my-0 p-4"):
+        with ui.card().classes(UI_STYLES.get_card_classes("xs", "card")):
             ui.label("Upload a .db file to run SQL queries on.").classes(
-                "text-h5 mb-0 dense"
+                UI_STYLES.get_layout_classes("title").replace("mb-4", "mb-0 dense")
             )
             ui.upload(on_upload=handle_upload).props("accept=.db").classes(
                 "q-pa-xs q-ma-xs mb-2"
@@ -699,10 +704,10 @@ def ui_add_data():
             "-- Enter SQL query here --",
             language="SQLite",
             theme="dracula",
-        ).classes("w-full min-w-0 h-40 mt-2")
+        ).classes(UI_STYLES.get_widget_style("code_display", "small")["classes"])
 
         result_box = ui.code("-- Results will appear here --", language="sql").classes(
-            "w-full min-w-0 h-64 mt-4"
+            UI_STYLES.get_widget_style("code_display", "medium")["classes"]
         )
 
     tab_list = {}
@@ -757,13 +762,10 @@ def ui_add_data():
                                 tab_dict["tab_list"].append(ui.tab(name))
                         with ui.tab_panels(temp_tab, value=tab_dict["tab_list"][0]):
                             for i, name in enumerate(tab_names):
-                                helpers.make_tab_panel(
-                                    tab_dict["tab_list"][i],
-                                    f"{name} {tab_dict['name']}",
-                                    lambda: function_map[tab_dict["build_function"]](
+                                with ui.tab_panel(tab_dict["tab_list"][i]):
+                                    function_map[tab_dict["build_function"]](
                                         name, tab_dict["tab_container"]
-                                    ),
-                                )
+                                    )
                         temp_tab.on(
                             "update:model-value",
                             lambda e,
@@ -802,8 +804,10 @@ def ui_devops_settings_entrypoint():
 
     # Show loading UI
     with devops_settings_container:
-        with ui.card().classes("w-full max-w-2xl mx-auto my-8 p-4"):
-            ui.label("Loading DevOps data...").classes("text-h5 mb-4")
+        with ui.card().classes(UI_STYLES.get_card_classes("xs", "card_spaced")):
+            ui.label("Loading DevOps data...").classes(
+                UI_STYLES.get_layout_classes("title")
+            )
             ui.skeleton().classes("w-full")
 
     called = {"done": False}
@@ -1136,12 +1140,8 @@ async def ui_devops_settings():
                             user_story_tab_list.append(ui.tab(name))
                     with ui.tab_panels(user_story_tabs, value=user_story_tab_list[0]):
                         for i, name in enumerate(user_story_tab_names):
-                            helpers.make_tab_panel(
-                                user_story_tab_list[i],
-                                f"{name} User Story",
-                                lambda: build_user_story_tab_panel(name),
-                                width="4",
-                            )
+                            with ui.tab_panel(user_story_tab_list[i]):
+                                build_user_story_tab_panel(name)
 
 
 def ui_query_editor():
@@ -1185,12 +1185,14 @@ def ui_query_editor():
             render_query_buttons()
 
         with ui.dialog() as popup:
-            with ui.card().classes("w-64"):
+            with ui.card().classes(UI_STYLES.get_widget_width("standard")):
                 name_input = ui.input("Query Name").classes("w-full")
                 with ui.row().classes("justify-between items-center w-full"):
-                    ui.button("Save", on_click=save_popup).classes("w-24")
+                    ui.button("Save", on_click=save_popup).classes(
+                        UI_STYLES.get_layout_classes("button_fixed")
+                    )
                     ui.button("Cancel", on_click=close_popup).props("flat").classes(
-                        "w-24"
+                        UI_STYLES.get_layout_classes("button_fixed")
                     )
         popup.open()
 
@@ -1229,15 +1231,17 @@ def ui_query_editor():
             render_query_buttons()
 
         with ui.dialog() as popup:
-            with ui.card().classes("w-64"):
+            with ui.card().classes(UI_STYLES.get_widget_width("standard")):
                 name_input = ui.select(
                     options=QE.df[QE.df["is_default"] != 1]["query_name"].tolist(),
                     label="Existing Query",
                 ).classes("w-full")
                 with ui.row().classes("justify-between items-center w-full"):
-                    ui.button("Update", on_click=save_popup).classes("w-24")
+                    ui.button("Update", on_click=save_popup).classes(
+                        UI_STYLES.get_layout_classes("button_fixed")
+                    )
                     ui.button("Cancel", on_click=close_popup).props("flat").classes(
-                        "w-24"
+                        UI_STYLES.get_layout_classes("button_fixed")
                     )
         popup.open()
 
@@ -1267,15 +1271,17 @@ def ui_query_editor():
             render_query_buttons()
 
         with ui.dialog() as popup:
-            with ui.card().classes("w-64"):
+            with ui.card().classes(UI_STYLES.get_widget_width("standard")):
                 name_input = ui.select(
                     options=QE.df[QE.df["is_default"] != 1]["query_name"].tolist(),
                     label="Existing Query",
                 ).classes("w-full")
                 with ui.row().classes("justify-between items-center w-full"):
-                    ui.button("Delete", on_click=save_popup).classes("w-24")
+                    ui.button("Delete", on_click=save_popup).classes(
+                        UI_STYLES.get_layout_classes("button_fixed")
+                    )
                     ui.button("Cancel", on_click=close_popup).props("flat").classes(
-                        "w-24"
+                        UI_STYLES.get_layout_classes("button_fixed")
                     )
         popup.open()
 
@@ -1326,8 +1332,12 @@ def ui_query_editor():
             popup.close()
 
         with ui.row().classes("justify-end gap-2"):
-            ui.button(save_data.button_name, on_click=on_save).classes("w-24")
-            ui.button("Cancel", on_click=close_popup).props("flat").classes("w-24")
+            ui.button(save_data.button_name, on_click=on_save).classes(
+                UI_STYLES.get_layout_classes("button_fixed")
+            )
+            ui.button("Cancel", on_click=close_popup).props("flat").classes(
+                UI_STYLES.get_layout_classes("button_fixed")
+            )
 
     with ui.row().classes("justify-between items-center w-full"):
         preset_queries = ui.element()
@@ -1338,7 +1348,7 @@ def ui_query_editor():
                     row["query_name"],
                     on_click=lambda r=row: editor.set_value(r["query_sql"]),
                 ).props("flat dense").classes(
-                    "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
+                    UI_STYLES.get_widget_style("query_button", "base")["classes"]
                 )
 
         def render_query_buttons():
@@ -1361,7 +1371,7 @@ def ui_query_editor():
                     name,
                     on_click=function,
                 ).props("flat dense").classes(
-                    "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
+                    UI_STYLES.get_widget_style("query_button", "base")["classes"]
                 )
 
     async def show_row_edit_popup(row_data):
@@ -1411,7 +1421,7 @@ def ui_query_editor():
         )
 
         with ui.dialog() as popup:
-            with ui.card().classes("w-76"):
+            with ui.card().classes(UI_STYLES.get_widget_width("medium")):
                 widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
                 add_save_button(save_data, fields, widgets, table_name, pk_data, popup)

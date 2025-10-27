@@ -112,6 +112,22 @@ class UIStyles:
         """
         return widget_type in self._styles["wide_widget_types"]
 
+    def get_card_classes(
+        self, container_size: str = "md", layout_type: str = "card"
+    ) -> str:
+        """Get complete card classes with container size.
+
+        Args:
+            container_size: Size name from container_widths (e.g., 'xs', 'md', 'xl')
+            layout_type: Layout type from layouts (e.g., 'card', 'card_padded', 'card_spaced')
+
+        Returns:
+            Complete CSS classes string for card
+        """
+        max_width = self.get_container_width(container_size)
+        layout_classes = self.get_layout_classes(layout_type)
+        return f"{layout_classes} max-w-{max_width}xl"
+
 
 # Global instance
 UI_STYLES = UIStyles.get_instance()
@@ -742,7 +758,31 @@ def bind_parent_relations(
                         pass
 
 
-def filter_df(df, filters, return_as="df", column=None):
+def filter_df(df, filters=None, return_as="df", column=None):
+    """Filter dataframe and return in various formats.
+
+    Args:
+        df: DataFrame to filter
+        filters: Dict of column:value pairs to filter by (None = no filtering)
+        return_as: Output format - "df", "list", "distinct_list", or "unique"
+        column: Column name to return when return_as is "list", "distinct_list", or "unique"
+
+    Returns:
+        Filtered data in requested format
+    """
+    # Handle the case where we just want unique values without filtering
+    if filters is None or len(filters) == 0:
+        if return_as in ["distinct_list", "unique"] and column:
+            if column in df.columns:
+                return df[column].dropna().unique().tolist()
+            return []
+        elif return_as == "list" and column:
+            if column in df.columns:
+                return df[column].tolist()
+            return []
+        return df
+
+    # Apply filters
     mask = None
     for col, val in filters.items():
         # Handle list values with .isin() instead of ==
@@ -756,17 +796,22 @@ def filter_df(df, filters, return_as="df", column=None):
         else:
             mask &= current_mask
     filtered = df.loc[mask] if mask is not None else df
+
     if return_as == "list" and column:
         return filtered[column].tolist()
-    elif return_as == "distinct_list" and column:
+    elif return_as in ["distinct_list", "unique"] and column:
         return filtered[column].unique().tolist()
     return filtered
 
 
+# Deprecated: Use filter_df(df, filters=None, return_as="unique", column=column_name) instead
 def get_unique_list(df, column):
-    if column in df.columns:
-        return df[column].dropna().unique().tolist()
-    return []
+    """Get unique values from a column.
+
+    DEPRECATED: Use filter_df(df, filters=None, return_as="unique", column=column_name) instead.
+    This function is kept for backward compatibility.
+    """
+    return filter_df(df, filters=None, return_as="unique", column=column)
 
 
 def assign_dynamic_options(fields, data_sources):
@@ -793,7 +838,15 @@ def assign_dynamic_options(fields, data_sources):
             field["default"] = data_sources.get(default_source, None)
 
 
+# DEPRECATED: Use build_generic_tab_panel directly instead
 def make_tab_panel(tab_name, title, build_fn, width: str = "2"):
+    """Create a tab panel with a card container.
+
+    DEPRECATED: This function creates unnecessary nested cards.
+    Use build_generic_tab_panel() directly instead, which already creates its own card.
+
+    This function is kept for backward compatibility but should not be used in new code.
+    """
     with ui.tab_panel(tab_name):
         with ui.card().classes(f"w-full max-w-{width}xl mx-auto my-0 p-4"):
             ui.label(title).classes("text-h5 mb-2")

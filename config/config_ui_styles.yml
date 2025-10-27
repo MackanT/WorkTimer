@@ -4,14 +4,26 @@
 # ===== WIDGET WIDTHS =====
 # Standard width classes for form inputs and widgets
 widget_widths:
+  # Extra compact: for very narrow inputs
+  xs: "w-32"
+
   # Compact: for narrow inputs like numbers, short select lists
   compact: "w-48"
 
   # Standard: default width for most form inputs
   standard: "w-64"
 
+  # Medium: wider than standard
+  medium: "w-76"
+
+  # Button width: for buttons (standardized width)
+  button: "w-24"
+
   # Wide: for longer text inputs
   wide: "w-96"
+
+  # Extra wide: for very wide inputs
+  extra_wide: "w-112"
 
   # Full: takes full available width with flex, constrained to container
   full: "w-full flex-1 min-w-0"
@@ -55,11 +67,20 @@ layouts:
   # Card container: standard card styling with overflow control to respect max-width
   card: "w-full mx-auto my-0 p-4 overflow-hidden"
 
-  # Button: standard button styling
-  button: "mt-2"
+  # Card with extra padding: for important content sections
+  card_padded: "w-full mx-auto mx-6 my-4 p-6 overflow-hidden"
 
-  # Title/Header: large text
+  # Card with vertical margin: for spaced sections
+  card_spaced: "w-full mx-auto my-8 p-4 overflow-hidden"
+
+  # Button with fixed width: for consistent button sizing
+  button_fixed: "w-24"
+
+  # Title/Header: large text with standard margin
   title: "text-h5 mb-2"
+
+  # Subtitle: medium text
+  subtitle: "text-subtitle1 mb-2"
 
 # ===== WIDGET-SPECIFIC STYLES =====
 # Styles applied per widget type
@@ -73,6 +94,15 @@ widget_styles:
     # Inline styles - force width with !important to override component defaults
     style: "min-height: 400px; width: 100% !important; max-width: 100% !important; overflow-x: auto; word-wrap: break-word;"
 
+  # Code display widget (ui.code for readonly)
+  code_display:
+    # Large height
+    large: "w-full min-w-0 h-96"
+    # Small height
+    small: "w-full min-w-0 h-40 mt-2"
+    # Medium height
+    medium: "w-full min-w-0 h-64 mt-4"
+
   # HTML preview widget
   html_preview:
     # Base styling
@@ -82,14 +112,13 @@ widget_styles:
     # Dark mode inline styles - force width with !important
     style: "background-color: #1e1e1e; border-color: #444; min-height: 400px; width: 100% !important; max-width: 100% !important; word-wrap: break-word; overflow-wrap: break-word;"
 
-  # Markdown preview
-  markdown_preview:
-    base: ""
-    style: ""
-
   # Chip group (tags)
   chip_group:
     base: "mb-4 gap-1 flex-wrap"
+
+  # Query button (compact button in button group)
+  query_button:
+    base: "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
 
 # ===== SIZE MAPPING =====
 # Map widget types to default sizes
