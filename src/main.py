@@ -1,9 +1,9 @@
 from nicegui import events, ui
 from nicegui.events import KeyEventArguments
-import helpers
-from helpers import UI_STYLES
+from . import helpers
+from .helpers import UI_STYLES
 import asyncio
-from globals import (
+from .globals import (
     Logger,
     AddData,
     QueryEngine,

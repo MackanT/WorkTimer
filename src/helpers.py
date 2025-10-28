@@ -9,7 +9,7 @@ import markdown as _markdown
 import bleach as _bleach
 
 import __main__
-from globals import SaveData
+from .globals import SaveData
 
 
 # ===== UI STYLE MANAGER =====
@@ -30,7 +30,7 @@ class UIStyles:
         """Load styles from config file."""
         if UIStyles._styles is None:
             config_path = os.path.join(
-                os.path.dirname(__file__), "config", "config_ui_styles.yml"
+                os.path.dirname(__file__), "..", "config", "config_ui_styles.yml"
             )
             with open(config_path, "r") as f:
                 UIStyles._styles = yaml.safe_load(f)
@@ -131,6 +131,9 @@ class UIStyles:
 
 # Global instance
 UI_STYLES = UIStyles.get_instance()
+
+
+# ===== MARKDOWN & HTML RENDERING =====
 
 
 def render_and_sanitize_markdown(text: str) -> str:
@@ -278,36 +281,60 @@ def render_and_sanitize_markdown(text: str) -> str:
     """
 
 
-def get_range_for(option):
+# ===== DATE & TIME UTILITIES =====
+
+
+def get_range_for(option: str) -> str:
+    """Get date range string for a given time period option.
+
+    Args:
+        option: Time period option ("Day", "Week", "Month", "Year", "All-Time")
+
+    Returns:
+        Formatted date range string "start - end"
+    """
     today = date.today()
+
     if option == "Day":
         return f"{today} - {today}"
-    elif option == "Week":
+
+    if option == "Week":
         start = today - timedelta(days=today.weekday())
         end = start + timedelta(days=6)
         return f"{start} - {end}"
-    elif option == "Month":
+
+    if option == "Month":
         start = today.replace(day=1)
         next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
         end = next_month - timedelta(days=1)
         return f"{start} - {end}"
-    elif option == "Year":
+
+    if option == "Year":
         start = today.replace(month=1, day=1)
         end = today.replace(month=12, day=31)
         return f"{start} - {end}"
-    elif option == "All-Time":
-        # Set to some default, or leave blank
-        start = date(2000, 1, 1)  ## TODO min(start_date) in db
+
+    if option == "All-Time":
+        # TODO: Get min(start_date) from database instead of hardcoded value
+        start = date(2000, 1, 1)
         end = today
         return f"{start} - {end}"
-    else:
-        return ""
+
+    return ""
 
 
-def parse_date_range(date_range_str):
-    # Accepts formats like 'YYYYMMDD - YYYYMMDD' or 'YYYY-MM-DD - YYYY-MM-DD'
+def parse_date_range(date_range_str: str) -> tuple[str | None, str | None]:
+    """Parse date range string into start and end dates.
+
+    Args:
+        date_range_str: Date range in format 'YYYYMMDD - YYYYMMDD' or 'YYYY-MM-DD - YYYY-MM-DD'
+
+    Returns:
+        Tuple of (start_date, end_date) as strings without dashes, or (None, None) if invalid
+    """
     if not date_range_str:
         return None, None
+
     match = re.match(
         r"(\d{4}-?\d{2}-?\d{2})\s*-\s*(\d{4}-?\d{2}-?\d{2})", date_range_str
     )
@@ -317,10 +344,23 @@ def parse_date_range(date_range_str):
         start = start.replace("-", "")
         end = end.replace("-", "")
         return start, end
+
     return None, None
 
 
-def check_input(widgets, required_fields) -> bool:
+# ===== INPUT VALIDATION & FEEDBACK =====
+
+
+def check_input(widgets: dict, required_fields: list[str]) -> bool:
+    """Validate that required fields have values.
+
+    Args:
+        widgets: Dictionary of widget instances
+        required_fields: List of field names that must have values
+
+    Returns:
+        True if all required fields have values, False otherwise
+    """
     is_ok = True
     for field in required_fields:
         if not widgets[field].value:
@@ -332,19 +372,34 @@ def check_input(widgets, required_fields) -> bool:
     return is_ok
 
 
-def print_success(table: str, main_param: str, action_type: str, widgets: dict = None):
+def print_success(
+    table: str, main_param: str, action_type: str, widgets: dict = None
+) -> tuple[str, str]:
+    """Display success notification and generate log messages.
+
+    Args:
+        table: Table/entity name
+        main_param: Main parameter name (e.g., 'customer_name')
+        action_type: Action performed (e.g., 'added', 'updated')
+        widgets: Optional dict of widget instances to log parameter values
+
+    Returns:
+        Tuple of (notification_message, log_message)
+    """
     msg_1 = f"{table} {main_param} {action_type}!"
-    ui.notify(
-        msg_1,
-        color="positive",
-    )
+    ui.notify(msg_1, color="positive")
+
     if widgets:
         print_msg = "Parameters: "
         for field in widgets:
             print_msg += f"{field}: {widgets[field].value}, "
         print_msg = print_msg.rstrip(", ")
         return msg_1, print_msg
+
     return msg_1, "No data to display."
+
+
+# ===== TEXT PARSING UTILITIES =====
 
 
 def extract_table_name(query_text: str) -> str:
@@ -354,11 +409,22 @@ def extract_table_name(query_text: str) -> str:
     return "unknown_table"
 
 
-def extract_devops_id(text):
+def extract_devops_id(text: str) -> int | None:
+    """Extract DevOps ID from text containing pattern ': ID -'.
+
+    Args:
+        text: Text to search for DevOps ID
+
+    Returns:
+        Extracted ID as integer, or None if not found
+    """
     match = re.search(r":\s*(\d+)\s*-", text)
     if match:
         return int(match.group(1))
     return None
+
+
+# ===== UI WIDGET FACTORIES =====
 
 
 def date_input(label, input_width: str = "w-64"):
@@ -523,7 +589,7 @@ def make_input_row(
                 html_widget.style(html_style["style"])
             created[fname] = html_widget
 
-        # Handle parent relationships
+        # Collect parent relationships for later binding
         if "parent" in field:
             pending_relations.append(
                 {"child": fname, "parent": field["parent"], "field_config": field}
@@ -537,16 +603,17 @@ def make_input_row(
     else:
         out_widgets.update(created)
 
-    # Collect pending parent relations
-    for field in fields:
-        if "parent" in field:
-            pending_relations.append(
-                {
-                    "child": field["name"],
-                    "parent": field["parent"],
-                    "field_config": field,
-                }
-            )
+    # Should be duplicate code, safe to remove
+    # # Collect pending parent relations
+    # for field in fields:
+    #     if "parent" in field:
+    #         pending_relations.append(
+    #             {
+    #                 "child": field["name"],
+    #                 "parent": field["parent"],
+    #                 "field_config": field,
+    #             }
+    #         )
 
     if defer_parent_wiring:
         return out_widgets, pending_relations
@@ -554,6 +621,9 @@ def make_input_row(
     # Otherwise bind relations immediately (backwards compatible behavior)
     bind_parent_relations(out_widgets, pending_relations, render_functions)
     return out_widgets
+
+
+# ===== PARENT-CHILD WIDGET BINDING =====
 
 
 def bind_parent_relations(
@@ -758,6 +828,9 @@ def bind_parent_relations(
                         pass
 
 
+# ===== DATAFRAME UTILITIES =====
+
+
 def filter_df(df, filters=None, return_as="df", column=None):
     """Filter dataframe and return in various formats.
 
@@ -814,6 +887,9 @@ def get_unique_list(df, column):
     return filter_df(df, filters=None, return_as="unique", column=column)
 
 
+# ===== CONFIGURATION HELPERS =====
+
+
 def assign_dynamic_options(fields, data_sources):
     for field in fields:
         if field.get("type") in ["date"] and "options_source" in field:
@@ -853,7 +929,18 @@ def make_tab_panel(tab_name, title, build_fn, width: str = "2"):
             build_fn()
 
 
-def parse_widget_values(widgets):
+# ===== WIDGET VALUE PARSING =====
+
+
+def parse_widget_values(widgets: dict) -> dict:
+    """Extract values from widget instances.
+
+    Args:
+        widgets: Dictionary of widget instances
+
+    Returns:
+        Dictionary mapping widget names to their values
+    """
     result = {}
     for key, widget in widgets.items():
         # Chip group: list of chips, get selected ones
@@ -881,8 +968,12 @@ def get_ui_elements(config: dict) -> list[str]:
     return elements
 
 
+# ===== UI RENDERING HELPERS =====
+
+
 def render_markdown_card(filename):
-    file_path = os.path.join(os.path.dirname(__file__), filename)
+    # Look in docs/ directory for documentation files
+    file_path = os.path.join(os.path.dirname(__file__), "..", "docs", filename)
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
@@ -892,7 +983,7 @@ def render_markdown_card(filename):
         ui.markdown(content).classes("flex-1 w-full h-full p-6 overflow-auto")
 
 
-# --- Generic Tab Panel Builder Functions ---
+# ===== GENERIC TAB PANEL BUILDERS =====
 
 
 def add_generic_save_button(
