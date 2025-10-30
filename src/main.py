@@ -10,6 +10,7 @@ from .globals import (
     DevOpsEngine,
     DevOpsTag,
     SaveData,
+    UIRefreshEngine,
     generate_sync_sql,
 )
 from datetime import datetime
@@ -1625,11 +1626,49 @@ def setup_ui():
     dark.enable()
 
     with ui.tabs().classes("w-full") as tabs:
-        tab_time = ui.tab("Time Tracking")
+        tab_time = ui.tab(
+            "Time Tracking", icon="schedule"
+        )  # TODO add icons on other tabs
         tab_data_input = ui.tab("Data Input")
         tab_query_editors = ui.tab("Query Editors")
         tab_log = ui.tab("Log")
         tab_info = ui.tab("Info")
+
+    # Set up UI refresh callbacks
+    async def ui_refresh_wrapper():
+        """Wrapper to ensure render_ui is called safely."""
+        try:
+            await render_ui()
+        except Exception as e:
+            LOG.log_msg("ERROR", f"Error refreshing UI: {e}")
+
+    def update_tab_indicator(has_active_timers):
+        """Update the Time Tracking tab icon based on active timers."""
+        try:
+            if has_active_timers:
+                tab_time.props("icon=play_circle color=positive")
+            else:
+                tab_time.props("icon=schedule")
+        except Exception as e:
+            LOG.log_msg("ERROR", f"Error updating tab indicator: {e}")
+
+    # Configure UI refresh engine
+    UI.set_ui_refresh_callback(ui_refresh_wrapper)
+    UI.set_tab_indicator_callback(update_tab_indicator)
+
+    # Start both UI refresh and DevOps scheduled tasks after the app starts (when event loop is available)
+    async def startup_tasks():
+        """Start background tasks after the app has started."""
+        LOG.log_msg("INFO", "Starting UI refresh task after app startup")
+        await UI.start_ui_refresh()
+
+        # Start DevOps scheduled tasks after NiceGUI is fully initialized
+        await DO.initialize_scheduled_tasks()
+
+    # Schedule both UI refresh and DevOps tasks to start after the event loop is running
+    from nicegui import app
+
+    app.on_startup(startup_tasks)
 
     def on_tab_change(e):
         tab_value = (
@@ -1683,7 +1722,7 @@ def run_async_task(func, *args, **kwargs):
 
 
 def main():
-    global LOG, QE, AD, DO
+    global LOG, QE, AD, DO, UI
 
     setup_config()
     LOG = Logger.get_logger("WorkTimer", debug=DEBUG_MODE)
@@ -1698,12 +1737,18 @@ def main():
     asyncio.run(AD.refresh())
 
     DO = DevOpsEngine(query_engine=QE, log_engine=DO_LOG)
+    print("INFO: Initializing DevOps engine...")
     asyncio.run(DO.initialize())
+    print("INFO: DevOps engine initialization completed")
+
+    UI = UIRefreshEngine(query_engine=QE, log_engine=LOG)
+    print("INFO: UI refresh engine created")
 
     GlobalRegistry.set("LOG", LOG)
     GlobalRegistry.set("QE", QE)
     GlobalRegistry.set("DO", DO)
     GlobalRegistry.set("AD", AD)
+    GlobalRegistry.set("UI", UI)
 
     ui.add_head_html("""
     <script>

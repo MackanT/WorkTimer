@@ -164,26 +164,44 @@ class DevOpsEngine:
         # Hourly incremental update
         async def hourly_incremental():
             while True:
-                await asyncio.sleep(3600)  # 1 hour
-                self.log.log_msg("INFO", "Running scheduled hourly incremental update")
-                await self.update_devops(incremental=True)
+                try:
+                    await asyncio.sleep(3600)
+                    self.log.log_msg(
+                        "INFO", "Running scheduled incremental DevOps update"
+                    )
+                    await self.update_devops(incremental=True)
+                except Exception as e:
+                    self.log.log_msg(
+                        "ERROR", f"Error in incremental DevOps update: {e}"
+                    )
+                except asyncio.CancelledError:
+                    break
 
         # Daily full refresh at 2 AM
         async def daily_full_refresh():
             while True:
-                # Calculate seconds until 2 AM
-                tomorrow = datetime.datetime.now() + datetime.timedelta(days=1)
-                target = tomorrow.replace(hour=2, minute=0, second=0, microsecond=0)
-                seconds_until_2am = (target - datetime.datetime.now()).total_seconds()
+                try:
+                    # Calculate seconds until 2 AM
+                    tomorrow = datetime.datetime.now() + datetime.timedelta(days=1)
+                    target = tomorrow.replace(hour=2, minute=0, second=0, microsecond=0)
+                    seconds_until_2am = (
+                        target - datetime.datetime.now()
+                    ).total_seconds()
 
-                await asyncio.sleep(seconds_until_2am)
-                self.log.log_msg("INFO", "Running scheduled daily full refresh")
-                await self.update_devops(incremental=False)
-                await asyncio.sleep(86400)  # Sleep for rest of day
+                    await asyncio.sleep(seconds_until_2am)
+                    self.log.log_msg("INFO", "Running scheduled daily full refresh")
+                    await self.update_devops(incremental=False)
+                    await asyncio.sleep(86400)  # Sleep for rest of day
+                except Exception as e:
+                    self.log.log_msg("ERROR", f"Error in daily full refresh: {e}")
+                    await asyncio.sleep(3600)  # Wait 1 hour before retrying
+                except asyncio.CancelledError:
+                    break
 
         # Start both tasks
-        self._scheduled_tasks.append(asyncio.create_task(hourly_incremental()))
-        self._scheduled_tasks.append(asyncio.create_task(daily_full_refresh()))
+        task1 = asyncio.create_task(hourly_incremental())
+        task2 = asyncio.create_task(daily_full_refresh())
+        self._scheduled_tasks.extend([task1, task2])
 
     def stop_scheduled_updates(self):
         """Stop all scheduled update tasks."""
@@ -192,6 +210,7 @@ class DevOpsEngine:
         self._scheduled_tasks.clear()
 
     async def initialize(self):
+        """Initialize DevOps connections and data (without starting scheduled tasks)."""
         try:
             await self.setup_manager()
 
@@ -208,9 +227,18 @@ class DevOpsEngine:
             await self.load_df()
             self.log.log_msg("INFO", "DevOps preload complete.")
 
-            await self.start_scheduled_updates()
         except Exception as e:
             self.log.log_msg("ERROR", f"Error during DevOps preload: {e}")
+
+    async def initialize_scheduled_tasks(self):
+        """Initialize scheduled tasks after NiceGUI startup (separate from data initialization)."""
+        try:
+            self.log.log_msg(
+                "INFO", "Initializing DevOps scheduled tasks after app startup"
+            )
+            await self.start_scheduled_updates()
+        except Exception as e:
+            self.log.log_msg("ERROR", f"Error starting DevOps scheduled tasks: {e}")
 
     async def setup_manager(self):
         df = await self.query_engine.query_db(
@@ -223,6 +251,7 @@ class DevOpsEngine:
             self.log.log_msg("WARNING", "No DevOps connections available")
             return None
 
+        max_ids = None
         if incremental:
             self.log.log_msg("INFO", "Performing incremental update of devops data")
             max_id_df = await self.query_engine.query_db(
@@ -355,3 +384,71 @@ class DevOpsEngine:
         if not status:
             self.log.log_msg("ERROR", msg)
         return status, msg
+
+
+class UIRefreshEngine:
+    """Engine for handling UI refresh tasks and active timer detection."""
+
+    def __init__(self, query_engine: QueryEngine, log_engine: Logger):
+        self.query_engine = query_engine
+        self.log = log_engine
+        self._refresh_tasks = []
+        self._ui_refresh_callback = None
+        self._tab_indicator_callback = None
+        self._active_timers_count = 0
+
+    def set_ui_refresh_callback(self, callback):
+        """Set the callback function to refresh the Time Tracking UI."""
+        self._ui_refresh_callback = callback
+
+    def set_tab_indicator_callback(self, callback):
+        """Set the callback function to update the tab indicator."""
+        self._tab_indicator_callback = callback
+
+    async def start_ui_refresh(self):
+        """Start the UI refresh task."""
+        self.log.log_msg("INFO", "Starting UI refresh task")
+
+        async def ui_refresh_loop():
+            while True:
+                try:
+                    await asyncio.sleep(30)  # Refresh every 30 seconds
+
+                    # Check for active timers
+                    active_count = await self._check_active_timers()
+
+                    # Update tab indicator if count changed
+                    if active_count != self._active_timers_count:
+                        self._active_timers_count = active_count
+                        if self._tab_indicator_callback:
+                            self._tab_indicator_callback(active_count > 0)
+
+                    # Refresh UI if callback is set
+                    if self._ui_refresh_callback:
+                        await self._ui_refresh_callback()
+
+                except Exception as e:
+                    self.log.log_msg("ERROR", f"Error in UI refresh loop: {e}")
+                except asyncio.CancelledError:
+                    break
+
+        task = asyncio.create_task(ui_refresh_loop())
+        self._refresh_tasks.append(task)
+
+    async def _check_active_timers(self):
+        """Check how many active timers are running."""
+        try:
+            df = await self.query_engine.query_db(
+                "SELECT COUNT(*) as count FROM time WHERE end_time IS NULL"
+            )
+            count = df.iloc[0]["count"] if not df.empty else 0
+            return count
+        except Exception as e:
+            self.log.log_msg("ERROR", f"Error checking active timers: {e}")
+            return 0
+
+    def stop_ui_refresh(self):
+        """Stop all UI refresh tasks."""
+        for task in self._refresh_tasks:
+            task.cancel()
+        self._refresh_tasks.clear()
