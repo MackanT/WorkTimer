@@ -6,7 +6,6 @@
 - Defaults to first project available per organisationurl
 - Git id dropdown currently only exists in project close. missing in query-view and add-data view
 - Option to upload file that is sent to user-story?
-- Marker for ongoing projects?
 
 ### Buggar
 

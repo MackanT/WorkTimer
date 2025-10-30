@@ -1,0 +1,59 @@
+tasks:
+  meta:
+    icon: "task_alt"
+    friendly_name: "Tasks & Progress"
+    build_function: "build_tasks_tab_panel"
+  
+  main:
+    fields:
+      - name: task_id
+        label: "Task ID"
+        type: input
+        readonly: true
+        optional: true
+      - name: title
+        label: "Title"
+        type: input
+        optional: false
+      - name: description
+        label: "Description"  
+        type: textarea
+        optional: true
+      - name: contact_person
+        label: "Contact Person"
+        type: input
+        optional: true
+      - name: customer_id
+        label: "Customer"
+        type: select
+        options_source: "customer_data"
+        optional: false
+      - name: project_id
+        label: "Project"
+        type: select
+        options_source: "project_data"
+        depends_on: "customer_id"
+        optional: false
+      - name: priority
+        label: "Priority"
+        type: select
+        options: ["High", "Medium", "Low", "None"]
+        default: "None"
+        optional: false
+      - name: status
+        label: "Status"
+        type: select
+        options: ["To Do", "In Progress", "On Hold", "Waiting", "Completed", "Cancelled", "Note to Self", "Idea"]
+        default: "To Do"
+        optional: false
+      - name: due_date
+        label: "Due Date"
+        type: date
+        optional: true
+    
+    action:
+      function: "save_task"
+      main_action: "Task"
+      main_param: "title"
+      secondary_action: "saved"
+      button_name: "Save Task"

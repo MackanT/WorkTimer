@@ -361,6 +361,30 @@ class Database:
                         "ERROR", f"Error populating queries table: {e}"
                     )
 
+            ## Tasks Table
+            df_tasks = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'tasks'"
+            )
+            if df_tasks.empty:
+                self.execute_query("""
+                create table if not exists tasks (
+                    task_id integer primary key autoincrement,
+                    customer_id integer not null,
+                    project_id integer not null,
+                    title text not null,
+                    description text,
+                    contact_person text,
+                    priority text default 'None',
+                    status text default 'To Do',
+                    created_date text not null,
+                    updated_date text not null,
+                    due_date text,
+                    foreign key (customer_id) references customers(customer_id),
+                    foreign key (project_id) references projects(project_id)
+                )
+                """)
+                self.log_engine.log_msg("INFO", "Table 'tasks' created successfully.")
+
         except Exception as e:
             self.log_engine.log_msg("ERROR", f"Error initializing database: {e}")
         finally:
@@ -1143,3 +1167,138 @@ class Database:
             """
             result = self.fetch_query(query, (pk,))
             return result
+
+    ### Tasks Table Operations ###
+
+    def create_task(self, customer_id: int, project_id: int, title: str, 
+                   description: str = None, contact_person: str = None, 
+                   priority: str = "None", status: str = "To Do", due_date: str = None):
+        """Create a new task."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        query = """
+            insert into tasks (customer_id, project_id, title, description, 
+                             contact_person, priority, status, created_date, 
+                             updated_date, due_date)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        
+        params = (customer_id, project_id, title, description, contact_person,
+                 priority, status, now, now, due_date)
+        
+        cursor = self.execute_query(query, params)
+        return cursor.lastrowid
+
+    def get_tasks(self, customer_id: int = None, project_id: int = None, 
+                  status: str = None, include_completed: bool = True):
+        """Get tasks with optional filtering."""
+        query = """
+            select 
+                t.task_id,
+                t.customer_id,
+                c.customer_name,
+                t.project_id,
+                p.project_name,
+                t.title,
+                t.description,
+                t.contact_person,
+                t.priority,
+                t.status,
+                t.created_date,
+                t.updated_date,
+                t.due_date
+            from tasks t
+            join customers c on t.customer_id = c.customer_id
+            join projects p on t.project_id = p.project_id
+            where 1=1
+        """
+        
+        params = []
+        
+        if customer_id:
+            query += " and t.customer_id = ?"
+            params.append(customer_id)
+            
+        if project_id:
+            query += " and t.project_id = ?"
+            params.append(project_id)
+            
+        if status:
+            query += " and t.status = ?"
+            params.append(status)
+            
+        if not include_completed:
+            query += " and t.status != 'Completed'"
+            
+        query += " order by t.updated_date desc"
+        
+        return self.fetch_query(query, tuple(params))
+
+    def update_task(self, task_id: int, **kwargs):
+        """Update a task with provided fields."""
+        if not kwargs:
+            return
+            
+        # Always update the updated_date
+        kwargs['updated_date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+        update_fields = list(kwargs.keys())
+        set_clause = ", ".join([f"{field} = ?" for field in update_fields])
+        values = list(kwargs.values())
+        values.append(task_id)
+        
+        query = f"update tasks set {set_clause} where task_id = ?"
+        self.execute_query(query, tuple(values))
+
+    def delete_task(self, task_id: int):
+        """Delete a task."""
+        query = "delete from tasks where task_id = ?"
+        self.execute_query(query, (task_id,))
+
+    def get_task_by_id(self, task_id: int):
+        """Get a single task by ID."""
+        query = """
+            select 
+                t.task_id,
+                t.customer_id,
+                c.customer_name,
+                t.project_id,
+                p.project_name,
+                t.title,
+                t.description,
+                t.contact_person,
+                t.priority,
+                t.status,
+                t.created_date,
+                t.updated_date,
+                t.due_date
+            from tasks t
+            join customers c on t.customer_id = c.customer_id
+            join projects p on t.project_id = p.project_id
+            where t.task_id = ?
+        """
+        
+        result = self.fetch_query(query, (task_id,))
+        return result.iloc[0] if not result.empty else None
+
+    def get_task_counts_by_status(self, customer_id: int = None, project_id: int = None):
+        """Get count of tasks by status for dashboard/summary views."""
+        query = """
+            select status, count(*) as count
+            from tasks
+            where 1=1
+        """
+        
+        params = []
+        
+        if customer_id:
+            query += " and customer_id = ?"
+            params.append(customer_id)
+            
+        if project_id:
+            query += " and project_id = ?"
+            params.append(project_id)
+            
+        query += " group by status"
+        
+        return self.fetch_query(query, tuple(params))

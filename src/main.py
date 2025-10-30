@@ -31,6 +31,7 @@ def setup_config():
         config_ui, \
         config_data, \
         config_query, \
+        config_tasks, \
         config_devops_contacts, \
         DEVOPS_TAGS, \
         DEBUG_MODE, \
@@ -51,6 +52,9 @@ def setup_config():
     with open(f"{CONFIG_FOLDER}/config_query.yml") as f:
         fields = yaml.safe_load(f)
     config_query = fields
+    with open(f"{CONFIG_FOLDER}/config_tasks.yml") as f:
+        fields = yaml.safe_load(f)
+    config_tasks = fields
 
     # Load DevOps contacts config (optional - use template if not exists)
     contacts_file = f"{CONFIG_FOLDER}/devops_contacts.yml"
@@ -437,6 +441,514 @@ def ui_time_tracking():
     asyncio.run(render_ui())
 
 
+def prep_tasks_data(tab_type, fields):
+    """Prepare data sources for tasks tabs."""
+    active_customers = helpers.filter_df(AD.df, {"c_current": 1})
+    customer_names = helpers.get_unique_list(active_customers, "customer_name")
+
+    # Get projects for each customer - include IDs for proper mapping
+    customer_data = {}
+    project_data = {}
+
+    for customer_name in customer_names:
+        # Get customer ID
+        customer_info = helpers.filter_df(
+            AD.df, {"customer_name": customer_name, "c_current": 1}
+        )
+        if not customer_info.empty:
+            customer_id = customer_info.iloc[0]["customer_id"]
+            customer_data[customer_id] = customer_name
+
+        # Get projects for this customer
+        customer_projects = helpers.filter_df(
+            AD.df, {"customer_name": customer_name, "p_current": 1}
+        )
+        project_names = helpers.get_unique_list(customer_projects, "project_name")
+
+        for project_name in project_names:
+            project_info = helpers.filter_df(
+                AD.df,
+                {
+                    "customer_name": customer_name,
+                    "project_name": project_name,
+                    "c_current": 1,
+                    "p_current": 1,
+                },
+            )
+            if not project_info.empty:
+                project_id = project_info.iloc[0]["project_id"]
+                project_data[project_id] = f"{customer_name} - {project_name}"
+
+    return {
+        "customer_data": customer_data,
+        "project_data": project_data,
+    }
+
+
+async def save_task_handler(widgets):
+    """Handle task save with simple validation."""
+    try:
+        # Parse widget values
+        widget_values = helpers.parse_widget_values(widgets)
+
+        # Simple validation - check required fields
+        if not widget_values.get("title"):
+            ui.notify("Title is required", type="negative")
+            return False, "Title is required"
+
+        if not widget_values.get("customer_id"):
+            ui.notify("Customer is required", type="negative")
+            return False, "Customer is required"
+
+        if not widget_values.get("project_id"):
+            ui.notify("Project is required", type="negative")
+            return False, "Project is required"
+
+        # Determine if this is an update or create
+        task_id = widget_values.get("task_id")
+        is_update = task_id and task_id != "New" and str(task_id).isdigit()
+
+        if is_update:
+            # Update existing task
+            await QE.function_db(
+                "update_task",
+                task_id=int(float(task_id)),
+                customer_id=int(float(widget_values["customer_id"])),
+                project_id=int(float(widget_values["project_id"])),
+                title=widget_values["title"],
+                description=widget_values.get("description", ""),
+                contact_person=widget_values.get("contact_person", ""),
+                priority=widget_values["priority"],
+                status=widget_values["status"],
+                due_date=widget_values.get("due_date"),
+            )
+            ui.notify("Task updated successfully!", type="positive")
+        else:
+            # Create new task
+            await QE.function_db(
+                "create_task",
+                customer_id=int(float(widget_values["customer_id"])),
+                project_id=int(float(widget_values["project_id"])),
+                title=widget_values["title"],
+                description=widget_values.get("description", ""),
+                contact_person=widget_values.get("contact_person", ""),
+                priority=widget_values["priority"],
+                status=widget_values["status"],
+                due_date=widget_values.get("due_date"),
+            )
+            ui.notify("Task created successfully!", type="positive")
+
+        return True, "Task saved successfully"
+
+    except Exception as e:
+        LOG.log_msg("ERROR", f"Error saving task: {e}")
+        ui.notify(f"Error saving task: {e}", type="negative")
+        return False, f"Error saving task: {e}"
+
+
+async def delete_task_handler(widgets):
+    """Handle task deletion."""
+    try:
+        widget_values = helpers.parse_widget_values(widgets)
+        task_id = widget_values.get("task_id")
+
+        if not task_id or task_id == "New" or not str(task_id).isdigit():
+            ui.notify("No task selected to delete", type="warning")
+            return False, "No task selected"
+
+        await QE.function_db("delete_task", int(task_id))
+        ui.notify("Task deleted successfully!", type="positive")
+        return True, "Task deleted successfully"
+
+    except Exception as e:
+        LOG.log_msg("ERROR", f"Error deleting task: {e}")
+        ui.notify(f"Error deleting task: {e}", type="negative")
+        return False, f"Error deleting task: {e}"
+
+
+async def new_task_handler(widgets):
+    """Handle new task creation (clear form)."""
+    try:
+        # Clear all form fields
+        for field_name, widget in widgets.items():
+            if hasattr(widget, "value"):
+                if field_name == "task_id":
+                    widget.value = "New"
+                elif field_name in ["priority"]:
+                    widget.value = "None"
+                elif field_name in ["status"]:
+                    widget.value = "To Do"
+                else:
+                    widget.value = "" if field_name != "due_date" else None
+
+        ui.notify("Ready to create new task", type="info")
+        return True, "Form cleared for new task"
+
+    except Exception as e:
+        LOG.log_msg("ERROR", f"Error preparing new task form: {e}")
+        return False, f"Error preparing form: {e}"
+
+
+def ui_tasks():
+    """Task management interface using configuration approach with improvements."""
+    # Use the existing configuration-based approach with correct parameters
+    data_sources = prep_tasks_data("main", config_tasks["tasks"]["main"]["fields"])
+    
+    # Create UI using configuration with correct named parameters
+    helpers.build_generic_tab_panel(
+        entity_name="tasks",
+        tab_type="main",
+        container_dict={"main": ui.column().classes("w-full")},
+        config_source=config_tasks,
+        data_prep_func=lambda: data_sources,
+        on_success_callback=None
+    )
+
+
+
+
+
+
+
+
+
+
+
+def ui_add_data():
+
+        # Helper function to safely schedule async refresh
+        def schedule_refresh():
+            try:
+                asyncio.create_task(refresh_task_list())
+            except RuntimeError:
+                # No event loop running, schedule with timer
+                ui.timer(
+                    0.1, lambda: asyncio.create_task(refresh_task_list()), once=True
+                )
+
+        # Function to sync filter selections to form (Issue #3)
+        def sync_filters_to_form():
+            if customer_filter.value != "all" and "customer_id" in widgets:
+                widgets["customer_id"].value = customer_filter.value
+                # Trigger project update
+                if "project_id" in widgets:
+                    on_form_customer_change()
+                    if project_filter.value != "all":
+                        widgets["project_id"].value = project_filter.value
+
+        # Set up filter dependencies
+        def on_customer_filter_change():
+            customer_id = customer_filter.value
+            if customer_id and customer_id != "all" and "project_data" in data_sources:
+                # Filter projects for the selected customer
+                filtered_projects = {"all": "All Projects"}
+                try:
+                    selected_customer_name = data_sources["customer_data"].get(
+                        int(customer_id), ""
+                    )
+                    for proj_id, proj_name in data_sources["project_data"].items():
+                        if proj_name.startswith(selected_customer_name):
+                            filtered_projects[str(proj_id)] = proj_name
+                except (ValueError, TypeError):
+                    pass
+                project_filter.set_options(filtered_projects)
+            else:
+                project_filter.set_options({"all": "All Projects"})
+            project_filter.value = "all"
+            sync_filters_to_form()  # Sync to form
+            schedule_refresh()
+
+        customer_filter.on("update:model-value", lambda: on_customer_filter_change())
+        project_filter.on(
+            "update:model-value", lambda: (sync_filters_to_form(), schedule_refresh())
+        )
+        status_filter.on("update:model-value", lambda: schedule_refresh())
+
+        ui.separator().classes("my-4")
+
+        # MAIN SECTION: Better layout with readable form and task list
+        with ui.row().classes("w-full gap-4"):
+            # LEFT SIDE: Task form with better sizing (Issue #3)
+            with ui.card().classes("flex-1 p-4"):
+                ui.label("Task Form").classes("text-h6 mb-4")
+
+                # Create form widgets manually for better control (Issues #1, #3)
+                with ui.column().classes("w-full gap-3"):
+                    # Title (required) - Issue #1: No task_id input since it's auto-generated
+                    title_input = ui.input("Title *").classes("w-full text-lg")
+
+                    # Customer and Project in a row
+                    with ui.row().classes("w-full gap-2"):
+                        customer_select = ui.select(
+                            label="Customer *",
+                            options={
+                                str(k): v
+                                for k, v in data_sources["customer_data"].items()
+                            },
+                        ).classes("flex-1")
+
+                        project_select = ui.select(
+                            label="Project *", options={}
+                        ).classes("flex-1")
+
+                    # Priority and Status in a row
+                    with ui.row().classes("w-full gap-2"):
+                        priority_select = ui.select(
+                            "Priority",
+                            options=["High", "Medium", "Low", "None"],
+                            value="None",
+                        ).classes("flex-1")
+
+                        status_select = ui.select(
+                            "Status",
+                            options=[
+                                "To Do",
+                                "In Progress",
+                                "On Hold",
+                                "Waiting",
+                                "Completed",
+                                "Cancelled",
+                                "Note to Self",
+                                "Idea",
+                            ],
+                            value="To Do",
+                        ).classes("flex-1")
+
+                    # Description (larger text area)
+                    description_input = (
+                        ui.textarea("Description").classes("w-full").props("rows=4")
+                    )
+
+                    # Contact Person and Due Date in a row
+                    with ui.row().classes("w-full gap-2"):
+                        contact_input = ui.input("Contact Person").classes("flex-1")
+                        due_date_input = ui.date("Due Date").classes("flex-1")
+
+                # Buttons
+                with ui.row().classes("gap-2 mt-4 justify-end"):
+                    new_btn = ui.button("New Task", icon="add", color="secondary")
+                    save_btn = ui.button("Save Task", icon="save", color="primary")
+                    delete_btn = ui.button(
+                        "Delete Task", icon="delete", color="negative"
+                    )
+
+                # Store current task ID for updates (hidden from user)
+                current_task_id = {"value": None}
+
+        # Group all form widgets for easy access (Issue #1: No task_id widget)
+        widgets = {
+            "title": title_input,
+            "customer_id": customer_select,
+            "project_id": project_select,
+            "priority": priority_select,
+            "status": status_select,
+            "description": description_input,
+            "contact_person": contact_input,
+            "due_date": due_date_input,
+        }
+
+        # Set up customer->project dependency for form
+        def on_form_customer_change():
+            customer_id = customer_select.value
+            filtered_projects = {}
+            try:
+                selected_customer_name = data_sources["customer_data"].get(
+                    int(customer_id), ""
+                )
+                for proj_id, proj_name in data_sources["project_data"].items():
+                    if proj_name.startswith(selected_customer_name):
+                        filtered_projects[str(proj_id)] = proj_name
+            except (ValueError, TypeError):
+                pass
+            project_select.set_options(filtered_projects)
+            project_select.set_options({})
+
+        customer_select.on("update:model-value", lambda: on_form_customer_change())
+
+        # RIGHT SIDE: Task List (Issue #2)
+        with ui.card().classes("flex-1 p-4"):
+            ui.label("Task List").classes("text-h6 mb-4")
+            task_list_container = ui.column().classes("w-full")
+
+        # Button handlers (Issue #4, #5: Fix validation and int conversion)
+        async def handle_save():
+            try:
+                # Use proper validation (Issue #5)
+                required_fields = ["title", "customer_id", "project_id"]
+                if not helpers.check_input(widgets, required_fields):
+                    return
+
+                success, message = await save_task_handler(widgets)
+                if success:
+                    ui.notify(message, type="positive")
+                    refresh_task_list_safe()
+                else:
+                    ui.notify(message, type="negative")
+            except Exception as e:
+                ui.notify(f"Error saving task: {e}", type="negative")
+
+        async def handle_new():
+            # Clear form for new task
+            title_input.value = ""
+            description_input.value = ""
+            contact_input.value = ""
+            due_date_input.value = None
+            priority_select.value = "None"
+            status_select.value = "To Do"
+            customer_select.value = None
+            project_select.value = None
+            current_task_id["value"] = None
+            ui.notify("Ready to create new task", type="info")
+
+        async def handle_delete():
+            if not current_task_id["value"]:
+                ui.notify("No task selected to delete", type="warning")
+                return
+            try:
+                await QE.function_db("delete_task", int(current_task_id["value"]))
+                ui.notify("Task deleted successfully!", type="positive")
+                await handle_new()  # Clear form
+                refresh_task_list_safe()
+            except Exception as e:
+                ui.notify(f"Error deleting task: {e}", type="negative")
+
+        # Wire up buttons
+        save_btn.on("click", lambda: asyncio.create_task(handle_save()))
+        new_btn.on("click", lambda: asyncio.create_task(handle_new()))
+        delete_btn.on("click", lambda: asyncio.create_task(handle_delete()))
+
+        # Simple refresh function
+        def refresh_task_list_safe():
+            try:
+                asyncio.create_task(refresh_task_list())
+            except RuntimeError:
+                ui.timer(
+                    0.1, lambda: asyncio.create_task(refresh_task_list()), once=True
+                )
+
+        async def refresh_task_list():
+            """Refresh the task list based on current filters."""
+            try:
+                tasks_df = await QE.function_db("get_tasks")
+
+                if tasks_df is None or tasks_df.empty:
+                    task_list_container.clear()
+                    with task_list_container:
+                        ui.label("No tasks found. Create your first task!").classes(
+                            "text-center text-grey-6 p-4"
+                        )
+                    return
+
+                # Apply filters
+                filtered_tasks = tasks_df.copy()
+
+                if customer_filter.value != "all":
+                    try:
+                        customer_id = int(customer_filter.value)
+                        filtered_tasks = filtered_tasks[
+                            filtered_tasks["customer_id"] == customer_id
+                        ]
+                    except ValueError:
+                        pass
+
+                if project_filter.value != "all":
+                    try:
+                        project_id = int(project_filter.value)
+                        filtered_tasks = filtered_tasks[
+                            filtered_tasks["project_id"] == project_id
+                        ]
+                    except ValueError:
+                        pass
+
+                if status_filter.value != "all":
+                    filtered_tasks = filtered_tasks[
+                        filtered_tasks["status"] == status_filter.value
+                    ]
+
+                # Clear and rebuild task list
+                task_list_container.clear()
+
+                with task_list_container:
+                    if filtered_tasks.empty:
+                        ui.label("No tasks match the current filters.").classes(
+                            "text-center text-grey-6 p-4"
+                        )
+                    else:
+                        # Create compact task cards
+                        for _, task in filtered_tasks.iterrows():
+                            with (
+                                ui.card()
+                                .classes(
+                                    "w-full p-3 mb-2 cursor-pointer hover:bg-grey-1"
+                                )
+                                .on("click", lambda t=task: load_task_to_form(t))
+                            ):
+                                with ui.row().classes(
+                                    "w-full items-center justify-between"
+                                ):
+                                    with ui.column().classes("flex-1"):
+                                        ui.label(str(task.get("title", ""))).classes(
+                                            "font-bold text-lg"
+                                        )
+                                        ui.label(
+                                            f"{task.get('customer_name', '')} - {task.get('project_name', '')}"
+                                        ).classes("text-sm text-grey-6")
+                                        if task.get("description"):
+                                            ui.label(
+                                                str(task.get("description", ""))[:80]
+                                                + "..."
+                                            ).classes("text-xs text-grey-5")
+
+                                    with ui.row().classes("gap-2 items-center"):
+                                        # Status chip
+                                        status_color = {
+                                            "To Do": "blue",
+                                            "In Progress": "orange",
+                                            "Completed": "green",
+                                            "On Hold": "purple",
+                                            "Cancelled": "red",
+                                        }.get(str(task.get("status", "")), "grey")
+                                        ui.chip(
+                                            str(task.get("status", "")),
+                                            color=status_color,
+                                        )
+
+                                        # Priority chip
+                                        priority_color = {
+                                            "High": "red",
+                                            "Medium": "orange",
+                                            "Low": "green",
+                                            "None": "grey",
+                                        }.get(str(task.get("priority", "")), "grey")
+                                        ui.chip(
+                                            str(task.get("priority", "")),
+                                            color=priority_color,
+                                        )
+
+            except Exception as e:
+                LOG.log_msg("ERROR", f"Error refreshing task list: {e}")
+                task_list_container.clear()
+                with task_list_container:
+                    ui.label(f"Error loading tasks: {e}").classes("text-negative p-4")
+
+        def load_task_to_form(task_data):
+            """Load task data into the form."""
+            current_task_id["value"] = task_data.get("task_id")
+            title_input.value = str(task_data.get("title", ""))
+            description_input.value = str(task_data.get("description", ""))
+            contact_input.value = str(task_data.get("contact_person", ""))
+            customer_select.value = str(task_data.get("customer_id", ""))
+            on_form_customer_change()  # Update projects
+            project_select.value = str(task_data.get("project_id", ""))
+            priority_select.value = str(task_data.get("priority", "None"))
+            status_select.value = str(task_data.get("status", "To Do"))
+            due_date_input.value = task_data.get("due_date")
+
+        # Wire up refresh button and initial load
+        refresh_button.on("click", lambda: refresh_task_list_safe())
+        ui.timer(0.1, lambda: refresh_task_list_safe(), once=True)
+
+
 def ui_add_data():
     asyncio.run(AD.refresh())
 
@@ -679,6 +1191,258 @@ def ui_add_data():
             data_prep_func=prep_bonus_data,
             on_success_callback=lambda: AD.refresh(),
         )
+
+    def build_tasks_tab_panel(tab_type, container_dict):
+        """Build the main tasks management panel using configuration-driven approach."""
+        # Use the same pattern as other tabs - build using configuration
+        helpers.build_generic_tab_panel(
+            entity_name="tasks",
+            tab_type=tab_type,
+            container_dict=container_dict,
+            config_source=config_tasks,
+            data_prep_func=prep_tasks_data,
+            custom_handlers={
+                "save_task": save_task_handler,
+                "delete_task": delete_task_handler,
+                "new_task": new_task_handler,
+            },
+            on_success_callback=lambda: None,
+        )
+
+    async def create_task(
+        customer_id,
+        project_id,
+        title,
+        description=None,
+        contact_person=None,
+        priority="None",
+        status="To Do",
+        due_date=None,
+    ):
+        """Create a new task in the database."""
+        try:
+            task_id = await QE.function_db(
+                "create_task",
+                customer_id=int(customer_id),
+                project_id=int(project_id),
+                title=title,
+                description=description,
+                contact_person=contact_person,
+                priority=priority,
+                status=status,
+                due_date=due_date,
+            )
+            LOG.log_msg("INFO", f"Task created successfully: {title}")
+            return True, f"Task '{title}' created successfully"
+        except Exception as e:
+            LOG.log_msg("ERROR", f"Error creating task: {e}")
+            return False, f"Error creating task: {e}"
+
+    def build_tasks_main_panel(container_dict):
+        """Build the main unified tasks management interface."""
+        container_dict.clear()
+
+        with container_dict:
+            # Create the main layout
+            with ui.row().classes("w-full gap-4"):
+                # Left side - Quick Add Task Form
+                with ui.card().classes("w-1/3"):
+                    ui.label("Add New Task").classes("text-lg font-bold mb-2")
+
+                    # Customer selection
+                    customer_select = ui.select(
+                        label="Customer", options={}, value=None
+                    ).classes("w-full mb-2")
+
+                    # Project selection (filtered by customer)
+                    project_select = ui.select(
+                        label="Project", options={}, value=None
+                    ).classes("w-full mb-2")
+
+                    # Task details
+                    title_input = ui.input(label="Task Title").classes("w-full mb-2")
+                    description_input = ui.textarea(label="Description").classes(
+                        "w-full mb-2"
+                    )
+                    contact_input = ui.input(label="Contact Person").classes(
+                        "w-full mb-2"
+                    )
+
+                    # Priority and Status
+                    with ui.row().classes("w-full gap-2 mb-2"):
+                        priority_select = ui.select(
+                            label="Priority",
+                            options=["High", "Medium", "Low", "None"],
+                            value="None",
+                        ).classes("flex-1")
+
+                        status_select = ui.select(
+                            label="Status",
+                            options=[
+                                "To Do",
+                                "In Progress",
+                                "On Hold",
+                                "Waiting",
+                                "Completed",
+                                "Cancelled",
+                                "Note to Self",
+                                "Idea",
+                            ],
+                            value="To Do",
+                        ).classes("flex-1")
+
+                    due_date_input = ui.date(label="Due Date").classes("w-full mb-2")
+
+                    # Add button
+                    add_button = ui.button("Add Task", icon="add").classes("w-full")
+
+                # Right side - Task List & Filters
+                with ui.card().classes("flex-1"):
+                    ui.label("Task List").classes("text-lg font-bold mb-2")
+
+                    # Filters
+                    with ui.row().classes("w-full gap-2 mb-4"):
+                        filter_customer = ui.select(
+                            label="Filter by Customer",
+                            options={"all": "All Customers"},
+                            value="all",
+                        ).classes("flex-1")
+
+                        filter_status = ui.select(
+                            label="Filter by Status",
+                            options={"all": "All Statuses"},
+                            value="all",
+                        ).classes("flex-1")
+
+                        refresh_button = ui.button("Refresh", icon="refresh")
+
+                    # Tasks table placeholder
+                    tasks_container = ui.card().classes("w-full")
+                    with tasks_container:
+                        ui.label("Tasks will appear here...")
+
+            # Load initial data and set up functionality
+            async def load_tasks_data():
+                """Load customer/project data and populate dropdowns."""
+                try:
+                    # Get customers
+                    customers_df = await QE.query_db(
+                        "SELECT customer_id, customer_name FROM customers WHERE is_current = 1"
+                    )
+                    customer_options = {
+                        str(row["customer_id"]): row["customer_name"]
+                        for _, row in customers_df.iterrows()
+                    }
+                    customer_select.set_options(customer_options)
+                    filter_customer.set_options(
+                        {"all": "All Customers", **customer_options}
+                    )
+
+                    # Load tasks
+                    await refresh_tasks_list()
+
+                except Exception as e:
+                    LOG.log_msg("ERROR", f"Error loading tasks data: {e}")
+
+            async def refresh_tasks_list():
+                """Refresh the tasks display."""
+                try:
+                    tasks_df = await QE.function_db("get_tasks")
+
+                    tasks_container.clear()
+                    with tasks_container:
+                        if tasks_df.empty:
+                            ui.label("No tasks found. Add your first task!")
+                        else:
+                            # Create a simple table for now
+                            with ui.row().classes("w-full font-bold border-b"):
+                                ui.label("Title").classes("flex-1")
+                                ui.label("Customer").classes("w-32")
+                                ui.label("Project").classes("w-32")
+                                ui.label("Status").classes("w-24")
+                                ui.label("Priority").classes("w-24")
+                                ui.label("Actions").classes("w-24")
+
+                            for _, task in tasks_df.iterrows():
+                                with ui.row().classes("w-full border-b py-2"):
+                                    ui.label(task["title"]).classes("flex-1")
+                                    ui.label(task["customer_name"]).classes("w-32")
+                                    ui.label(task["project_name"]).classes("w-32")
+                                    ui.label(task["status"]).classes("w-24")
+                                    ui.label(task["priority"]).classes("w-24")
+                                    ui.button("Edit", icon="edit", size="sm").classes(
+                                        "w-24"
+                                    )
+
+                except Exception as e:
+                    LOG.log_msg("ERROR", f"Error refreshing tasks: {e}")
+
+            async def on_customer_change():
+                """Update project dropdown when customer changes."""
+                try:
+                    if customer_select.value:
+                        projects_df = await QE.query_db(
+                            "SELECT project_id, project_name FROM projects WHERE customer_id = ? AND is_current = 1",
+                            (customer_select.value,),
+                        )
+                        project_options = {
+                            str(row["project_id"]): row["project_name"]
+                            for _, row in projects_df.iterrows()
+                        }
+                        project_select.set_options(project_options)
+                except Exception as e:
+                    LOG.log_msg("ERROR", f"Error loading projects: {e}")
+
+            async def add_new_task():
+                """Add a new task."""
+                try:
+                    if not all(
+                        [customer_select.value, project_select.value, title_input.value]
+                    ):
+                        ui.notify(
+                            "Please fill in Customer, Project, and Title",
+                            type="warning",
+                        )
+                        return
+
+                    success, message = await create_task(
+                        customer_id=customer_select.value,
+                        project_id=project_select.value,
+                        title=title_input.value,
+                        description=description_input.value,
+                        contact_person=contact_input.value,
+                        priority=priority_select.value,
+                        status=status_select.value,
+                        due_date=due_date_input.value,
+                    )
+
+                    if success:
+                        ui.notify(message, type="positive")
+                        # Clear form
+                        title_input.value = ""
+                        description_input.value = ""
+                        contact_input.value = ""
+                        due_date_input.value = None
+                        # Refresh list
+                        await refresh_tasks_list()
+                    else:
+                        ui.notify(message, type="negative")
+
+                except Exception as e:
+                    LOG.log_msg("ERROR", f"Error adding task: {e}")
+                    ui.notify(f"Error adding task: {e}", type="negative")
+
+            # Wire up events
+            customer_select.on(
+                "update:model-value", lambda: asyncio.create_task(on_customer_change())
+            )
+            add_button.on("click", lambda: asyncio.create_task(add_new_task()))
+            refresh_button.on(
+                "click", lambda: asyncio.create_task(refresh_tasks_list())
+            )
+
+            # Initialize data
+            asyncio.create_task(load_tasks_data())
 
     def add_work_item(widgets):
         """Create a work item (Epic, Feature, or User Story) based on the selected type."""
@@ -1204,6 +1968,7 @@ def ui_add_data():
                     "build_project_tab_panel": build_project_tab_panel,
                     "build_bonus_tab_panel": build_bonus_tab_panel,
                     "build_work_item_tab_panel": build_work_item_tab_panel,
+                    "build_tasks_tab_panel": build_tasks_tab_panel,
                 }
 
                 for tab_dict in tab_list.values():
@@ -1626,13 +2391,12 @@ def setup_ui():
     dark.enable()
 
     with ui.tabs().classes("w-full") as tabs:
-        tab_time = ui.tab(
-            "Time Tracking", icon="schedule"
-        )  # TODO add icons on other tabs
-        tab_data_input = ui.tab("Data Input")
-        tab_query_editors = ui.tab("Query Editors")
-        tab_log = ui.tab("Log")
-        tab_info = ui.tab("Info")
+        tab_time = ui.tab("Time Tracking", icon="schedule")
+        tab_data_input = ui.tab("Data Input", icon="input")
+        tab_tasks = ui.tab("Tasks", icon="assignment")
+        tab_query_editors = ui.tab("Query Editors", icon="code")
+        tab_log = ui.tab("Log", icon="terminal")
+        tab_info = ui.tab("Info", icon="info")
 
     # Set up UI refresh callbacks
     async def ui_refresh_wrapper():
@@ -1686,6 +2450,8 @@ def setup_ui():
             ui_time_tracking()
         with ui.tab_panel(tab_data_input):
             ui_add_data()
+        with ui.tab_panel(tab_tasks):
+            ui_tasks()
         with ui.tab_panel(tab_query_editors):
             ui_query_editor()
         with ui.tab_panel(tab_log):
