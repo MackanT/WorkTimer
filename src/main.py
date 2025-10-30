@@ -19,6 +19,7 @@ import os
 import yaml
 import re
 import html
+from .globals import GlobalRegistry
 
 CONFIG_FOLDER = "config"
 
@@ -880,9 +881,24 @@ async def ui_devops_settings():
                 "default_assignee": default_assignee,
             }
         elif tab_type == "Update":
+            # Prepare customer-specific assignees for Update tab
+            assignees = {}
+            for customer in customer_names:
+                # Get customer-specific data from config
+                customer_data = config_devops_contacts.get("customers", {}).get(
+                    customer, {}
+                )
+                default_data = config_devops_contacts.get("default", {})
+
+                # Use customer-specific assignees, or fall back to defaults
+                assignees[customer] = customer_data.get(
+                    "assignees", default_data.get("assignees", [])
+                )
+
             return {
                 "customer_data": customer_names,
                 "work_items": work_items,
+                "assignees": assignees,
             }
         return {}
 
@@ -906,7 +922,7 @@ async def ui_devops_settings():
             title=wid["user_story_name"],
             description=description,
             additional_fields=additional_fields,
-            markdown=wid.get("use_markdown", True),
+            markdown=True,  # wid.get("use_markdown", True)
             parent=parent_id,
         )
         state = "INFO" if success else "ERROR"
@@ -941,6 +957,56 @@ async def ui_devops_settings():
                 return False, f"Failed to update: {msg}"
         return False, "DevOps manager not available"
 
+    async def update_work_item(widgets):
+        """Save the updated work item fields back to DevOps."""
+        c_name = widgets["customer_name"].value
+        work_item_display = widgets["work_item"].value
+        work_item_id = helpers.extract_devops_id(work_item_display)
+
+        # Collect all fields that have values
+        fields_to_update = {}
+
+        # Description (always present)
+        description = widgets["description_editor"].value or ""
+        if description:
+            fields_to_update["System.Description"] = description
+
+        # State
+        state = widgets.get("state")
+        if state and state.value:
+            fields_to_update["System.State"] = state.value
+
+        # Assigned To
+        assigned_to = widgets.get("assigned_to")
+        if assigned_to and assigned_to.value:
+            fields_to_update["System.AssignedTo"] = assigned_to.value
+
+        # Priority
+        priority = widgets.get("priority")
+        if priority and priority.value:
+            fields_to_update["Microsoft.VSTS.Common.Priority"] = int(priority.value)
+
+        # Determine if description is markdown based on the editor's language
+        is_markdown = (
+            getattr(widgets.get("description_editor"), "language", "markdown")
+            == "markdown"
+        )
+
+        if DO and DO.manager:
+            status, msg = DO.manager.update_work_item_fields(
+                c_name, work_item_id, fields_to_update, markdown=is_markdown
+            )
+            if status:
+                LOG.log_msg("INFO", f"Work item {work_item_id} updated successfully")
+                return (
+                    True,
+                    f"Work item {work_item_id} updated successfully",
+                )
+            else:
+                LOG.log_msg("ERROR", f"Failed to update work item: {msg}")
+                return False, f"Failed to update: {msg}"
+        return False, "DevOps manager not available"
+
     def build_user_story_tab_panel(tab_type):
         """Build user story tab panel using generic builder with DevOps-specific handlers."""
 
@@ -948,6 +1014,7 @@ async def ui_devops_settings():
         custom_handlers = {
             "add_user_story": add_user_story,
             "update_work_item_description": update_work_item_description,
+            "update_work_item": update_work_item,
         }
 
         # Render functions for HTML preview
@@ -974,6 +1041,9 @@ async def ui_devops_settings():
             preview_html = widgets.get("description_preview")
             work_item_widget = widgets.get("work_item")
             customer_widget = widgets.get("customer_name")
+            state_widget = widgets.get("state")
+            assigned_to_widget = widgets.get("assigned_to")
+            priority_widget = widgets.get("priority")
 
             # Set up editor preview update
             if editor_widget and preview_html:
@@ -985,11 +1055,11 @@ async def ui_devops_settings():
 
                 editor_widget.on_value_change(update_preview)
 
-            # Set up work item description loader
+            # Set up work item details loader
             if work_item_widget and customer_widget and editor_widget and preview_html:
 
-                async def load_work_item_description(e):
-                    """Load description when work item is selected."""
+                async def load_work_item_details(e):
+                    """Load all work item details when work item is selected."""
                     c_name = customer_widget.value
                     work_item_display = work_item_widget.value
 
@@ -999,31 +1069,104 @@ async def ui_devops_settings():
                     work_item_id = helpers.extract_devops_id(work_item_display)
 
                     if DO.manager:
-                        status, description, fmt = DO.manager.get_description(
+                        # Get full work item details
+                        status, details = DO.manager.get_work_item_details(
                             customer_name=c_name, work_item_id=work_item_id
                         )
 
                         if status:
-                            description_clean = html.unescape(description or "")
+                            # Update description
+                            description_raw = details.get("description", "")
+
+                            # Check if the content appears to be HTML (contains HTML tags)
+                            is_html_content = bool(
+                                description_raw
+                                and ("<" in description_raw and ">" in description_raw)
+                            )
+
+                            if is_html_content:
+                                # Convert HTML to markdown for better readability in editor
+                                description_clean = helpers.convert_html_to_markdown(
+                                    description_raw
+                                )
+                            else:
+                                # Just unescape HTML entities for plain text/markdown content
+                                description_clean = html.unescape(description_raw)
+
                             editor_widget.value = description_clean
                             editor_widget.update()
                             preview_html.set_content(
                                 helpers.render_and_sanitize_markdown(description_clean)
                             )
-                            LOG.log_msg(
-                                "INFO",
-                                f"Loaded description for work item {work_item_id} (format: {fmt})",
-                            )
+
+                            # Update other fields
+                            if state_widget and details.get("state"):
+                                try:
+                                    state_value = details["state"]
+                                    # Try both methods for setting the value
+                                    state_widget.set_value(state_value)
+                                    state_widget.value = state_value
+                                except Exception as e:
+                                    LOG.log_msg(
+                                        "WARNING", f"Failed to set state widget: {e}"
+                                    )
+
+                            if assigned_to_widget and details.get("assigned_to"):
+                                try:
+                                    # Get the raw assigned_to field from DevOps to extract email
+                                    assigned_to_raw = details.get("assigned_to_raw")
+                                    assigned_to_display = details["assigned_to"]
+
+                                    # Try to use the email address (uniqueName) if available
+                                    if assigned_to_raw and isinstance(
+                                        assigned_to_raw, dict
+                                    ):
+                                        assigned_to_value = assigned_to_raw.get(
+                                            "uniqueName", assigned_to_display
+                                        )
+                                    else:
+                                        assigned_to_value = assigned_to_display
+
+                                    # Check if the value is in the dropdown options
+                                    widget_options = getattr(
+                                        assigned_to_widget, "options", []
+                                    )
+                                    if assigned_to_value in widget_options:
+                                        assigned_to_widget.set_value(assigned_to_value)
+                                        assigned_to_widget.value = assigned_to_value
+                                    else:
+                                        # For combobox widgets (with_input: true), we can set custom values
+                                        assigned_to_widget.set_value(
+                                            assigned_to_display
+                                        )
+                                        assigned_to_widget.value = assigned_to_display
+                                except Exception as e:
+                                    LOG.log_msg(
+                                        "WARNING",
+                                        f"Failed to set assigned_to widget: {e}",
+                                    )
+
+                            if priority_widget and details.get("priority") is not None:
+                                try:
+                                    # Convert to integer to match widget options
+                                    priority_value = int(details["priority"])
+                                    # Try both methods for setting the value
+                                    priority_widget.set_value(priority_value)
+                                    priority_widget.value = priority_value
+                                except Exception as e:
+                                    LOG.log_msg(
+                                        "WARNING", f"Failed to set priority widget: {e}"
+                                    )
                         else:
                             ui.notify(
-                                f"Failed to load description: {description}",
+                                f"Failed to load work item details: {details}",
                                 color="negative",
                             )
                             LOG.log_msg(
-                                "ERROR", f"Failed to load description: {description}"
+                                "ERROR", f"Failed to load work item details: {details}"
                             )
 
-                work_item_widget.on("update:model-value", load_work_item_description)
+                work_item_widget.on("update:model-value", load_work_item_details)
 
         # Add special event handlers for Add tab (auto-populate source and contact)
         if tab_type == "Add" and widgets:
@@ -1597,6 +1740,11 @@ def main():
 
     DO = DevOpsEngine(query_engine=QE, log_engine=DO_LOG)
     asyncio.run(DO.initialize())
+
+    GlobalRegistry.set("LOG", LOG)
+    GlobalRegistry.set("QE", QE)
+    GlobalRegistry.set("DO", DO)
+    GlobalRegistry.set("AD", AD)
 
     ui.add_head_html("""
     <script>

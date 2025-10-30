@@ -104,14 +104,14 @@ devops_user_story:
       - name: description_preview
         label: Preview
         type: html
-        optional: False
+        optional: True
         parent: description_editor
         parent_update: True
         render_function: render_and_sanitize
     rows:
       - [customer_name, parent_name, user_story_name]
       - [assigned_to, contact_person, source]
-      - [state, priority, use_markdown]
+      - [state, priority]
       - [tags]
       - [description_editor, description_preview]
     action:
@@ -135,6 +135,33 @@ devops_user_story:
         options_source: work_items
         optional: False
         parent: customer_name
+      - name: state
+        label: State
+        type: select
+        options:
+          - New
+          - Active
+          - Resolved
+          - Closed
+          - Removed
+        optional: True
+      - name: assigned_to
+        label: Assigned To
+        type: select
+        with_input: true
+        options: []
+        options_source: assignees
+        optional: True
+        parent: customer_name
+      - name: priority
+        label: Priority
+        type: select
+        options:
+          - 1
+          - 2
+          - 3
+          - 4
+        optional: True
       - name: description_editor
         label: Description Editor
         type: codemirror
@@ -143,15 +170,16 @@ devops_user_story:
       - name: description_preview
         label: Preview
         type: html
-        optional: False
+        optional: True
         parent: description_editor
         parent_update: True
         render_function: render_and_sanitize
     rows:
       - [customer_name, work_item]
+      - [state, assigned_to, priority]
       - [description_editor, description_preview]
     action:
-      function: update_work_item_description
+      function: update_work_item
       main_action: Work Item
       main_param: work_item
       secondary_action: updated

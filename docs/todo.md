@@ -2,11 +2,11 @@
 
 - Easy way to add time in post.
 - update customer/project should also update times values!
-- Devops connector
 - Make PAT-tokens etc masked
 - Defaults to first project available per organisationurl
 - Git id dropdown currently only exists in project close. missing in query-view and add-data view
 - Option to upload file that is sent to user-story?
+- Marker for ongoing projects?
 
 ### Buggar
 

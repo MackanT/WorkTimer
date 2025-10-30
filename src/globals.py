@@ -7,6 +7,28 @@ import logging
 import datetime
 
 
+# Global registry for shared instances
+class GlobalRegistry:
+    """Registry for shared application instances."""
+
+    _instances = {}
+
+    @classmethod
+    def set(cls, name: str, instance):
+        """Set a global instance."""
+        cls._instances[name] = instance
+
+    @classmethod
+    def get(cls, name: str, default=None):
+        """Get a global instance."""
+        return cls._instances.get(name, default)
+
+    @classmethod
+    def clear(cls):
+        """Clear all instances."""
+        cls._instances.clear()
+
+
 def generate_sync_sql(main_db, uploaded_path):
     return Database.generate_sync_sql(main_db, uploaded_path)
 
@@ -182,7 +204,7 @@ class DevOpsEngine:
 
             # Always update/rebuild devops data to reflect latest customer info
             self.log.log_msg("INFO", "Performing incremental DevOps update on startup.")
-            # await self.update_devops(incremental=True)
+            await self.update_devops(incremental=True)
             await self.load_df()
             self.log.log_msg("INFO", "DevOps preload complete.")
 

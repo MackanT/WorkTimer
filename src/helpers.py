@@ -7,8 +7,8 @@ import re
 import numpy as np
 import markdown as _markdown
 import bleach as _bleach
+from markdownify import markdownify as _markdownify
 
-import __main__
 from .globals import SaveData
 
 
@@ -281,6 +281,53 @@ def render_and_sanitize_markdown(text: str) -> str:
     """
 
 
+def convert_html_to_markdown(html_text: str) -> str:
+    """Convert HTML content to clean markdown text.
+    
+    Args:
+        html_text: HTML content to convert
+        
+    Returns:
+        Clean markdown text suitable for editing
+    """
+    if not html_text or not html_text.strip():
+        return ""
+    
+    # Pre-process to remove script and style tags
+    import re
+    html_text = re.sub(r'<script[^>]*>.*?</script>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
+    html_text = re.sub(r'<style[^>]*>.*?</style>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Use markdownify to convert HTML to markdown
+    markdown_text = _markdownify(
+        html_text,
+        heading_style="atx",  # Use # style headers
+        bullets="-",  # Use - for bullet points
+        autolinks=False,  # Don't auto-convert URLs
+        default_title=True,  # Include title attributes
+    ).strip()
+    
+    # Clean up common HTML artifacts that might remain
+    import html
+    markdown_text = html.unescape(markdown_text)
+    
+    # Clean up excessive whitespace and normalize line breaks
+    lines = markdown_text.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        line = line.rstrip()  # Remove trailing whitespace
+        cleaned_lines.append(line)
+    
+    # Join lines and remove excessive blank lines
+    result = '\n'.join(cleaned_lines)
+    
+    # Replace multiple consecutive blank lines with just two
+    result = re.sub(r'\n\n\n+', '\n\n', result)
+    
+    return result.strip()
+
+
 # ===== DATE & TIME UTILITIES =====
 
 
@@ -363,7 +410,20 @@ def check_input(widgets: dict, required_fields: list[str]) -> bool:
     """
     is_ok = True
     for field in required_fields:
-        if not widgets[field].value:
+        widget = widgets.get(field)
+        if widget is None:
+            continue  # Skip missing widgets
+
+        # Get widget value safely - some widgets don't have .value attribute
+        widget_value = None
+        if hasattr(widget, "value"):
+            widget_value = widget.value
+        elif isinstance(widget, list) and widget and hasattr(widget[0], "selected"):
+            # Handle chip groups - check if any chips are selected
+            widget_value = any(getattr(chip, "selected", False) for chip in widget)
+
+        # Check if the widget has a value
+        if not widget_value:
             ui.notify(
                 f"{field.replace('_', ' ').title()} is required!",
                 color="negative",
@@ -1001,11 +1061,12 @@ def add_generic_save_button(
     """
 
     async def on_save():
-        # Import globals from main module
+        # Import globals from the global registry
+        from .globals import GlobalRegistry
 
-        LOG = getattr(__main__, "LOG", None)
-        QE = getattr(__main__, "QE", None)
-        DO = getattr(__main__, "DO", None)
+        LOG = GlobalRegistry.get("LOG")
+        QE = GlobalRegistry.get("QE")
+        DO = GlobalRegistry.get("DO")
 
         if not QE:
             ui.notify("Query engine not initialized", color="negative")

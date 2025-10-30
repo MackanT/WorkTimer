@@ -62,6 +62,22 @@ class DevOpsManager:
             return (False, f"No DevOps connection for {customer_name}")
         return client.update_work_item_description(work_item_id, description, markdown)
 
+    def update_work_item_fields(self, customer_name, work_item_id, fields, markdown=False):
+        """Update multiple fields of a work item. Returns (True, msg) or (False, msg)."""
+        client = self.clients.get(customer_name)
+        if not client:
+            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.update_work_item_fields(work_item_id, fields, markdown)
+
+    def get_work_item_details(self, customer_name, work_item_id):
+        """Get work item details. Returns (True, details_dict) or (False, error_msg)."""
+        client = self.clients.get(customer_name)
+        if not client:
+            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.get_work_item_details(work_item_id)
+
     def create_user_story(
         self,
         customer_name,
@@ -353,6 +369,12 @@ class DevOpsClient:
                     fmt = "html"
             except Exception:
                 fmt = "markdown"
+
+            # Log successful retrieval
+            self.log.log_msg(
+                "INFO",
+                f"Loaded description for work item {work_item_id} (format: {fmt})",
+            )
             return (True, desc, fmt)
         except Exception as e:
             self.log.log_msg("ERROR", f"Error fetching work item {work_item_id}: {e}")
@@ -395,5 +417,102 @@ class DevOpsClient:
         except Exception as e:
             self.log.log_msg("ERROR", f"Error updating work item {work_item_id}: {e}")
             return (False, f"Error updating work item {work_item_id}: {e}")
+
+    def update_work_item_fields(
+        self, work_item_id: int, fields: dict, markdown: bool = False
+    ):
+        """Update multiple fields of a work item.
+        
+        Args:
+            work_item_id: ID of the work item to update
+            fields: Dictionary of field names to values (e.g., {"System.State": "Active"})
+            markdown: Whether to format System.Description as markdown
+            
+        Returns (True, message) on success; (False, message) on failure.
+        """
+        try:
+            patch_document = []
+            
+            # Add each field to the patch document
+            for field_name, value in fields.items():
+                if value is not None and value != "":
+                    patch_document.append({
+                        "op": "add",
+                        "path": f"/fields/{field_name}",
+                        "value": value,
+                    })
+            
+            # If updating description and markdown is True, set the format
+            if markdown and "System.Description" in fields:
+                patch_document.append({
+                    "op": "add",
+                    "path": "/multilineFieldsFormat/System.Description",
+                    "value": "Markdown",
+                })
+            
+            # Only proceed if there are fields to update
+            if not patch_document:
+                return (True, f"No changes needed for work item {work_item_id}")
+            
+            self.wit_client.update_work_item(
+                patch_document, int(work_item_id), project=self.project_name
+            )
+            
+            field_names = list(fields.keys())
+            self.log.log_msg(
+                "INFO", f"Updated fields {field_names} for work item {work_item_id}"
+            )
+            return (True, f"Updated work item {work_item_id} successfully")
+            
+        except AzureDevOpsServiceError as e:
+            self.log.log_msg("ERROR", f"Azure DevOps error occurred: {e}")
+            return (False, f"Azure DevOps error occurred: {e}")
+        except Exception as e:
+            self.log.log_msg("ERROR", f"Error updating work item {work_item_id}: {e}")
+            return (False, f"Error updating work item {work_item_id}: {e}")
+
+    def get_work_item_details(self, work_item_id: int):
+        """Get work item details including state, assigned to, and priority.
+        
+        Returns (True, details_dict) on success; (False, error_message) on failure.
+        """
+        try:
+            work_item = self.wit_client.get_work_item(int(work_item_id), project=self.project_name)
+            
+            # Extract assigned to field with better handling
+            assigned_to_field = work_item.fields.get("System.AssignedTo")
+            assigned_to = ""
+            if assigned_to_field:
+                if isinstance(assigned_to_field, dict):
+                    # It's a user object with displayName, uniqueName, etc.
+                    assigned_to = assigned_to_field.get("displayName", assigned_to_field.get("uniqueName", ""))
+                elif isinstance(assigned_to_field, str):
+                    # It's just a string
+                    assigned_to = assigned_to_field
+            
+            # Extract priority with better handling
+            priority_field = work_item.fields.get("Microsoft.VSTS.Common.Priority")
+            priority = None
+            if priority_field is not None:
+                try:
+                    priority = int(priority_field)
+                except (ValueError, TypeError):
+                    priority = None
+            
+            details = {
+                "state": work_item.fields.get("System.State"),
+                "assigned_to": assigned_to,
+                "assigned_to_raw": assigned_to_field,  # Keep raw field for email extraction
+                "priority": priority,
+                "title": work_item.fields.get("System.Title"),
+                "description": work_item.fields.get("System.Description", ""),
+            }
+            
+            self.log.log_msg("INFO", f"Loaded details for work item {work_item_id}")
+            return (True, details)
+            
+        except Exception as e:
+            self.log.log_msg("ERROR", f"Error fetching work item details {work_item_id}: {e}")
+            return (False, f"Error fetching work item details {work_item_id}: {e}")
 
     # DevOpsManager should not itself implement update logic; calls go to DevOpsClient
