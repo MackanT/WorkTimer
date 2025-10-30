@@ -320,6 +320,37 @@ class DevOpsEngine:
                     "Triggering incremental DevOps refresh after work item creation",
                 )
                 asyncio.create_task(self.update_devops(incremental=True))
+        elif func_name == "create_epic":
+            status, msg = self.manager.create_epic(
+                customer_name=customer_name,
+                title=kwargs.get("title"),
+                description=kwargs.get("description"),
+                additional_fields=kwargs.get("additional_fields"),
+                markdown=kwargs.get("markdown", False),
+            )
+            # Trigger incremental refresh after creating work item
+            if status:
+                self.log.log_msg(
+                    "INFO",
+                    "Triggering incremental DevOps refresh after work item creation",
+                )
+                asyncio.create_task(self.update_devops(incremental=True))
+        elif func_name == "create_feature":
+            status, msg = self.manager.create_feature(
+                customer_name=customer_name,
+                title=kwargs.get("title"),
+                description=kwargs.get("description"),
+                additional_fields=kwargs.get("additional_fields"),
+                markdown=kwargs.get("markdown", False),
+                parent=kwargs.get("parent"),
+            )
+            # Trigger incremental refresh after creating work item
+            if status:
+                self.log.log_msg(
+                    "INFO",
+                    "Triggering incremental DevOps refresh after work item creation",
+                )
+                asyncio.create_task(self.update_devops(incremental=True))
 
         if not status:
             self.log.log_msg("ERROR", msg)

@@ -283,21 +283,26 @@ def render_and_sanitize_markdown(text: str) -> str:
 
 def convert_html_to_markdown(html_text: str) -> str:
     """Convert HTML content to clean markdown text.
-    
+
     Args:
         html_text: HTML content to convert
-        
+
     Returns:
         Clean markdown text suitable for editing
     """
     if not html_text or not html_text.strip():
         return ""
-    
+
     # Pre-process to remove script and style tags
     import re
-    html_text = re.sub(r'<script[^>]*>.*?</script>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
-    html_text = re.sub(r'<style[^>]*>.*?</style>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
-    
+
+    html_text = re.sub(
+        r"<script[^>]*>.*?</script>", "", html_text, flags=re.DOTALL | re.IGNORECASE
+    )
+    html_text = re.sub(
+        r"<style[^>]*>.*?</style>", "", html_text, flags=re.DOTALL | re.IGNORECASE
+    )
+
     # Use markdownify to convert HTML to markdown
     markdown_text = _markdownify(
         html_text,
@@ -306,25 +311,26 @@ def convert_html_to_markdown(html_text: str) -> str:
         autolinks=False,  # Don't auto-convert URLs
         default_title=True,  # Include title attributes
     ).strip()
-    
+
     # Clean up common HTML artifacts that might remain
     import html
+
     markdown_text = html.unescape(markdown_text)
-    
+
     # Clean up excessive whitespace and normalize line breaks
-    lines = markdown_text.split('\n')
+    lines = markdown_text.split("\n")
     cleaned_lines = []
-    
+
     for line in lines:
         line = line.rstrip()  # Remove trailing whitespace
         cleaned_lines.append(line)
-    
+
     # Join lines and remove excessive blank lines
-    result = '\n'.join(cleaned_lines)
-    
+    result = "\n".join(cleaned_lines)
+
     # Replace multiple consecutive blank lines with just two
-    result = re.sub(r'\n\n\n+', '\n\n', result)
-    
+    result = re.sub(r"\n\n\n+", "\n\n", result)
+
     return result.strip()
 
 
@@ -498,6 +504,154 @@ def date_input(label, input_width: str = "w-64"):
     return date
 
 
+def setup_template_handling(widgets: dict):
+    """Set up template handling for codemirror widgets with templates."""
+    from datetime import date
+
+    # Find codemirror widgets with template info
+    template_widgets = {}
+    for widget_name, widget in widgets.items():
+        if hasattr(widget, "_template_info"):
+            template_widgets[widget_name] = widget
+
+    if not template_widgets:
+        return
+
+    # Set up template selection based on work_item_type
+    work_item_type_widget = widgets.get("work_item_type")
+    if not work_item_type_widget:
+        return
+
+    def update_templates(e=None, parent_field_changed=None):
+        current_type = (
+            work_item_type_widget.value if work_item_type_widget.value else "User Story"
+        )
+
+        for widget_name, widget in template_widgets.items():
+            template_info = widget._template_info
+            templates = template_info["templates"]
+            parent_fields = template_info["parent_fields"]
+
+            if parent_field_changed:
+                # Only update specific parent field placeholder, don't reload entire template
+                current_content = widget.value or ""
+                parent_widget = widgets.get(parent_field_changed)
+
+                if parent_widget and parent_field_changed in parent_fields:
+                    # Update specific lines that contain the field placeholder
+                    lines = current_content.split("\n")
+                    updated_lines = []
+
+                    for line in lines:
+                        # Look for lines that mention the field (e.g., "**Source:**" or "**Contact:**")
+                        if parent_field_changed == "source" and "**Source:**" in line:
+                            updated_lines.append(
+                                f"**Source:** {parent_widget.value or ''}"
+                            )
+                        elif (
+                            parent_field_changed == "contact_person"
+                            and "**Contact:**" in line
+                        ):
+                            updated_lines.append(
+                                f"**Contact:** {parent_widget.value or ''}"
+                            )
+                        else:
+                            updated_lines.append(line)
+
+                    widget.value = "\n".join(updated_lines)
+            else:
+                # Full template reload (only when work_item_type changes)
+                template_content = templates.get(current_type, "")
+
+                if template_content:
+                    # Replace {today} placeholder
+                    content = template_content.replace("{today}", str(date.today()))
+
+                    # Replace parent field placeholders if they exist
+                    for parent_field in parent_fields:
+                        parent_widget = widgets.get(parent_field)
+                        if parent_widget and parent_widget.value:
+                            placeholder = "{" + parent_field + "}"
+                            content = content.replace(
+                                placeholder, str(parent_widget.value)
+                            )
+
+                    # Update the editor content
+                    widget.value = content
+
+    # Bind to work_item_type changes (full template reload)
+    work_item_type_widget.on_value_change(lambda e: update_templates(e, None))
+
+    # Also bind to parent field changes for surgical updates
+    for widget_name, widget in template_widgets.items():
+        template_info = widget._template_info
+        parent_fields = template_info["parent_fields"]
+
+        for parent_field in parent_fields:
+            parent_widget = widgets.get(parent_field)
+            if parent_widget:
+                # Create a closure to capture the parent_field value
+                def make_parent_handler(field_name):
+                    return lambda e: update_templates(e, field_name)
+
+                parent_widget.on_value_change(make_parent_handler(parent_field))
+
+    # Set initial template
+    update_templates()
+
+
+def setup_conditional_visibility(widgets: dict, conditional_widgets: dict):
+    """Set up conditional visibility for widgets based on other widget values."""
+
+    def make_visibility_handler(conditional_widget_info):
+        """Create a visibility handler for a conditional widget."""
+
+        def handle_visibility(e=None):
+            widget = conditional_widget_info["widget"]
+            visible_when = conditional_widget_info["visible_when"]
+
+            # Check all conditions
+            is_visible = True
+            for condition_field, condition_values in visible_when.items():
+                condition_widget = widgets.get(condition_field)
+                if condition_widget and condition_widget.value:
+                    current_value = condition_widget.value
+                    if isinstance(condition_values, list):
+                        if current_value not in condition_values:
+                            is_visible = False
+                            break
+                    else:
+                        if current_value != condition_values:
+                            is_visible = False
+                            break
+                else:
+                    # If condition widget has no value, hide this widget
+                    is_visible = False
+                    break
+
+            # Set visibility
+            if is_visible:
+                widget.set_visibility(True)
+            else:
+                widget.set_visibility(False)
+
+        return handle_visibility
+
+    # Set up handlers for each conditional widget
+    for widget_name, widget_info in conditional_widgets.items():
+        handler = make_visibility_handler(widget_info)
+        visible_when = widget_info["visible_when"]
+
+        # Bind the handler to all condition fields
+        for condition_field in visible_when.keys():
+            condition_widget = widgets.get(condition_field)
+            if condition_widget:
+                condition_widget.on_value_change(handler)
+
+        # Call handler initially to set initial visibility
+        handler()
+
+
 def make_input_row(
     fields,
     layout_mode: str = None,
@@ -520,6 +674,7 @@ def make_input_row(
     """
     created = {}
     pending_relations = []
+    conditional_widgets = {}  # Track widgets with conditional visibility
 
     for field in fields:
         label = field["label"]
@@ -609,12 +764,21 @@ def make_input_row(
                     )
             created[fname] = chips
         elif ftype == "codemirror":
-            # Replace template variables in default value
-            if default_val:
-                default_val = default_val.replace("{today}", str(date.today()))
+            # Handle templates for codemirror based on work_item_type
+            templates = field.get("templates", {})
+            initial_content = default_val or ""
+
+            # If templates are defined, we'll set up template selection
+            # For now, start with empty content and set up template handling
+            if templates:
+                initial_content = ""
+
+            # Replace template variables in content
+            if initial_content:
+                initial_content = initial_content.replace("{today}", str(date.today()))
 
             editor = ui.codemirror(
-                default_val or "",
+                initial_content,
                 language=field.get("type_language", "markdown"),
                 theme="dracula",
                 line_wrapping=True,
@@ -628,6 +792,13 @@ def make_input_row(
             if code_style["style"]:
                 editor.style(code_style["style"])
             created[fname] = editor
+
+            # Store template info for later setup
+            if templates:
+                created[fname]._template_info = {
+                    "templates": templates,
+                    "parent_fields": field.get("parent_fields", []),
+                }
         elif ftype == "markdown":
             # Markdown preview
             preview = ui.markdown(default_val or "").classes(widget_classes)
@@ -655,6 +826,14 @@ def make_input_row(
                 {"child": fname, "parent": field["parent"], "field_config": field}
             )
 
+        # Track conditional widgets
+        if field.get("conditional") and field.get("visible_when"):
+            conditional_widgets[fname] = {
+                "widget": created[fname],
+                "visible_when": field["visible_when"],
+                "field_config": field,
+            }
+
     # Merge created into provided widgets (if any)
     out_widgets = widgets if widgets is not None else {}
     # If widgets was None, ensure it's a new dict
@@ -663,17 +842,12 @@ def make_input_row(
     else:
         out_widgets.update(created)
 
-    # Should be duplicate code, safe to remove
-    # # Collect pending parent relations
-    # for field in fields:
-    #     if "parent" in field:
-    #         pending_relations.append(
-    #             {
-    #                 "child": field["name"],
-    #                 "parent": field["parent"],
-    #                 "field_config": field,
-    #             }
-    #         )
+    # Set up conditional field visibility
+    if conditional_widgets:
+        setup_conditional_visibility(out_widgets, conditional_widgets)
+
+    # Set up template handling for codemirror widgets
+    setup_template_handling(out_widgets)
 
     if defer_parent_wiring:
         return out_widgets, pending_relations
@@ -701,6 +875,40 @@ def bind_parent_relations(
     render_functions = render_functions or {}
     data_sources = data_sources or {}
 
+    # Special handling for parent_name field that depends on both customer_name and work_item_type
+    parent_name_widget = widgets.get("parent_name")
+    customer_widget = widgets.get("customer_name")
+    work_item_type_widget = widgets.get("work_item_type")
+
+    if (
+        parent_name_widget
+        and customer_widget
+        and work_item_type_widget
+        and "parent_names" in data_sources
+    ):
+
+        def update_parent_name_options(e=None):
+            customer = customer_widget.value
+            work_item_type = work_item_type_widget.value
+            parent_names_data = data_sources["parent_names"]
+
+            if customer and work_item_type and isinstance(parent_names_data, dict):
+                customer_data = parent_names_data.get(customer, {})
+                if isinstance(customer_data, dict):
+                    parent_name_widget.options = customer_data.get(work_item_type, [])
+                else:
+                    parent_name_widget.options = []
+            else:
+                parent_name_widget.options = []
+            parent_name_widget.update()
+
+        # Bind to both customer_name and work_item_type changes
+        customer_widget.on_value_change(update_parent_name_options)
+        work_item_type_widget.on_value_change(update_parent_name_options)
+
+        # Set initial options
+        update_parent_name_options()
+
     for rel in pending_relations:
         child = rel["child"]
         parent = rel["parent"]
@@ -726,6 +934,35 @@ def bind_parent_relations(
                         widget.options = options_map
                     else:
                         widget.options = []
+
+                    # Special handling for nested data sources like parent_names
+                    options_source = field_config.get("options_source")
+                    if options_source and options_source in data_sources:
+                        data = data_sources[options_source]
+                        if isinstance(data, dict) and parent_val in data:
+                            if field_config.get("name") == "parent_name":
+                                # Special handling for parent_name field - needs work_item_type
+                                work_item_type_widget = widgets.get("work_item_type")
+                                if (
+                                    work_item_type_widget
+                                    and work_item_type_widget.value
+                                ):
+                                    work_item_type = work_item_type_widget.value
+                                    customer_data = data.get(parent_val, {})
+                                    if isinstance(customer_data, dict):
+                                        widget.options = customer_data.get(
+                                            work_item_type, []
+                                        )
+                                    else:
+                                        widget.options = []
+                                else:
+                                    widget.options = []
+                            else:
+                                # Regular nested handling
+                                nested_data = data.get(parent_val, [])
+                                widget.options = (
+                                    nested_data if isinstance(nested_data, list) else []
+                                )
 
                     # Set default value from default_source if available
                     default_source = field_config.get("default_source")
@@ -958,7 +1195,16 @@ def assign_dynamic_options(fields, data_sources):
                 field["options"] = [str(date.today())]
         elif "options" in field and "options_source" in field:
             source = field["options_source"]
-            field["options"] = data_sources.get(source, [])
+            # Handle nested data sources (like parent_names)
+            data = data_sources.get(source, [])
+            if isinstance(data, dict) and not data:
+                # Empty dict, set empty options
+                field["options"] = []
+            elif isinstance(data, dict):
+                # For nested structures like parent_names, we'll handle this during parent binding
+                field["options"] = []
+            else:
+                field["options"] = data
 
         if field.get("type") in ["number"]:
             val = field.get("options", 0)

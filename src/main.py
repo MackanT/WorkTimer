@@ -840,11 +840,23 @@ async def ui_devops_settings():
         )
         user_stories[customer] = [row["display_name"] for _, row in filtered.iterrows()]
 
-        # Get parent items (Epic/Feature) for each customer
-        filtered = helpers.filter_df(
+        # Get parent items for different work item types
+        # Epics (no parents), Features (Epic parents), User Stories (Epic/Feature parents)
+        epics_filtered = helpers.filter_df(
+            DO.df, {"customer_name": customer, "type": "Epic"}
+        )
+        features_filtered = helpers.filter_df(
             DO.df, {"customer_name": customer, "type": ["Epic", "Feature"]}
         )
-        parent_names[customer] = [row["display_name"] for _, row in filtered.iterrows()]
+        parent_names[customer] = {
+            "Epic": [],  # Epics have no parents
+            "Feature": [
+                row["display_name"] for _, row in epics_filtered.iterrows()
+            ],  # Features parent to Epics
+            "User Story": [
+                row["display_name"] for _, row in features_filtered.iterrows()
+            ],  # User Stories parent to Epics/Features
+        }
 
     def prep_devops_data(tab_type, fields):
         """Prepare data sources for DevOps tabs."""
@@ -902,24 +914,40 @@ async def ui_devops_settings():
             }
         return {}
 
-    def add_user_story(widgets):
+    def add_work_item(widgets):
+        """Create a work item (Epic, Feature, or User Story) based on the selected type."""
         wid = helpers.parse_widget_values(widgets)
 
-        # Use the description from the editor directly
+        work_item_type = wid["work_item_type"]
+        title = wid["work_item_title"]
         description = wid.get("description_editor", "")
 
+        # Build additional fields
         additional_fields = {
             "System.State": wid["state"],
             "System.Tags": ", ".join([t for t in wid.get("tags", [])]),
             "Microsoft.VSTS.Common.Priority": int(wid["priority"]),
             "System.AssignedTo": wid.get("assigned_to", ""),
         }
-        parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
+
+        # Handle parent relationship (only for Features and User Stories)
+        parent_id = None
+        if wid.get("parent_name") and work_item_type in ["Feature", "User Story"]:
+            parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
+
+        # Map work item type to DevOps helper function
+        helper_function_map = {
+            "Epic": "create_epic",
+            "Feature": "create_feature",
+            "User Story": "create_user_story",
+        }
+
+        helper_function = helper_function_map.get(work_item_type, "create_user_story")
 
         success, message = DO.devops_helper(
-            "create_user_story",
+            helper_function,
             customer_name=wid["customer_name"],
-            title=wid["user_story_name"],
+            title=title,
             description=description,
             additional_fields=additional_fields,
             markdown=True,  # wid.get("use_markdown", True)
@@ -1007,12 +1035,12 @@ async def ui_devops_settings():
                 return False, f"Failed to update: {msg}"
         return False, "DevOps manager not available"
 
-    def build_user_story_tab_panel(tab_type):
-        """Build user story tab panel using generic builder with DevOps-specific handlers."""
+    def build_work_item_tab_panel(tab_type):
+        """Build work item tab panel using generic builder with DevOps-specific handlers."""
 
         # Custom handlers for DevOps operations
         custom_handlers = {
-            "add_user_story": add_user_story,
+            "add_work_item": add_work_item,
             "update_work_item_description": update_work_item_description,
             "update_work_item": update_work_item,
         }
@@ -1025,9 +1053,9 @@ async def ui_devops_settings():
 
         # Use generic builder and get back the widgets
         widgets = helpers.build_generic_tab_panel(
-            entity_name="devops_user_story",
+            entity_name="devops_work_item",
             tab_type=tab_type,
-            container_dict=tab_user_story_containers,
+            container_dict=tab_work_item_containers,
             config_source=config_devops_ui,
             data_prep_func=prep_devops_data,
             custom_handlers=custom_handlers,
@@ -1256,35 +1284,33 @@ async def ui_devops_settings():
     with ui.splitter(value=20).classes("w-full h-full") as splitter:
         with splitter.before:
             with ui.tabs().props("vertical").classes("w-full") as main_tabs:
-                tab_user_story = ui.tab("User Story", icon="business")
-                # tab_feature = ui.tab("Feature", icon="assignment")
-                # tab_epic = ui.tab("Epic", icon="attach_money")
+                tab_work_item = ui.tab("Work Items", icon="business")
         with splitter.after:
             with (
-                ui.tab_panels(main_tabs, value=tab_user_story)
+                ui.tab_panels(main_tabs, value=tab_work_item)
                 .props("vertical")
                 .classes("w-full h-full")
             ):
-                tab_user_story_containers = {}
+                tab_work_item_containers = {}
 
-                async def on_user_story_tab_change(e):
+                async def on_work_item_tab_change(e):
                     tab_type = e.args
                     await AD.refresh()
-                    build_user_story_tab_panel(tab_type)
+                    build_work_item_tab_panel(tab_type)
 
-                # User Stories
-                user_story_tab_names = [
-                    i.capitalize() for i in config_devops_ui["devops_user_story"]
+                # Work Items
+                work_item_tab_names = [
+                    i.capitalize() for i in config_devops_ui["devops_work_item"]
                 ]
-                user_story_tab_list = []
-                with ui.tab_panel(tab_user_story):
-                    with ui.tabs().classes("mb-2") as user_story_tabs:
-                        for name in user_story_tab_names:
-                            user_story_tab_list.append(ui.tab(name))
-                    with ui.tab_panels(user_story_tabs, value=user_story_tab_list[0]):
-                        for i, name in enumerate(user_story_tab_names):
-                            with ui.tab_panel(user_story_tab_list[i]):
-                                build_user_story_tab_panel(name)
+                work_item_tab_list = []
+                with ui.tab_panel(tab_work_item):
+                    with ui.tabs().classes("mb-2") as work_item_tabs:
+                        for name in work_item_tab_names:
+                            work_item_tab_list.append(ui.tab(name))
+                    with ui.tab_panels(work_item_tabs, value=work_item_tab_list[0]):
+                        for i, name in enumerate(work_item_tab_names):
+                            with ui.tab_panel(work_item_tab_list[i]):
+                                build_work_item_tab_panel(name)
 
 
 def ui_query_editor():

@@ -1,5 +1,5 @@
 ## DevOps Information ###
-devops_user_story:
+devops_work_item:
   add:
     fields:
       - name: customer_name
@@ -8,8 +8,17 @@ devops_user_story:
         options: []
         options_source: customer_data
         optional: False
-      - name: user_story_name
-        label: User Story Title
+      - name: work_item_type
+        label: Work Item Type
+        type: select
+        options:
+          - Epic
+          - Feature
+          - User Story
+        default: User Story
+        optional: False
+      - name: work_item_title
+        label: Title
         type: input
         optional: False
       - name: state
@@ -34,6 +43,9 @@ devops_user_story:
           - In person
           - Other
         optional: True
+        conditional: true
+        visible_when:
+          work_item_type: [User Story]
       - name: contact_person
         label: Contact Person
         type: select
@@ -42,6 +54,9 @@ devops_user_story:
         options_source: contact_persons
         optional: True
         parent: customer_name
+        conditional: true
+        visible_when:
+          work_item_type: [User Story]
       - name: assigned_to
         label: Assigned To
         type: select
@@ -58,12 +73,15 @@ devops_user_story:
         options_source: devops_tags
         optional: True
       - name: parent_name
-        label: Parent (Epic/Feature)
+        label: Parent
         type: select
         options: []
         options_source: parent_names
-        optional: False
+        optional: True
         parent: customer_name
+        conditional: true
+        visible_when:
+          work_item_type: [Feature, User Story]
       - name: priority
         label: Priority
         type: select
@@ -85,21 +103,50 @@ devops_user_story:
         type_language: markdown
         optional: False
         parent_fields: [source, contact_person]
-        default: |
-          **Received Date:** {today}
-          **Source:** 
-          **Contact:** 
+        templates:
+          Epic: |
+            **Created Date:** {today}
 
-          ## Problem
-
-
-          ## More Information
+            ## Strategic Goal
 
 
-          ## Solution
+            ## Business Value
 
 
-          ## Validation
+            ## Success Criteria
+
+
+            ## Timeline
+
+          Feature: |
+            **Created Date:** {today}
+
+            ## Feature Description
+
+
+            ## Business Value
+
+
+            ## Acceptance Criteria
+
+
+            ## Dependencies
+
+          User Story: |
+            **Received Date:** {today}
+            **Source:** 
+            **Contact:** 
+
+            ## Problem
+
+
+            ## More Information
+
+
+            ## Solution
+
+
+            ## Validation
 
       - name: description_preview
         label: Preview
@@ -109,15 +156,16 @@ devops_user_story:
         parent_update: True
         render_function: render_and_sanitize
     rows:
-      - [customer_name, parent_name, user_story_name]
-      - [assigned_to, contact_person, source]
+      - [customer_name, work_item_type, work_item_title]
+      - [parent_name, assigned_to]
+      - [contact_person, source]
       - [state, priority]
       - [tags]
       - [description_editor, description_preview]
     action:
-      function: add_user_story
-      main_action: User Story
-      main_param: user_story_name
+      function: add_work_item
+      main_action: Work Item
+      main_param: work_item_title
       secondary_action: added
       button_name: "Add"
   update:
@@ -129,7 +177,7 @@ devops_user_story:
         options_source: customer_data
         optional: False
       - name: work_item
-        label: Work Item (Epic/Feature/User Story)
+        label: Work Item
         type: select
         options: []
         options_source: work_items

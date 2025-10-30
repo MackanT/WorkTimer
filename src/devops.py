@@ -95,6 +95,39 @@ class DevOpsManager:
             title, description, additional_fields, markdown, parent
         )
 
+    def create_epic(
+        self,
+        customer_name,
+        title,
+        description=None,
+        additional_fields=None,
+        markdown=False,
+    ):
+        client = self.clients.get(customer_name)
+        if not client:
+            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.create_epic(
+            title, description, additional_fields, markdown
+        )
+
+    def create_feature(
+        self,
+        customer_name,
+        title,
+        description=None,
+        additional_fields=None,
+        markdown=False,
+        parent=None,
+    ):
+        client = self.clients.get(customer_name)
+        if not client:
+            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.create_feature(
+            title, description, additional_fields, markdown, parent
+        )
+
     def get_epics_feature_df(self, max_ids: dict = None):
         """Get work items in long format with parent_id column.
 
@@ -351,6 +384,112 @@ class DevOpsClient:
         except Exception as e:
             self.log.log_msg("ERROR", f"Error creating user story: {e}")
             return (False, f"Error creating user story: {e}")
+
+    def create_epic(
+        self,
+        title,
+        description=None,
+        additional_fields=None,
+        markdown=False,
+    ):
+        """Create a new Epic work item in Azure DevOps."""
+        try:
+            patch_document = [
+                {"op": "add", "path": "/fields/System.Title", "value": title}
+            ]
+            if description:
+                patch_document.append(
+                    {
+                        "op": "add",
+                        "path": "/fields/System.Description",
+                        "value": description,
+                    }
+                )
+            if additional_fields:
+                for field, value in additional_fields.items():
+                    if value is not None:
+                        patch_document.append(
+                            {"op": "add", "path": f"/fields/{field}", "value": value}
+                        )
+            if markdown:
+                patch_document.append(
+                    {
+                        "op": "add",
+                        "path": "/multilineFieldsFormat/System.Description",
+                        "value": "Markdown",
+                    }
+                )
+
+            work_item = self.wit_client.create_work_item(
+                patch_document, project=self.project_name, type="Epic"
+            )
+            self.log.log_msg("INFO", f"Created Epic with ID {work_item.id}")
+            return (True, f"Created Epic with ID {work_item.id}")
+        except AzureDevOpsServiceError as e:
+            self.log.log_msg("ERROR", f"Azure DevOps error occurred: {e}")
+            return (False, f"Azure DevOps error occurred: {e}")
+        except Exception as e:
+            self.log.log_msg("ERROR", f"Error creating epic: {e}")
+            return (False, f"Error creating epic: {e}")
+
+    def create_feature(
+        self,
+        title,
+        description=None,
+        additional_fields=None,
+        markdown=False,
+        parent=None,
+    ):
+        """Create a new Feature work item in Azure DevOps."""
+        try:
+            patch_document = [
+                {"op": "add", "path": "/fields/System.Title", "value": title}
+            ]
+            if description:
+                patch_document.append(
+                    {
+                        "op": "add",
+                        "path": "/fields/System.Description",
+                        "value": description,
+                    }
+                )
+            if additional_fields:
+                for field, value in additional_fields.items():
+                    if value is not None:
+                        patch_document.append(
+                            {"op": "add", "path": f"/fields/{field}", "value": value}
+                        )
+            if markdown:
+                patch_document.append(
+                    {
+                        "op": "add",
+                        "path": "/multilineFieldsFormat/System.Description",
+                        "value": "Markdown",
+                    }
+                )
+            if parent:
+                patch_document.append(
+                    {
+                        "op": "add",
+                        "path": "/relations/-",
+                        "value": {
+                            "rel": "System.LinkTypes.Hierarchy-Reverse",
+                            "url": f"{self.organization_url}/{self.project_name}/_apis/wit/workItems/{parent}",
+                        },
+                    }
+                )
+
+            work_item = self.wit_client.create_work_item(
+                patch_document, project=self.project_name, type="Feature"
+            )
+            self.log.log_msg("INFO", f"Created Feature with ID {work_item.id}")
+            return (True, f"Created Feature with ID {work_item.id}")
+        except AzureDevOpsServiceError as e:
+            self.log.log_msg("ERROR", f"Azure DevOps error occurred: {e}")
+            return (False, f"Azure DevOps error occurred: {e}")
+        except Exception as e:
+            self.log.log_msg("ERROR", f"Error creating feature: {e}")
+            return (False, f"Error creating feature: {e}")
 
     def get_work_item_description(self, work_item_id: int):
         """Return the System.Description field for a single work item as plain text.
