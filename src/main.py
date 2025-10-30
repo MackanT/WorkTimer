@@ -28,7 +28,6 @@ CONFIG_FOLDER = "config"
 def setup_config():
     global \
         config_ui, \
-        config_devops_ui, \
         config_data, \
         config_query, \
         config_devops_contacts, \
@@ -45,9 +44,6 @@ def setup_config():
     with open(f"{CONFIG_FOLDER}/config_ui.yml") as f:
         fields = yaml.safe_load(f)
     config_ui = fields
-    with open(f"{CONFIG_FOLDER}/config_devops_ui.yml") as f:
-        fields = yaml.safe_load(f)
-    config_devops_ui = fields
     with open(f"{CONFIG_FOLDER}/config_data.yml") as f:
         fields = yaml.safe_load(f)
     config_data = fields
@@ -561,6 +557,93 @@ def ui_add_data():
         # Bonus tab only has "Add" and doesn't need any dynamic data sources
         return {}
 
+    def prep_devops_data(tab_type, fields):
+        """Prepare data sources for DevOps Work Items tabs."""
+        if DO.df is None:
+            return {}
+
+        customer_names = helpers.get_unique_list(DO.df, "customer_name")
+        work_items = {}
+        parent_names = {}
+
+        for customer in customer_names:
+            filtered = helpers.filter_df(DO.df, {"customer_name": customer})
+            work_items[customer] = [
+                row["display_name"] for _, row in filtered.iterrows()
+            ]
+
+            # Get parent items for different work item types
+            epics_filtered = helpers.filter_df(
+                DO.df, {"customer_name": customer, "type": "Epic"}
+            )
+            features_filtered = helpers.filter_df(
+                DO.df, {"customer_name": customer, "type": ["Epic", "Feature"]}
+            )
+            parent_names[customer] = {
+                "Epic": [],  # Epics have no parents
+                "Feature": [
+                    row["display_name"] for _, row in epics_filtered.iterrows()
+                ],  # Features parent to Epics
+                "User Story": [
+                    row["display_name"] for _, row in features_filtered.iterrows()
+                ],  # User Stories parent to Epics/Features
+            }
+
+        if tab_type == "Add":
+            # Prepare customer-specific contacts and assignees
+            contact_persons = {}
+            assignees = {}
+            default_assignee = {}
+
+            for customer in customer_names:
+                # Get customer-specific data from config
+                customer_data = config_devops_contacts.get("customers", {}).get(
+                    customer, {}
+                )
+                default_data = config_devops_contacts.get("default", {})
+
+                # Use customer-specific contacts, or fall back to defaults
+                contact_persons[customer] = customer_data.get(
+                    "contacts", default_data.get("contacts", [])
+                )
+                assignees[customer] = customer_data.get(
+                    "assignees", default_data.get("assignees", [])
+                )
+                # Get the default assignee for this customer
+                default_assignee[customer] = customer_data.get("default_assignee", None)
+
+            return {
+                "customer_data": customer_names,
+                "work_items": work_items,
+                "parent_names": parent_names,
+                "devops_tags": DEVOPS_TAGS,
+                "contact_persons": contact_persons,
+                "assignees": assignees,
+                "default_assignee": default_assignee,
+            }
+        elif tab_type == "Update":
+            # Prepare customer-specific assignees for Update tab
+            assignees = {}
+            for customer in customer_names:
+                # Get customer-specific data from config
+                customer_data = config_devops_contacts.get("customers", {}).get(
+                    customer, {}
+                )
+                default_data = config_devops_contacts.get("default", {})
+
+                # Use customer-specific assignees, or fall back to defaults
+                assignees[customer] = customer_data.get(
+                    "assignees", default_data.get("assignees", [])
+                )
+
+            return {
+                "customer_data": customer_names,
+                "work_items": work_items,
+                "assignees": assignees,
+            }
+
+        return {}
+
     # --- Wrapper Functions (Simple Entities) ---
 
     def build_customer_tab_panel(tab_type, container_dict):
@@ -595,324 +678,6 @@ def ui_add_data():
             data_prep_func=prep_bonus_data,
             on_success_callback=lambda: AD.refresh(),
         )
-
-    def build_database_compare():
-        def handle_upload(e: events.UploadEventArguments):
-            ui.notify(f"File uploaded: {e.name}", color="positive")
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
-                tmp.write(e.content.read())
-                uploaded_path = tmp.name
-
-            sync_sql = generate_sync_sql(MAIN_DB, uploaded_path)
-            db_deltas.set_content(sync_sql)
-            db_deltas.update()
-            os.remove(uploaded_path)  # Clean up temp file
-
-        with ui.card().classes(UI_STYLES.get_card_classes("xs", "card")):
-            ui.label("Upload a .db file to compare with the main database.").classes(
-                UI_STYLES.get_layout_classes("title").replace("mb-4", "mb-0 dense")
-            )
-            ui.upload(on_upload=handle_upload).props("accept=.db").classes(
-                "q-pa-xs q-ma-xs"
-            )
-            ui.separator().classes("my-4")
-            ui.label("SQL to synchronize uploaded DB:").classes(
-                UI_STYLES.get_layout_classes("subtitle")
-            )
-            db_deltas = (
-                ui.code("--temp location of sql-changes...", language="sql")
-                .props("readonly")
-                .classes(UI_STYLES.get_widget_style("code_display", "large")["classes"])
-            )
-
-    def build_database_update():
-        uploaded_db_path = None
-        original_db_filename = None
-
-        def handle_upload(e: events.UploadEventArguments):
-            nonlocal uploaded_db_path, original_db_filename
-            ui.notify(f"File uploaded: {e.name}", color="positive")
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
-                tmp.write(e.content.read())
-                uploaded_db_path = tmp.name
-                original_db_filename = e.name if hasattr(e, "name") else "database.db"
-            result_box.set_content(f"-- Uploaded DB: {uploaded_db_path}")
-            result_box.update()
-
-        def run_sql():
-            if not uploaded_db_path:
-                ui.notify("No uploaded DB!", color="negative")
-                return
-            import sqlite3
-
-            try:
-                conn = sqlite3.connect(uploaded_db_path)
-
-                cursor = conn.cursor()
-                query = (
-                    sql_input.value if hasattr(sql_input, "value") else sql_input.text
-                )
-                cursor.executescript(query)
-                conn.commit()
-
-                # Try to fetch results if it's a SELECT
-                if query.strip().lower().startswith("select"):
-                    cursor.execute(query)
-                    rows = cursor.fetchall()
-                    columns = [desc[0] for desc in cursor.description]
-                    result = (
-                        "\t".join(columns)
-                        + "\n"
-                        + "\n".join(
-                            ["\t".join(str(cell) for cell in row) for row in rows]
-                        )
-                    )
-                else:
-                    result = "Query executed successfully."
-                    ui.notify("Query executed successfully.", color="positive")
-                conn.close()
-                result_box.set_content(result)
-                result_box.update()
-            except Exception as e:
-                result_box.set_content(f"Error: {e}")
-                result_box.update()
-
-        with ui.card().classes(UI_STYLES.get_card_classes("xs", "card")):
-            ui.label("Upload a .db file to run SQL queries on.").classes(
-                UI_STYLES.get_layout_classes("title").replace("mb-4", "mb-0 dense")
-            )
-            ui.upload(on_upload=handle_upload).props("accept=.db").classes(
-                "q-pa-xs q-ma-xs mb-2"
-            )
-            with ui.row().classes("w-full mb-2"):
-                ui.button("Run SQL", on_click=run_sql).classes("mr-2")
-
-                def download_db():
-                    if not uploaded_db_path:
-                        ui.notify("No uploaded DB!", color="negative")
-                        return
-                    # Serve the file for download with the original filename
-                    filename = (
-                        original_db_filename
-                        if original_db_filename
-                        else os.path.basename(uploaded_db_path)
-                    )
-                    ui.download(uploaded_db_path, filename)
-
-                ui.button("Download DB", on_click=download_db)
-
-        sql_input = ui.codemirror(
-            "-- Enter SQL query here --",
-            language="SQLite",
-            theme="dracula",
-        ).classes(UI_STYLES.get_widget_style("code_display", "small")["classes"])
-
-        result_box = ui.code("-- Results will appear here --", language="sql").classes(
-            UI_STYLES.get_widget_style("code_display", "medium")["classes"]
-        )
-
-    tab_list = {}
-    vertical_tab_entries = [i for i in config_ui]
-    function_map = {
-        "build_customer_tab_panel": build_customer_tab_panel,
-        "build_project_tab_panel": build_project_tab_panel,
-        "build_bonus_tab_panel": build_bonus_tab_panel,
-    }
-    with ui.splitter(value=20).classes("w-full h-full") as splitter:
-        with splitter.before:
-            with ui.tabs().props("vertical").classes("w-full") as main_tabs:
-                for tab in vertical_tab_entries:
-                    meta_data = config_ui[tab].get("meta", {})
-                    tab_list[tab] = {
-                        "tab": ui.tab(
-                            meta_data.get("friendly_name", tab.capitalize()),
-                            icon=meta_data.get("icon", "folder"),
-                        ),
-                        "name": tab,
-                        "tab_list": [],
-                        "tab_container": {},
-                        "build_function": meta_data.get("build_function", None),
-                        "friendly_name": meta_data.get(
-                            "friendly_name", tab.capitalize()
-                        ),
-                    }
-                tab_database = ui.tab("Database", icon="storage")
-        with splitter.after:
-            with (
-                ui.tab_panels(
-                    main_tabs, value=tab_list[vertical_tab_entries[0]]["friendly_name"]
-                )
-                .props("vertical")
-                .classes("w-full h-full")
-            ):
-
-                async def on_tab_change(e, function, container):
-                    tab_type = e.args
-                    await AD.refresh()
-                    function(tab_type, container)
-
-                for tab_dict in tab_list.values():
-                    tab_names = [
-                        i.capitalize()
-                        for i in helpers.get_ui_elements(config_ui[tab_dict["name"]])
-                    ]
-
-                    with ui.tab_panel(tab_dict["tab"]):
-                        with ui.tabs().classes("mb-2") as temp_tab:
-                            for name in tab_names:
-                                tab_dict["tab_list"].append(ui.tab(name))
-                        with ui.tab_panels(temp_tab, value=tab_dict["tab_list"][0]):
-                            for i, name in enumerate(tab_names):
-                                with ui.tab_panel(tab_dict["tab_list"][i]):
-                                    function_map[tab_dict["build_function"]](
-                                        name, tab_dict["tab_container"]
-                                    )
-                        temp_tab.on(
-                            "update:model-value",
-                            lambda e,
-                            function=function_map[tab_dict["build_function"]],
-                            container=tab_dict["tab_container"]: on_tab_change(
-                                e,
-                                function,
-                                container,
-                            ),
-                        )
-
-                # Database
-                with ui.tab_panel(tab_database):
-                    with ui.tabs().classes("mb-2") as database_tabs:
-                        tab_add = ui.tab("Schema Compare")
-                        tab_update = ui.tab("Update DB")
-
-                    with ui.tab_panels(database_tabs, value=tab_add):
-                        with ui.tab_panel(tab_add):
-                            build_database_compare()
-                        with ui.tab_panel(tab_update):
-                            build_database_update()
-
-
-def ui_devops_settings_entrypoint():
-    """Checks if the data needed for the DevOps settings UI is ready. If not, shows a loading UI and polls for data readiness.
-    Once the data is ready, it calls the ui_devops_settings() function to render the actual settings UI.
-    """
-    global devops_settings_container
-    if (
-        "devops_settings_container" not in globals()
-        or devops_settings_container is None
-    ):
-        devops_settings_container = ui.element()
-    devops_settings_container.clear()
-
-    # Show loading UI
-    with devops_settings_container:
-        with ui.card().classes(UI_STYLES.get_card_classes("xs", "card_spaced")):
-            ui.label("Loading DevOps data...").classes(
-                UI_STYLES.get_layout_classes("title")
-            )
-            ui.skeleton().classes("w-full")
-
-    called = {"done": False}
-
-    async def check_data_ready():
-        if not called["done"] and DO.df is not None:
-            called["done"] = True
-            devops_settings_container.clear()
-            await ui_devops_settings()
-            return False  # Stop timer
-        return not called["done"]
-
-    ui.timer(callback=check_data_ready, interval=0.5)
-
-
-async def ui_devops_settings():
-    customer_names = helpers.get_unique_list(DO.df, "customer_name")
-
-    user_stories = {}
-    work_items = {}
-    parent_names = {}
-
-    for customer in customer_names:
-        filtered = helpers.filter_df(DO.df, {"customer_name": customer})
-        work_items[customer] = [row["display_name"] for _, row in filtered.iterrows()]
-
-        filtered = helpers.filter_df(
-            DO.df, {"customer_name": customer, "type": "User Story"}
-        )
-        user_stories[customer] = [row["display_name"] for _, row in filtered.iterrows()]
-
-        # Get parent items for different work item types
-        # Epics (no parents), Features (Epic parents), User Stories (Epic/Feature parents)
-        epics_filtered = helpers.filter_df(
-            DO.df, {"customer_name": customer, "type": "Epic"}
-        )
-        features_filtered = helpers.filter_df(
-            DO.df, {"customer_name": customer, "type": ["Epic", "Feature"]}
-        )
-        parent_names[customer] = {
-            "Epic": [],  # Epics have no parents
-            "Feature": [
-                row["display_name"] for _, row in epics_filtered.iterrows()
-            ],  # Features parent to Epics
-            "User Story": [
-                row["display_name"] for _, row in features_filtered.iterrows()
-            ],  # User Stories parent to Epics/Features
-        }
-
-    def prep_devops_data(tab_type, fields):
-        """Prepare data sources for DevOps tabs."""
-        if tab_type == "Add":
-            # Prepare customer-specific contacts and assignees
-            contact_persons = {}
-            assignees = {}
-            default_assignee = {}
-
-            for customer in customer_names:
-                # Get customer-specific data from config
-                customer_data = config_devops_contacts.get("customers", {}).get(
-                    customer, {}
-                )
-                default_data = config_devops_contacts.get("default", {})
-
-                # Use customer-specific contacts, or fall back to defaults
-                contact_persons[customer] = customer_data.get(
-                    "contacts", default_data.get("contacts", [])
-                )
-                assignees[customer] = customer_data.get(
-                    "assignees", default_data.get("assignees", [])
-                )
-                # Get the default assignee for this customer
-                default_assignee[customer] = customer_data.get("default_assignee", None)
-
-            return {
-                "customer_data": customer_names,
-                "devops_items": work_items,
-                "parent_names": parent_names,
-                "devops_tags": DEVOPS_TAGS,
-                "contact_persons": contact_persons,
-                "assignees": assignees,
-                "default_assignee": default_assignee,
-            }
-        elif tab_type == "Update":
-            # Prepare customer-specific assignees for Update tab
-            assignees = {}
-            for customer in customer_names:
-                # Get customer-specific data from config
-                customer_data = config_devops_contacts.get("customers", {}).get(
-                    customer, {}
-                )
-                default_data = config_devops_contacts.get("default", {})
-
-                # Use customer-specific assignees, or fall back to defaults
-                assignees[customer] = customer_data.get(
-                    "assignees", default_data.get("assignees", [])
-                )
-
-            return {
-                "customer_data": customer_names,
-                "work_items": work_items,
-                "assignees": assignees,
-            }
-        return {}
 
     def add_work_item(widgets):
         """Create a work item (Epic, Feature, or User Story) based on the selected type."""
@@ -1035,7 +800,7 @@ async def ui_devops_settings():
                 return False, f"Failed to update: {msg}"
         return False, "DevOps manager not available"
 
-    def build_work_item_tab_panel(tab_type):
+    def build_work_item_tab_panel(tab_type, container_dict):
         """Build work item tab panel using generic builder with DevOps-specific handlers."""
 
         # Custom handlers for DevOps operations
@@ -1055,8 +820,8 @@ async def ui_devops_settings():
         widgets = helpers.build_generic_tab_panel(
             entity_name="devops_work_item",
             tab_type=tab_type,
-            container_dict=tab_work_item_containers,
-            config_source=config_devops_ui,
+            container_dict=container_dict,
+            config_source=config_ui,
             data_prep_func=prep_devops_data,
             custom_handlers=custom_handlers,
             render_functions=render_functions,
@@ -1281,36 +1046,207 @@ async def ui_devops_settings():
 
                     contact_widget.on("update:model-value", on_contact_change)
 
+    def build_database_compare():
+        def handle_upload(e: events.UploadEventArguments):
+            ui.notify(f"File uploaded: {e.name}", color="positive")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+                tmp.write(e.content.read())
+                uploaded_path = tmp.name
+
+            sync_sql = generate_sync_sql(MAIN_DB, uploaded_path)
+            db_deltas.set_content(sync_sql)
+            db_deltas.update()
+            os.remove(uploaded_path)  # Clean up temp file
+
+        with ui.card().classes(UI_STYLES.get_card_classes("xs", "card")):
+            ui.label("Upload a .db file to compare with the main database.").classes(
+                UI_STYLES.get_layout_classes("title").replace("mb-4", "mb-0 dense")
+            )
+            ui.upload(on_upload=handle_upload).props("accept=.db").classes(
+                "q-pa-xs q-ma-xs"
+            )
+            ui.separator().classes("my-4")
+            ui.label("SQL to synchronize uploaded DB:").classes(
+                UI_STYLES.get_layout_classes("subtitle")
+            )
+            db_deltas = (
+                ui.code("--temp location of sql-changes...", language="sql")
+                .props("readonly")
+                .classes(UI_STYLES.get_widget_style("code_display", "large")["classes"])
+            )
+
+    def build_database_update():
+        uploaded_db_path = None
+        original_db_filename = None
+
+        def handle_upload(e: events.UploadEventArguments):
+            nonlocal uploaded_db_path, original_db_filename
+            ui.notify(f"File uploaded: {e.name}", color="positive")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+                tmp.write(e.content.read())
+                uploaded_db_path = tmp.name
+                original_db_filename = e.name if hasattr(e, "name") else "database.db"
+            result_box.set_content(f"-- Uploaded DB: {uploaded_db_path}")
+            result_box.update()
+
+        def run_sql():
+            if not uploaded_db_path:
+                ui.notify("No uploaded DB!", color="negative")
+                return
+            import sqlite3
+
+            try:
+                conn = sqlite3.connect(uploaded_db_path)
+
+                cursor = conn.cursor()
+                query = (
+                    sql_input.value if hasattr(sql_input, "value") else sql_input.text
+                )
+                cursor.executescript(query)
+                conn.commit()
+
+                # Try to fetch results if it's a SELECT
+                if query.strip().lower().startswith("select"):
+                    cursor.execute(query)
+                    rows = cursor.fetchall()
+                    columns = [desc[0] for desc in cursor.description]
+                    result = (
+                        "\t".join(columns)
+                        + "\n"
+                        + "\n".join(
+                            ["\t".join(str(cell) for cell in row) for row in rows]
+                        )
+                    )
+                else:
+                    result = "Query executed successfully."
+                    ui.notify("Query executed successfully.", color="positive")
+                conn.close()
+                result_box.set_content(result)
+                result_box.update()
+            except Exception as e:
+                result_box.set_content(f"Error: {e}")
+                result_box.update()
+
+        with ui.card().classes(UI_STYLES.get_card_classes("xs", "card")):
+            ui.label("Upload a .db file to run SQL queries on.").classes(
+                UI_STYLES.get_layout_classes("title").replace("mb-4", "mb-0 dense")
+            )
+            ui.upload(on_upload=handle_upload).props("accept=.db").classes(
+                "q-pa-xs q-ma-xs mb-2"
+            )
+            with ui.row().classes("w-full mb-2"):
+                ui.button("Run SQL", on_click=run_sql).classes("mr-2")
+
+                def download_db():
+                    if not uploaded_db_path:
+                        ui.notify("No uploaded DB!", color="negative")
+                        return
+                    # Serve the file for download with the original filename
+                    filename = (
+                        original_db_filename
+                        if original_db_filename
+                        else os.path.basename(uploaded_db_path)
+                    )
+                    ui.download(uploaded_db_path, filename)
+
+                ui.button("Download DB", on_click=download_db)
+
+        sql_input = ui.codemirror(
+            "-- Enter SQL query here --",
+            language="SQLite",
+            theme="dracula",
+        ).classes(UI_STYLES.get_widget_style("code_display", "small")["classes"])
+
+        result_box = ui.code("-- Results will appear here --", language="sql").classes(
+            UI_STYLES.get_widget_style("code_display", "medium")["classes"]
+        )
+
+    tab_list = {}
+    vertical_tab_entries = [i for i in config_ui]
+
     with ui.splitter(value=20).classes("w-full h-full") as splitter:
         with splitter.before:
             with ui.tabs().props("vertical").classes("w-full") as main_tabs:
-                tab_work_item = ui.tab("Work Items", icon="business")
+                for tab in vertical_tab_entries:
+                    meta_data = config_ui[tab].get("meta", {})
+                    tab_list[tab] = {
+                        "tab": ui.tab(
+                            meta_data.get("friendly_name", tab.capitalize()),
+                            icon=meta_data.get("icon", "folder"),
+                        ),
+                        "name": tab,
+                        "tab_list": [],
+                        "tab_container": {},
+                        "build_function": meta_data.get("build_function", None),
+                        "friendly_name": meta_data.get(
+                            "friendly_name", tab.capitalize()
+                        ),
+                    }
+                tab_database = ui.tab("Database", icon="storage")
         with splitter.after:
             with (
-                ui.tab_panels(main_tabs, value=tab_work_item)
+                ui.tab_panels(
+                    main_tabs, value=tab_list[vertical_tab_entries[0]]["friendly_name"]
+                )
                 .props("vertical")
                 .classes("w-full h-full")
             ):
-                tab_work_item_containers = {}
 
-                async def on_work_item_tab_change(e):
+                async def on_tab_change(e, function, container):
                     tab_type = e.args
                     await AD.refresh()
-                    build_work_item_tab_panel(tab_type)
+                    function(tab_type, container)
 
-                # Work Items
-                work_item_tab_names = [
-                    i.capitalize() for i in config_devops_ui["devops_work_item"]
-                ]
-                work_item_tab_list = []
-                with ui.tab_panel(tab_work_item):
-                    with ui.tabs().classes("mb-2") as work_item_tabs:
-                        for name in work_item_tab_names:
-                            work_item_tab_list.append(ui.tab(name))
-                    with ui.tab_panels(work_item_tabs, value=work_item_tab_list[0]):
-                        for i, name in enumerate(work_item_tab_names):
-                            with ui.tab_panel(work_item_tab_list[i]):
-                                build_work_item_tab_panel(name)
+                # Define function map after all functions are available
+                function_map = {
+                    "build_customer_tab_panel": build_customer_tab_panel,
+                    "build_project_tab_panel": build_project_tab_panel,
+                    "build_bonus_tab_panel": build_bonus_tab_panel,
+                    "build_work_item_tab_panel": build_work_item_tab_panel,
+                }
+
+                for tab_dict in tab_list.values():
+                    tab_names = [
+                        i.capitalize()
+                        for i in helpers.get_ui_elements(config_ui[tab_dict["name"]])
+                    ]
+
+                    with ui.tab_panel(tab_dict["tab"]):
+                        with ui.tabs().classes("mb-2") as temp_tab:
+                            for name in tab_names:
+                                tab_dict["tab_list"].append(ui.tab(name))
+                        # Only create tab_panels if there are tabs to display
+                        if tab_dict["tab_list"]:
+                            with ui.tab_panels(temp_tab, value=tab_dict["tab_list"][0]):
+                                for i, name in enumerate(tab_names):
+                                    with ui.tab_panel(tab_dict["tab_list"][i]):
+                                        function_map[tab_dict["build_function"]](
+                                            name, tab_dict["tab_container"]
+                                        )
+                            temp_tab.on(
+                                "update:model-value",
+                                lambda e,
+                                function=function_map[tab_dict["build_function"]],
+                                container=tab_dict["tab_container"]: on_tab_change(
+                                    e,
+                                    function,
+                                    container,
+                                ),
+                            )
+
+                # Database
+                with ui.tab_panel(tab_database):
+                    with ui.tabs().classes("mb-2") as database_tabs:
+                        tab_add = ui.tab("Schema Compare")
+                        tab_update = ui.tab("Update DB")
+
+                    with ui.tab_panels(database_tabs, value=tab_add):
+                        with ui.tab_panel(tab_add):
+                            build_database_compare()
+                        with ui.tab_panel(tab_update):
+                            build_database_update()
+
+    # DevOps Work Item Functions - moved from DevOps Settings to be used in Data Input
 
 
 def ui_query_editor():
@@ -1691,7 +1627,6 @@ def setup_ui():
     with ui.tabs().classes("w-full") as tabs:
         tab_time = ui.tab("Time Tracking")
         tab_data_input = ui.tab("Data Input")
-        tab_ui_edits = ui.tab("DevOps Settings")
         tab_query_editors = ui.tab("Query Editors")
         tab_log = ui.tab("Log")
         tab_info = ui.tab("Info")
@@ -1712,8 +1647,6 @@ def setup_ui():
             ui_time_tracking()
         with ui.tab_panel(tab_data_input):
             ui_add_data()
-        with ui.tab_panel(tab_ui_edits):
-            ui_devops_settings_entrypoint()
         with ui.tab_panel(tab_query_editors):
             ui_query_editor()
         with ui.tab_panel(tab_log):

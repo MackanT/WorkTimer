@@ -13,15 +13,16 @@
   - Overall cleaner and nicer layout (full screen width compatible!)
   - Color coding in query editor
   - Multirow text input support
+  - Based on yaml config files, makes it easy to add new entries over time without having to modify code
 - Query Engine
   - "Standard" queries are now stored in the database instead of in code
   - Added option for users to save custom queries in the database for easier future usage
 - DevOps Engine
   - Can now request and store table of all DevOps epics, features, and user stories for faster, more responsive UI
   - Ending tasks now has user-story with drop-down list instead of ID input
-  - Added support to create user-story directly from the program
-  - Adding customers automatically triggers refresh of devops data
+  - Added support to create user-story, featues and epics directly from the program
   - Code does automatic full and incremental load from devops over time
+  - New yaml files to store employees and contacts at customer to give dropdown simplification in devops creation
 - Added database compare feature
   - Schema compare current db-file with old db-file. Simplifies future migration
   - Added option to run code in any db file and save results. Used in conjunction with compare to migrate old db to new format

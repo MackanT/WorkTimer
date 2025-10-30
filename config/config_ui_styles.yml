@@ -126,7 +126,7 @@ default_sizes:
   input: "standard"
   text: "full"
   textarea: "full"
-  number: "compact"
+  number: "standard"
   date: "standard"
   datetime: "standard"
   select: "standard"
