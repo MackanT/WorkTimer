@@ -361,6 +361,50 @@ class Database:
                         "ERROR", f"Error populating queries table: {e}"
                     )
 
+            ## Tasks table
+            df_tasks = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'tasks'"
+            )
+            if df_tasks.empty:
+                self.execute_query("""
+                create table if not exists tasks (
+                    task_id integer primary key autoincrement,
+                    title text not null,
+                    description text,
+                    
+                    -- Status & Priority
+                    status text not null default 'To Do',
+                    priority text not null default 'Medium',
+                    completed boolean default false,
+                    
+                    -- Assignment & Organization
+                    assigned_to text,
+                    customer_name text,
+                    project_name text,
+                    parent_task_id integer,
+                    
+                    -- Time Management
+                    due_date date,
+                    estimated_hours real default 0,
+                    actual_hours real default 0,
+                    progress_percentage integer default 0,
+                    
+                    -- Metadata
+                    tags text,
+                    created_at timestamp default current_timestamp,
+                    updated_at timestamp default current_timestamp,
+                    completed_at timestamp,
+                    created_by text,
+                    updated_by text,
+                    
+                    -- Foreign Keys
+                    foreign key (customer_name) references customers(customer_name),
+                    foreign key (project_name) references projects(project_name),
+                    foreign key (parent_task_id) references tasks(task_id)
+                )
+                """)
+                self.log_engine.log_msg("INFO", "Table 'tasks' created successfully.")
+
         except Exception as e:
             self.log_engine.log_msg("ERROR", f"Error initializing database: {e}")
         finally:
@@ -728,6 +772,256 @@ class Database:
             "INFO",
             f"Inserted new bonus percent {bonus_percent}% starting from {start_date}",
         )
+
+    ### Task Table Operations ###
+
+    def insert_task(
+        self,
+        title: str,
+        description: str = None,
+        status: str = "To Do",
+        priority: str = "Medium",
+        assigned_to: str = None,
+        customer_name: str = None,
+        project_name: str = None,
+        due_date: str = None,
+        estimated_hours: float = 0,
+        tags: str = None,
+        created_by: str = None,
+    ):
+        """Insert a new task into the database"""
+        try:
+            # Insert task and get the new task_id
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                insert into tasks (
+                    title, description, status, priority, assigned_to,
+                    customer_name, project_name, due_date, estimated_hours,
+                    tags, created_by, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+                """,
+                (
+                    title,
+                    description,
+                    status,
+                    priority,
+                    assigned_to,
+                    customer_name,
+                    project_name,
+                    due_date,
+                    estimated_hours,
+                    tags,
+                    created_by,
+                ),
+            )
+            task_id = cursor.lastrowid
+            self.conn.commit()
+
+            # Get the complete created task data
+            task_data = self.fetch_query(
+                "select *, datetime(created_at) as created_at from tasks where task_id = ?",
+                (task_id,),
+            )
+
+            self.log_engine.log_msg(
+                "INFO", f"Task '{title}' created successfully with ID {task_id}"
+            )
+
+            # Return success, message, and the complete task data
+            task_dict = task_data.iloc[0].to_dict() if not task_data.empty else {}
+            return True, f"Task '{title}' created successfully", task_dict
+        except Exception as e:
+            error_msg = f"Failed to create task '{title}': {e}"
+            self.log_engine.log_msg("ERROR", error_msg)
+            return False, error_msg, None
+
+    def update_task(
+        self,
+        task_id: int,
+        title: str = None,
+        description: str = None,
+        status: str = None,
+        priority: str = None,
+        assigned_to: str = None,
+        due_date: str = None,
+        estimated_hours: float = None,
+        actual_hours: float = None,
+        progress_percentage: int = None,
+        tags: str = None,
+        updated_by: str = None,
+    ):
+        """Update an existing task"""
+        try:
+            # Build dynamic update query based on provided fields
+            set_clauses = []
+            params = []
+
+            if title is not None:
+                set_clauses.append("title = ?")
+                params.append(title)
+            if description is not None:
+                set_clauses.append("description = ?")
+                params.append(description)
+            if status is not None:
+                set_clauses.append("status = ?")
+                params.append(status)
+                # Set completed_at if status changes to "Done"
+                if status == "Done":
+                    set_clauses.append("completed_at = current_timestamp")
+            if priority is not None:
+                set_clauses.append("priority = ?")
+                params.append(priority)
+            if assigned_to is not None:
+                set_clauses.append("assigned_to = ?")
+                params.append(assigned_to)
+            if due_date is not None:
+                set_clauses.append("due_date = ?")
+                params.append(due_date)
+            if estimated_hours is not None:
+                set_clauses.append("estimated_hours = ?")
+                params.append(estimated_hours)
+            if actual_hours is not None:
+                set_clauses.append("actual_hours = ?")
+                params.append(actual_hours)
+            if progress_percentage is not None:
+                set_clauses.append("progress_percentage = ?")
+                params.append(progress_percentage)
+            if tags is not None:
+                set_clauses.append("tags = ?")
+                params.append(tags)
+            if updated_by is not None:
+                set_clauses.append("updated_by = ?")
+                params.append(updated_by)
+
+            # Always update the updated_at timestamp
+            set_clauses.append("updated_at = current_timestamp")
+
+            if not set_clauses:
+                warning_msg = "No fields to update for task"
+                self.log_engine.log_msg("WARNING", warning_msg)
+                return False, warning_msg
+
+            query = f"update tasks set {', '.join(set_clauses)} where task_id = ?"
+            params.append(task_id)
+
+            self.execute_query(query, tuple(params))
+            success_msg = f"Task {task_id} updated successfully"
+            self.log_engine.log_msg("INFO", success_msg)
+            return True, success_msg
+        except Exception as e:
+            error_msg = f"Failed to update task {task_id}: {e}"
+            self.log_engine.log_msg("ERROR", error_msg)
+            return False, error_msg
+
+    def delete_task(self, task_id: int):
+        """Delete a task from the database"""
+        try:
+            # First check if task exists
+            task = self.fetch_query(
+                "select title from tasks where task_id = ?", (task_id,)
+            )
+            if task.empty:
+                warning_msg = f"Task {task_id} not found"
+                self.log_engine.log_msg("WARNING", warning_msg)
+                return False, warning_msg
+
+            task_title = task.iloc[0]["title"]
+
+            # Delete the task
+            self.execute_query("delete from tasks where task_id = ?", (task_id,))
+            success_msg = f"Task '{task_title}' (ID: {task_id}) deleted successfully"
+            self.log_engine.log_msg("INFO", success_msg)
+            return True, success_msg
+        except Exception as e:
+            error_msg = f"Failed to delete task {task_id}: {e}"
+            self.log_engine.log_msg("ERROR", error_msg)
+            return False, error_msg
+
+    def set_task_completion(self, task_id: int, completed: bool):
+        """Set task completion status (boolean)"""
+        try:
+            # Check if task exists first
+            task_check = self.fetch_query(
+                "select task_id, title from tasks where task_id = ?", (task_id,)
+            )
+            if task_check.empty:
+                warning_msg = f"Task {task_id} not found"
+                self.log_engine.log_msg("WARNING", warning_msg)
+                return False, warning_msg
+
+            # Update completion status and completed_at timestamp
+            if completed:
+                query = """
+                    update tasks 
+                    set completed = true, 
+                        completed_at = current_timestamp,
+                        updated_at = current_timestamp
+                    where task_id = ?
+                """
+                action = "completed"
+            else:
+                query = """
+                    update tasks 
+                    set completed = false, 
+                        completed_at = null,
+                        updated_at = current_timestamp
+                    where task_id = ?
+                """
+                action = "marked as incomplete"
+
+            self.execute_query(query, (task_id,))
+
+            task_title = task_check.iloc[0]["title"]
+            success_msg = f"Task '{task_title}' (ID: {task_id}) {action}"
+            self.log_engine.log_msg("INFO", success_msg)
+            return True, success_msg
+
+        except Exception as e:
+            error_msg = f"Failed to update completion for task {task_id}: {e}"
+            self.log_engine.log_msg("ERROR", error_msg)
+            return False, error_msg
+
+    def get_task_by_id(self, task_id: int):
+        """Get a single task by ID"""
+        try:
+            result = self.fetch_query(
+                """
+                select *
+                from tasks
+                where task_id = ?
+                """,
+                (task_id,),
+            )
+            return result.iloc[0] if not result.empty else None
+        except Exception as e:
+            self.log_engine.log_msg("ERROR", f"Failed to get task {task_id}: {e}")
+            return None
+
+    def get_tasks_by_customer(self, customer_name: str = None):
+        """Get tasks filtered by customer"""
+        try:
+            if customer_name:
+                query = """
+                    select *
+                    from tasks
+                    where customer_name = ?
+                    order by created_at desc
+                """
+                params = (customer_name,)
+            else:
+                query = """
+                    select t
+                    from tasks
+                    order by created_at desc
+                """
+                params = ()
+
+            result = self.fetch_query(query, params)
+            return result
+        except Exception as e:
+            self.log_engine.log_msg("ERROR", f"Failed to get tasks: {e}")
+            return pd.DataFrame()
 
     ### Query Operations ###
 

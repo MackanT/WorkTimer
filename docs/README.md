@@ -2,7 +2,7 @@
 
 # WorkTimer
 
->A helper program to keep track of time spent on different tasks, with built-in DevOps integration.
+A helper program to keep track of time spent on different tasks, with built-in DevOps integration.
 
 ---
 

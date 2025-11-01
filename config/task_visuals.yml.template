@@ -1,0 +1,35 @@
+# Task Visual Customization Template
+# Copy this file to task_visuals.yml and customize as needed
+# This file should be in .gitignore to keep personal customizations private
+
+visual:
+  customers:
+    # Example customer configurations (uncomment and customize as needed)
+    # Available icons: business, apartment, store, factory, account_balance, domain, etc.
+    # Available colors: red, pink, purple, deep-purple, indigo, blue, light-blue, cyan, teal, green, light-green, lime, yellow, amber, orange, deep-orange, brown, grey, blue-grey
+    
+    # "Your Customer Name":
+    #   icon: "business"
+    #   color: "blue"
+    # "Another Customer":
+    #   icon: "store"
+    #   color: "green"
+    
+    default:
+      icon: "group"
+      color: "blue-grey"
+
+  projects:
+    # Example project configurations (uncomment and customize as needed)
+    # Available icons: cloud, schedule, sports_esports, code, web, mobile_friendly, storage, analytics, etc.
+    
+    # "Your Project Name":
+    #   icon: "code"
+    #   color: "purple"
+    # "Another Project":
+    #   icon: "web"
+    #   color: "orange"
+    
+    default:
+      icon: "folder"
+      color: "indigo"

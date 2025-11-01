@@ -7,8 +7,15 @@
 - Git id dropdown currently only exists in project close. missing in query-view and add-data view
 - Option to upload file that is sent to user-story?
 - Marker for ongoing projects?
+- Devops välja kolumn för kortet (todo, on hold, in progress etc!)
+- sätt task till "done" när en stänger on_checkmark
 
 ### Buggar
+- At midnight, date "today" does not switch automatically
+- Make "ongoing" timer code run also everytime we close a timer
+- Nightly full load error (?)
+    2025-10-31 03:11:45 | ERROR    | DevOps    :: Error fetching work items: Error occurred in request., ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+
 
 ### Completed -- Old from before ReadMe
 - clean up of customer sort order (not needed anymore)

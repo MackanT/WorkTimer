@@ -3,3 +3,5 @@ __pycache__/
 _Old/*
 *.egg-info/
 config/devops_contacts.yml
+config/task_visuals.yml
+copilot-instructions.md

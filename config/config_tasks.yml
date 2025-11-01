@@ -1,0 +1,277 @@
+# Task Management Configuration
+
+task:
+  # Table view configuration
+  table:
+    columns:
+      - name: "selected"
+        label: ""
+        field: "selected"
+        align: "center"
+        style: "width: 60px;"
+        sortable: false
+
+      - name: "task_id"
+        label: "ID"
+        field: "task_id"
+        align: "left"
+        style: "width: 100px;"
+        sortable: true
+
+      - name: "Title"
+        label: "Title"
+        field: "Title"
+        align: "left"
+        style: "min-width: 200px;"
+        sortable: true
+
+      - name: "Priority"
+        label: "Priority"
+        field: "Priority"
+        align: "left"
+        style: "width: 100px;"
+        sortable: true
+
+      - name: "Status"
+        label: "Status"
+        field: "Status"
+        align: "left"
+        style: "width: 120px;"
+        sortable: true
+
+      - name: "Assignee"
+        label: "Assignee"
+        field: "Assignee"
+        align: "left"
+        style: "width: 150px;"
+        sortable: true
+
+      - name: "actions"
+        label: "Actions"
+        field: "actions"
+        align: "center"
+        style: "width: 80px;"
+        sortable: false
+  meta:
+    friendly_name: "Tasks"
+    icon: "assignment"
+    build_function: "build_task_tab_panel"
+
+  add:
+    action:
+      function: "insert_task"
+      button_name: "Add Task"
+      main_action: "Task"
+      main_param: "title"
+      secondary_action: "added"
+
+    fields:
+      - name: "title"
+        type: "input"
+        label: "Task Title"
+        optional: false
+        default: ""
+
+      - name: "description"
+        type: "text"
+        label: "Description"
+        optional: true
+        default: ""
+
+      - name: "status"
+        type: "select"
+        label: "Status"
+        optional: false
+        options:
+          ["To Do", "In Progress", "In Review", "Blocked", "On Hold", "Idea"]
+        default: "To Do"
+        with_input: false
+
+      - name: "priority"
+        type: "select"
+        label: "Priority"
+        optional: false
+        options: ["Low", "Medium", "High", "Critical"]
+        default: "Medium"
+        with_input: false
+
+      - name: "assigned_to"
+        type: "select"
+        label: "Assigned To"
+        optional: true
+        parent: "customer_name"
+        options_source: "assignees"
+        default: ""
+        with_input: true
+
+      - name: "customer_name"
+        type: "select"
+        label: "Customer"
+        optional: false
+        options: []
+        options_source: "customer_data"
+        default: ""
+        with_input: false
+
+      - name: "project_name"
+        type: "select"
+        label: "Project"
+        optional: false
+        options: []
+        parent: "customer_name"
+        options_source: "project_names"
+        default: ""
+        with_input: false
+
+      - name: "due_date"
+        type: "date"
+        label: "Due Date"
+        optional: true
+        default: ""
+
+      - name: "estimated_hours"
+        type: "number"
+        label: "Estimated Hours"
+        optional: true
+        default: 0
+
+      - name: "tags"
+        type: "input"
+        label: "Tags (comma-separated)"
+        optional: true
+        default: ""
+
+    # Define layout - rows for better organization
+    rows:
+      - ["title"]
+      - ["description"]
+      - ["customer_name", "project_name"]
+      - ["status", "priority"]
+      - ["assigned_to"]
+      - ["due_date", "estimated_hours"]
+      - ["tags"]
+
+  update:
+    action:
+      function: "update_task"
+      button_name: "Update Task"
+      main_action: "Task"
+      main_param: "task_selector"
+      secondary_action: "updated"
+
+    fields:
+      - name: "task_selector"
+        type: "select"
+        label: "Select Task"
+        optional: false
+        options_source: "task_list"
+        default: ""
+        with_input: false
+
+      - name: "title"
+        type: "input"
+        label: "Task Title"
+        optional: false
+        default: ""
+        parent: "task_selector"
+        options_source: "task_title"
+
+      - name: "description"
+        type: "text"
+        label: "Description"
+        optional: true
+        default: ""
+        parent: "task_selector"
+        options_source: "task_description"
+
+      - name: "status"
+        type: "select"
+        label: "Status"
+        optional: false
+        options:
+          ["To Do", "In Progress", "In Review", "Blocked", "On Hold", "Idea"]
+        default: "To Do"
+        parent: "task_selector"
+        options_source: "task_status"
+        with_input: false
+
+      - name: "priority"
+        type: "select"
+        label: "Priority"
+        optional: false
+        options: ["Low", "Medium", "High", "Critical"]
+        default: "Medium"
+        parent: "task_selector"
+        options_source: "task_priority"
+        with_input: false
+
+      - name: "assigned_to"
+        type: "select"
+        label: "Assigned To"
+        optional: true
+        default: ""
+        parent: "task_selector"
+        options_source: "task_assigned_to"
+        with_input: true
+
+      - name: "due_date"
+        type: "date"
+        label: "Due Date"
+        optional: true
+        default: ""
+        parent: "task_selector"
+        options_source: "task_due_date"
+
+      - name: "estimated_hours"
+        type: "number"
+        label: "Estimated Hours"
+        optional: true
+        default: 0
+        parent: "task_selector"
+        options_source: "task_estimated_hours"
+
+      - name: "tags"
+        type: "input"
+        label: "Tags (comma-separated)"
+        optional: true
+        default: ""
+        parent: "task_selector"
+        options_source: "task_tags"
+
+    # Layout for update tab
+    rows:
+      - ["task_selector"]
+      - ["title"]
+      - ["description"]
+      - ["status", "priority"]
+      - ["assigned_to"]
+      - ["due_date", "estimated_hours"]
+      - ["tags"]
+
+  delete:
+    action:
+      function: "delete_task"
+      button_name: "Delete Task"
+      main_action: "Task"
+      main_param: "task_selector"
+      secondary_action: "deleted"
+
+    fields:
+      - name: "task_selector"
+        type: "select"
+        label: "Select Task to Delete"
+        optional: false
+        options_source: "task_list"
+        default: ""
+        with_input: false
+
+      - name: "confirm_delete"
+        type: "switch"
+        label: "Confirm Deletion"
+        optional: false
+        default: false
+
+    # Simple layout for delete
+    rows:
+      - ["task_selector"]
+      - ["confirm_delete"]
