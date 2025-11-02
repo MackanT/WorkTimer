@@ -356,7 +356,7 @@ devops_work_item:
 
             ## Validation
 
-      - name: description_preview
+      - field_id: description_preview
         label: Preview
         type: html
         optional: True
@@ -456,6 +456,7 @@ bonus:
       - name: start_date
         label: Start Date
         type: date
+        options_source: today
         optional: false
     action:
       function: "insert_bonus"
@@ -464,6 +465,6 @@ bonus:
       secondary_action: "added"
       button_name: "Add"
   meta:
-    icon: attach_money
+    icon: money_bag
     friendly_name: Bonus
     build_function: build_bonus_tab_panel

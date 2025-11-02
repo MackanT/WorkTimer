@@ -152,9 +152,7 @@ def render_and_sanitize_markdown(text: str) -> str:
     raw_html = _markdown.markdown(
         text,
         extensions=[
-            "fenced_code",
-            "codehilite",
-            "tables",
+            "extra",  # Includes fenced_code, tables, and more
             "nl2br",  # Convert newlines to <br>
             "sane_lists",  # Better list handling
         ],
@@ -682,7 +680,10 @@ def make_input_row(
             label += " (optional)"
 
         ftype = field["type"]
-        fname = field["name"]
+        # Fields can use either "name" or "field_id" as identifier
+        fname = field.get("name") or field.get("field_id")
+        if not fname:
+            raise ValueError(f"Field missing both 'name' and 'field_id': {field}")
 
         # Determine widget width using UI_STYLES
         if layout_mode:
@@ -858,7 +859,13 @@ def make_input_row(
 
 
 def create_task_card(
-    task_id, columns, completed=False, on_checkbox_click=None, on_edit_click=None, on_card_click=None, config_task_visuals=None
+    task_id,
+    columns,
+    completed=False,
+    on_checkbox_click=None,
+    on_edit_click=None,
+    on_card_click=None,
+    config_task_visuals=None,
 ):
     """
     Create a reusable task card component.
@@ -889,7 +896,7 @@ def create_task_card(
 
     # Extract specific field values from columns for better layout
     column_map = {col["label"]: col["value"] for col in columns}
-    
+
     title = column_map.get("Title", "Untitled")
     description = column_map.get("Description", "")
     status = column_map.get("Status", "")
@@ -902,7 +909,7 @@ def create_task_card(
     # Add completion styling
     card_classes = "w-full p-3 cursor-pointer"
     card_style = "min-width: 320px; max-width: 400px; height: fit-content;"
-    
+
     if completed:
         card_classes += " opacity-75"
         card_style += " border-left: 4px solid #4caf50;"
@@ -915,16 +922,16 @@ def create_task_card(
     ):
         # Top row: checkbox, title, edit-button
         with ui.row().classes("w-full justify-between items-center mb-2"):
-            checkbox = ui.checkbox(value=completed, on_change=handle_checkbox_change).classes(
-                "flex-none"
-            )
+            checkbox = ui.checkbox(
+                value=completed, on_change=handle_checkbox_change
+            ).classes("flex-none")
             checkbox.on("click", js_handler="(e) => e.stopPropagation()")
-            
+
             # Title in the middle, expandable
             ui.label(title).classes(
                 "flex-grow text-sm font-medium text-white truncate mx-2"
             )
-            
+
             edit_button = (
                 ui.button("", icon="edit", on_click=handle_edit_click)
                 .props("flat dense round")
@@ -938,70 +945,98 @@ def create_task_card(
                 if customer:
                     # Get customer visual config
                     customer_config = {}
-                    if config_task_visuals and 'visual' in config_task_visuals:
-                        customer_config = config_task_visuals['visual'].get('customers', {}).get(customer, 
-                                        config_task_visuals['visual']['customers'].get('default', {}))
-                    
-                    customer_icon = customer_config.get('icon', 'group')
-                    customer_color = customer_config.get('color', 'blue-grey')
-                    ui.chip(customer, icon=customer_icon).props(f"dense color={customer_color}").classes("text-xs")
-                
+                    if config_task_visuals and "visual" in config_task_visuals:
+                        customer_config = (
+                            config_task_visuals["visual"]
+                            .get("customers", {})
+                            .get(
+                                customer,
+                                config_task_visuals["visual"]["customers"].get(
+                                    "default", {}
+                                ),
+                            )
+                        )
+
+                    customer_icon = customer_config.get("icon", "group")
+                    customer_color = customer_config.get("color", "blue-grey")
+                    ui.chip(customer, icon=customer_icon).props(
+                        f"dense color={customer_color}"
+                    ).classes("text-xs")
+
                 if project:
                     # Get project visual config
                     project_config = {}
-                    if config_task_visuals and 'visual' in config_task_visuals:
-                        project_config = config_task_visuals['visual'].get('projects', {}).get(project,
-                                       config_task_visuals['visual']['projects'].get('default', {}))
-                    
-                    project_icon = project_config.get('icon', 'folder')
-                    project_color = project_config.get('color', 'indigo')
-                    ui.chip(project, icon=project_icon).props(f"dense color={project_color}").classes("text-xs")
+                    if config_task_visuals and "visual" in config_task_visuals:
+                        project_config = (
+                            config_task_visuals["visual"]
+                            .get("projects", {})
+                            .get(
+                                project,
+                                config_task_visuals["visual"]["projects"].get(
+                                    "default", {}
+                                ),
+                            )
+                        )
+
+                    project_icon = project_config.get("icon", "folder")
+                    project_color = project_config.get("color", "indigo")
+                    ui.chip(project, icon=project_icon).props(
+                        f"dense color={project_color}"
+                    ).classes("text-xs")
 
         # Third row: Big description box
         if description:
             with ui.element().classes("w-full mb-2"):
                 ui.label("Description:").classes("text-xs text-gray-400 mb-1")
-                with ui.element().classes("w-full p-2 bg-gray-800 rounded").style(
-                    "max-height: 100px; overflow-y: auto;"
+                with (
+                    ui.element()
+                    .classes("w-full p-2 bg-gray-800 rounded")
+                    .style("max-height: 100px; overflow-y: auto;")
                 ):
-                    ui.label(description).classes(
-                        "text-sm text-white"
-                    ).style(
+                    ui.label(description).classes("text-sm text-white").style(
                         "word-wrap: break-word; overflow-wrap: break-word; "
                         "white-space: pre-wrap; line-height: 1.4;"
                     )
 
         # Fourth row: status, priority, dates in a compact grid
-        with ui.row().classes("w-full items-center justify-between text-xs text-gray-300"):
+        with ui.row().classes(
+            "w-full items-center justify-between text-xs text-gray-300"
+        ):
             # Left side: Status and Priority
             with ui.row().classes("items-center gap-2"):
                 if status:
                     status_color = {
                         "To Do": "blue-grey",
-                        "In Progress": "orange", 
+                        "In Progress": "orange",
                         "In Review": "purple",
                         "Blocked": "red",
-                        "On Hold": "yellow"
+                        "On Hold": "yellow",
                     }.get(status, "grey")
-                    ui.chip(status).props(f"dense color={status_color}").classes("text-xs")
-                
+                    ui.chip(status).props(f"dense color={status_color}").classes(
+                        "text-xs"
+                    )
+
                 if priority:
                     priority_color = {
                         "Critical": "red",
-                        "High": "orange", 
+                        "High": "orange",
                         "Medium": "blue",
-                        "Low": "green"
+                        "Low": "green",
                     }.get(priority, "grey")
-                    ui.chip(priority).props(f"dense color={priority_color}").classes("text-xs")
-            
+                    ui.chip(priority).props(f"dense color={priority_color}").classes(
+                        "text-xs"
+                    )
+
             # Right side: Dates
             with ui.column().classes("items-end"):
                 if due_date:
                     ui.label(f"Due: {due_date}").classes("text-xs text-gray-400")
                 if created:
                     # Format created date to be more compact
-                    created_short = created.split(' ')[0] if ' ' in created else created
-                    ui.label(f"Created: {created_short}").classes("text-xs text-gray-500")
+                    created_short = created.split(" ")[0] if " " in created else created
+                    ui.label(f"Created: {created_short}").classes(
+                        "text-xs text-gray-500"
+                    )
 
     return card
 
@@ -1319,7 +1354,7 @@ def filter_df(df, filters=None, return_as="df", column=None):
     if return_as == "list" and column:
         return filtered[column].tolist()
     elif return_as in ["distinct_list", "unique"] and column:
-        return filtered[column].unique().tolist()
+        return filtered[column].dropna().unique().tolist()
     return filtered
 
 
@@ -1350,14 +1385,19 @@ def assign_dynamic_options(fields, data_sources):
                 # Empty dict, set empty options
                 field["options"] = []
             elif isinstance(data, dict):
-                # For nested structures like parent_names, we'll handle this during parent binding
-                field["options"] = []
+                # For nested structures (parent-child relationships):
+                # Store the dict in options so parent binding can access it
+                # This allows the binding code to work even if data_sources isn't available
+                field["options"] = data
             else:
                 field["options"] = data
 
         if field.get("type") in ["number"]:
             val = field.get("options", 0)
-            if isinstance(val, (np.integer, float)):
+            # If options is a dict (parent-child relationship), keep it as is
+            if isinstance(val, dict):
+                pass  # Keep the dict for parent handler
+            elif isinstance(val, (np.integer, float)):
                 field["options"] = int(val)
             elif isinstance(val, int):
                 field["options"] = val
