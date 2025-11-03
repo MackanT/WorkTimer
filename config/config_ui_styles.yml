@@ -82,6 +82,18 @@ layouts:
   # Subtitle: medium text
   subtitle: "text-subtitle1 mb-2"
 
+  # Time tracking - customer card column
+  time_tracking_customer_column: "items-start"
+
+  # Time tracking - customer header row
+  time_tracking_customer_header: "w-full justify-between"
+
+  # Time tracking - project row
+  time_tracking_project_row: "items-center w-full"
+
+  # Time tracking - main container row
+  time_tracking_container: "px-4 justify-between overflow-x-auto"
+
 # ===== WIDGET-SPECIFIC STYLES =====
 # Styles applied per widget type
 widget_styles:
@@ -120,6 +132,23 @@ widget_styles:
   query_button:
     base: "text-grey-5 text-xs px-2 py-1 min-h-0 min-w-0 font-semibold"
 
+  # Time tracking - project value label
+  time_tracking_project_value:
+    classes: "text-grey text-right whitespace-nowrap w-full"
+    style: "max-width:100px; overflow-x:auto;"
+
+  # Time tracking - customer name label
+  time_tracking_customer_name:
+    classes: "text-lg text-right"
+
+  # Time tracking - customer total label
+  time_tracking_customer_total:
+    classes: "text-base text-grey text-right"
+
+  # Time tracking - project name label
+  time_tracking_project_name:
+    classes: "ml-2 truncate"
+
 # ===== SIZE MAPPING =====
 # Map widget types to default sizes
 default_sizes:
@@ -135,6 +164,20 @@ default_sizes:
   codemirror: "full"
   html: "full"
   markdown: "full"
+
+# ===== INLINE STYLES =====
+# Inline CSS styles for specific components
+inline_styles:
+  # Time tracking module
+  time_tracking:
+    # Customer card flex layout
+    customer_card: "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
+    # Main container max width
+    container: "flex-wrap:nowrap; width:100%; max-width:1800px; margin:0 auto;"
+    # Customer header row
+    customer_header: "display:flex; align-items:center;"
+    # Project row grid
+    project_row: "display: grid; grid-template-columns: 20px 1fr 100px; align-items: center; margin-bottom:2px; min-height:20px;"
 
 # ===== LAYOUT MODE DETECTION =====
 # Widget types that trigger "wide layout mode" for their container
