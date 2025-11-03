@@ -105,10 +105,10 @@ def setup_ui():
             ui_time_tracking()
         with ui.tab_panel(tab_data_input):
             ui_add_data()
-        with ui.tab_panel(tab_query_editors):
-            ui_query_editor()
         with ui.tab_panel(tasks_input):
             ui_tasks()
+        with ui.tab_panel(tab_query_editors):
+            ui_query_editor()
         with ui.tab_panel(tab_log):
             ui_log()
         with ui.tab_panel(tab_info):
