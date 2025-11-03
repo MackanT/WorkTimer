@@ -10,8 +10,8 @@ from ..helpers import UI_STYLES
 import asyncio
 from datetime import datetime
 from .. import helpers
-import re
 from ..globals import GlobalRegistry
+from .dialogs import show_time_entry_dialog
 
 # ============================================================================
 # Constants
@@ -154,147 +154,56 @@ def ui_time_tracking():
             asyncio.create_task(update_tab_indicator_now())
             return
 
-        async def show_uncheck_popup():
-            checkbox = event.sender
-            with ui.dialog().props("persistent") as popup:
-                with ui.card().classes(UI_STYLES.get_widget_width("extra_wide")):
-                    # Query project/customer info
-                    sql_query = f"""
-                    select distinct t.customer_name, t.project_name, p.git_id from time t
-                    left join projects p on p.project_id = t.project_id
-                    where t.customer_id = {customer_id}
-                    and t.project_id = {project_id}
-                    """
-                    df = await QE.query_db(sql_query)
-                    c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
-                    p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
-                    git_id = df.iloc[0]["git_id"] if not df.empty else 0
-                    has_git_id = git_id is not None and git_id > 0
+        # Unchecked - show dialog for saving comment/DevOps
+        checkbox = event.sender
 
-                    ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
-
-                    # DevOps connection check
-                    has_devops = bool(
-                        hasattr(DO, "manager")
-                        and DO.manager
-                        and hasattr(DO.manager, "clients")
-                        and c_name in DO.manager.clients
+        async def handle_save(git_id_val, comment, store_to_devops):
+            """Save time entry with comment and optionally to DevOps."""
+            run_async_task(
+                lambda: asyncio.run(
+                    QE.function_db(
+                        "insert_time_row",
+                        int(customer_id),
+                        int(project_id),
+                        git_id=git_id_val,
+                        comment=comment,
                     )
-                    id_input = None
-                    id_checkbox = None
-                    if has_devops:
-                        id_options = DO.df[(DO.df["customer_name"] == c_name)][
-                            ["display_name", "id"]
-                        ].dropna()
-                        id_input = ui.select(
-                            id_options["display_name"].tolist(),
-                            with_input=True,
-                            label="DevOps-ID",
-                        ).classes("w-full -mb-2")
-                        if has_git_id:
-                            match = id_options[id_options["id"] == git_id]
-                            id_input.value = (
-                                match["display_name"].iloc[0]
-                                if not match.empty
-                                else None
-                            )
+                )
+            )
 
-                        with ui.row().classes(
-                            "w-full items-center justify-between -mt-2"
-                        ):
+            # Save to DevOps if requested
+            if store_to_devops and git_id_val and git_id_val > 0:
+                sql_code = f"select customer_name from customers where customer_id = {customer_id}"
+                customer_name = await QE.query_db(sql_code)
+                if DO.manager:
+                    status, msg = DO.manager.save_comment(
+                        customer_name=customer_name.iloc[0]["customer_name"],
+                        comment=comment,
+                        git_id=git_id_val,
+                    )
+                    col = "positive" if status else "negative"
+                    ui.notify(msg, color=col)
 
-                            def toggle_switch():
-                                id_checkbox.value = not id_checkbox.value
-                                id_checkbox.update()
+            await update_tab_indicator_now()
 
-                            ui.label("Store to DevOps").on(
-                                "click", toggle_switch
-                            ).classes("cursor-pointer")
-                            id_checkbox = ui.switch(value=has_git_id).props("dense")
+        async def handle_delete():
+            """Delete the time entry."""
+            await QE.function_db("delete_time_row", int(customer_id), int(project_id))
+            await update_tab_indicator_now()
 
-                    comment_input = ui.textarea(
-                        label="Comment", placeholder="What work was done?"
-                    ).classes("w-full -mt-2")
+        def handle_close():
+            """Close dialog without saving - reset checkbox."""
+            nonlocal ignore_next_checkbox_event
+            ignore_next_checkbox_event = True
+            checkbox.set_value(True)
 
-                    def close_popup():
-                        nonlocal ignore_next_checkbox_event
-                        ignore_next_checkbox_event = True
-                        checkbox.set_value(True)
-                        popup.close()
-
-                    async def save_popup():
-                        git_id_val = None
-                        store_to_devops = False
-                        if has_devops and id_input is not None:
-                            git_id_str = id_input.value
-                            if git_id_str and isinstance(git_id_str, str):
-                                match = re.search(r":\s*(\d+)\s*-", git_id_str)
-                                if match:
-                                    try:
-                                        git_id_val = int(match.group(1))
-                                    except ValueError:
-                                        git_id_val = None
-                            store_to_devops = (
-                                id_checkbox.value if id_checkbox is not None else False
-                            )
-
-                        LOG.log_msg(
-                            "DEBUG",
-                            f"Saved: {git_id_val}, {store_to_devops}, {comment_input.value}, customer_id: {customer_id}, project_id: {project_id}",
-                        )
-                        run_async_task(
-                            lambda: asyncio.run(
-                                QE.function_db(
-                                    "insert_time_row",
-                                    int(customer_id),
-                                    int(project_id),
-                                    git_id=git_id_val,
-                                    comment=comment_input.value,
-                                )
-                            )
-                        )
-
-                        sql_code = f"select customer_name from customers where customer_id = {customer_id}"
-                        customer_name = await QE.query_db(sql_code)
-                        if (
-                            has_devops
-                            and store_to_devops
-                            and git_id_val
-                            and git_id_val > 0
-                        ):
-                            if DO.manager:
-                                status, msg = DO.manager.save_comment(
-                                    customer_name=customer_name.iloc[0][
-                                        "customer_name"
-                                    ],
-                                    comment=comment_input.value,
-                                    git_id=git_id_val,
-                                )
-                                col = "positive" if status else "negative"
-                                ui.notify(msg, color=col)
-                        popup.close()
-                        await update_tab_indicator_now()
-
-                    async def delete_popup():
-                        await QE.function_db(
-                            "delete_time_row", int(customer_id), int(project_id)
-                        )
-                        ui.notify("Entry deleted", color="negative")
-                        popup.close()
-                        await update_tab_indicator_now()
-
-                    with ui.row().classes("justify-end gap-2"):
-                        btn_classes = UI_STYLES.get_widget_width("button")
-                        ui.button("Save", on_click=save_popup).classes(btn_classes)
-                        ui.button("Delete", on_click=delete_popup).props(
-                            "color=negative"
-                        ).classes(f"q-btn--warning {btn_classes}")
-                        ui.button("Close", on_click=close_popup).props("flat").classes(
-                            btn_classes
-                        )
-            popup.open()
-
-        await show_uncheck_popup()
+        await show_time_entry_dialog(
+            customer_id=customer_id,
+            project_id=project_id,
+            on_save_callback=handle_save,
+            on_delete_callback=handle_delete,
+            on_close_callback=handle_close,
+        )
 
     def make_callback(customer_id, project_id):
         return lambda e: on_checkbox_change(e, e.value, customer_id, project_id)
