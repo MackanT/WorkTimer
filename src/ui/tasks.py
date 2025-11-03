@@ -39,7 +39,7 @@ def get_customer_project_data() -> dict:
     AD = GlobalRegistry.get("AD")
     LOG = GlobalRegistry.get("LOG")
 
-    if not AD or AD.df is None or AD.df.empty:
+    if not AD or helpers.is_dataframe_empty(AD.df):
         if LOG:
             LOG.log_msg("WARNING", "No customer/project data available")
         return {"customer_data": [], "project_names": {}}
@@ -126,7 +126,7 @@ async def populate_task_list_async():
         # Fetch all tasks
         tasks_df = await db.query_db("SELECT task_id, title FROM tasks ORDER BY title")
 
-        if tasks_df is not None and not tasks_df.empty:
+        if helpers.has_dataframe_data(tasks_df):
             # Build task list with identifiers
             task_list = [
                 f"{row['title']} (ID: {row['task_id']})"

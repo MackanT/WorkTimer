@@ -1303,19 +1303,32 @@ class Database:
 
     ### General DB Operations ###
 
-    def get_customer_name(self, customer_id: int) -> str:
+    def _get_entity_name(self, entity_type: str, entity_id: int) -> str:
+        """
+        Generic helper to retrieve entity name by ID.
+        
+        Args:
+            entity_type: "customer" or "project"
+            entity_id: ID of the entity
+            
+        Returns:
+            Entity name as string, or empty string if not found
+        """
+        table_name = f"{entity_type}s"  # customers, projects
+        column_name = f"{entity_type}_name"
+        id_column = f"{entity_type}_id"
+        
         return self._get_value_from_db(
-            "select customer_name from customers where customer_id = ?",
-            (customer_id,),
+            f"select {column_name} from {table_name} where {id_column} = ?",
+            (entity_id,),
             data_type="str",
         )
 
+    def get_customer_name(self, customer_id: int) -> str:
+        return self._get_entity_name("customer", customer_id)
+
     def get_project_name(self, project_id: int) -> str:
-        return self._get_value_from_db(
-            "select project_name from projects where project_id = ?",
-            (project_id,),
-            data_type="str",
-        )
+        return self._get_entity_name("project", project_id)
 
     def execute_query(self, query: str, params: tuple = ()):
         try:

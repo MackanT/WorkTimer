@@ -207,78 +207,23 @@ def ui_query_editor():
     # ========================================================================
 
     def add_save_button(save_data, fields, widgets, table_name, pk_data, popup):
-        """Add save button for row editing with validation and success handling."""
-
-        async def on_save():
-            # Validate required fields
-            required_fields = [
-                f["name"] for f in fields if not f.get("optional", False)
-            ]
-            if not helpers.check_input(widgets, required_fields):
-                return
-
-            # Build kwargs from widget values
-            kwargs = {}
-            for field in fields:
-                field_name = field["name"]
-                value = widgets[field_name].value
-
-                # Convert single-item lists to strings
-                if isinstance(value, list):
-                    if len(value) == 1:
-                        kwargs[field_name] = value[0]
-                    elif len(value) > 1:
-                        ui.notify(
-                            f"Field '{field_name}' has multiple values",
-                            color="negative",
-                        )
-                        LOG.log_msg(
-                            "WARNING",
-                            f"Field '{field_name}' has multiple values: {value}",
-                        )
-                        return
-                    else:
-                        kwargs[field_name] = value
-                else:
-                    kwargs[field_name] = value
-
-            kwargs["table_name"] = table_name
-            kwargs["pk_data"] = pk_data
-
-            # Execute save operation
-            await QE.function_db(save_data.function, **kwargs)
-
-            # Build success message
-            main_value = (
-                ""
-                if save_data.main_param == "None"
-                else widgets[save_data.main_param].value
-            )
-            secondary_action = (
-                ""
-                if save_data.secondary_action == "None"
-                else save_data.secondary_action
-            )
-
-            msg_1, msg_2 = helpers.print_success(
-                save_data.main_action,
-                main_value,
-                secondary_action,
-                widgets=widgets,
-            )
-            LOG.log_msg("INFO", msg_1)
-            LOG.log_msg("INFO", msg_2)
-
-            close_popup()
+        """Add save button for row editing using centralized handler."""
 
         def close_popup():
             popup.close()
 
-        # Add buttons
+        # Add buttons in a row
         with ui.row().classes("justify-end gap-2"):
-            ui.button(save_data.button_name, on_click=on_save).classes(
-                UI_STYLES.get_layout_classes("button_fixed")
+            # Use centralized save button with additional_kwargs for table_name and pk_data
+            helpers.add_generic_save_button(
+                save_data=save_data,
+                fields=fields,
+                widgets=widgets,
+                additional_kwargs={"table_name": table_name, "pk_data": pk_data},
+                button_classes=UI_STYLES.get_layout_classes("button_fixed"),
             )
+
+            # Add cancel button
             ui.button("Cancel", on_click=close_popup).props("flat").classes(
                 UI_STYLES.get_layout_classes("button_fixed")
             )

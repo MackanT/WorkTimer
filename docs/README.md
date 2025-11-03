@@ -14,6 +14,8 @@ A helper program to keep track of time spent on different tasks, with built-in D
   - Color coding in query editor
   - Multirow text input support
   - Based on yaml config files, makes it easy to add new entries over time without having to modify code
+- To-Do
+  - Added built in task handling system (non-devops) for storing current tasks with info, descriptions, due dates etc.
 - Query Engine
   - "Standard" queries are now stored in the database instead of in code
   - Added option for users to save custom queries in the database for easier future usage

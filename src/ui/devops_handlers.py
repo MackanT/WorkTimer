@@ -238,11 +238,16 @@ class DevOpsWorkItemHandlers:
                         )
 
                         # Update other fields
-                        self._set_widget_value(state_widget, details.get("state"))
-                        self._set_assignee_widget(assigned_to_widget, details)
-                        self._set_widget_value(
+                        self._set_widget_value_safe(state_widget, details.get("state"), "string")
+                        self._set_widget_value_safe(
+                            assigned_to_widget,
+                            details.get("assigned_to_raw") or details.get("assigned_to"),
+                            "assignee"
+                        )
+                        self._set_widget_value_safe(
                             priority_widget,
-                            int(details["priority"]) if details.get("priority") is not None else None
+                            details.get("priority"),
+                            "int"
                         )
                     else:
                         ui.notify(
@@ -310,40 +315,47 @@ class DevOpsWorkItemHandlers:
                     update_editor_field("Contact", contact_widget.value or "")
                 contact_widget.on("update:model-value", on_contact_change)
 
-    def _set_widget_value(self, widget, value):
-        """Safely set widget value."""
-        if widget and value is not None:
-            try:
-                widget.set_value(value)
-                widget.value = value
-            except Exception as e:
-                self.LOG.log_msg("WARNING", f"Failed to set widget value: {e}")
-
-    def _set_assignee_widget(self, widget, details):
-        """Safely set assignee widget value with fallback logic."""
-        if not widget or not details.get("assigned_to"):
+    def _set_widget_value_safe(self, widget, value, value_type="string"):
+        """
+        Safely set widget value with type-specific handling.
+        
+        Args:
+            widget: NiceGUI widget to update
+            value: Value to set
+            value_type: "string", "assignee", or "int"
+        """
+        if not widget or value is None:
             return
         
         try:
-            assigned_to_raw = details.get("assigned_to_raw")
-            assigned_to_display = details["assigned_to"]
-
-            # Try to use email address if available
-            if assigned_to_raw and isinstance(assigned_to_raw, dict):
-                assigned_to_value = assigned_to_raw.get(
-                    "uniqueName", assigned_to_display
-                )
-            else:
-                assigned_to_value = assigned_to_display
-
-            # Check if value is in dropdown options
-            widget_options = getattr(widget, "options", [])
-            if assigned_to_value in widget_options:
-                widget.set_value(assigned_to_value)
-                widget.value = assigned_to_value
-            else:
-                # For combobox widgets, we can set custom values
-                widget.set_value(assigned_to_display)
-                widget.value = assigned_to_display
+            if value_type == "assignee":
+                # Special handling for assignee widgets
+                # Try to extract email if value is a dict
+                if isinstance(value, dict):
+                    assignee_value = value.get("uniqueName", value.get("displayName", ""))
+                else:
+                    assignee_value = value
+                
+                # Check if value is in dropdown options
+                widget_options = getattr(widget, "options", [])
+                if assignee_value in widget_options:
+                    widget.set_value(assignee_value)
+                    widget.value = assignee_value
+                else:
+                    # For combobox widgets, we can set custom values
+                    widget.set_value(assignee_value)
+                    widget.value = assignee_value
+            
+            elif value_type == "int":
+                # Convert to int if needed
+                int_value = int(value) if value is not None else None
+                if int_value is not None:
+                    widget.set_value(int_value)
+                    widget.value = int_value
+            
+            else:  # string or default
+                widget.set_value(value)
+                widget.value = value
+                
         except Exception as e:
-            self.LOG.log_msg("WARNING", f"Failed to set assigned_to widget: {e}")
+            self.LOG.log_msg("WARNING", f"Failed to set widget value (type={value_type}): {e}")

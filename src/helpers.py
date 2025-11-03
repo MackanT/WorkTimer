@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from typing import Optional, Callable
 import re
 import numpy as np
+import pandas as pd
 import markdown as _markdown
 import bleach as _bleach
 from markdownify import markdownify as _markdownify
@@ -372,6 +373,39 @@ def parse_date_range(date_range_str: str) -> tuple[str | None, str | None]:
         return start, end
 
     return None, None
+
+
+# ===== DATA VALIDATION =====
+
+
+def is_dataframe_empty(df: Optional[pd.DataFrame]) -> bool:
+    """
+    Check if a DataFrame is None or empty.
+    
+    Common pattern used throughout the codebase to validate query results.
+    
+    Args:
+        df: DataFrame to check (can be None)
+        
+    Returns:
+        True if df is None or empty, False if it has data
+    """
+    return df is None or df.empty
+
+
+def has_dataframe_data(df: Optional[pd.DataFrame]) -> bool:
+    """
+    Check if a DataFrame has data (not None and not empty).
+    
+    Inverse of is_dataframe_empty() for positive logic conditions.
+    
+    Args:
+        df: DataFrame to check (can be None)
+        
+    Returns:
+        True if df has data, False if None or empty
+    """
+    return df is not None and not df.empty
 
 
 # ===== INPUT VALIDATION & FEEDBACK =====
@@ -1377,7 +1411,7 @@ async def _execute_dynamic_query(
         query = query.replace("{parent_value}", str(parent_val))
         result_df = await QE.query_db(query)
 
-        if result_df is not None and not result_df.empty:
+        if has_dataframe_data(result_df):
             # Extract value from specified column
             return (
                 result_df.iloc[0, column]
@@ -1414,7 +1448,7 @@ async def _execute_dynamic_query_for_options(
         query = query.replace("{parent_value}", str(parent_val))
         result_df = await QE.query_db(query)
 
-        if result_df is not None and not result_df.empty:
+        if has_dataframe_data(result_df):
             # Assume first column contains the options
             return result_df.iloc[:, 0].tolist()
         return []
@@ -1786,7 +1820,13 @@ def render_markdown_card(filename: str) -> None:
 
 
 def add_generic_save_button(
-    save_data, fields, widgets, custom_handlers=None, on_success_callback=None
+    save_data,
+    fields,
+    widgets,
+    custom_handlers=None,
+    on_success_callback=None,
+    additional_kwargs=None,
+    button_classes="mt-2",
 ):
     """
     Generic save button that handles both standard DB operations and custom handlers.
@@ -1797,6 +1837,8 @@ def add_generic_save_button(
         widgets: Dict of widget instances
         custom_handlers: Optional dict mapping function names to handler functions
         on_success_callback: Optional async callback to run after successful save
+        additional_kwargs: Optional dict of extra kwargs to pass to the DB function (e.g., table_name, pk_data)
+        button_classes: CSS classes to apply to the button (default: "mt-2")
     """
 
     async def on_save():
@@ -1834,15 +1876,24 @@ def add_generic_save_button(
 
         # Standard database operation
         kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
+        
         # Convert any single-item list in kwargs to a string
         for k, v in kwargs.items():
             if isinstance(v, list):
                 if len(v) == 1:
                     kwargs[k] = v[0]
                 elif len(v) > 1:
-                    raise ValueError(
-                        f"Field '{k}' has multiple values: {v}. Only one value is allowed."
+                    ui.notify(
+                        f"Field '{k}' has multiple values: {v}",
+                        color="negative",
                     )
+                    if LOG:
+                        LOG.log_msg("WARNING", f"Field '{k}' has multiple values: {v}")
+                    return
+
+        # Add any additional kwargs (e.g., table_name, pk_data for query editor)
+        if additional_kwargs:
+            kwargs.update(additional_kwargs)
 
         await QE.function_db(func_name, **kwargs)
 
@@ -1870,7 +1921,7 @@ def add_generic_save_button(
         if on_success_callback:
             await on_success_callback()
 
-    ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
+    ui.button(save_data.button_name, on_click=on_save).classes(button_classes)
 
 
 def build_generic_tab_panel(

@@ -29,17 +29,27 @@ class DevOpsManager:
                     f"DevOps connection failed for {row['customer_name']}:\n{e}",
                 )
 
-    def save_comment(self, customer_name, comment, git_id):
+    def _get_client(self, customer_name):
+        """
+        Get DevOps client for customer, logging warning if not found.
+        
+        Returns:
+            DevOpsClient or None
+        """
         client = self.clients.get(customer_name)
         if not client:
             self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
+        return client
+
+    def save_comment(self, customer_name, comment, git_id):
+        client = self._get_client(customer_name)
+        if not client:
             return f"No DevOps connection for {customer_name}"
         return client.add_comment_to_work_item(git_id, comment)
 
     def get_workitem_level(self, customer_name, level=None, work_item_id=None):
-        client = self.clients.get(customer_name)
+        client = self._get_client(customer_name)
         if not client:
-            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return f"No DevOps connection for {customer_name}"
         return client.get_workitem_level(level, work_item_id)
 
@@ -48,33 +58,29 @@ class DevOpsManager:
 
         Returns (True, description) on success or (False, message) on failure.
         """
-        client = self.clients.get(customer_name)
+        client = self._get_client(customer_name)
         if not client:
-            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return (False, f"No DevOps connection for {customer_name}")
         return client.get_work_item_description(work_item_id)
 
     def set_description(self, customer_name, work_item_id, description, markdown=False):
         """Set (update) a work item's description. Returns (True, msg) or (False, msg)."""
-        client = self.clients.get(customer_name)
+        client = self._get_client(customer_name)
         if not client:
-            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return (False, f"No DevOps connection for {customer_name}")
         return client.update_work_item_description(work_item_id, description, markdown)
 
     def update_work_item_fields(self, customer_name, work_item_id, fields, markdown=False):
         """Update multiple fields of a work item. Returns (True, msg) or (False, msg)."""
-        client = self.clients.get(customer_name)
+        client = self._get_client(customer_name)
         if not client:
-            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return (False, f"No DevOps connection for {customer_name}")
         return client.update_work_item_fields(work_item_id, fields, markdown)
 
     def get_work_item_details(self, customer_name, work_item_id):
         """Get work item details. Returns (True, details_dict) or (False, error_msg)."""
-        client = self.clients.get(customer_name)
+        client = self._get_client(customer_name)
         if not client:
-            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return (False, f"No DevOps connection for {customer_name}")
         return client.get_work_item_details(work_item_id)
 
@@ -87,9 +93,8 @@ class DevOpsManager:
         markdown=False,
         parent=None,
     ):
-        client = self.clients.get(customer_name)
+        client = self._get_client(customer_name)
         if not client:
-            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return (False, f"No DevOps connection for {customer_name}")
         return client.create_user_story(
             title, description, additional_fields, markdown, parent
@@ -103,9 +108,8 @@ class DevOpsManager:
         additional_fields=None,
         markdown=False,
     ):
-        client = self.clients.get(customer_name)
+        client = self._get_client(customer_name)
         if not client:
-            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return (False, f"No DevOps connection for {customer_name}")
         return client.create_epic(
             title, description, additional_fields, markdown
@@ -120,9 +124,8 @@ class DevOpsManager:
         markdown=False,
         parent=None,
     ):
-        client = self.clients.get(customer_name)
+        client = self._get_client(customer_name)
         if not client:
-            self.log.log_msg("WARNING", f"No DevOps connection for {customer_name}")
             return (False, f"No DevOps connection for {customer_name}")
         return client.create_feature(
             title, description, additional_fields, markdown, parent
@@ -326,6 +329,81 @@ class DevOpsClient:
             self.log.log_msg("ERROR", f"Error fetching work items: {e}")
             return (False, f"Error fetching work items: {e}")
 
+    def _create_work_item(
+        self,
+        work_item_type: str,
+        title: str,
+        description=None,
+        additional_fields=None,
+        markdown=False,
+        parent=None,
+    ):
+        """
+        Create a work item in Azure DevOps.
+        
+        Args:
+            work_item_type: "User Story", "Epic", or "Feature"
+            title: Work item title
+            description: Optional description
+            additional_fields: Dict of additional field values
+            markdown: Whether description is markdown format
+            parent: Parent work item ID (for Features and User Stories)
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        try:
+            patch_document = [
+                {"op": "add", "path": "/fields/System.Title", "value": title}
+            ]
+            
+            if description:
+                patch_document.append({
+                    "op": "add",
+                    "path": "/fields/System.Description",
+                    "value": description,
+                })
+            
+            if additional_fields:
+                for field, value in additional_fields.items():
+                    if value is not None:
+                        patch_document.append({
+                            "op": "add",
+                            "path": f"/fields/{field}",
+                            "value": value,
+                        })
+            
+            if markdown:
+                patch_document.append({
+                    "op": "add",
+                    "path": "/multilineFieldsFormat/System.Description",
+                    "value": "Markdown",
+                })
+            
+            if parent:
+                patch_document.append({
+                    "op": "add",
+                    "path": "/relations/-",
+                    "value": {
+                        "rel": "System.LinkTypes.Hierarchy-Reverse",
+                        "url": f"{self.organization_url}/{self.project_name}/_apis/wit/workItems/{parent}",
+                    },
+                })
+
+            work_item = self.wit_client.create_work_item(
+                patch_document, project=self.project_name, type=work_item_type
+            )
+            
+            self.log.log_msg("INFO", f"Created {work_item_type} with ID {work_item.id}")
+            return (True, f"Created {work_item_type} with ID {work_item.id}")
+            
+        except AzureDevOpsServiceError as e:
+            self.log.log_msg("ERROR", f"Azure DevOps error occurred: {e}")
+            return (False, f"Azure DevOps error occurred: {e}")
+        except Exception as e:
+            self.log.log_msg("ERROR", f"Error creating {work_item_type.lower()}: {e}")
+            return (False, f"Error creating {work_item_type.lower()}: {e}")
+
     def create_user_story(
         self,
         title,
@@ -335,55 +413,9 @@ class DevOpsClient:
         parent=None,
     ):
         """Create a new User Story work item in Azure DevOps."""
-        try:
-            patch_document = [
-                {"op": "add", "path": "/fields/System.Title", "value": title}
-            ]
-            if description:
-                patch_document.append(
-                    {
-                        "op": "add",
-                        "path": "/fields/System.Description",
-                        "value": description,
-                    }
-                )
-            if additional_fields:
-                for field, value in additional_fields.items():
-                    if value is not None:
-                        patch_document.append(
-                            {"op": "add", "path": f"/fields/{field}", "value": value}
-                        )
-            if markdown:
-                patch_document.append(
-                    {
-                        "op": "add",
-                        "path": "/multilineFieldsFormat/System.Description",
-                        "value": "Markdown",
-                    }
-                )
-            if parent:
-                patch_document.append(
-                    {
-                        "op": "add",
-                        "path": "/relations/-",
-                        "value": {
-                            "rel": "System.LinkTypes.Hierarchy-Reverse",
-                            "url": f"{self.organization_url}/{self.project_name}/_apis/wit/workItems/{parent}",
-                        },
-                    }
-                )
-
-            work_item = self.wit_client.create_work_item(
-                patch_document, project=self.project_name, type="User Story"
-            )
-            self.log.log_msg("INFO", f"Created User Story with ID {work_item.id}")
-            return (True, f"Created User Story with ID {work_item.id}")
-        except AzureDevOpsServiceError as e:
-            self.log.log_msg("ERROR", f"Azure DevOps error occurred: {e}")
-            return (False, f"Azure DevOps error occurred: {e}")
-        except Exception as e:
-            self.log.log_msg("ERROR", f"Error creating user story: {e}")
-            return (False, f"Error creating user story: {e}")
+        return self._create_work_item(
+            "User Story", title, description, additional_fields, markdown, parent
+        )
 
     def create_epic(
         self,
@@ -393,44 +425,9 @@ class DevOpsClient:
         markdown=False,
     ):
         """Create a new Epic work item in Azure DevOps."""
-        try:
-            patch_document = [
-                {"op": "add", "path": "/fields/System.Title", "value": title}
-            ]
-            if description:
-                patch_document.append(
-                    {
-                        "op": "add",
-                        "path": "/fields/System.Description",
-                        "value": description,
-                    }
-                )
-            if additional_fields:
-                for field, value in additional_fields.items():
-                    if value is not None:
-                        patch_document.append(
-                            {"op": "add", "path": f"/fields/{field}", "value": value}
-                        )
-            if markdown:
-                patch_document.append(
-                    {
-                        "op": "add",
-                        "path": "/multilineFieldsFormat/System.Description",
-                        "value": "Markdown",
-                    }
-                )
-
-            work_item = self.wit_client.create_work_item(
-                patch_document, project=self.project_name, type="Epic"
-            )
-            self.log.log_msg("INFO", f"Created Epic with ID {work_item.id}")
-            return (True, f"Created Epic with ID {work_item.id}")
-        except AzureDevOpsServiceError as e:
-            self.log.log_msg("ERROR", f"Azure DevOps error occurred: {e}")
-            return (False, f"Azure DevOps error occurred: {e}")
-        except Exception as e:
-            self.log.log_msg("ERROR", f"Error creating epic: {e}")
-            return (False, f"Error creating epic: {e}")
+        return self._create_work_item(
+            "Epic", title, description, additional_fields, markdown
+        )
 
     def create_feature(
         self,
@@ -441,55 +438,9 @@ class DevOpsClient:
         parent=None,
     ):
         """Create a new Feature work item in Azure DevOps."""
-        try:
-            patch_document = [
-                {"op": "add", "path": "/fields/System.Title", "value": title}
-            ]
-            if description:
-                patch_document.append(
-                    {
-                        "op": "add",
-                        "path": "/fields/System.Description",
-                        "value": description,
-                    }
-                )
-            if additional_fields:
-                for field, value in additional_fields.items():
-                    if value is not None:
-                        patch_document.append(
-                            {"op": "add", "path": f"/fields/{field}", "value": value}
-                        )
-            if markdown:
-                patch_document.append(
-                    {
-                        "op": "add",
-                        "path": "/multilineFieldsFormat/System.Description",
-                        "value": "Markdown",
-                    }
-                )
-            if parent:
-                patch_document.append(
-                    {
-                        "op": "add",
-                        "path": "/relations/-",
-                        "value": {
-                            "rel": "System.LinkTypes.Hierarchy-Reverse",
-                            "url": f"{self.organization_url}/{self.project_name}/_apis/wit/workItems/{parent}",
-                        },
-                    }
-                )
-
-            work_item = self.wit_client.create_work_item(
-                patch_document, project=self.project_name, type="Feature"
-            )
-            self.log.log_msg("INFO", f"Created Feature with ID {work_item.id}")
-            return (True, f"Created Feature with ID {work_item.id}")
-        except AzureDevOpsServiceError as e:
-            self.log.log_msg("ERROR", f"Azure DevOps error occurred: {e}")
-            return (False, f"Azure DevOps error occurred: {e}")
-        except Exception as e:
-            self.log.log_msg("ERROR", f"Error creating feature: {e}")
-            return (False, f"Error creating feature: {e}")
+        return self._create_work_item(
+            "Feature", title, description, additional_fields, markdown, parent
+        )
 
     def get_work_item_description(self, work_item_id: int):
         """Return the System.Description field for a single work item as plain text.
