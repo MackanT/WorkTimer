@@ -117,6 +117,7 @@ project:
       - name: "git_id"
         label: "Git ID"
         type: number
+        step: 1
         optional: True
     action:
       function: "insert_project"
@@ -149,6 +150,7 @@ project:
       - name: "new_git_id"
         label: "New Git ID"
         type: number
+        step: 1
         options: []
         options_source: new_git_id
         parent: project_name
@@ -465,6 +467,6 @@ bonus:
       secondary_action: "added"
       button_name: "Add"
   meta:
-    icon: money_bag
+    icon: payments
     friendly_name: Bonus
     build_function: build_bonus_tab_panel
