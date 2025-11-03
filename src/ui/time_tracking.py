@@ -13,6 +13,44 @@ from .. import helpers
 import re
 from ..globals import GlobalRegistry
 
+# ============================================================================
+# Constants
+# ============================================================================
+
+# UI Layout
+GRID_COLUMNS = "160px 550px 240px"
+TIME_OPTIONS = ["Day", "Week", "Month", "Year", "All-Time", "Custom"]
+DISPLAY_OPTIONS = ["Time", "Bonus"]
+
+# Project row grid layout
+PROJECT_ROW_GRID = "20px 1fr 100px"
+PROJECT_ROW_MIN_HEIGHT = "20px"
+
+# Customer card sizing
+CUSTOMER_CARD_FLEX = "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
+CONTAINER_MAX_WIDTH = "1800px"
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+
+def is_time_display(display_value: str) -> bool:
+    """Check if display mode is 'Time' (vs 'Bonus')."""
+    return "time" in display_value.lower()
+
+
+def format_value(value: float, is_time: bool) -> str:
+    """Format a value as time (hours) or bonus (SEK)."""
+    if is_time:
+        return f"{value:.2f} h"
+    return f"{value:.2f} SEK"
+
+
+# ============================================================================
+# Main UI
+# ============================================================================
+
 
 def ui_time_tracking():
     """
@@ -31,13 +69,11 @@ def ui_time_tracking():
     run_async_task = GlobalRegistry.get("run_async_task")
     update_tab_indicator_now = GlobalRegistry.get("update_tab_indicator_now")
 
-    with ui.grid(columns="160px 550px 240px").classes("w-full gap-0 items-center"):
+    with ui.grid(columns=GRID_COLUMNS).classes("w-full gap-0 items-center"):
         ui.label("Time Span").classes("items-center")
-        time_options = ["Day", "Week", "Month", "Year", "All-Time", "Custom"]
         selected_time = (
-            ui.radio(time_options, value="Day").props("inline").classes("items-center")
+            ui.radio(TIME_OPTIONS, value="Day").props("inline").classes("items-center")
         )
-        selected_time
         with ui.input("Date range").classes(
             f"{UI_STYLES.get_widget_width('compact')} ml-4 items-center"
         ) as date_input:
@@ -69,7 +105,7 @@ def ui_time_tracking():
 
         ui.label("Display Options").classes("mr-8 items-center")
         radio_display_selection = (
-            ui.radio(["Time", "Bonus"], value="Time")
+            ui.radio(DISPLAY_OPTIONS, value="Time")
             .props("inline")
             .classes("items-center")
         )
@@ -285,12 +321,11 @@ def ui_time_tracking():
         container.clear()
 
         def get_total_string(customer_id):
-            if "time" in radio_display_selection.value.lower():
-                total = df[df["customer_id"] == customer_id]["total_time"].sum()
-                return f"{total:.2f} h"
-            else:
-                total = df[df["customer_id"] == customer_id]["user_bonus"].sum()
-                return f"{total:.2f} SEK"
+            is_time = is_time_display(radio_display_selection.value)
+            total = df[df["customer_id"] == customer_id][
+                "total_time" if is_time else "user_bonus"
+            ].sum()
+            return format_value(total, is_time)
 
         async def make_project_row(project, customer_id):
             sql_query = (
@@ -304,7 +339,8 @@ def ui_time_tracking():
                 ui.row()
                 .classes("items-center w-full")
                 .style(
-                    "display: grid; grid-template-columns: 20px 1fr 100px; align-items: center; margin-bottom:2px; min-height:20px;"
+                    f"display: grid; grid-template-columns: {PROJECT_ROW_GRID}; "
+                    f"align-items: center; margin-bottom:2px; min-height:{PROJECT_ROW_MIN_HEIGHT};"
                 )
             ):
                 ui.checkbox(
@@ -314,11 +350,9 @@ def ui_time_tracking():
                     value=initial_state,
                 )
                 ui.label(str(project["project_name"])).classes("ml-2 truncate")
-                total_string = (
-                    f"{project['total_time']} h"
-                    if "time" in radio_display_selection.value.lower()
-                    else f"{project['user_bonus']} SEK"
-                )
+                is_time = is_time_display(radio_display_selection.value)
+                value = project["total_time"] if is_time else project["user_bonus"]
+                total_string = format_value(value, is_time)
                 value_label = (
                     ui.label(f"{total_string}")
                     .classes("text-grey text-right whitespace-nowrap w-full")
@@ -328,13 +362,7 @@ def ui_time_tracking():
 
         async def make_customer_card(customer_id, customer_name, group):
             with ui.card().classes(UI_STYLES.get_card_classes("xs", "card_padded")):
-                with (
-                    ui.column()
-                    .classes("items-start")
-                    .style(
-                        "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
-                    )
-                ):
+                with ui.column().classes("items-start").style(CUSTOMER_CARD_FLEX):
                     total_string = get_total_string(customer_id)
                     with (
                         ui.row()
@@ -354,7 +382,9 @@ def ui_time_tracking():
             with (
                 ui.row()
                 .classes("px-4 justify-between overflow-x-auto")
-                .style("flex-wrap:nowrap; width:100%; max-width:1800px; margin:0 auto;")
+                .style(
+                    f"flex-wrap:nowrap; width:100%; max-width:{CONTAINER_MAX_WIDTH}; margin:0 auto;"
+                )
             ):
                 # Run customer cards in series for UI consistency
                 for (customer_id, customer_name), group in customers:
@@ -366,18 +396,13 @@ def ui_time_tracking():
             expected_range = helpers.get_range_for(selected_time.value)
             if date_input.value != expected_range:
                 date_input.value = expected_range
-                LOG.log_msg(
-                    "DEBUG",
-                    f"Auto-updated date range for {selected_time.value}: {expected_range}",
-                )
 
         df = await get_ui_data()
+        is_time = is_time_display(radio_display_selection.value)
 
         def get_time_string(row):
-            if "time" in radio_display_selection.value.lower():
-                return f"{row['total_time']} h"
-            else:
-                return f"{row['user_bonus']} SEK"
+            value = row["total_time"] if is_time else row["user_bonus"]
+            return format_value(value, is_time)
 
         # Build a lookup for (customer_id, project_id) to row
         df_lookup = {
@@ -392,12 +417,10 @@ def ui_time_tracking():
 
         # Update customer total labels
         for label_total, customer_id in customer_total_labels:
-            if "time" in radio_display_selection.value.lower():
-                total = df[df["customer_id"] == customer_id]["total_time"].sum()
-                label_total.text = f"{total:.2f} h"
-            else:
-                total = df[df["customer_id"] == customer_id]["user_bonus"].sum()
-                label_total.text = f"{total:.2f} SEK"
+            total = df[df["customer_id"] == customer_id][
+                "total_time" if is_time else "user_bonus"
+            ].sum()
+            label_total.text = format_value(total, is_time)
 
     # Register these functions globally so they can be accessed by other UI components
     GlobalRegistry.set("time_tracking_render_ui", render_ui)
