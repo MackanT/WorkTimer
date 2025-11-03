@@ -14,6 +14,7 @@ from ..globals import GlobalRegistry
 from .data_registry import DataPrepRegistry
 from .form_builder import EntityFormBuilder
 from .. import helpers
+from ..helpers import UI_STYLES
 
 # ============================================================================
 # Constants
@@ -396,17 +397,29 @@ def on_task_click(task_id: int):
             ]
 
             with view_container:
-                with ui.card().classes("w-full p-4"):
-                    with ui.column().classes("gap-3 w-full"):
+                with ui.card().classes(
+                    UI_STYLES.get_layout_classes("full_width_padded")
+                ):
+                    with ui.column().classes(
+                        UI_STYLES.get_layout_classes("full_row_gap_3")
+                    ):
                         for field in fields:
                             if isinstance(field[0], tuple):  # Row of 2 fields
-                                with ui.row().classes("gap-4 w-full"):
+                                with ui.row().classes(
+                                    UI_STYLES.get_layout_classes("full_row_gap_4")
+                                ):
                                     for label, value in field:
-                                        with ui.column().classes("flex-1"):
+                                        with ui.column().classes(
+                                            UI_STYLES.get_layout_classes("flex_one")
+                                        ):
                                             ui.label(label).classes(
                                                 "text-sm font-bold text-gray-400"
                                             )
-                                            ui.label(str(value)).classes("text-base")
+                                            ui.label(str(value)).classes(
+                                                UI_STYLES.get_layout_classes(
+                                                    "text_base"
+                                                )
+                                            )
                             else:  # Single field
                                 ui.label(field[0]).classes(
                                     "text-sm font-bold text-gray-400"
@@ -414,12 +427,14 @@ def on_task_click(task_id: int):
                                 # Special handling for Description to preserve formatting
                                 if field[0] == "Description":
                                     ui.label(str(field[1])).classes(
-                                        "text-base mb-2"
+                                        UI_STYLES.get_layout_classes("text_base_mb")
                                     ).style(
                                         "white-space: pre-wrap; word-wrap: break-word;"
                                     )
                                 else:
-                                    ui.label(str(field[1])).classes("text-base mb-2")
+                                    ui.label(str(field[1])).classes(
+                                        UI_STYLES.get_layout_classes("text_base_mb")
+                                    )
 
             tabs.set_value("View")
         except Exception:
@@ -434,7 +449,9 @@ def render_card_view(tasks: list[dict], container: ui.element):
 
     if not tasks:
         with container:
-            ui.label("No tasks found").classes("text-gray-500 text-center w-full p-8")
+            ui.label("No tasks found").classes(
+                UI_STYLES.get_layout_classes("text_center_muted_padded")
+            )
         return
 
     config_task_visuals = GlobalRegistry.get("config_task_visuals")
@@ -442,7 +459,7 @@ def render_card_view(tasks: list[dict], container: ui.element):
     with container:
         with (
             ui.scroll_area()
-            .classes("w-full")
+            .classes(UI_STYLES.get_layout_classes("full_width"))
             .style(f"height: {TASK_LIST_HEIGHT}; min-width: 0;")
         ):
             # Use CSS Grid for proper grid layout with padding
@@ -604,12 +621,16 @@ def ui_tasks():
     # ========================================================================
 
     # Create main container with splitter (left: task view, right: forms)
-    with ui.splitter(value=SPLITTER_RATIO).classes("w-full h-full") as splitter:
+    with ui.splitter(value=SPLITTER_RATIO).classes(
+        UI_STYLES.get_layout_classes("full_size")
+    ) as splitter:
         # Left panel: Task view
         with splitter.before:
             with ui.element().classes("p-4 w-full h-full"):
                 # Controls row
-                with ui.row().classes("w-full justify-between items-center mb-4"):
+                with ui.row().classes(
+                    UI_STYLES.get_layout_classes("full_row_between_centered") + " mb-4"
+                ):
                     # Left side: Sort dropdown and show completed toggle
                     with ui.row().classes("gap-4 items-center"):
                         # Sort dropdown
@@ -642,7 +663,7 @@ def ui_tasks():
                         )
 
                     # Right side: Add button and view toggle
-                    with ui.row().classes("gap-2"):
+                    with ui.row().classes(UI_STYLES.get_layout_classes("row_gap_2")):
                         # Add Task button
                         def switch_to_add_mode():
                             tabs = GlobalRegistry.get("task_tabs")
@@ -665,7 +686,9 @@ def ui_tasks():
                         view_toggle_btn.tooltip("Toggle Card/Table View")
 
                 # Tasks container
-                tasks_container = ui.column().classes("w-full")
+                tasks_container = ui.column().classes(
+                    UI_STYLES.get_layout_classes("full_width")
+                )
                 GlobalRegistry.set("tasks_container", tasks_container)
 
                 # Defer initial task loading to avoid sync/async issues
@@ -681,7 +704,9 @@ def ui_tasks():
 
                 # Create tabs
                 with (
-                    ui.tabs().props("inline-label align=left").classes("w-full") as tabs
+                    ui.tabs()
+                    .props("inline-label align=left")
+                    .classes(UI_STYLES.get_layout_classes("full_width")) as tabs
                 ):
                     ui.tab("Add")
                     ui.tab("Update")
@@ -691,7 +716,9 @@ def ui_tasks():
                 GlobalRegistry.set("task_tabs", tabs)
 
                 # Create tab panels
-                with ui.tab_panels(tabs, value="Add").classes("w-full"):
+                with ui.tab_panels(tabs, value="Add").classes(
+                    UI_STYLES.get_layout_classes("full_width")
+                ):
                     # Add tab
                     with ui.tab_panel("Add"):
                         builder.build_form(

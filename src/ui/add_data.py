@@ -15,6 +15,7 @@ from nicegui import ui
 
 from .. import helpers
 from ..globals import GlobalRegistry
+from ..helpers import UI_STYLES
 from .data_registry import DataPrepRegistry
 from .form_builder import EntityFormBuilder
 from .database_tools import build_database_compare_tab, build_database_update_tab
@@ -347,11 +348,17 @@ def ui_add_data():
         # Store builder for cross-entity refresh
         entity_builders[entity_name] = (builder, tab_types, container_dict)
 
-        with ui.tabs().props("inline-label align=left").classes("w-full") as tabs:
+        with (
+            ui.tabs()
+            .props("inline-label align=left")
+            .classes(UI_STYLES.get_layout_classes("full_width")) as tabs
+        ):
             for tab_type in tab_types:
                 ui.tab(tab_type)
 
-        with ui.tab_panels(tabs, value=tab_types[0]).classes("w-full"):
+        with ui.tab_panels(tabs, value=tab_types[0]).classes(
+            UI_STYLES.get_layout_classes("full_width")
+        ):
             for tab_type in tab_types:
                 with ui.tab_panel(tab_type):
                     # Use lambda with default argument to capture tab_type correctly
@@ -408,11 +415,17 @@ def ui_add_data():
             devops_handlers.setup_update_tab_handlers(widgets)
             return widgets
 
-        with ui.tabs().props("inline-label align=left").classes("w-full") as tabs:
+        with (
+            ui.tabs()
+            .props("inline-label align=left")
+            .classes(UI_STYLES.get_layout_classes("full_width")) as tabs
+        ):
             ui.tab("Add")
             ui.tab("Update")
 
-        with ui.tab_panels(tabs, value="Add").classes("w-full"):
+        with ui.tab_panels(tabs, value="Add").classes(
+            UI_STYLES.get_layout_classes("full_width")
+        ):
             # Add tab with custom handler and event setup
             with ui.tab_panel("Add"):
                 build_add_form()
@@ -425,12 +438,20 @@ def ui_add_data():
     # Main UI Layout
     # ========================================================================
 
-    with ui.column().classes("w-full gap-4"):
+    with ui.column().classes(UI_STYLES.get_layout_classes("full_row_gap_4")):
         # Use splitter for vertical tabs layout (tabs on left, content on right)
-        with ui.splitter(value=20).classes("w-full h-full") as splitter:
+        with ui.splitter(value=20).classes(
+            UI_STYLES.get_layout_classes("full_size")
+        ) as splitter:
             # Left side: Vertical tabs
             with splitter.before:
-                with ui.tabs().props("vertical").classes("w-full") as tabs_vertical:
+                with (
+                    ui.tabs()
+                    .props("vertical")
+                    .classes(
+                        UI_STYLES.get_layout_classes("full_width")
+                    ) as tabs_vertical
+                ):
                     # Get icons from config metadata
                     customer_icon = (
                         config_ui.get("customer", {})
@@ -462,7 +483,7 @@ def ui_add_data():
                 with (
                     ui.tab_panels(tabs_vertical, value="customer")
                     .props("vertical")
-                    .classes("w-full h-full")
+                    .classes(UI_STYLES.get_layout_classes("full_size"))
                 ):
                     # Customer tab panel - use separate container dict
                     with ui.tab_panel("customer"):
@@ -489,12 +510,16 @@ def ui_add_data():
                         with (
                             ui.tabs()
                             .props("inline-label align=left")
-                            .classes("w-full") as db_tabs
+                            .classes(
+                                UI_STYLES.get_layout_classes("full_width")
+                            ) as db_tabs
                         ):
                             ui.tab("compare", label="Compare")
                             ui.tab("update", label="Update")
 
-                        with ui.tab_panels(db_tabs, value="compare").classes("w-full"):
+                        with ui.tab_panels(db_tabs, value="compare").classes(
+                            UI_STYLES.get_layout_classes("full_width")
+                        ):
                             with ui.tab_panel("compare"):
                                 build_database_compare_tab(MAIN_DB)
 

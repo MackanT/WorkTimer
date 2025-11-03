@@ -10,6 +10,7 @@ from nicegui import ui
 
 from ..globals import GlobalRegistry, Logger
 from .. import helpers
+from ..helpers import UI_STYLES
 
 # ============================================================================
 # Constants
@@ -32,14 +33,16 @@ def ui_log():
     LOG = GlobalRegistry.get("LOG")
 
     if not LOG:
-        with ui.card().classes("w-full p-4"):
-            ui.label("Log engine not available").classes("text-negative")
+        with ui.card().classes(UI_STYLES.get_layout_classes("full_width_padded")):
+            ui.label("Log engine not available").classes(
+                UI_STYLES.get_layout_classes("text_negative")
+            )
         return
 
     with ui.card().classes(
         f"w-full max-w-[{LOG_CARD_MAX_WIDTH}] mx-auto my-8 p-2 h-[{LOG_CARD_HEIGHT}]"
     ):
-        ui.label("Application Log").classes("text-h5 mb-4")
+        ui.label("Application Log").classes(UI_STYLES.get_layout_classes("title"))
         log_textarea = ui.html(content="").classes(
             "w-full h-full overflow-auto bg-black text-white p-2 rounded"
         )
@@ -49,13 +52,21 @@ def ui_log():
 
 def ui_info():
     """Info and README viewer with markdown rendering."""
-    with ui.splitter(value=INFO_SPLITTER_RATIO).classes("w-full h-full") as splitter:
+    with ui.splitter(value=INFO_SPLITTER_RATIO).classes(
+        UI_STYLES.get_layout_classes("full_size")
+    ) as splitter:
         with splitter.before:
-            with ui.tabs().props("vertical").classes("w-full") as info_tabs:
+            with (
+                ui.tabs()
+                .props("vertical")
+                .classes(UI_STYLES.get_layout_classes("full_width")) as info_tabs
+            ):
                 ui.tab("README", icon="description")
                 ui.tab("Info", icon="info")
         with splitter.after:
-            with ui.tab_panels(info_tabs, value="README").classes("w-full h-full"):
+            with ui.tab_panels(info_tabs, value="README").classes(
+                UI_STYLES.get_layout_classes("full_size")
+            ):
                 with ui.tab_panel("README"):
                     helpers.render_markdown_card("README.md")
                 with ui.tab_panel("Info"):

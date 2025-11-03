@@ -12,6 +12,7 @@ import asyncio
 from nicegui import ui, app
 
 from ..globals import GlobalRegistry
+from ..helpers import UI_STYLES
 from .time_tracking import ui_time_tracking
 from .add_data import ui_add_data
 from .tasks import ui_tasks
@@ -25,13 +26,13 @@ def setup_ui():
     LOG = GlobalRegistry.get("LOG")
     UI = GlobalRegistry.get("UI")
     DO = GlobalRegistry.get("DO")
-    
+
     # Enable dark mode
     dark = ui.dark_mode()
     dark.enable()
 
     # Create main tabs
-    with ui.tabs().classes("w-full") as tabs:
+    with ui.tabs().classes(UI_STYLES.get_layout_classes("full_width")) as tabs:
         tab_time = ui.tab("Time Tracking", icon="schedule")
         tab_data_input = ui.tab("Data Input", icon="input")
         tasks_input = ui.tab("To-Do", icon="check_box")
@@ -100,7 +101,9 @@ def setup_ui():
     tabs.on("update:model-value", on_tab_change)
 
     # Create tab panels with UI content
-    with ui.tab_panels(tabs, value=tab_time).classes("w-full"):
+    with ui.tab_panels(tabs, value=tab_time).classes(
+        UI_STYLES.get_layout_classes("full_width")
+    ):
         with ui.tab_panel(tab_time):
             ui_time_tracking()
         with ui.tab_panel(tab_data_input):

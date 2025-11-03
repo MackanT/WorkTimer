@@ -84,16 +84,20 @@ def ui_query_editor():
         with ui.dialog() as popup:
             with ui.card().classes(UI_STYLES.get_widget_width("standard")):
                 if input_type == "input":
-                    name_widget = ui.input("Query Name").classes("w-full")
+                    name_widget = ui.input("Query Name").classes(
+                        UI_STYLES.get_layout_classes("full_width")
+                    )
                 else:  # select
                     name_widget = ui.select(
                         options=options or [], label="Existing Query"
-                    ).classes("w-full")
+                    ).classes(UI_STYLES.get_layout_classes("full_width"))
 
                 async def on_button_click():
                     await on_confirm(popup, name_widget.value)
 
-                with ui.row().classes("justify-between items-center w-full"):
+                with ui.row().classes(
+                    UI_STYLES.get_layout_classes("full_row_between_centered")
+                ):
                     ui.button(title, on_click=on_button_click).classes(
                         UI_STYLES.get_layout_classes("button_fixed")
                     )
@@ -213,7 +217,11 @@ def ui_query_editor():
             popup.close()
 
         # Add buttons in a row
-        with ui.row().classes("justify-end gap-2"):
+        with ui.row().classes(
+            UI_STYLES.get_layout_classes("row_end")
+            + " "
+            + UI_STYLES.get_layout_classes("row_gap_2")
+        ):
             # Use centralized save button with additional_kwargs for table_name and pk_data
             helpers.add_generic_save_button(
                 save_data=save_data,
@@ -232,7 +240,7 @@ def ui_query_editor():
     # Query Button Rendering
     # ========================================================================
 
-    with ui.row().classes("justify-between items-center w-full"):
+    with ui.row().classes(UI_STYLES.get_layout_classes("full_row_between_centered")):
         preset_queries = ui.element()
 
         def render_query_buttons_group(queries):
@@ -249,7 +257,9 @@ def ui_query_editor():
             """Render all preset and custom query buttons."""
             preset_queries.clear()
             with preset_queries:
-                with ui.button_group().classes("gap-1"):
+                with ui.button_group().classes(
+                    UI_STYLES.get_layout_classes("row_gap_1")
+                ):
                     # Default queries
                     render_query_buttons_group(QE.df[QE.df["is_default"] == 1])
                     ui.separator().props("vertical").classes("mx-2")
@@ -259,7 +269,7 @@ def ui_query_editor():
         render_query_buttons()
 
         # Query management buttons
-        with ui.button_group().classes("gap-1"):
+        with ui.button_group().classes(UI_STYLES.get_layout_classes("row_gap_1")):
             for name, function in [
                 ("Save Query", save_custom_query),
                 ("Update Query", update_custom_query),

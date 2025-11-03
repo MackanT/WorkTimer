@@ -71,7 +71,7 @@ def create_date_range_picker(on_change_callback) -> tuple:
                     else None,
                 )
             )
-            with ui.row().classes("justify-end"):
+            with ui.row().classes(UI_STYLES.get_layout_classes("row_end")):
                 ui.button("Close", on_click=menu.close).props("flat")
         with date_input.add_slot("append"):
             ui.icon("edit_calendar").on("click", menu.open).classes(
@@ -131,10 +131,10 @@ def ui_time_tracking():
     # Filter Controls
     # ========================================================================
 
-    with ui.grid(columns=GRID_COLUMNS).classes("w-full gap-0 items-center"):
-        ui.label("Time Span").classes("items-center")
+    with ui.grid(columns=GRID_COLUMNS).classes(UI_STYLES.get_layout_classes("full_row_nogap")):
+        ui.label("Time Span").classes(UI_STYLES.get_layout_classes("row_centered"))
         selected_time = (
-            ui.radio(TIME_OPTIONS, value="Day").props("inline").classes("items-center")
+            ui.radio(TIME_OPTIONS, value="Day").props("inline").classes(UI_STYLES.get_layout_classes("row_centered"))
         )
         date_input, date_picker = create_date_range_picker(set_custom_radio)
 
@@ -142,10 +142,10 @@ def ui_time_tracking():
         radio_display_selection = (
             ui.radio(DISPLAY_OPTIONS, value="Time")
             .props("inline")
-            .classes("items-center")
+            .classes(UI_STYLES.get_layout_classes("row_centered"))
         )
 
-    ui.separator().classes("my-2")
+    ui.separator().classes(UI_STYLES.get_layout_classes("margin_y_2"))
 
     # Wire up event handlers
     date_input.value = helpers.get_range_for(selected_time.value)
