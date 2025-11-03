@@ -201,6 +201,7 @@ class DevOpsContactConfig(BaseModel):
 
     contacts: List[str] = Field(default_factory=list)
     assignees: List[str] = Field(default_factory=list)
+    default_assignee: Optional[str] = None
 
 
 class ConfigDevOpsContacts(BaseModel):
