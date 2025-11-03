@@ -931,7 +931,7 @@ def create_task_card(
 
     # Add completion styling
     card_classes = "w-full p-3 cursor-pointer"
-    card_style = "min-width: 320px; max-width: 400px; height: fit-content;"
+    card_style = "min-width: 320px; max-width: 400px;"
 
     if completed:
         card_classes += " opacity-75"
@@ -1007,19 +1007,21 @@ def create_task_card(
                         f"dense color={project_color}"
                     ).classes("text-xs")
 
-        # Third row: Big description box
-        if description:
-            with ui.element().classes("w-full mb-2"):
-                ui.label("Description:").classes("text-xs text-gray-400 mb-1")
-                with (
-                    ui.element()
-                    .classes("w-full p-2 bg-gray-800 rounded")
-                    .style("max-height: 100px; overflow-y: auto;")
-                ):
+        # Third row: Big description box (fixed height for uniform cards)
+        with ui.element().classes("w-full mb-2"):
+            ui.label("Description:").classes("text-xs text-gray-400 mb-1")
+            with (
+                ui.element()
+                .classes("w-full p-2 bg-gray-800 rounded")
+                .style("height: 100px; overflow-y: auto;")
+            ):
+                if description:
                     ui.label(description).classes("text-sm text-white").style(
                         "word-wrap: break-word; overflow-wrap: break-word; "
                         "white-space: pre-wrap; line-height: 1.4;"
                     )
+                else:
+                    ui.label("No description").classes("text-sm text-gray-500 italic")
 
         # Fourth row: status, priority, dates in a compact grid
         with ui.row().classes(

@@ -16,20 +16,33 @@ from .form_builder import EntityFormBuilder
 from .. import helpers
 
 # ============================================================================
-# Data Preparation Functions
+# Constants
+# ============================================================================
+
+# UI Layout Constants
+SPLITTER_RATIO = 65  # Percentage for left panel (task view)
+TASK_LIST_HEIGHT = "600px"  # Height of scrollable task list
+SORT_SELECT_WIDTH = "w-64"  # Width class for sort dropdown
+
+# ============================================================================
+# Helper Functions
 # ============================================================================
 
 
-@DataPrepRegistry.register("task", "Add")
-def prep_task_add_data(**kwargs):
-    """Prepare data sources for adding a new task."""
+def get_customer_project_data() -> dict:
+    """
+    Get active customers and project names from ActiveData.
+
+    Returns:
+        Dictionary with customer_data (list) and project_names (dict)
+    """
     AD = GlobalRegistry.get("AD")
     LOG = GlobalRegistry.get("LOG")
 
     if not AD or AD.df is None or AD.df.empty:
         if LOG:
-            LOG.log_msg("WARNING", "No customer/project data available for task add")
-        return {}
+            LOG.log_msg("WARNING", "No customer/project data available")
+        return {"customer_data": [], "project_names": {}}
 
     # Get active customers and projects from AD.df
     active_data = helpers.filter_df(AD.df, {"c_current": 1})
@@ -43,12 +56,28 @@ def prep_task_add_data(**kwargs):
         )
         project_names[customer] = helpers.get_unique_list(filtered, "project_name")
 
+    return {
+        "customer_data": customer_names,
+        "project_names": project_names,
+    }
+
+
+# ============================================================================
+# Data Preparation Functions
+# ============================================================================
+
+
+@DataPrepRegistry.register("task", "Add")
+def prep_task_add_data(**kwargs):
+    """Prepare data sources for adding a new task."""
+    # Get customer/project data
+    data = get_customer_project_data()
+
     # Set default due date to tomorrow
     default_due_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 
     return {
-        "customer_data": customer_names,
-        "project_names": project_names,
+        **data,
         "due_date": default_due_date,
         "today": datetime.now().strftime("%Y-%m-%d"),
         "priority": 2,  # Default: Medium
@@ -59,43 +88,15 @@ def prep_task_add_data(**kwargs):
 @DataPrepRegistry.register("task", "Update")
 def prep_task_update_data(**kwargs):
     """Prepare data sources for updating a task."""
-    AD = GlobalRegistry.get("AD")
-    LOG = GlobalRegistry.get("LOG")
-
-    if not AD or AD.df is None or AD.df.empty:
-        if LOG:
-            LOG.log_msg("WARNING", "No customer/project data available for task update")
-        return {}
-
-    # Get active customers and projects from AD.df
-    active_data = helpers.filter_df(AD.df, {"c_current": 1})
-    customer_names = helpers.get_unique_list(active_data, "customer_name")
-
-    # Build project names per customer
-    project_names = {}
-    for customer in customer_names:
-        filtered = helpers.filter_df(
-            active_data, {"customer_name": customer, "p_current": 1}
-        )
-        project_names[customer] = helpers.get_unique_list(filtered, "project_name")
+    # Get customer/project data
+    data = get_customer_project_data()
 
     # task_list will be populated asynchronously after form builds
     # Child fields use dynamic_query to fetch values when parent changes
     return {
-        "customer_data": customer_names,
-        "project_names": project_names,
+        **data,
         "today": datetime.now().strftime("%Y-%m-%d"),
         "task_list": [],  # Will be populated by populate_task_list_async()
-    }
-
-
-@DataPrepRegistry.register("task", "Delete")
-def prep_task_delete_data(**kwargs):
-    """Prepare data sources for deleting a task."""
-    # TODO: Get task data for dropdown
-    # For now, return empty - tasks need to be loaded async
-    return {
-        "task_data": {},
     }
 
 
@@ -137,12 +138,6 @@ async def populate_task_list_async():
             if task_selector:
                 task_selector.options = task_list
                 task_selector.update()
-
-                if LOG:
-                    LOG.log_msg(
-                        "INFO",
-                        f"populate_task_list_async: Loaded {len(task_list)} tasks",
-                    )
         else:
             if LOG:
                 LOG.log_msg("WARNING", "populate_task_list_async: No tasks found")
@@ -222,8 +217,8 @@ view_is_cards = {"value": True}  # Default to card view
 def get_sort_query(sort_by: str) -> str:
     """Get SQL ORDER BY clause based on sort selection."""
     sort_queries = {
-        "Due Date (Earliest First)": "ORDER BY due_date ASC",  ## TODO make due_date = NULL last
-        "Due Date (Latest First)": "ORDER BY due_date DESC",  ## TODO make due_date = NULL last
+        "Due Date (Earliest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END DESC, due_date ASC",
+        "Due Date (Latest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 0 ELSE 1 END DESC, due_date DESC",
         "Priority (High to Low)": "ORDER BY priority ASC",
         "Priority (Low to High)": "ORDER BY priority DESC",
         "Status": "ORDER BY completed ASC, due_date ASC",
@@ -235,7 +230,9 @@ def get_sort_query(sort_by: str) -> str:
     return sort_queries.get(sort_by, "ORDER BY due_date ASC")
 
 
-async def fetch_tasks(sort_by: str = "Due Date (Earliest First)") -> list[dict]:
+async def fetch_tasks(
+    sort_by: str = "Due Date (Earliest First)", show_completed: bool = False
+) -> list[dict]:
     """Fetch tasks from database with customer/project names."""
     db = GlobalRegistry.get("QE")
     LOG = GlobalRegistry.get("LOG")
@@ -245,9 +242,13 @@ async def fetch_tasks(sort_by: str = "Due Date (Earliest First)") -> list[dict]:
             LOG.log_msg("ERROR", "Database not available")
         return []
 
+    # Build WHERE clause based on show_completed flag
+    where_clause = "" if show_completed else "WHERE completed = 0"
+
     # Query just tasks table - customer_name and project_name are already in tasks
     query = f"""
         SELECT * FROM tasks 
+        {where_clause}
         {get_sort_query(sort_by)}
     """
 
@@ -278,23 +279,6 @@ async def fetch_tasks(sort_by: str = "Due Date (Earliest First)") -> list[dict]:
         tasks_list.append(task)
 
     return tasks_list
-
-
-def create_fallback_task(task_id: int) -> dict:
-    """Create a fallback task dictionary for error recovery."""
-    return {
-        "task_id": task_id,
-        "task_title": "Unknown Task",
-        "task_description": "",
-        "customer_id": None,
-        "customer_name": "Unknown",
-        "project_id": None,
-        "project_name": "Unknown",
-        "priority": 2,
-        "due_date": datetime.now().strftime("%Y-%m-%d"),
-        "completed": 0,
-        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
 
 
 def on_task_checkbox_click(task_id: int, checked: bool):
@@ -335,6 +319,7 @@ def on_task_edit_click(task_id: int):
             return
 
         try:
+            # task_id is validated as int, so f-string is safe here
             task_df = await db.query_db(
                 f"SELECT task_id, title FROM tasks WHERE task_id = {task_id}"
             )
@@ -376,6 +361,7 @@ def on_task_click(task_id: int):
             return
 
         try:
+            # task_id is validated as int, so f-string is safe here
             task_df = await db.query_db(
                 f"SELECT * FROM tasks WHERE task_id = {task_id}"
             )
@@ -427,7 +413,9 @@ def on_task_click(task_id: int):
                                 )
                                 # Special handling for Description to preserve formatting
                                 if field[0] == "Description":
-                                    ui.label(str(field[1])).classes("text-base mb-2").style(
+                                    ui.label(str(field[1])).classes(
+                                        "text-base mb-2"
+                                    ).style(
                                         "white-space: pre-wrap; word-wrap: break-word;"
                                     )
                                 else:
@@ -452,7 +440,11 @@ def render_card_view(tasks: list[dict], container: ui.element):
     config_task_visuals = GlobalRegistry.get("config_task_visuals")
 
     with container:
-        with ui.scroll_area().classes("w-full").style("height: 600px; min-width: 0;"):
+        with (
+            ui.scroll_area()
+            .classes("w-full")
+            .style(f"height: {TASK_LIST_HEIGHT}; min-width: 0;")
+        ):
             # Use CSS Grid for proper grid layout with padding
             with (
                 ui.element()
@@ -552,6 +544,7 @@ async def refresh_tasks():
     """Refresh task display."""
     tasks_container = GlobalRegistry.get("tasks_container")
     sort_select = GlobalRegistry.get("tasks_sort_select")
+    show_completed_toggle = GlobalRegistry.get("tasks_show_completed_toggle")
     LOG = GlobalRegistry.get("LOG")
 
     if not tasks_container:
@@ -560,7 +553,8 @@ async def refresh_tasks():
         return
 
     sort_by = sort_select.value if sort_select else "Due Date (Earliest First)"
-    tasks = await fetch_tasks(sort_by)
+    show_completed = show_completed_toggle.value if show_completed_toggle else False
+    tasks = await fetch_tasks(sort_by, show_completed)
 
     if view_is_cards["value"]:
         render_card_view(tasks, tasks_container)
@@ -610,32 +604,42 @@ def ui_tasks():
     # ========================================================================
 
     # Create main container with splitter (left: task view, right: forms)
-    with ui.splitter(value=65).classes("w-full h-full") as splitter:
+    with ui.splitter(value=SPLITTER_RATIO).classes("w-full h-full") as splitter:
         # Left panel: Task view
         with splitter.before:
             with ui.element().classes("p-4 w-full h-full"):
-                ui.label("Tasks").classes("text-2xl font-bold mb-4")
-
                 # Controls row
                 with ui.row().classes("w-full justify-between items-center mb-4"):
-                    # Sort dropdown
-                    sort_options = [
-                        "Due Date (Earliest First)",
-                        "Due Date (Latest First)",
-                        "Priority (High to Low)",
-                        "Priority (Low to High)",
-                        "Status",
-                        "Customer",
-                        "Project",
-                        "Created (Newest First)",
-                        "Created (Oldest First)",
-                    ]
-                    sort_select = ui.select(
-                        options=sort_options,
-                        value="Due Date (Earliest First)",
-                        on_change=lambda: refresh_tasks(),
-                    ).classes("w-64")
-                    GlobalRegistry.set("tasks_sort_select", sort_select)
+                    # Left side: Sort dropdown and show completed toggle
+                    with ui.row().classes("gap-4 items-center"):
+                        # Sort dropdown
+                        sort_options = [
+                            "Due Date (Earliest First)",
+                            "Due Date (Latest First)",
+                            "Priority (High to Low)",
+                            "Priority (Low to High)",
+                            "Status",
+                            "Customer",
+                            "Project",
+                            "Created (Newest First)",
+                            "Created (Oldest First)",
+                        ]
+                        sort_select = ui.select(
+                            options=sort_options,
+                            value="Due Date (Earliest First)",
+                            on_change=lambda: refresh_tasks(),
+                        ).classes(SORT_SELECT_WIDTH)
+                        GlobalRegistry.set("tasks_sort_select", sort_select)
+
+                        # Show completed toggle
+                        show_completed_toggle = ui.switch(
+                            "Show Completed",
+                            value=False,
+                            on_change=lambda: refresh_tasks(),
+                        )
+                        GlobalRegistry.set(
+                            "tasks_show_completed_toggle", show_completed_toggle
+                        )
 
                     # Right side: Add button and view toggle
                     with ui.row().classes("gap-2"):
@@ -713,6 +717,71 @@ def ui_tasks():
                             lambda: asyncio.create_task(populate_task_list_async()),
                             once=True,
                         )
+
+                        # Add delete button at the bottom
+                        async def handle_delete_task():
+                            import re
+
+                            task_selector = update_widgets.get("task_selector")
+                            if not task_selector or not task_selector.value:
+                                ui.notify("Please select a task first", type="warning")
+                                return
+
+                            # Extract task_id from selector
+                            match = re.search(
+                                r"\(ID: (\d+)\)", str(task_selector.value)
+                            )
+                            if not match:
+                                ui.notify("Could not extract task ID", type="negative")
+                                return
+
+                            task_id = int(match.group(1))
+                            task_title = task_selector.value.split(" (ID:")[0]
+
+                            # Show confirmation dialog
+                            with ui.dialog() as dialog, ui.card():
+                                ui.label(
+                                    f"Are you sure you want to delete task '{task_title}'?"
+                                ).classes("text-lg mb-4")
+                                with ui.row().classes("w-full justify-end gap-2"):
+                                    ui.button("Cancel", on_click=dialog.close).props(
+                                        "flat"
+                                    )
+
+                                    async def confirm_delete():
+                                        QE = GlobalRegistry.get("QE")
+                                        if QE:
+                                            try:
+                                                await QE.function_db(
+                                                    "delete_task", task_id=task_id
+                                                )
+                                                ui.notify(
+                                                    f"Task '{task_title}' deleted",
+                                                    type="positive",
+                                                )
+                                                dialog.close()
+                                                await on_task_save_success()
+                                                # Clear the form
+                                                task_selector.set_value(None)
+                                            except Exception as e:
+                                                ui.notify(
+                                                    f"Failed to delete task: {e}",
+                                                    type="negative",
+                                                )
+
+                                    ui.button(
+                                        "Delete",
+                                        on_click=confirm_delete,
+                                        color="negative",
+                                    )
+                            dialog.open()
+
+                        ui.button(
+                            "Delete Task",
+                            on_click=handle_delete_task,
+                            icon="delete",
+                            color="negative",
+                        ).classes("mt-4")
 
                     # View tab - read-only display of task details
                     with ui.tab_panel("View"):
