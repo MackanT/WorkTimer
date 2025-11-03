@@ -426,17 +426,35 @@ def ui_add_data():
     # ========================================================================
 
     with ui.column().classes("w-full gap-4"):
-        ui.label("Add Data").classes("text-2xl font-bold")
-
         # Use splitter for vertical tabs layout (tabs on left, content on right)
         with ui.splitter(value=20).classes("w-full h-full") as splitter:
             # Left side: Vertical tabs
             with splitter.before:
                 with ui.tabs().props("vertical").classes("w-full") as tabs_vertical:
-                    ui.tab("customer", label="Customer", icon="business")
-                    ui.tab("project", label="Project", icon="work")
-                    ui.tab("devops", label="DevOps", icon="cloud")
-                    ui.tab("bonus", label="Bonus", icon="card_giftcard")
+                    # Get icons from config metadata
+                    customer_icon = (
+                        config_ui.get("customer", {})
+                        .get("meta", {})
+                        .get("icon", "business")
+                    )
+                    project_icon = (
+                        config_ui.get("project", {}).get("meta", {}).get("icon", "work")
+                    )
+                    devops_icon = (
+                        config_ui.get("devops_work_item", {})
+                        .get("meta", {})
+                        .get("icon", "cloud")
+                    )
+                    bonus_icon = (
+                        config_ui.get("bonus", {})
+                        .get("meta", {})
+                        .get("icon", "card_giftcard")
+                    )
+
+                    ui.tab("customer", label="Customer", icon=customer_icon)
+                    ui.tab("project", label="Project", icon=project_icon)
+                    ui.tab("devops", label="DevOps", icon=devops_icon)
+                    ui.tab("bonus", label="Bonus", icon=bonus_icon)
                     ui.tab("database", label="Database", icon="storage")
 
             # Right side: Tab content
