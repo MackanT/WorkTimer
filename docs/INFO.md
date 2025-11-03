@@ -1,112 +1,244 @@
 # 🚀 WorkTimer User Guide
 
-Welcome to **WorkTimer** – your all-in-one time tracking and DevOps management tool! This guide will help you get started and make the most of the app’s features.
-
-
-## 📋 How to Use WorkTimer
-
-Follow these steps to get started with tracking your work:
-
-1. **Add Customer(s)**
-  - Go to the **Data Input** tab.
-  - Fill in the customer details and click 'Add'.
-
-2. **Add Project(s)**
-  - In the **Data Input** tab, select the project section.
-  - Enter project details and link them to a customer, then click 'Add'.
-
-3. **Add Bonus(es)**
-  - Still in the **Data Input** tab, switch to the bonus section.
-  - Enter bonus information and save.
-
-4. **Start and Stop Times for Customers**
-  - Use the **Time Tracking** tab to start and stop timers for your customers and projects.
-  - Select the customer and project, then use the checkbox or timer controls to log your work.
-
-All your entries will be saved and visible in the app for review and reporting.
+Welcome to **WorkTimer** – your modern time tracking and DevOps management solution! This guide covers everything you need to know to track time, manage tasks, and integrate with Azure DevOps.
 
 ---
 
 ## 🏁 Getting Started
 
-1. **Launch the App**
-   - Start WorkTimer by running the Python script:
-     ```
-     python [main.py]
-     ```
-     or by running (Docker installation, see bottom of guide)
-     ```
-     docker compose up
-     ```
-   - Open your browser and navigate to `http://localhost:8080`.
+### Launching the Application
+
+**Option 1: Direct Python Execution**
+```bash
+uv run -m src.main
+```
+
+**Option 2: Docker (Recommended for 24/7 Operation)**
+```bash
+docker compose up
+```
+
+Once started, open your browser to **`http://localhost:8080`**
+
+### Initial Setup
+
+1. **Add Your First Customer**
+   - Navigate to **Data Input** → **Customer** tab
+   - Fill in customer name and (optionally) Azure DevOps details
+   - Click **Add**
+
+2. **Create Projects**
+   - Navigate to **Data Input** → **Project** tab
+   - Select your customer from the dropdown
+   - Enter project details and click **Add**
+
+3. **Configure Bonuses** (Optional)
+   - Navigate to **Data Input** → **Bonus** tab
+   - Add bonus entries as a percentage (e.g., 25 for 25%) and the start date
+   - If no bonus is configured, all calculations default to 0% bonus
+
+You're now ready to start tracking time!
 
 ---
 
 ## ⏰ Time Tracking
 
-The time tracking view lets you filter and display your work entries based on selected time span, custom date ranges, and whether you want to see tracked hours or bonus amounts. Adjust these options to focus on the period and data most relevant to you.
+Track your billable hours with an intuitive customer/project interface.
+
+### Features
+- **Time Span Selection** - View data by Day, Week, Month, Year, All-Time, or Custom range
+- **Display Toggle** - Switch between tracked time and bonus amounts
+- **Live Timers** - Start/stop timers with a single checkbox click
+- **Visual Indicators** - Active timers shown with animated icons in tab header
+
+### Workflow
+1. Select your desired time span (default: Day)
+2. Find the customer and project you're working on
+3. Click the checkbox to start tracking time
+4. Click again to stop and log the entry
+
+**Pro Tip:** When you stop a timer, you'll have the option to attach a comment or link to a DevOps work item.
+
+---
+
+## ✅ To-Do System
+
+Manage tasks independently from DevOps with the built-in task system.
+
+### Features
+- **Card & Table Views** - Toggle between visual cards and detailed table layouts
+- **Rich Task Data** - Track titles, descriptions, due dates, priority, status, customer, and project
+- **Smart Filtering** - Sort by due date, priority, status, or customer/project
+- **Quick Actions** - Click cards to view details, edit tasks, or mark as complete
+
+### Creating Tasks
+1. Go to **To-Do** tab
+2. Click the **+** button or switch to **Add** tab
+3. Fill in task details (title is required)
+4. Click **Add Task**
+
+### Managing Tasks
+- **Edit**: Click any task card, then switch to **Update** tab
+- **Complete**: Click the checkbox on any task
+- **View Details**: Click a card to see full description and metadata
 
 ---
 
 ## 📝 Data Input
 
+Central hub for managing all your entities (customers, projects, bonuses, DevOps work items).
 
-The Data Input tab is your central place to create, edit, enable, or disable customers and projects. The simplified UI lets you make all changes without writing SQL queries—just use the forms and options provided.
+### Customers
+- **Add**: Create new customers with optional DevOps PAT tokens
+- **Update**: Modify customer details (changes propagate to projects)
+- **Disable/Reenable**: Soft-delete customers without losing historical data
+
+### Projects
+- **Add**: Link projects to customers with descriptive names
+- **Update**: Change project details or update devpos default ids
+- **Disable/Reenable**: Archive projects while preserving time entries
+
+### Bonuses
+- **Add**: Record flexible bonus percent
+
+### DevOps Work Items
+- **User Stories**: Create stories with markdown descriptions and live preview
+- **Features**: Create features with parent epic linking
+- **Epics**: Create top-level epics for organizing work
+- **Parent Linking**: Automatically link child items to parent features/epics
+
+**Note:** DevOps integration requires valid PAT token and organization URL configured per customer.
 
 ---
 
-## 🛠️ DevOps Settings
+## 🔍 Query Editors
 
+Powerful SQL interface for custom data analysis and table editing.
 
-The DevOps Settings tab currently supports creating user stories linked to your projects. More features, such as epic and feature management, will be added in future updates.
+### Features
+- **Preset Queries** - Click built-in queries for common reports
+- **Custom Queries** - Write, save, and manage your own SQL queries
+- **Syntax Validation** - Real-time SQL syntax checking before execution
+- **Result Editing** - Click any row in results to edit values directly
+- **Keyboard Shortcuts** - Press **F5** to execute queries
+
+### Workflow
+1. Select a preset query or write custom SQL in the editor
+2. Press **F5** or click **Execute**
+3. View results in the table below
+4. Click any row to edit values (opens edit dialog)
+
+### Managing Custom Queries
+- **Save**: Click **Save As** to store your SQL for reuse
+- **Update**: Modify and save changes to existing custom queries
+- **Delete**: Remove custom queries you no longer need
+
+**Pro Tip:** Use the color-coded editor to spot syntax errors before execution.
 
 ---
 
-## 🗃️ Query Editors
+## 🗃️ Database Tools
 
+Advanced features for database management and migration.
 
-In the Query Editors tab, you can run either premade queries by selecting them from a list and pressing F5, or write your own custom SQL to find the values you need. Save and edit your favorite queries as custom queries for quick access.
+### Schema Comparison
+- Compare your current database schema with older versions
+- Identify structural changes and plan migrations
+- Generate sync SQL for schema updates
 
-For simple modifications to the default tables, just click on a row in the query output—this will open a popup where you can make changes directly.
+### Database Script Runner
+- Execute SQL scripts on any database file
+- Save query results for analysis or migration
+- Useful for migrating data between database versions
+
+**Note:** These tools are for users who participated in the alpha builds of the program and or in the future want to migrate to a newer incompatible version
 
 ---
 
 ## 📊 Log & Info
 
+### Application Log
+- **Real-time Monitoring** - See all actions as they happen
+- **Color-Coded Messages** - Info (white), warnings (yellow), errors (red)
+- **Source Tracking** - Identify which engine generated each log entry
+- **Modern Interface** - Dark theme with monospace font for readability
 
-The Application Log records most actions performed in the program, giving you a real-time overview of activity. Note that logs are not saved anywhere—if you restart the server, the log history will be cleared.
+**Important:** Logs are stored in memory only and reset on application restart.
 
-The Info tab provides documentation, usage tips, and troubleshooting help to guide you through the app.
+### Info Tab
+Access this guide and additional documentation directly within the application.
 
 ---
 
 ## 🧑‍💻 Troubleshooting
 
-If you encounter any issues, check the Log tab for error messages. For further help, contact Marcus Toftås.
+### Common Issues
+
+**Application won't start**
+- Check that port 8080 is not in use by another application
+- Verify Python 3.11+ is installed (`python --version`)
+
+**DevOps integration not working**
+- Verify PAT token has correct permissions (Work Items: Read, Write, Manage)
+- Check that organization URL is correct (should be just the org name, not full URL)
+- Review Application Log for specific error messages
+
+**Database errors**
+- Ensure `data_dpg.db` file exists and is not locked by another process
+- Check that you have write permissions in the application directory
+- Review Application Log for SQL error details
+
+**UI not responsive**
+- Hard refresh your browser (Ctrl+F5 or Cmd+Shift+R)
+- Clear browser cache
+- Check Application Log for JavaScript errors
+
+### Getting Help
+For additional support, contact **Marcus Toftås** or check the GitHub repository issues.
 
 ---
 
+## 🐳 Docker Deployment
 
-## 🐳 Running with Docker
+Run WorkTimer in a container for 24/7 availability without local Python installation.
 
-You can run WorkTimer using Docker for 24/7 access:
+### Prerequisites
+- Docker Desktop installed ([download here](https://www.docker.com/products/docker-desktop))
+- `docker-compose.yml` and `Dockerfile` in project root
 
-1. **Install Docker**
-  - Download and install Docker Desktop from [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop)
+### Deployment Steps
 
-2. **Get the Project Files**
-  - Make sure you have the `Dockerfile`, `docker-compose.yml`, and any required config files.
+1. **Build and Start**
+   ```bash
+   docker compose up
+   ```
+   Add `-d` flag for detached mode (runs in background)
 
-3. **Start the App**
-  - Open a terminal in the project directory and run:
-    ```sh
-    docker compose up
-    ```
-  - This will build and start all services defined in your compose file.
+2. **Access the Application**
+   Open browser to `http://localhost:8080`
 
-4. **Access the App**
-  - Open your browser and go to `http://localhost:8080`
+3. **View Logs**
+   ```bash
+   docker compose logs -f
+   ```
 
-No need to install Python or dependencies locally—the container handles everything!
+4. **Stop the Application**
+   ```bash
+   docker compose down
+   ```
+
+### Data Persistence
+The database file is mounted as a volume, so your data persists across container restarts. Ensure the volume mapping in `docker-compose.yml` points to your desired data location.
+
+---
+
+## 💡 Tips & Best Practices
+
+- **Daily Routine**: Start each day by reviewing your To-Do list and setting task priorities
+- **Time Tracking**: Start timers at the beginning of work sessions, not retroactively
+- **Comments**: Add meaningful comments when stopping timers to improve DevOps integration
+- **Custom Queries**: Save frequently-used SQL queries for quick access
+- **DevOps Sync**: Let automatic sync run—full refresh happens daily at 2 AM, incremental hourly
+- **Backup**: Regularly backup your `data_dpg.db` file before major operations
 
 ---
