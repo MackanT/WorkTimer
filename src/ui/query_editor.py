@@ -240,44 +240,62 @@ def ui_query_editor():
     # Query Button Rendering
     # ========================================================================
 
-    with ui.row().classes(UI_STYLES.get_layout_classes("full_row_between_centered")):
-        preset_queries = ui.element()
+    # Top row: Preset queries on left, management buttons on right
+    with ui.row().classes("w-full justify-between items-center gap-2 mb-1"):
+        # Left side: Preset queries
+        with ui.row().classes("items-center gap-2 flex-wrap"):
+            ui.label("Preset:").classes("text-sm font-semibold text-gray-400")
+            preset_queries = ui.row().classes("gap-2 flex-wrap")
 
-        def render_query_buttons_group(queries):
-            """Render a group of query buttons from a dataframe."""
-            for _, row in queries.iterrows():
-                ui.button(
-                    row["query_name"],
-                    on_click=lambda r=row: editor.set_value(r["query_sql"]),
-                ).props("flat dense").classes(
-                    UI_STYLES.get_widget_style("query_button", "base")["classes"]
+        # Right side: Management buttons
+        with ui.row().classes("gap-2"):
+            ui.button(icon="save", on_click=save_custom_query).props(
+                "round size=sm color=green"
+            ).tooltip("Save Query")
+            ui.button(icon="edit", on_click=update_custom_query).props(
+                "round size=sm color=blue"
+            ).tooltip("Update Query")
+            ui.button(icon="delete", on_click=delete_custom_query).props(
+                "round size=sm color=red"
+            ).tooltip("Delete Query")
+
+    # Custom queries section - separate row below
+    with ui.row().classes("items-center gap-2 flex-wrap mb-3"):
+        ui.label("Custom:").classes("text-sm font-semibold text-gray-400")
+        custom_queries = ui.row().classes("gap-2 flex-wrap")
+
+    def render_query_chip(query_name, query_sql, is_default=True):
+        """Render a single query as a clickable chip."""
+        # Use a muted blue-grey color
+        ui.chip(
+            query_name,
+            on_click=lambda: editor.set_value(query_sql),
+        ).props("clickable").classes("cursor-pointer text-sm").style(
+            "background-color: #4a5568; color: #e2e8f0"
+        )
+
+    def render_query_buttons():
+        """Render all preset and custom query chips."""
+        preset_queries.clear()
+        custom_queries.clear()
+
+        with preset_queries:
+            for _, row in QE.df[QE.df["is_default"] == 1].iterrows():
+                render_query_chip(row["query_name"], row["query_sql"], is_default=True)
+
+        with custom_queries:
+            custom_df = QE.df[QE.df["is_default"] != 1]
+            if custom_df.empty:
+                ui.label("No custom queries yet").classes(
+                    "text-xs text-gray-500 italic"
                 )
+            else:
+                for _, row in custom_df.iterrows():
+                    render_query_chip(
+                        row["query_name"], row["query_sql"], is_default=False
+                    )
 
-        def render_query_buttons():
-            """Render all preset and custom query buttons."""
-            preset_queries.clear()
-            with preset_queries:
-                with ui.button_group().classes(
-                    UI_STYLES.get_layout_classes("row_gap_1")
-                ):
-                    # Default queries
-                    render_query_buttons_group(QE.df[QE.df["is_default"] == 1])
-                    ui.separator().props("vertical").classes("mx-2")
-                    # Custom queries
-                    render_query_buttons_group(QE.df[QE.df["is_default"] != 1])
-
-        render_query_buttons()
-
-        # Query management buttons
-        with ui.button_group().classes(UI_STYLES.get_layout_classes("row_gap_1")):
-            for name, function in [
-                ("Save Query", save_custom_query),
-                ("Update Query", update_custom_query),
-                ("Delete Query", delete_custom_query),
-            ]:
-                ui.button(name, on_click=function).props("flat dense").classes(
-                    UI_STYLES.get_widget_style("query_button", "base")["classes"]
-                )
+    render_query_buttons()
 
     async def show_row_edit_popup(row_data):
         """Show popup for editing a row from query results."""
@@ -362,7 +380,13 @@ def ui_query_editor():
     # Query Editor UI Components
     # ========================================================================
 
-    ui.label("Query Editor")
+    # Execute button above editor (replaces label)
+    with ui.row().classes(UI_STYLES.get_layout_classes("row_end")):
+        ui.button(
+            "Execute Query (f5)",
+            icon="play_arrow",
+            on_click=lambda: asyncio.create_task(execute_query()),
+        ).props("color=primary size=sm")
 
     # Get initial query (default 'time' query)
     initial_query = QE.df[QE.df["query_name"] == "time"]["query_sql"].values[0]
