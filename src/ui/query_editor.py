@@ -247,16 +247,16 @@ def ui_query_editor():
             ui.label("Preset:").classes("text-sm font-semibold text-gray-400")
             preset_queries = ui.row().classes("gap-2 flex-wrap")
 
-        # Right side: Management buttons
-        with ui.row().classes("gap-2"):
+        # Right side: Management buttons (styled like To-Do view toggle)
+        with ui.row().classes("gap-1"):
             ui.button(icon="save", on_click=save_custom_query).props(
-                "round size=sm color=green"
+                "flat dense color=primary"
             ).tooltip("Save Query")
             ui.button(icon="edit", on_click=update_custom_query).props(
-                "round size=sm color=blue"
+                "flat dense color=primary"
             ).tooltip("Update Query")
             ui.button(icon="delete", on_click=delete_custom_query).props(
-                "round size=sm color=red"
+                "flat dense color=negative"
             ).tooltip("Delete Query")
 
     # Custom queries section - separate row below
@@ -266,12 +266,12 @@ def ui_query_editor():
 
     def render_query_chip(query_name, query_sql, is_default=True):
         """Render a single query as a clickable chip."""
-        # Use a muted blue-grey color
-        ui.chip(
+        # Subtle outline button
+        ui.button(
             query_name,
             on_click=lambda: editor.set_value(query_sql),
-        ).props("clickable").classes("cursor-pointer text-sm").style(
-            "background-color: #4a5568; color: #e2e8f0"
+        ).props("outline dense no-caps").classes("cursor-pointer").style(
+            "color: #9ca3af; border-color: #4b5563"
         )
 
     def render_query_buttons():
