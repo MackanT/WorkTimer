@@ -9,7 +9,7 @@ import markdown as _markdown
 import bleach as _bleach
 from markdownify import markdownify as _markdownify
 
-from .globals import SaveData
+from .globals import GlobalRegistry, SaveData
 
 
 # ===== UI STYLE MANAGER =====
@@ -742,27 +742,9 @@ def make_input_row(
             ):
                 # Use static options from config (e.g., status, priority)
                 options = config_options
-                # DEBUG: Log static options being used
-                from .globals import GlobalRegistry
-
-                LOG = GlobalRegistry.get("LOG")
-                if LOG:
-                    LOG.log_msg(
-                        "INFO",
-                        f"make_input_row: Field '{fname}' using static options (has parent: {'parent' in field}): {options}",
-                    )
             elif "parent" in field:
                 # No static options, will be populated by parent binding
                 options = []
-                # DEBUG: Log dynamic options
-                from .globals import GlobalRegistry
-
-                LOG = GlobalRegistry.get("LOG")
-                if LOG:
-                    LOG.log_msg(
-                        "INFO",
-                        f"make_input_row: Field '{fname}' has parent, options will be populated dynamically",
-                    )
             else:
                 # Fallback to whatever options were defined
                 options = config_options if config_options else []
@@ -772,9 +754,14 @@ def make_input_row(
             # Check if with_input is specified in field config, default to True
             with_input = field.get("with_input", True)
             select_widget = ui.select(options, label=label, with_input=with_input)
-            # If with_input is enabled, allow adding new values
+            # If with_input is enabled, check if custom values are allowed
             if with_input:
-                select_widget.props('new-value-mode="add-unique"')
+                # allow_custom defaults to True for backwards compatibility
+                # Set allow_custom: false to enable search without allowing new values
+                allow_custom = field.get("allow_custom", True)
+                if allow_custom:
+                    select_widget.props('new-value-mode="add-unique"')
+                # else: search enabled but no custom values allowed
             select_widget.classes(widget_classes)
             if "default" in field:
                 select_widget.value = field["default"]
@@ -1144,6 +1131,7 @@ def bind_parent_relations(
 
                 options_map = field_config.get("options", {})
                 parent_val = widgets[parent].value if parent in widgets else None
+
                 widget = widgets.get(child)
                 if widget is None:
                     return
@@ -1156,46 +1144,75 @@ def bind_parent_relations(
                     )
 
                     if not has_static_options:
-                        # Only update options if field doesn't have static options
-                        if isinstance(options_map, dict):
-                            widget.options = options_map.get(parent_val, [])
-                        elif isinstance(options_map, list):
-                            widget.options = options_map
-                        else:
-                            widget.options = []
+                        # Check if field has dynamic query configured
+                        dynamic_query = field_config.get("dynamic_query")
+                        if dynamic_query and parent_val:
+                            # Execute dynamic query to fetch options
 
-                        # Special handling for nested data sources like parent_names
-                        options_source = field_config.get("options_source")
-                        if options_source and options_source in data_sources:
-                            data = data_sources[options_source]
-                            if isinstance(data, dict) and parent_val in data:
-                                if field_config.get("name") == "parent_name":
-                                    # Special handling for parent_name field - needs work_item_type
-                                    work_item_type_widget = widgets.get(
-                                        "work_item_type"
+                            QE = GlobalRegistry.get("QE")
+                            if QE:
+                                try:
+                                    # Replace {parent_value} placeholder in query
+                                    query = dynamic_query.replace(
+                                        "{parent_value}", str(parent_val)
                                     )
-                                    if (
-                                        work_item_type_widget
-                                        and work_item_type_widget.value
-                                    ):
-                                        work_item_type = work_item_type_widget.value
-                                        customer_data = data.get(parent_val, {})
-                                        if isinstance(customer_data, dict):
-                                            widget.options = customer_data.get(
-                                                work_item_type, []
-                                            )
+                                    result_df = await QE.query_db(query)
+
+                                    if result_df is not None and not result_df.empty:
+                                        # Assume first column contains the options
+                                        widget.options = result_df.iloc[:, 0].tolist()
+                                    else:
+                                        widget.options = []
+                                except Exception as e:
+                                    LOG = GlobalRegistry.get("LOG")
+                                    if LOG:
+                                        LOG.log_msg(
+                                            "ERROR",
+                                            f"Dynamic query failed for {child}: {e}",
+                                        )
+                                    widget.options = []
+                        else:
+                            # Fallback to static options from data_sources
+                            # Only update options if field doesn't have static options
+                            if isinstance(options_map, dict):
+                                widget.options = options_map.get(parent_val, [])
+                            elif isinstance(options_map, list):
+                                widget.options = options_map
+                            else:
+                                widget.options = []
+
+                            # Special handling for nested data sources like parent_names
+                            options_source = field_config.get("options_source")
+                            if options_source and options_source in data_sources:
+                                data = data_sources[options_source]
+                                if isinstance(data, dict) and parent_val in data:
+                                    if field_config.get("name") == "parent_name":
+                                        # Special handling for parent_name field - needs work_item_type
+                                        work_item_type_widget = widgets.get(
+                                            "work_item_type"
+                                        )
+                                        if (
+                                            work_item_type_widget
+                                            and work_item_type_widget.value
+                                        ):
+                                            work_item_type = work_item_type_widget.value
+                                            customer_data = data.get(parent_val, {})
+                                            if isinstance(customer_data, dict):
+                                                widget.options = customer_data.get(
+                                                    work_item_type, []
+                                                )
+                                            else:
+                                                widget.options = []
                                         else:
                                             widget.options = []
                                     else:
-                                        widget.options = []
-                                else:
-                                    # Regular nested handling
-                                    nested_data = data.get(parent_val, [])
-                                    widget.options = (
-                                        nested_data
-                                        if isinstance(nested_data, list)
-                                        else []
-                                    )
+                                        # Regular nested handling
+                                        nested_data = data.get(parent_val, [])
+                                        widget.options = (
+                                            nested_data
+                                            if isinstance(nested_data, list)
+                                            else []
+                                        )
 
                     # For fields with static options OR dynamic options, set value from options_source
                     options_source = field_config.get("options_source")
@@ -1217,31 +1234,81 @@ def bind_parent_relations(
                             widget.value = default_map[parent_val]
 
                     widget.update()
-                elif ftype == "input":
-                    if isinstance(options_map, dict):
-                        widget.value = options_map.get(parent_val, "")
-                    elif isinstance(options_map, list):
-                        widget.value = options_map[0] if options_map else ""
-                    widget.update()
-                elif ftype == "number":
-                    if isinstance(options_map, dict):
-                        val = options_map.get(parent_val, 0)
-                        if isinstance(val, list):
-                            widget.value = (
-                                val[0]
-                                if val and isinstance(val[0], (int, float))
-                                else 0
-                            )
-                        else:
-                            widget.value = val if isinstance(val, (int, float)) else 0
-                    elif isinstance(options_map, list):
-                        widget.value = (
-                            options_map[0]
-                            if options_map and isinstance(options_map[0], (int, float))
-                            else 0
-                        )
+                elif ftype in ["input", "text", "number", "date"]:
+                    # Check for dynamic query
+                    dynamic_query = field_config.get("dynamic_query")
+                    dynamic_column = field_config.get(
+                        "dynamic_column", 0
+                    )  # Which column to extract from result
+
+                    if dynamic_query and parent_val:
+                        # Execute dynamic query to fetch value
+                        QE = GlobalRegistry.get("QE")
+                        if QE:
+                            try:
+                                # Replace {parent_value} placeholder in query
+                                query = dynamic_query.replace(
+                                    "{parent_value}", str(parent_val)
+                                )
+                                result_df = await QE.query_db(query)
+
+                                if result_df is not None and not result_df.empty:
+                                    # Extract value from specified column
+                                    value = result_df.iloc[0, dynamic_column]
+                                    widget.value = (
+                                        value
+                                        if value is not None
+                                        else (
+                                            ""
+                                            if ftype in ["input", "text", "date"]
+                                            else 0
+                                        )
+                                    )
+                                else:
+                                    widget.value = (
+                                        "" if ftype in ["input", "text", "date"] else 0
+                                    )
+                            except Exception as e:
+                                LOG = GlobalRegistry.get("LOG")
+                                if LOG:
+                                    LOG.log_msg(
+                                        "ERROR",
+                                        f"Dynamic query failed for {child}: {e}",
+                                    )
+                                widget.value = (
+                                    "" if ftype in ["input", "text", "date"] else 0
+                                )
                     else:
-                        widget.value = 0
+                        # Fallback to static options_map
+                        if ftype == "input" or ftype == "text":
+                            if isinstance(options_map, dict):
+                                widget.value = options_map.get(parent_val, "")
+                            elif isinstance(options_map, list):
+                                widget.value = options_map[0] if options_map else ""
+                        elif ftype == "number":
+                            if isinstance(options_map, dict):
+                                val = options_map.get(parent_val, 0)
+                                if isinstance(val, list):
+                                    widget.value = (
+                                        val[0]
+                                        if val and isinstance(val[0], (int, float))
+                                        else 0
+                                    )
+                                else:
+                                    widget.value = (
+                                        val if isinstance(val, (int, float)) else 0
+                                    )
+                            elif isinstance(options_map, list):
+                                val = options_map[0] if options_map else 0
+                                widget.value = (
+                                    val if isinstance(val, (int, float)) else 0
+                                )
+                        elif ftype == "date":
+                            if isinstance(options_map, dict):
+                                widget.value = options_map.get(parent_val, "")
+                            elif isinstance(options_map, list):
+                                widget.value = options_map[0] if options_map else ""
+
                     widget.update()
                 elif ftype == "chip_group":
                     options = []
@@ -1322,6 +1389,16 @@ def bind_parent_relations(
 
             return update_child
 
+        # Store update handler in a registry for manual triggering
+        update_handler = make_update_child()
+
+        # Store in GlobalRegistry under a key like "task_selector_children_updaters"
+        # This allows manual triggering when programmatically setting parent value
+        parent_updaters_key = f"{parent}_children_updaters"
+        parent_updaters = GlobalRegistry.get(parent_updaters_key) or []
+        parent_updaters.append({"child": child, "handler": update_handler})
+        GlobalRegistry.set(parent_updaters_key, parent_updaters)
+
         # Attach listener if parent exists.
         # Try several possible event names (NiceGUI components differ across versions)
         # and fall back to a lightweight polling timer if none of them attach.
@@ -1331,7 +1408,7 @@ def bind_parent_relations(
             if hasattr(parent_widget, "on"):
                 for event_name in ("update:model-value", "update", "change", "input"):
                     try:
-                        parent_widget.on(event_name, make_update_child())
+                        parent_widget.on(event_name, update_handler)
                         attached = True
                         # Don't break - try to attach multiple events for better coverage
                     except Exception:
@@ -1360,7 +1437,7 @@ def bind_parent_relations(
                                 last["value"] = v
                                 # call update handler (it reads current parent value from widgets)
                                 try:
-                                    await make_update_child()(None)
+                                    await update_handler(None)
                                 except Exception:
                                     pass
 
@@ -1543,7 +1620,6 @@ def add_generic_save_button(
 
     async def on_save():
         # Import globals from the global registry
-        from .globals import GlobalRegistry
 
         LOG = GlobalRegistry.get("LOG")
         QE = GlobalRegistry.get("QE")

@@ -111,7 +111,8 @@ task:
         options: []
         options_source: "customer_data"
         default: ""
-        with_input: false
+        with_input: true
+        allow_custom: false
 
       - name: "project_name"
         type: "select"
@@ -121,7 +122,8 @@ task:
         parent: "customer_name"
         options_source: "project_names"
         default: ""
-        with_input: false
+        with_input: true
+        allow_custom: false
 
       - name: "due_date"
         type: "date"
@@ -164,21 +166,31 @@ task:
         type: "select"
         label: "Select Task"
         optional: false
+        options: []
         options_source: "task_list"
         default: ""
-        with_input: false
+        with_input: true
+        allow_custom: false
 
       - name: "title"
         type: "input"
         label: "Task Title"
         optional: false
         default: ""
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT title FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "description"
         type: "text"
         label: "Description"
         optional: true
         default: ""
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT description FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "status"
         type: "select"
@@ -188,6 +200,10 @@ task:
           ["To Do", "In Progress", "In Review", "Blocked", "On Hold", "Idea"]
         default: "To Do"
         with_input: false
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT status FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "priority"
         type: "select"
@@ -196,31 +212,51 @@ task:
         options: ["Low", "Medium", "High", "Critical"]
         default: "Medium"
         with_input: false
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT priority FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "assigned_to"
-        type: "select"
+        type: "input"
         label: "Assigned To"
         optional: true
         default: ""
         with_input: true
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT assigned_to FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "due_date"
         type: "date"
         label: "Due Date"
         optional: true
         default: ""
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT due_date FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "estimated_hours"
         type: "number"
         label: "Estimated Hours"
         optional: true
         default: 0
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT estimated_hours FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "tags"
         type: "input"
         label: "Tags (comma-separated)"
         optional: true
         default: ""
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT tags FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
     # Layout for update tab
     rows:
