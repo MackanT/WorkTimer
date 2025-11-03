@@ -29,7 +29,7 @@ INFO_SPLITTER_RATIO = 20
 
 
 def ui_log():
-    """Application log viewer."""
+    """Application log viewer with modern styled log display."""
     LOG = GlobalRegistry.get("LOG")
 
     if not LOG:
@@ -39,15 +39,29 @@ def ui_log():
             )
         return
 
-    with ui.card().classes(
-        f"w-full max-w-[{LOG_CARD_MAX_WIDTH}] mx-auto my-8 p-2 h-[{LOG_CARD_HEIGHT}]"
-    ):
-        ui.label("Application Log").classes(UI_STYLES.get_layout_classes("title"))
-        log_textarea = ui.html(content="").classes(
-            "w-full h-full overflow-auto bg-black text-white p-2 rounded"
-        )
-        Logger.set_log_textarea(log_textarea)
-        LOG.update_log_textarea()
+    # Modern card with better spacing and max width
+    with ui.card().classes(f"w-full max-w-[{LOG_CARD_MAX_WIDTH}] mx-auto my-4 p-6"):
+        # Header with icon and title
+        with ui.row().classes("w-full items-center gap-3 mb-4"):
+            ui.icon("terminal", size="md").classes("text-blue-400")
+            ui.label("Application Log").classes("text-h5 text-white font-medium")
+
+        # Log display container - styled like task description boxes
+        with ui.element().classes("w-full"):
+            log_textarea = (
+                ui.html(content="")
+                .classes("w-full bg-gray-800 text-white p-4 rounded-lg overflow-auto")
+                .style(
+                    f"height: {LOG_CARD_HEIGHT}; "
+                    "font-family: 'Consolas', 'Monaco', 'Courier New', monospace; "
+                    "font-size: 13px; "
+                    "line-height: 1.6; "
+                    "word-wrap: break-word; "
+                    "white-space: pre-wrap;"
+                )
+            )
+            Logger.set_log_textarea(log_textarea)
+            LOG.update_log_textarea()
 
 
 def ui_info():

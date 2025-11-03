@@ -117,7 +117,6 @@ class Logger:
                 lines.append(line)
             self.__class__.LOG_TEXTAREA.set_content("<br>".join(lines))
             self.__class__.LOG_TEXTAREA.update()
-            self.__class__.LOG_TEXTAREA.run_method("scrollTo", 0, 99999)
 
 
 class QueryEngine:
@@ -212,10 +211,10 @@ class DevOpsEngine:
     def has_customer_connection(self, customer_name: str) -> bool:
         """
         Check if a specific customer has DevOps integration configured.
-        
+
         Args:
             customer_name: Name of the customer to check
-            
+
         Returns:
             True if customer has active DevOps connection
         """
