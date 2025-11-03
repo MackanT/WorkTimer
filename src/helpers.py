@@ -713,7 +713,10 @@ def make_input_row(
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "number":
-            created[fname] = ui.number(label, min=0).classes(widget_classes)
+            # Support float values with step=0.1 for decimal precision
+            created[fname] = ui.number(label, min=0, step=0.1, format="%.1f").classes(
+                widget_classes
+            )
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "date":
@@ -727,10 +730,43 @@ def make_input_row(
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "select":
-            if "parent" in field:
+            # Handle options: prefer static options if defined, otherwise empty for parent-driven
+            # Get options from config if they exist
+            config_options = field.get("options", [])
+
+            # Use static options if defined (non-empty list), regardless of parent
+            if (
+                config_options
+                and isinstance(config_options, list)
+                and len(config_options) > 0
+            ):
+                # Use static options from config (e.g., status, priority)
+                options = config_options
+                # DEBUG: Log static options being used
+                from .globals import GlobalRegistry
+
+                LOG = GlobalRegistry.get("LOG")
+                if LOG:
+                    LOG.log_msg(
+                        "INFO",
+                        f"make_input_row: Field '{fname}' using static options (has parent: {'parent' in field}): {options}",
+                    )
+            elif "parent" in field:
+                # No static options, will be populated by parent binding
                 options = []
+                # DEBUG: Log dynamic options
+                from .globals import GlobalRegistry
+
+                LOG = GlobalRegistry.get("LOG")
+                if LOG:
+                    LOG.log_msg(
+                        "INFO",
+                        f"make_input_row: Field '{fname}' has parent, options will be populated dynamically",
+                    )
             else:
-                options = field.get("options", {})
+                # Fallback to whatever options were defined
+                options = config_options if config_options else []
+
             if options is None:
                 options = []
             # Check if with_input is specified in field config, default to True
@@ -1112,41 +1148,66 @@ def bind_parent_relations(
                 if widget is None:
                     return
                 if ftype == "select":
-                    if isinstance(options_map, dict):
-                        widget.options = options_map.get(parent_val, [])
-                    elif isinstance(options_map, list):
-                        widget.options = options_map
-                    else:
-                        widget.options = []
+                    # Check if field has static options defined in config
+                    has_static_options = (
+                        field_config.get("options")
+                        and isinstance(field_config.get("options"), list)
+                        and len(field_config.get("options")) > 0
+                    )
 
-                    # Special handling for nested data sources like parent_names
+                    if not has_static_options:
+                        # Only update options if field doesn't have static options
+                        if isinstance(options_map, dict):
+                            widget.options = options_map.get(parent_val, [])
+                        elif isinstance(options_map, list):
+                            widget.options = options_map
+                        else:
+                            widget.options = []
+
+                        # Special handling for nested data sources like parent_names
+                        options_source = field_config.get("options_source")
+                        if options_source and options_source in data_sources:
+                            data = data_sources[options_source]
+                            if isinstance(data, dict) and parent_val in data:
+                                if field_config.get("name") == "parent_name":
+                                    # Special handling for parent_name field - needs work_item_type
+                                    work_item_type_widget = widgets.get(
+                                        "work_item_type"
+                                    )
+                                    if (
+                                        work_item_type_widget
+                                        and work_item_type_widget.value
+                                    ):
+                                        work_item_type = work_item_type_widget.value
+                                        customer_data = data.get(parent_val, {})
+                                        if isinstance(customer_data, dict):
+                                            widget.options = customer_data.get(
+                                                work_item_type, []
+                                            )
+                                        else:
+                                            widget.options = []
+                                    else:
+                                        widget.options = []
+                                else:
+                                    # Regular nested handling
+                                    nested_data = data.get(parent_val, [])
+                                    widget.options = (
+                                        nested_data
+                                        if isinstance(nested_data, list)
+                                        else []
+                                    )
+
+                    # For fields with static options OR dynamic options, set value from options_source
                     options_source = field_config.get("options_source")
                     if options_source and options_source in data_sources:
                         data = data_sources[options_source]
                         if isinstance(data, dict) and parent_val in data:
-                            if field_config.get("name") == "parent_name":
-                                # Special handling for parent_name field - needs work_item_type
-                                work_item_type_widget = widgets.get("work_item_type")
-                                if (
-                                    work_item_type_widget
-                                    and work_item_type_widget.value
-                                ):
-                                    work_item_type = work_item_type_widget.value
-                                    customer_data = data.get(parent_val, {})
-                                    if isinstance(customer_data, dict):
-                                        widget.options = customer_data.get(
-                                            work_item_type, []
-                                        )
-                                    else:
-                                        widget.options = []
-                                else:
-                                    widget.options = []
-                            else:
-                                # Regular nested handling
-                                nested_data = data.get(parent_val, [])
-                                widget.options = (
-                                    nested_data if isinstance(nested_data, list) else []
-                                )
+                            value_data = data[parent_val]
+                            # Extract value from list if needed
+                            if isinstance(value_data, list) and len(value_data) > 0:
+                                widget.value = value_data[0]
+                            elif not isinstance(value_data, list):
+                                widget.value = value_data
 
                     # Set default value from default_source if available
                     default_source = field_config.get("default_source")

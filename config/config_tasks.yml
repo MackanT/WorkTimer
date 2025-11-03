@@ -173,16 +173,12 @@ task:
         label: "Task Title"
         optional: false
         default: ""
-        parent: "task_selector"
-        options_source: "task_title"
 
       - name: "description"
         type: "text"
         label: "Description"
         optional: true
         default: ""
-        parent: "task_selector"
-        options_source: "task_description"
 
       - name: "status"
         type: "select"
@@ -191,8 +187,6 @@ task:
         options:
           ["To Do", "In Progress", "In Review", "Blocked", "On Hold", "Idea"]
         default: "To Do"
-        parent: "task_selector"
-        options_source: "task_status"
         with_input: false
 
       - name: "priority"
@@ -201,8 +195,6 @@ task:
         optional: false
         options: ["Low", "Medium", "High", "Critical"]
         default: "Medium"
-        parent: "task_selector"
-        options_source: "task_priority"
         with_input: false
 
       - name: "assigned_to"
@@ -210,8 +202,6 @@ task:
         label: "Assigned To"
         optional: true
         default: ""
-        parent: "task_selector"
-        options_source: "task_assigned_to"
         with_input: true
 
       - name: "due_date"
@@ -219,24 +209,18 @@ task:
         label: "Due Date"
         optional: true
         default: ""
-        parent: "task_selector"
-        options_source: "task_due_date"
 
       - name: "estimated_hours"
         type: "number"
         label: "Estimated Hours"
         optional: true
         default: 0
-        parent: "task_selector"
-        options_source: "task_estimated_hours"
 
       - name: "tags"
         type: "input"
         label: "Tags (comma-separated)"
         optional: true
         default: ""
-        parent: "task_selector"
-        options_source: "task_tags"
 
     # Layout for update tab
     rows:

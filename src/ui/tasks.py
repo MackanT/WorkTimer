@@ -1,888 +1,991 @@
 """
-Task Management UI Module
+Task management UI with card/table views and CRUD operations.
 
-Handles the task management interface including:
-- Card and table views of tasks
-- Task creation and editing forms
-- Task filtering and sorting
-- Task completion tracking
+Refactored to use DataPrepRegistry and EntityFormBuilder pattern.
+Uses config_tasks.yml for form definitions.
 """
 
 import asyncio
+from datetime import datetime, timedelta
+
 from nicegui import ui
 
 from ..globals import GlobalRegistry
+from .data_registry import DataPrepRegistry
+from .form_builder import EntityFormBuilder
 from .. import helpers
 
+# ============================================================================
+# Data Preparation Functions
+# ============================================================================
 
-def ui_tasks():
-    """Main UI for task management with card/table views and creation form."""
-    # Get global instances from registry
+
+@DataPrepRegistry.register("task", "Add")
+def prep_task_add_data(**kwargs):
+    """Prepare data sources for adding a new task."""
     AD = GlobalRegistry.get("AD")
-    QE = GlobalRegistry.get("QE")
     LOG = GlobalRegistry.get("LOG")
 
-    # Get configs from registry
-    config_tasks = (
-        GlobalRegistry.get("config_tasks") if GlobalRegistry.get("config_tasks") else {}
-    )
-    config_task_visuals = (
-        GlobalRegistry.get("config_task_visuals")
-        if GlobalRegistry.get("config_task_visuals")
-        else {}
-    )
+    if not AD or AD.df is None or AD.df.empty:
+        if LOG:
+            LOG.log_msg("WARNING", "No customer/project data available for task add")
+        return {}
 
-    # Get UI_STYLES from helpers
-    UI_STYLES = helpers.UI_STYLES
+    # Get active customers and projects from AD.df
+    active_data = helpers.filter_df(AD.df, {"c_current": 1})
+    customer_names = helpers.get_unique_list(active_data, "customer_name")
 
-    # Callback functions for task interactions
-    def on_task_checkbox_click(task_id, checked):
-        """Handle task completion checkbox"""
-        print(
-            f"Task {task_id} marked as {'completed' if checked else 'incomplete'}: {checked}"
+    # Build project names per customer
+    project_names = {}
+    for customer in customer_names:
+        filtered = helpers.filter_df(
+            active_data, {"customer_name": customer, "p_current": 1}
         )
+        project_names[customer] = helpers.get_unique_list(filtered, "project_name")
 
-        # Run completion update in background without awaiting
-        asyncio.create_task(
-            QE.function_db(
+    # Set default due date to tomorrow
+    default_due_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    return {
+        "customer_data": customer_names,
+        "project_names": project_names,
+        "due_date": default_due_date,
+        "today": datetime.now().strftime("%Y-%m-%d"),
+        "priority": 2,  # Default: Medium
+        "completed": 0,  # Default: Not completed
+    }
+
+
+@DataPrepRegistry.register("task", "Update")
+def prep_task_update_data(**kwargs):
+    """Prepare data sources for updating a task."""
+    AD = GlobalRegistry.get("AD")
+    LOG = GlobalRegistry.get("LOG")
+
+    if not AD or AD.df is None or AD.df.empty:
+        if LOG:
+            LOG.log_msg("WARNING", "No customer/project data available for task update")
+        return {}
+
+    # Get active customers and projects from AD.df
+    active_data = helpers.filter_df(AD.df, {"c_current": 1})
+    customer_names = helpers.get_unique_list(active_data, "customer_name")
+
+    # Build project names per customer
+    project_names = {}
+    for customer in customer_names:
+        filtered = helpers.filter_df(
+            active_data, {"customer_name": customer, "p_current": 1}
+        )
+        project_names[customer] = helpers.get_unique_list(filtered, "project_name")
+
+    result = {
+        "customer_data": customer_names,
+        "project_names": project_names,
+        "today": datetime.now().strftime("%Y-%m-%d"),
+        # Task list will be populated lazily when Update tab is first accessed
+        "task_list": [],
+        "task_title": {},
+        "task_description": {},
+        "task_status": {},
+        "task_priority": {},
+        "task_assigned_to": {},
+        "task_due_date": {},
+        "task_estimated_hours": {},
+        "task_tags": {},
+    }
+
+    return result
+
+
+@DataPrepRegistry.register("task", "Delete")
+def prep_task_delete_data(**kwargs):
+    """Prepare data sources for deleting a task."""
+    # TODO: Get task data for dropdown
+    # For now, return empty - tasks need to be loaded async
+    return {
+        "task_data": {},
+    }
+
+
+# ============================================================================
+# Custom Action Handlers
+# ============================================================================
+
+
+async def handle_update_task(widgets: dict) -> tuple[bool, str]:
+    """
+    Custom handler for updating a task.
+    Extracts task_id from task_selector and calls database update function.
+    
+    Args:
+        widgets: Dictionary of form widgets
+        
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    import re
+    from ..globals import GlobalRegistry
+    
+    QE = GlobalRegistry.get("QE")
+    LOG = GlobalRegistry.get("LOG")
+    
+    if not QE:
+        return False, "Database not available"
+    
+    try:
+        # Extract task_id from task_selector value "Title (ID: 5)"
+        task_selector_value = widgets.get("task_selector").value
+        match = re.search(r'\(ID: (\d+)\)', str(task_selector_value))
+        
+        if not match:
+            return False, "Could not extract task ID from selection"
+        
+        task_id = int(match.group(1))
+        
+        # Collect field values (excluding task_selector)
+        kwargs = {
+            "task_id": task_id,
+            "title": widgets["title"].value,
+            "description": widgets["description"].value,
+            "status": widgets["status"].value,
+            "priority": widgets["priority"].value,
+            "assigned_to": widgets["assigned_to"].value,
+            "due_date": widgets["due_date"].value,
+            "estimated_hours": widgets["estimated_hours"].value,
+            "tags": widgets["tags"].value,
+        }
+        
+        # Call database update function
+        await QE.function_db("update_task", **kwargs)
+        
+        if LOG:
+            LOG.log_msg("INFO", f"Successfully updated task {task_id}: {kwargs['title']}")
+        
+        return True, f"Task '{kwargs['title']}' updated successfully"
+        
+    except Exception as e:
+        if LOG:
+            LOG.log_msg("ERROR", f"Failed to update task: {e}")
+        return False, f"Failed to update task: {str(e)}"
+
+
+# ============================================================================
+# Task View Management (Card/Table)
+# ============================================================================
+
+# Global state for view management
+view_is_cards = {"value": True}  # Default to card view
+
+
+def get_sort_query(sort_by: str) -> str:
+    """Get SQL ORDER BY clause based on sort selection."""
+    sort_queries = {
+        "Due Date (Earliest First)": "ORDER BY due_date ASC",  ## TODO make due_date = NULL last
+        "Due Date (Latest First)": "ORDER BY due_date DESC",  ## TODO make due_date = NULL last
+        "Priority (High to Low)": "ORDER BY priority ASC",
+        "Priority (Low to High)": "ORDER BY priority DESC",
+        "Status": "ORDER BY completed ASC, due_date ASC",
+        "Customer": "ORDER BY customer_name ASC, due_date ASC",
+        "Project": "ORDER BY project_name ASC, due_date ASC",
+        "Created (Newest First)": "ORDER BY created_at DESC",
+        "Created (Oldest First)": "ORDER BY created_at ASC",
+    }
+    return sort_queries.get(sort_by, "ORDER BY due_date ASC")
+
+
+async def fetch_tasks(sort_by: str = "Due Date (Earliest First)") -> list[dict]:
+    """Fetch tasks from database with customer/project names."""
+    db = GlobalRegistry.get("QE")
+    LOG = GlobalRegistry.get("LOG")
+
+    if not db:
+        if LOG:
+            LOG.log_msg("ERROR", "Database not available")
+        return []
+
+    # Query just tasks table - customer_name and project_name are already in tasks
+    query = f"""
+        SELECT * FROM tasks 
+        {get_sort_query(sort_by)}
+    """
+
+    # QueryEngine.query_db is async
+    df = await db.query_db(query)
+
+    if LOG:
+        if df is None:
+            LOG.log_msg("WARNING", "fetch_tasks: query returned None")
+        elif df.empty:
+            LOG.log_msg("WARNING", "fetch_tasks: query returned empty dataframe")
+        else:
+            LOG.log_msg("INFO", f"fetch_tasks: Retrieved {len(df)} tasks")
+
+    if df is None or df.empty:
+        return []
+
+    # Transform database rows to UI format with columns array
+    tasks_list = []
+    for _, row in df.iterrows():
+        task = {
+            "task_id": str(row.get("task_id", "")),
+            "completed": bool(row.get("completed", False)),
+            "columns": [
+                {"label": "Title", "value": str(row.get("title", ""))},
+                {"label": "Description", "value": str(row.get("description", ""))},
+                {"label": "Status", "value": str(row.get("status", ""))},
+                {"label": "Priority", "value": str(row.get("priority", ""))},
+                {"label": "Assignee", "value": str(row.get("assigned_to", ""))},
+                {"label": "Customer", "value": str(row.get("customer_name", ""))},
+                {"label": "Project", "value": str(row.get("project_name", ""))},
+                {"label": "Due Date", "value": str(row.get("due_date", ""))},
+                {"label": "Created", "value": str(row.get("created_at", ""))},
+            ],
+        }
+        tasks_list.append(task)
+
+    return tasks_list
+
+
+def create_fallback_task(task_id: int) -> dict:
+    """Create a fallback task dictionary for error recovery."""
+    return {
+        "task_id": task_id,
+        "task_title": "Unknown Task",
+        "task_description": "",
+        "customer_id": None,
+        "customer_name": "Unknown",
+        "project_id": None,
+        "project_name": "Unknown",
+        "priority": 2,
+        "due_date": datetime.now().strftime("%Y-%m-%d"),
+        "completed": 0,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def on_task_checkbox_click(task_id: int, checked: bool):
+    """Handle task completion checkbox click (non-async wrapper)."""
+
+    async def _update_task():
+        db = GlobalRegistry.get("QE")
+        LOG = GlobalRegistry.get("LOG")
+
+        if not db:
+            if LOG:
+                LOG.log_msg("ERROR", "Database not available")
+            return
+
+        try:
+            await db.function_db(
                 "set_task_completion",
                 task_id=task_id,
                 completed=checked,
             )
+            status = "completed" if checked else "incomplete"
+            if LOG:
+                LOG.log_msg("INFO", f"Task {task_id} marked as {status}")
+            await refresh_tasks()
+        except Exception as e:
+            if LOG:
+                LOG.log_msg("ERROR", f"Failed to update task completion: {e}")
+
+    asyncio.create_task(_update_task())
+
+
+def on_task_edit_click(task_id: int):
+    """Handle task edit button click - switches to Update tab and selects the task."""
+
+    async def _switch_to_update():
+        db = GlobalRegistry.get("QE")
+        LOG = GlobalRegistry.get("LOG")
+        tabs = GlobalRegistry.get("task_tabs")
+        update_widgets = GlobalRegistry.get("task_update_widgets")
+
+        if not db or not tabs or not update_widgets:
+            if LOG:
+                LOG.log_msg(
+                    "ERROR",
+                    f"Required components not available: db={bool(db)}, tabs={bool(tabs)}, update_widgets={bool(update_widgets)}",
+                )
+            return
+
+        try:
+            # Fetch task data to get title for identifier
+            task_df = await db.query_db(
+                f"SELECT task_id, title FROM tasks WHERE task_id = {task_id}"
+            )
+
+            if task_df is not None and not task_df.empty:
+                task_data = task_df.iloc[0].to_dict()
+                task_title = task_data.get("title", "Untitled")
+                task_identifier = f"{task_title} (ID: {task_id})"
+
+                if LOG:
+                    LOG.log_msg(
+                        "INFO",
+                        f"on_task_edit_click: Switching to Update tab for: {task_identifier}",
+                    )
+
+                # Switch to Update tab
+                tabs.set_value("Update")
+
+                # Get the task_selector widget and set its value
+                task_selector = update_widgets.get("task_selector")
+                if task_selector:
+                    if LOG:
+                        LOG.log_msg(
+                            "INFO",
+                            f"on_task_edit_click: Setting task_selector to: {task_identifier}",
+                        )
+
+                    # Set the value
+                    task_selector.set_value(task_identifier)
+                    
+                    # Manually populate fields since set_value doesn't always trigger events
+                    await populate_task_fields(task_identifier)
+
+                    if LOG:
+                        LOG.log_msg(
+                            "INFO",
+                            f"on_task_edit_click: task_selector value set to: {task_selector.value}",
+                        )
+                else:
+                    if LOG:
+                        LOG.log_msg(
+                            "WARNING",
+                            "on_task_edit_click: task_selector widget not found in update_widgets",
+                        )
+            else:
+                if LOG:
+                    LOG.log_msg("WARNING", f"Task {task_id} not found")
+        except Exception as e:
+            if LOG:
+                LOG.log_msg(
+                    "ERROR", f"Failed to switch to edit mode for task {task_id}: {e}"
+                )
+
+    asyncio.create_task(_switch_to_update())
+
+
+async def populate_task_selector():
+    """Populate the task_selector dropdown with all tasks from database."""
+    db = GlobalRegistry.get("QE")
+    LOG = GlobalRegistry.get("LOG")
+    update_widgets = GlobalRegistry.get("task_update_widgets")
+
+    if not db or not update_widgets:
+        if LOG:
+            LOG.log_msg(
+                "WARNING",
+                f"Cannot populate task selector: db={bool(db)}, widgets={bool(update_widgets)}",
+            )
+        return
+
+    try:
+        # Fetch all tasks
+        tasks_df = await db.query_db("SELECT task_id, title FROM tasks ORDER BY title")
+
+        if tasks_df is not None and not tasks_df.empty:
+            # Build task list
+            task_list = []
+            for _, row in tasks_df.iterrows():
+                task_id = row["task_id"]
+                title = row["title"]
+                task_identifier = f"{title} (ID: {task_id})"
+                task_list.append(task_identifier)
+
+            # Update the task_selector widget options
+            task_selector = update_widgets.get("task_selector")
+            if task_selector:
+                task_selector.options = task_list
+
+                # Add on_change handler to populate fields when task is selected
+                async def on_task_selected():
+                    if task_selector.value:
+                        await populate_task_fields(task_selector.value)
+
+                task_selector.on(
+                    "update:model-value",
+                    lambda: asyncio.create_task(on_task_selected()),
+                )
+                task_selector.update()
+
+                if LOG:
+                    LOG.log_msg(
+                        "INFO",
+                        f"populate_task_selector: Loaded {len(task_list)} tasks into dropdown",
+                    )
+            else:
+                if LOG:
+                    LOG.log_msg(
+                        "WARNING",
+                        "populate_task_selector: task_selector widget not found",
+                    )
+        else:
+            if LOG:
+                LOG.log_msg(
+                    "WARNING", "populate_task_selector: No tasks found in database"
+                )
+    except Exception as e:
+        if LOG:
+            LOG.log_msg("ERROR", f"populate_task_selector: Failed to load tasks: {e}")
+
+
+async def populate_task_fields(task_identifier: str):
+    """Populate all task fields when a task is selected from the dropdown."""
+    db = GlobalRegistry.get("QE")
+    LOG = GlobalRegistry.get("LOG")
+    update_widgets = GlobalRegistry.get("task_update_widgets")
+
+    if not db or not update_widgets or not task_identifier:
+        return
+
+    try:
+        # Extract task_id from identifier "Title (ID: 5)"
+        import re
+
+        match = re.search(r"\(ID: (\d+)\)", task_identifier)
+        if not match:
+            if LOG:
+                LOG.log_msg(
+                    "WARNING",
+                    f"populate_task_fields: Could not extract task_id from: {task_identifier}",
+                )
+            return
+
+        task_id = int(match.group(1))
+
+        if LOG:
+            LOG.log_msg(
+                "INFO", f"populate_task_fields: Fetching data for task_id={task_id}"
+            )
+
+        # Fetch full task data
+        task_df = await db.query_db(f"SELECT * FROM tasks WHERE task_id = {task_id}")
+
+        if task_df is not None and not task_df.empty:
+            task_data = task_df.iloc[0].to_dict()
+
+            # Populate each field widget
+            field_mappings = {
+                "title": "title",
+                "description": "description",
+                "status": "status",
+                "priority": "priority",
+                "assigned_to": "assigned_to",
+                "due_date": "due_date",
+                "estimated_hours": "estimated_hours",
+                "tags": "tags",
+            }
+
+            for widget_name, db_column in field_mappings.items():
+                widget = update_widgets.get(widget_name)
+                if widget and db_column in task_data:
+                    value = task_data[db_column]
+                    if value is not None:
+                        try:
+                            # For select widgets (status, priority), use direct value assignment
+                            # For other widgets, use set_value() or direct assignment
+                            if widget_name in ["status", "priority"]:
+                                # Direct assignment for select widgets
+                                widget.value = value
+                                widget.update()
+                                if LOG:
+                                    LOG.log_msg(
+                                        "INFO",
+                                        f"populate_task_fields: Set {widget_name} = {value} (direct)",
+                                    )
+                            else:
+                                # For input/text/number widgets, convert to string
+                                str_value = str(value)
+                                widget.set_value(str_value)
+                                if LOG:
+                                    LOG.log_msg(
+                                        "INFO",
+                                        f"populate_task_fields: Set {widget_name} = {str_value}",
+                                    )
+                        except Exception as e:
+                            if LOG:
+                                LOG.log_msg(
+                                    "ERROR",
+                                    f"populate_task_fields: Failed to set {widget_name}: {e}",
+                                )
+
+            if LOG:
+                LOG.log_msg(
+                    "INFO", f"populate_task_fields: Populated fields for task {task_id}"
+                )
+        else:
+            if LOG:
+                LOG.log_msg(
+                    "WARNING",
+                    f"populate_task_fields: Task {task_id} not found in database",
+                )
+    except Exception as e:
+        if LOG:
+            LOG.log_msg(
+                "ERROR", f"populate_task_fields: Failed to populate fields: {e}"
+            )
+        import traceback
+
+        if LOG:
+            LOG.log_msg(
+                "ERROR", f"populate_task_fields traceback: {traceback.format_exc()}"
+            )
+
+
+def on_task_click(task_id: int):
+    """Handle task card/row click - switches to View mode with read-only display."""
+
+    async def _switch_to_view():
+        db = GlobalRegistry.get("QE")
+        LOG = GlobalRegistry.get("LOG")
+        tabs = GlobalRegistry.get("task_tabs")
+        view_container = GlobalRegistry.get("task_view_container")
+
+        if not db or not tabs or not view_container:
+            if LOG:
+                LOG.log_msg("ERROR", "Database, tabs, or view container not available")
+            return
+
+        try:
+            # Fetch task data from database
+            task_df = await db.query_db(
+                f"SELECT * FROM tasks WHERE task_id = {task_id}"
+            )
+
+            if task_df is not None and not task_df.empty:
+                task_data = task_df.iloc[0].to_dict()
+
+                # Clear and rebuild view container with task details
+                view_container.clear()
+
+                with view_container:
+                    ui.label("Task Details").classes("text-xl font-bold mb-4")
+
+                    # Create read-only display of task fields
+                    with ui.card().classes("w-full p-4"):
+                        with ui.column().classes("gap-3 w-full"):
+                            # Title
+                            ui.label("Title").classes("text-sm font-bold text-gray-400")
+                            ui.label(str(task_data.get("title", ""))).classes(
+                                "text-base mb-2"
+                            )
+
+                            # Description
+                            ui.label("Description").classes(
+                                "text-sm font-bold text-gray-400"
+                            )
+                            ui.label(str(task_data.get("description", "N/A"))).classes(
+                                "text-base mb-2"
+                            )
+
+                            # Customer and Project
+                            with ui.row().classes("gap-4 w-full"):
+                                with ui.column().classes("flex-1"):
+                                    ui.label("Customer").classes(
+                                        "text-sm font-bold text-gray-400"
+                                    )
+                                    ui.label(
+                                        str(task_data.get("customer_name", "N/A"))
+                                    ).classes("text-base")
+                                with ui.column().classes("flex-1"):
+                                    ui.label("Project").classes(
+                                        "text-sm font-bold text-gray-400"
+                                    )
+                                    ui.label(
+                                        str(task_data.get("project_name", "N/A"))
+                                    ).classes("text-base")
+
+                            # Status and Priority
+                            with ui.row().classes("gap-4 w-full mt-2"):
+                                with ui.column().classes("flex-1"):
+                                    ui.label("Status").classes(
+                                        "text-sm font-bold text-gray-400"
+                                    )
+                                    ui.label(
+                                        str(task_data.get("status", "N/A"))
+                                    ).classes("text-base")
+                                with ui.column().classes("flex-1"):
+                                    ui.label("Priority").classes(
+                                        "text-sm font-bold text-gray-400"
+                                    )
+                                    ui.label(
+                                        str(task_data.get("priority", "N/A"))
+                                    ).classes("text-base")
+
+                            # Due Date
+                            with ui.row().classes("gap-4 w-full mt-2"):
+                                with ui.column().classes("flex-1"):
+                                    ui.label("Due Date").classes(
+                                        "text-sm font-bold text-gray-400"
+                                    )
+                                    ui.label(
+                                        str(task_data.get("due_date", "N/A"))
+                                    ).classes("text-base")
+                                with ui.column().classes("flex-1"):
+                                    ui.label("Assigned To").classes(
+                                        "text-sm font-bold text-gray-400"
+                                    )
+                                    ui.label(
+                                        str(task_data.get("assigned_to", "N/A"))
+                                    ).classes("text-base")
+
+                            # Hours
+                            with ui.row().classes("gap-4 w-full mt-2"):
+                                with ui.column().classes("flex-1"):
+                                    ui.label("Estimated Hours").classes(
+                                        "text-sm font-bold text-gray-400"
+                                    )
+                                    ui.label(
+                                        str(task_data.get("estimated_hours", "N/A"))
+                                    ).classes("text-base")
+                                with ui.column().classes("flex-1"):
+                                    ui.label("Actual Hours").classes(
+                                        "text-sm font-bold text-gray-400"
+                                    )
+                                    ui.label(
+                                        str(task_data.get("actual_hours", "N/A"))
+                                    ).classes("text-base")
+
+                            # Completed
+                            ui.label("Completed").classes(
+                                "text-sm font-bold text-gray-400 mt-2"
+                            )
+                            completed = task_data.get("completed", False)
+                            ui.label("Yes" if completed else "No").classes("text-base")
+
+                            # Timestamps
+                            ui.label("Created").classes(
+                                "text-sm font-bold text-gray-400 mt-2"
+                            )
+                            ui.label(str(task_data.get("created_at", "N/A"))).classes(
+                                "text-sm text-gray-500"
+                            )
+
+                # Switch to View tab
+                tabs.set_value("View")
+
+                if LOG:
+                    LOG.log_msg("INFO", f"Viewing task {task_id}")
+            else:
+                if LOG:
+                    LOG.log_msg("WARNING", f"Task {task_id} not found")
+        except Exception as e:
+            if LOG:
+                LOG.log_msg("ERROR", f"Failed to load task {task_id}: {e}")
+
+    asyncio.create_task(_switch_to_view())
+
+
+def render_card_view(tasks: list[dict], container: ui.element):
+    """Render tasks in card view."""
+    container.clear()
+
+    if not tasks:
+        with container:
+            ui.label("No tasks found").classes("text-gray-500 text-center w-full p-8")
+        return
+
+    config_task_visuals = GlobalRegistry.get("config_task_visuals")
+
+    with container:
+        with ui.scroll_area().classes("w-full").style("height: 600px; min-width: 0;"):
+            # Use CSS Grid for proper grid layout with padding
+            with (
+                ui.element()
+                .classes("w-full")
+                .style(
+                    "display: grid; "
+                    "grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); "
+                    "gap: 16px; "
+                    "padding: 8px;"
+                )
+            ):
+                for task in tasks:
+                    # Render task card
+                    helpers.create_task_card(
+                        task_id=task["task_id"],
+                        columns=task["columns"],
+                        completed=task.get("completed", False),
+                        on_checkbox_click=on_task_checkbox_click,
+                        on_edit_click=on_task_edit_click,
+                        on_card_click=on_task_click,
+                        config_task_visuals=config_task_visuals,
+                    )
+
+
+def render_table_view(tasks: list[dict], container: ui.element):
+    """Render tasks in table view."""
+    container.clear()
+
+    if not tasks:
+        with container:
+            ui.label("No tasks found").classes("text-gray-500 text-center w-full p-8")
+        return
+
+    # Transform tasks from columns array format to flat field format for table
+    table_data = []
+    for task in tasks:
+        row = {
+            "task_id": task["task_id"],
+            "completed": task.get("completed", False),
+        }
+        # Convert columns array to flat fields
+        for col in task.get("columns", []):
+            row[col["label"]] = col["value"]
+        table_data.append(row)
+
+    columns = [
+        {"name": "completed", "label": "✓", "field": "completed", "align": "center"},
+        {
+            "name": "Title",
+            "label": "Title",
+            "field": "Title",
+            "align": "left",
+        },
+        {
+            "name": "Customer",
+            "label": "Customer",
+            "field": "Customer",
+            "align": "left",
+        },
+        {
+            "name": "Project",
+            "label": "Project",
+            "field": "Project",
+            "align": "left",
+        },
+        {
+            "name": "Priority",
+            "label": "Priority",
+            "field": "Priority",
+            "align": "center",
+        },
+        {
+            "name": "Due Date",
+            "label": "Due Date",
+            "field": "Due Date",
+            "align": "center",
+        },
+        {"name": "Status", "label": "Status", "field": "Status", "align": "center"},
+    ]
+
+    with container:
+        table = ui.table(
+            columns=columns,
+            rows=table_data,
+            row_key="task_id",
+        ).classes("w-full")
+
+        # Custom cell rendering for checkbox
+        table.add_slot(
+            "body-cell-completed",
+            """
+            <q-td :props="props">
+                <q-checkbox 
+                    :model-value="props.row.completed"
+                    @update:model-value="$parent.$emit('checkbox-click', props.row.task_id, $event)"
+                />
+            </q-td>
+        """,
         )
 
-    def on_task_edit_click(task_id):
-        """Handle edit task button click"""
-        print(f"Edit task {task_id}")
+        # Custom cell rendering for priority (handles text values)
+        table.add_slot(
+            "body-cell-Priority",
+            """
+            <q-td :props="props">
+                <span v-if="props.row.Priority === 'Critical' || props.row.Priority === 'High'" class="text-red-600 font-bold">{{ props.row.Priority }}</span>
+                <span v-else-if="props.row.Priority === 'Medium'" class="text-yellow-600">{{ props.row.Priority }}</span>
+                <span v-else class="text-green-600">{{ props.row.Priority }}</span>
+            </q-td>
+        """,
+        )
 
-        # Switch to edit mode
-        async def switch_to_edit_mode():
-            try:
-                # Fetch task data from database
-                task_df = await QE.query_db(
-                    f"select * from tasks where task_id = {task_id}"
-                )
+        # Wire up event handlers
+        table.on(
+            "checkbox-click", lambda e: on_task_checkbox_click(e.args[0], e.args[1])
+        )
 
-                if task_df is not None and not task_df.empty:
-                    task_data = task_df.iloc[0].to_dict()
 
-                    edit_state["mode"] = "edit"
-                    edit_state["task_id"] = task_id
-                    edit_state["task_data"] = task_data
+async def refresh_tasks():
+    """Refresh task display."""
+    tasks_container = GlobalRegistry.get("tasks_container")
+    sort_select = GlobalRegistry.get("tasks_sort_select")
+    LOG = GlobalRegistry.get("LOG")
 
-                    form_title.text = f"Edit Task: {task_data.get('title', 'Unknown')}"
-                    build_task_form()
-                else:
-                    ui.notify(f"Task {task_id} not found!", color="negative")
+    if not tasks_container:
+        if LOG:
+            LOG.log_msg("WARNING", "Tasks container not found for refresh")
+        return
 
-            except Exception as e:
-                ui.notify(f"Error loading task {task_id}: {e}", color="negative")
+    sort_by = sort_select.value if sort_select else "Due Date (Earliest First)"
+    tasks = await fetch_tasks(sort_by)
 
-        # Run the async function
-        asyncio.create_task(switch_to_edit_mode())
+    if LOG:
+        LOG.log_msg(
+            "INFO",
+            f"refresh_tasks: Got {len(tasks)} tasks, view_is_cards={view_is_cards['value']}",
+        )
 
-    def on_task_click(task_id):
-        """Handle task card click for details view"""
-        print(f"View details for task {task_id}")
-        # TODO: Open task details dialog
-        ui.notify(f"Task details for {task_id} - Feature coming soon!", color="info")
+    if view_is_cards["value"]:
+        render_card_view(tasks, tasks_container)
+    else:
+        render_table_view(tasks, tasks_container)
 
+
+async def toggle_view():
+    """Toggle between card and table view."""
+    view_is_cards["value"] = not view_is_cards["value"]
+    await refresh_tasks()
+
+
+# ============================================================================
+# Main Task UI Entry Point
+# ============================================================================
+
+
+def ui_tasks():
+    """Main entry point for task management UI - called by app_layout."""
+    # Get task config from GlobalRegistry (stored as config_tasks)
+    task_config = GlobalRegistry.get("config_tasks")
+    LOG = GlobalRegistry.get("LOG")
+
+    if not task_config:
+        if LOG:
+            LOG.log_msg("ERROR", "config_tasks not found in GlobalRegistry")
+        return
+
+    # EntityFormBuilder expects config with entity_name as key
+    # config_tasks.yml structure: { task: { add: {...}, update: {...} } }
+    # So we pass the full task_config which contains "task" key
+
+    # Create container dict for cross-tab widget access
+    container_dict = {}
+    GlobalRegistry.set("task_container_dict", container_dict)
+
+    # Define refresh callback that reloads tasks
+    async def on_task_save_success():
+        """Callback after successful task save/update/delete."""
+        await refresh_tasks()
+
+    # ========================================================================
+    # Main UI Layout
+    # ========================================================================
+
+    # Create main container with splitter (left: task view, right: forms)
     with ui.splitter(value=65).classes("w-full h-full") as splitter:
+        # Left panel: Task view
         with splitter.before:
             with ui.element().classes("p-4 w-full h-full"):
-                # View state - True for cards, False for table
-                view_is_cards = {"value": True}
+                ui.label("Tasks").classes("text-2xl font-bold mb-4")
 
-                edit_state = {
-                    "mode": "add",  # "add" or "edit"
-                    "task_id": None,
-                    "task_data": {},
-                }
-
-                # This will be redefined after form_title and build_task_form are available
-                switch_to_add_mode = None
-
+                # Controls row
                 with ui.row().classes("w-full justify-between items-center mb-4"):
-                    ui.label("Tasks").classes(UI_STYLES.get_layout_classes("title"))
+                    # Sort dropdown
+                    sort_options = [
+                        "Due Date (Earliest First)",
+                        "Due Date (Latest First)",
+                        "Priority (High to Low)",
+                        "Priority (Low to High)",
+                        "Status",
+                        "Customer",
+                        "Project",
+                        "Created (Newest First)",
+                        "Created (Oldest First)",
+                    ]
+                    sort_select = ui.select(
+                        options=sort_options,
+                        value="Due Date (Earliest First)",
+                        on_change=lambda: refresh_tasks(),
+                    ).classes("w-64")
+                    GlobalRegistry.set("tasks_sort_select", sort_select)
 
-                    # Sorting controls in the middle
-                    with ui.row().classes("items-center gap-2"):
-                        ui.label("Sort by:").classes("text-sm text-gray-400")
-                        sort_options = ui.select(
-                            options=[
-                                "Due Date",
-                                "Priority",
-                                "Status",
-                                "Customer",
-                                "Project",
-                                "Created",
-                            ],
-                            value="Due Date",
-                        ).classes("w-32")
-
-                        def on_sort_change(e):
-                            current_sort["value"] = sort_options.value
-                            ui.timer(0.1, refresh_tasks, once=True)
-
-                        sort_options.on("update:model-value", on_sort_change)
-
-                    # Right side buttons
+                    # Right side: Add button and view toggle
                     with ui.row().classes("gap-2"):
-                        # Refresh button
-                        refresh_button = (
-                            ui.button("", icon="refresh")
-                            .classes("w-10 h-10 flex-none")
-                            .props("flat")
-                        )
-                        refresh_button.on_click(
-                            lambda: ui.timer(0.1, refresh_tasks, once=True)
-                        )
+                        # Add Task button
+                        def switch_to_add_mode():
+                            tabs = GlobalRegistry.get("task_tabs")
+                            if tabs:
+                                tabs.set_value("Add")
+                                # Clear any stored update data
+                                GlobalRegistry.set("task_update_data", None)
+
+                        add_task_btn = ui.button(
+                            icon="add",
+                            on_click=switch_to_add_mode,
+                        ).props("flat dense")
+                        add_task_btn.tooltip("Add New Task")
+
                         # View toggle button
-                        view_toggle = (
-                            ui.button("", icon="view_module")
-                            .classes("w-10 h-10 flex-none")
-                            .props("flat")
-                        )
-                        # Add Task button (to switch back to add mode)
-                        add_task_button = (
-                            ui.button("", icon="add")
-                            .classes("w-10 h-10 flex-none")
-                            .props("flat")
-                        )
+                        view_toggle_btn = ui.button(
+                            icon="view_module",
+                            on_click=toggle_view,
+                        ).props("flat dense")
+                        view_toggle_btn.tooltip("Toggle Card/Table View")
 
-                # Container for the task content (will be updated based on view) - force full width
-                task_container = ui.element().classes("w-full min-w-0")
+                # Tasks container
+                tasks_container = ui.column().classes("w-full")
+                GlobalRegistry.set("tasks_container", tasks_container)
 
-                # State to hold tasks data
-                tasks_data = {"tasks": []}
-                current_sort = {"value": "Due Date"}
+                # Defer initial task loading to avoid sync/async issues
+                # Use a timer to load tasks after UI is constructed
+                ui.timer(0.1, refresh_tasks, once=True)
 
-                def create_fallback_task(
-                    task_id, title, description, status, priority="N/A", completed=False
-                ):
-                    """Create a standardized fallback task for error/no-data scenarios"""
-                    return {
-                        "task_id": task_id,
-                        "completed": completed,
-                        "columns": [
-                            {"label": "Title", "value": title},
-                            {"label": "Description", "value": description},
-                            {"label": "Status", "value": status},
-                            {"label": "Priority", "value": priority},
-                            {"label": "Assignee", "value": ""},
-                            {"label": "Customer", "value": ""},
-                            {"label": "Project", "value": ""},
-                            {"label": "Due Date", "value": ""},
-                            {"label": "Created", "value": ""},
-                        ],
-                    }
-
-                def get_sort_query(sort_by):
-                    """Generate SQL ORDER BY clause based on sort selection"""
-                    sort_queries = {
-                        "Due Date": """
-                            case when due_date is null or due_date = '' then 1 else 0 end,
-                            due_date asc,
-                            created_at desc
-                        """,
-                        "Priority": """
-                            case priority
-                                when 'Critical' then 1
-                                when 'High' then 2  
-                                when 'Medium' then 3
-                                when 'Low' then 4
-                                else 5
-                            end asc,
-                            due_date asc
-                        """,
-                        "Status": """
-                            case status
-                                when 'In Progress' then 1
-                                when 'To Do' then 2
-                                when 'In Review' then 3
-                                when 'Blocked' then 4
-                                when 'On Hold' then 5
-                                else 6
-                            end asc,
-                            due_date asc
-                        """,
-                        "Customer": "customer_name asc, project_name asc, due_date asc",
-                        "Project": "project_name asc, customer_name asc, due_date asc",
-                        "Created": "created_at desc",
-                    }
-                    return sort_queries.get(sort_by, sort_queries["Due Date"])
-
-                async def fetch_tasks(sort_by="Due Date"):
-                    """Fetch tasks from database and transform to UI format"""
-                    try:
-                        # Fetch all tasks from database with dynamic sorting
-                        order_clause = get_sort_query(sort_by)
-                        tasks_df = await QE.query_db(f"""
-                            select * from tasks 
-                            order by {order_clause}
-                        """)
-
-                        if tasks_df is not None and not tasks_df.empty:
-                            tasks_list = []
-                            for _, row in tasks_df.iterrows():
-                                # Transform database row to UI format
-                                task = {
-                                    "task_id": str(row.get("task_id", "")),
-                                    "completed": bool(row.get("completed", False)),
-                                    "columns": [
-                                        {
-                                            "label": "Title",
-                                            "value": str(row.get("title", "")),
-                                        },
-                                        {
-                                            "label": "Description",
-                                            "value": str(row.get("description", "")),
-                                        },
-                                        {
-                                            "label": "Status",
-                                            "value": str(row.get("status", "")),
-                                        },
-                                        {
-                                            "label": "Priority",
-                                            "value": str(row.get("priority", "")),
-                                        },
-                                        {
-                                            "label": "Assignee",
-                                            "value": str(row.get("assigned_to", "")),
-                                        },
-                                        {
-                                            "label": "Customer",
-                                            "value": str(row.get("customer_name", "")),
-                                        },
-                                        {
-                                            "label": "Project",
-                                            "value": str(row.get("project_name", "")),
-                                        },
-                                        {
-                                            "label": "Due Date",
-                                            "value": str(row.get("due_date", "")),
-                                        },
-                                        {
-                                            "label": "Created",
-                                            "value": str(row.get("created_at", "")),
-                                        },
-                                    ],
-                                }
-                                tasks_list.append(task)
-
-                            tasks_data["tasks"] = tasks_list
-                        else:
-                            # Fallback to sample data if no database results
-                            tasks_data["tasks"] = [
-                                create_fallback_task(
-                                    "NO_DATA",
-                                    "No tasks found",
-                                    "Add some tasks to get started",
-                                    "Info",
-                                )
-                            ]
-                    except Exception as e:
-                        ui.notify(f"Error fetching tasks: {e}", color="negative")
-                        tasks_data["tasks"] = [
-                            create_fallback_task(
-                                "ERROR",
-                                "Error loading tasks",
-                                f"Database error: {e}",
-                                "Error",
-                            )
-                        ]
-
-                def update_view_icon():
-                    """Update the toggle button icon based on current view"""
-                    if view_is_cards["value"]:
-                        view_toggle.props(
-                            "icon=view_list"
-                        )  # Show table icon when in card view
-                    else:
-                        view_toggle.props(
-                            "icon=view_module"
-                        )  # Show card icon when in table view
-
-                def render_card_view():
-                    """Render tasks in true grid layout"""
-                    with (
-                        ui.scroll_area()
-                        .classes("w-full")
-                        .style("height: 600px; min-width: 0;")
-                    ):
-                        # Use CSS Grid for proper grid layout
-                        with (
-                            ui.element()
-                            .classes("w-full")
-                            .style(
-                                "display: grid; "
-                                "grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); "
-                                "gap: 16px; "
-                                "padding: 8px;"
-                            )
-                        ):
-                            for task in tasks_data["tasks"]:
-                                helpers.create_task_card(
-                                    task_id=task["task_id"],
-                                    columns=task["columns"],
-                                    completed=task.get("completed", False),
-                                    on_checkbox_click=on_task_checkbox_click,
-                                    on_edit_click=on_task_edit_click,
-                                    on_card_click=on_task_click,
-                                    config_task_visuals=config_task_visuals,
-                                )
-
-                def render_table_view():
-                    """Render tasks in table layout"""
-                    # Create table data
-                    table_data = []
-                    for task in tasks_data["tasks"]:
-                        row = {
-                            "task_id": task["task_id"],
-                            "selected": task.get("completed", False),
-                        }
-                        for col in task["columns"]:
-                            row[col["label"]] = col["value"]
-                        table_data.append(row)
-
-                    # Get table columns configuration from config
-                    columns = []
-                    if (
-                        "table" in config_tasks.get("task", {})
-                        and "columns" in config_tasks["task"]["table"]
-                    ):
-                        for col_config in config_tasks["task"]["table"]["columns"]:
-                            column = {
-                                "name": col_config["name"],
-                                "label": col_config["label"],
-                                "field": col_config["field"],
-                                "align": col_config["align"],
-                                "style": col_config["style"],
-                            }
-                            # Only add sortable if it's True
-                            if col_config.get("sortable", False):
-                                column["sortable"] = True
-                            columns.append(column)
-                    else:
-                        # Fallback to hardcoded columns if config is not available
-                        columns = [
-                            {
-                                "name": "selected",
-                                "label": "",
-                                "field": "selected",
-                                "align": "left",
-                                "style": "width: 60px;",
-                            },
-                            {
-                                "name": "task_id",
-                                "label": "ID",
-                                "field": "task_id",
-                                "align": "left",
-                                "sortable": True,
-                                "style": "width: 100px;",
-                            },
-                            {
-                                "name": "Title",
-                                "label": "Title",
-                                "field": "Title",
-                                "align": "left",
-                                "sortable": True,
-                                "style": "min-width: 200px;",
-                            },
-                        ]
-
-                    # Create table with custom row rendering
-                    with (
-                        ui.scroll_area()
-                        .classes("w-full")
-                        .style("height: 600px; min-width: 0;")
-                    ):
-                        table = ui.table(
-                            columns=columns, rows=table_data, pagination=20
-                        )
-                        table.classes("w-full min-w-full")
-                        table.style("min-width: 800px;")
-
-                        # Add custom cell templates
-                        table.add_slot(
-                            "body-cell-selected",
-                            """
-                            <q-td :props="props">
-                                <q-checkbox v-model="props.row.selected" 
-                                           @update:model-value="(val) => $parent.$emit('checkbox-change', props.row.task_id, val)" />
-                            </q-td>
-                        """,
-                        )
-
-                        table.add_slot(
-                            "body-cell-actions",
-                            """
-                            <q-td :props="props">
-                                <q-btn flat dense icon="edit" size="sm"
-                                       @click="$parent.$emit('edit-click', props.row.task_id)" />
-                            </q-td>
-                        """,
-                        )
-
-                        # Handle table events
-                        table.on(
-                            "checkbox-change",
-                            lambda e: on_task_checkbox_click(e.args[0], e.args[1]),
-                        )
-                        table.on("edit-click", lambda e: on_task_edit_click(e.args[0]))
-                        table.on(
-                            "rowClick",
-                            lambda e: on_task_click(e.args[1]["task_id"])
-                            if len(e.args) > 1
-                            else None,
-                        )
-
-                async def refresh_tasks():
-                    """Refresh tasks from database and update current view"""
-                    await fetch_tasks(current_sort["value"])
-                    task_container.clear()
-
-                    with task_container:
-                        if view_is_cards["value"]:
-                            render_card_view()
-                        else:
-                            render_table_view()
-
-                async def add_new_task_to_view(task_data):
-                    """Add a single new task to the existing view without full refresh"""
-                    # Create task object in the expected format
-                    new_task = {
-                        "task_id": str(task_data.get("task_id", "")),
-                        "completed": bool(task_data.get("completed", False)),
-                        "columns": [
-                            {
-                                "label": "Title",
-                                "value": str(task_data.get("title", "")),
-                            },
-                            {
-                                "label": "Description",
-                                "value": str(task_data.get("description", "")),
-                            },
-                            {
-                                "label": "Status",
-                                "value": str(task_data.get("status", "")),
-                            },
-                            {
-                                "label": "Priority",
-                                "value": str(task_data.get("priority", "")),
-                            },
-                            {
-                                "label": "Assignee",
-                                "value": str(task_data.get("assigned_to", "")),
-                            },
-                            {
-                                "label": "Customer",
-                                "value": str(task_data.get("customer_name", "")),
-                            },
-                            {
-                                "label": "Project",
-                                "value": str(task_data.get("project_name", "")),
-                            },
-                            {
-                                "label": "Due Date",
-                                "value": str(task_data.get("due_date", "")),
-                            },
-                            {
-                                "label": "Created",
-                                "value": str(task_data.get("created_at", "")),
-                            },
-                        ],
-                    }
-
-                    # Remove "no data" placeholder if it exists
-                    if len(tasks_data["tasks"]) == 1 and tasks_data["tasks"][0][
-                        "task_id"
-                    ] in ["NO_DATA", "ERROR"]:
-                        tasks_data["tasks"] = []
-
-                    # Add new task to the beginning of the list
-                    tasks_data["tasks"].insert(0, new_task)
-
-                    # Re-render the current view
-                    task_container.clear()
-                    with task_container:
-                        if view_is_cards["value"]:
-                            render_card_view()
-                        else:
-                            render_table_view()
-
-                def clear_form_fields(widgets):
-                    """Clear form fields instead of rebuilding entire form"""
-                    for widget_name, widget in widgets.items():
-                        if hasattr(widget, "value"):
-                            if widget_name in ["status", "priority"]:
-                                # Reset to default values for select widgets
-                                widget.value = (
-                                    "To Do" if widget_name == "status" else "Medium"
-                                )
-                            elif widget_name == "estimated_hours":
-                                widget.value = 0
-                            else:
-                                widget.value = ""
-
-                def toggle_view():
-                    """Toggle between card and table view"""
-                    view_is_cards["value"] = not view_is_cards["value"]
-                    task_container.clear()
-
-                    with task_container:
-                        if view_is_cards["value"]:
-                            render_card_view()
-                        else:
-                            render_table_view()
-
-                    update_view_icon()
-
-                # Bind toggle button
-                view_toggle.on_click(toggle_view)
-
-                # Initialize view with data
-                async def initialize_tasks():
-                    update_view_icon()
-                    await refresh_tasks()
-
-                # Start initialization using NiceGUI's timer (runs once after UI is ready)
-                ui.timer(0.1, lambda: None).single_shot = True
-                ui.timer(0.2, initialize_tasks, once=True)
+        # Right panel: Forms
         with splitter.after:
-            # Task creation form in the right panel
             with ui.element().classes("p-4 w-full h-full"):
-                # Dynamic title that changes based on mode
-                form_title = ui.label("Add New Task").classes(
-                    UI_STYLES.get_layout_classes("title")
-                )
+                # Create EntityFormBuilder instance with the full task_config
+                # EntityFormBuilder will look for task_config["task"] internally
+                builder = EntityFormBuilder("task", task_config)
 
-                # Container for the task creation form
-                task_form_container = ui.element()
+                # Create tabs
+                with (
+                    ui.tabs().props("inline-label align=left").classes("w-full") as tabs
+                ):
+                    ui.tab("Add")
+                    ui.tab("Update")
+                    ui.tab("View")
 
-                def build_task_form():
-                    """Build the task creation form"""
-                    task_form_container.clear()
+                # Store tabs in GlobalRegistry so click handlers can switch tabs
+                GlobalRegistry.set("task_tabs", tabs)
 
-                    with task_form_container:
-                        # Data preparation function (reuse existing logic)
-                        def prep_task_data(tab_type, fields):
-                            """Prepare data sources for task dialog"""
-                            if not hasattr(AD, "df") or AD.df is None or AD.df.empty:
-                                LOG.log_msg(
-                                    "WARNING", "No customer/project data available"
-                                )
-                                return {}
-
-                            active_data = helpers.filter_df(AD.df, {"c_current": 1})
-                            if active_data.empty:
-                                LOG.log_msg(
-                                    "WARNING", "No active customer/project data"
-                                )
-                                return {}
-
-                            # Build customer list
-                            customer_rows = active_data[
-                                ["customer_id", "customer_name"]
-                            ].drop_duplicates()
-                            customer_list = [
-                                row["customer_name"]
-                                for _, row in customer_rows.iterrows()
-                            ]
-
-                            # Build project mapping by customer_name
-                            project_names = {}
-                            for _, cust_row in customer_rows.iterrows():
-                                customer_id = cust_row["customer_id"]
-                                customer_name = cust_row["customer_name"]
-
-                                filtered = helpers.filter_df(
-                                    active_data,
-                                    {"customer_id": customer_id, "p_current": 1},
-                                )
-                                project_list = []
-                                if not filtered.empty:
-                                    for _, proj_row in (
-                                        filtered[["project_id", "project_name"]]
-                                        .drop_duplicates()
-                                        .iterrows()
-                                    ):
-                                        project_list.append(proj_row["project_name"])
-                                project_names[customer_name] = project_list
-
-                            LOG.log_msg(
-                                "DEBUG",
-                                f"Task form - Found {len(customer_list)} customers: {customer_list}",
-                            )
-                            LOG.log_msg(
-                                "DEBUG", f"Task form - Project mapping: {project_names}"
-                            )
-
-                            result_data = {
-                                "customer_data": customer_list,
-                                "project_names": project_names,
-                            }
-
-                            # If in edit mode, add the existing task data as defaults
-                            if edit_state["mode"] == "edit" and edit_state["task_data"]:
-                                task_data = edit_state["task_data"]
-                                result_data.update(
-                                    {
-                                        "default_title": task_data.get("title", ""),
-                                        "default_description": task_data.get(
-                                            "description", ""
-                                        ),
-                                        "default_status": task_data.get(
-                                            "status", "To Do"
-                                        ),
-                                        "default_priority": task_data.get(
-                                            "priority", "Medium"
-                                        ),
-                                        "default_assigned_to": task_data.get(
-                                            "assigned_to", ""
-                                        ),
-                                        "default_customer_name": task_data.get(
-                                            "customer_name", ""
-                                        ),
-                                        "default_project_name": task_data.get(
-                                            "project_name", ""
-                                        ),
-                                        "default_due_date": task_data.get(
-                                            "due_date", ""
-                                        ),
-                                        "default_estimated_hours": task_data.get(
-                                            "estimated_hours", 0
-                                        ),
-                                        "default_tags": task_data.get("tags", ""),
-                                    }
-                                )
-
-                            return result_data
-
-                        # Custom task save handler (handles both insert and update)
-                        async def save_task(widgets):
-                            """Save task to database - handles both create and update"""
-                            try:
-                                task_data = helpers.parse_widget_values(widgets)
-
-                                if edit_state["mode"] == "edit":
-                                    # Update existing task (note: customer/project can't be changed in edit mode)
-                                    result = await QE.function_db(
-                                        "update_task",
-                                        task_id=edit_state["task_id"],
-                                        title=task_data.get("title", ""),
-                                        description=task_data.get("description", ""),
-                                        status=task_data.get("status", "To Do"),
-                                        priority=task_data.get("priority", "Medium"),
-                                        assigned_to=task_data.get("assigned_to", ""),
-                                        due_date=task_data.get("due_date", ""),
-                                        estimated_hours=float(
-                                            task_data.get("estimated_hours", 0) or 0
-                                        ),
-                                        tags=task_data.get("tags", ""),
-                                        updated_by="UI_User",
-                                    )
-
-                                    # Handle update result (success, message)
-                                    success = result[0]
-                                    message = result[1]
-
-                                    if success:
-                                        ui.notify(
-                                            f"Task '{task_data.get('title', 'Untitled')}' updated successfully!",
-                                            color="positive",
-                                        )
-                                        # Switch back to add mode and refresh tasks
-                                        edit_state["mode"] = "add"
-                                        edit_state["task_id"] = None
-                                        edit_state["task_data"] = {}
-                                        form_title.text = "Add New Task"
-
-                                        # Refresh the task list to show updated data
-                                        await refresh_tasks()
-
-                                        # Rebuild form in add mode
-                                        build_task_form()
-
-                                        return True, message
-                                    else:
-                                        return False, message
-
-                                else:
-                                    # Insert new task
-                                    result = await QE.function_db(
-                                        "insert_task",
-                                        title=task_data.get("title", ""),
-                                        description=task_data.get("description", ""),
-                                        status=task_data.get("status", "To Do"),
-                                        priority=task_data.get("priority", "Medium"),
-                                        assigned_to=task_data.get("assigned_to", ""),
-                                        customer_name=task_data.get(
-                                            "customer_name", ""
-                                        ),
-                                        project_name=task_data.get("project_name", ""),
-                                        due_date=task_data.get("due_date", ""),
-                                        estimated_hours=float(
-                                            task_data.get("estimated_hours", 0) or 0
-                                        ),
-                                        tags=task_data.get("tags", ""),
-                                        created_by="UI_User",
-                                    )
-
-                                    # Handle the insert return format (success, message, task_data)
-                                    success = result[0]
-                                    message = result[1]
-                                    new_task_data = (
-                                        result[2] if len(result) > 2 else None
-                                    )
-
-                                    if success:
-                                        ui.notify(
-                                            f"Task '{task_data.get('title', 'Untitled')}' created successfully!",
-                                            color="positive",
-                                        )
-                                        # Efficiently add new task to view and clear form
-                                        if new_task_data:
-                                            await add_new_task_to_view(new_task_data)
-                                        clear_form_fields(widgets)
-                                        return True, message
-                                    else:
-                                        return False, message
-
-                            except Exception as e:
-                                action = (
-                                    "updating"
-                                    if edit_state["mode"] == "edit"
-                                    else "creating"
-                                )
-                                return False, f"Error {action} task: {e}"
-
-                        # Function to populate form fields in edit mode
-                        def populate_form_for_edit(widgets, task_data):
-                            """Populate form widgets with existing task data"""
-                            if not widgets or not task_data:
-                                return
-
-                            # Get the project_names data from the prep function
-                            prep_data = prep_task_data("Add", {})
-                            project_names_dict = prep_data.get("project_names", {})
-
-                            # First, populate non-dependent fields
-                            simple_fields = {
-                                "title": "title",
-                                "description": "description",
-                                "status": "status",
-                                "priority": "priority",
-                                "assigned_to": "assigned_to",
-                                "due_date": "due_date",
-                                "estimated_hours": "estimated_hours",
-                                "tags": "tags",
-                            }
-
-                            for field_name, data_key in simple_fields.items():
-                                if field_name in widgets and data_key in task_data:
-                                    widget = widgets[field_name]
-                                    value = task_data[data_key]
-
-                                    if hasattr(widget, "value") and value is not None:
-                                        if field_name == "estimated_hours":
-                                            widget.value = float(value) if value else 0
-                                        else:
-                                            widget.value = value or ""
-                                        widget.update()
-
-                            # Handle customer and project dependency
-                            customer_name = task_data.get("customer_name", "")
-                            project_name = task_data.get("project_name", "")
-
-                            if customer_name and "customer_name" in widgets:
-                                customer_widget = widgets["customer_name"]
-                                customer_widget.value = customer_name
-                                customer_widget.update()
-
-                                # Update project dropdown options for this customer
-                                if (
-                                    "project_name" in widgets
-                                    and customer_name in project_names_dict
-                                ):
-                                    project_widget = widgets["project_name"]
-                                    project_options = project_names_dict[customer_name]
-
-                                    # Set the project dropdown options
-                                    if hasattr(project_widget, "options"):
-                                        project_widget.options = project_options
-                                        project_widget.update()
-
-                                    # Set the project value after options are updated
-                                    def set_project_value():
-                                        if project_name in project_options:
-                                            project_widget.value = project_name
-                                            project_widget.update()
-
-                                    # Small delay to ensure options are set first
-                                    ui.timer(0.1, set_project_value, once=True)
-
-                        # Custom handlers for task operations (use same handler for both add and update)
-                        custom_handlers = {
-                            "insert_task": save_task,
-                            "update_task": save_task,  # Same handler handles both cases
-                        }
-
-                        # Determine tab type and container key based on edit mode
-                        tab_type = "Update" if edit_state["mode"] == "edit" else "Add"
-                        container_key = tab_type
-
-                        # Container for the form
-                        form_container_dict = {container_key: ui.element()}
-
-                        # Use the generic tab panel builder (without dialog)
-                        widgets = helpers.build_generic_tab_panel(
-                            entity_name="task",
-                            tab_type=tab_type,
-                            container_dict=form_container_dict,
-                            config_source=config_tasks,
-                            data_prep_func=prep_task_data,
-                            custom_handlers=custom_handlers,
-                            container_size="md",
+                # Create tab panels
+                with ui.tab_panels(tabs, value="Add").classes("w-full"):
+                    # Add tab
+                    with ui.tab_panel("Add"):
+                        builder.build_form(
+                            tab_type="Add",
+                            container_dict=container_dict,
+                            on_success_callback=on_task_save_success,
                         )
 
-                        # If in edit mode, populate the form fields with existing data
-                        if (
-                            edit_state["mode"] == "edit"
-                            and edit_state["task_data"]
-                            and widgets
-                        ):
-                            populate_form_for_edit(widgets, edit_state["task_data"])
+                    # Update tab
+                    with ui.tab_panel("Update"):
+                        update_widgets = builder.build_form(
+                            tab_type="Update",
+                            container_dict=container_dict,
+                            custom_handlers={"update_task": handle_update_task},
+                            on_success_callback=on_task_save_success,
+                        )
+                        # Store widgets in GlobalRegistry so edit handler can access them
+                        GlobalRegistry.set("task_update_widgets", update_widgets)
 
-                        # Add Cancel button for edit mode inside the form container
-                        if edit_state["mode"] == "edit":
-                            with form_container_dict[container_key]:
-                                with ui.row().classes("w-full justify-end mt-4"):
-                                    ui.button(
-                                        "Cancel Edit",
-                                        icon="cancel",
-                                        on_click=lambda: switch_to_add_mode(),
-                                    ).props("color=grey")
+                        # Populate the task_selector dropdown asynchronously
+                        ui.timer(
+                            0.1,
+                            lambda: asyncio.create_task(populate_task_selector()),
+                            once=True,
+                        )
 
-                            # Add informational text about edit mode
-                            ui.label(
-                                f"Editing Task ID: {edit_state['task_id']}"
-                            ).classes("text-sm text-gray-400 mt-2")
+                    # View tab - read-only display of task details
+                    with ui.tab_panel("View"):
+                        view_container = ui.column().classes("w-full")
+                        GlobalRegistry.set("task_view_container", view_container)
 
-                # Initialize the form after AD data is ready
-                async def init_task_form():
-                    await AD.refresh()
-                    build_task_form()
-
-                ui.timer(0.1, init_task_form, once=True)
-
-                # Define the switch_to_add_mode function now that all dependencies are available
-                def switch_to_add_mode():
-                    """Switch back to add task mode"""
-                    edit_state["mode"] = "add"
-                    edit_state["task_data"] = None
-                    form_title.text = "Add New Task"
-                    build_task_form()
-
-                # Connect the Add Task button to the switch function
-                add_task_button.on_click(switch_to_add_mode)
+                        with view_container:
+                            ui.label("Click a task card to view details").classes(
+                                "text-gray-500"
+                            )
