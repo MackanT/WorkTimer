@@ -22,14 +22,6 @@ GRID_COLUMNS = "160px 550px 240px"
 TIME_OPTIONS = ["Day", "Week", "Month", "Year", "All-Time", "Custom"]
 DISPLAY_OPTIONS = ["Time", "Bonus"]
 
-# Project row grid layout
-PROJECT_ROW_GRID = "20px 1fr 100px"
-PROJECT_ROW_MIN_HEIGHT = "20px"
-
-# Customer card sizing
-CUSTOMER_CARD_FLEX = "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
-CONTAINER_MAX_WIDTH = "1800px"
-
 # ============================================================================
 # Helper Functions
 # ============================================================================
@@ -45,10 +37,15 @@ def format_value(value: float, is_time: bool) -> str:
     return f"{value:.2f} h" if is_time else f"{value:.2f} SEK"
 
 
+def get_column_name(is_time: bool) -> str:
+    """Get the appropriate column name based on display mode."""
+    return "total_time" if is_time else "user_bonus"
+
+
 def create_date_range_picker(on_change_callback) -> tuple:
     """
     Create date range input with calendar picker.
-    
+
     Returns:
         Tuple of (date_input, date_picker) widgets
     """
@@ -63,7 +60,9 @@ def create_date_range_picker(on_change_callback) -> tuple:
                     date_input,
                     forward=lambda x: f"{x['from']} - {x['to']}"
                     if isinstance(x, dict) and x
-                    else x if isinstance(x, str) else None,
+                    else x
+                    if isinstance(x, str)
+                    else None,
                     backward=lambda x: {
                         "from": x.split(" - ")[0],
                         "to": x.split(" - ")[1],
@@ -78,11 +77,11 @@ def create_date_range_picker(on_change_callback) -> tuple:
             ui.icon("edit_calendar").on("click", menu.open).classes(
                 "cursor-pointer items-center"
             )
-    
+
     # Bind change events
     date_input.on("update:model-value", on_change_callback)
     date_picker.on("update:model-value", on_change_callback)
-    
+
     return date_input, date_picker
 
 
@@ -161,17 +160,22 @@ def ui_time_tracking():
 
     async def on_checkbox_change(event, checked, customer_id, project_id):
         """
-        Handle checkbox change for time/project row. If checked, insert row; if unchecked, show popup for comment/devops/delete.
+        Handle checkbox change for time/project row.
+        If checked, insert row; if unchecked, show popup for comment/devops/delete.
         """
         nonlocal ignore_next_checkbox_event
         if ignore_next_checkbox_event:
             ignore_next_checkbox_event = False
             return
 
+        # Convert IDs to int once
+        customer_id_int = int(customer_id)
+        project_id_int = int(project_id)
+
         if checked:
             run_async_task(
                 lambda: asyncio.run(
-                    QE.function_db("insert_time_row", int(customer_id), int(project_id))
+                    QE.function_db("insert_time_row", customer_id_int, project_id_int)
                 )
             )
             # Update tab indicator immediately when starting a timer
@@ -187,8 +191,8 @@ def ui_time_tracking():
                 lambda: asyncio.run(
                     QE.function_db(
                         "insert_time_row",
-                        int(customer_id),
-                        int(project_id),
+                        customer_id_int,
+                        project_id_int,
                         git_id=git_id_val,
                         comment=comment,
                     )
@@ -197,11 +201,13 @@ def ui_time_tracking():
 
             # Save to DevOps if requested
             if store_to_devops and git_id_val and git_id_val > 0:
-                sql_code = f"select customer_name from customers where customer_id = {customer_id}"
-                customer_name = await QE.query_db(sql_code)
-                if DO.manager:
+                customer_name_df = await QE.query_db(
+                    "select customer_name from customers where customer_id = ?",
+                    params=(customer_id_int,),
+                )
+                if DO.manager and not customer_name_df.empty:
                     status, msg = DO.manager.save_comment(
-                        customer_name=customer_name.iloc[0]["customer_name"],
+                        customer_name=customer_name_df.iloc[0]["customer_name"],
                         comment=comment,
                         git_id=git_id_val,
                     )
@@ -212,7 +218,7 @@ def ui_time_tracking():
 
         async def handle_delete():
             """Delete the time entry."""
-            await QE.function_db("delete_time_row", int(customer_id), int(project_id))
+            await QE.function_db("delete_time_row", customer_id_int, project_id_int)
             await update_tab_indicator_now()
 
         def handle_close():
@@ -222,8 +228,8 @@ def ui_time_tracking():
             checkbox.set_value(True)
 
         await show_time_entry_dialog(
-            customer_id=customer_id,
-            project_id=project_id,
+            customer_id=customer_id_int,
+            project_id=project_id_int,
             on_save_callback=handle_save,
             on_delete_callback=handle_delete,
             on_close_callback=handle_close,
@@ -236,15 +242,18 @@ def ui_time_tracking():
     customer_total_labels = []
 
     async def get_ui_data():
+        """Fetch UI data for the selected date range."""
         date_range_str = date_input.value
         start_date, end_date = helpers.parse_date_range(date_range_str)
-        if not start_date or not end_date:  # Fallback to today if not set
+
+        # Fallback to today if date range not set
+        if not start_date or not end_date:
             today = datetime.now().strftime("%Y%m%d")
             start_date = end_date = today
-        df = await QE.function_db(
+
+        return await QE.function_db(
             "get_customer_ui_list", start_date=start_date, end_date=end_date
         )
-        return df
 
     async def render_ui():
         """Render the main time tracking UI, grouped by customer and project."""
@@ -253,14 +262,17 @@ def ui_time_tracking():
         df = await get_ui_data()
         container.clear()
 
+        # Cache display mode to avoid repeated calls
+        is_time = is_time_display(radio_display_selection.value)
+        column_name = get_column_name(is_time)
+
         def get_total_string(customer_id):
-            is_time = is_time_display(radio_display_selection.value)
-            total = df[df["customer_id"] == customer_id][
-                "total_time" if is_time else "user_bonus"
-            ].sum()
+            """Get formatted total for a customer."""
+            total = df[df["customer_id"] == customer_id][column_name].sum()
             return format_value(total, is_time)
 
         async def make_project_row(project, customer_id):
+            """Create a single project row with checkbox and value."""
             sql_query = (
                 f"select * from time where customer_id = {customer_id} "
                 f"and project_id = {project['project_id']} and end_time is null"
@@ -270,11 +282,8 @@ def ui_time_tracking():
 
             with (
                 ui.row()
-                .classes("items-center w-full")
-                .style(
-                    f"display: grid; grid-template-columns: {PROJECT_ROW_GRID}; "
-                    f"align-items: center; margin-bottom:2px; min-height:{PROJECT_ROW_MIN_HEIGHT};"
-                )
+                .classes(UI_STYLES.get_layout_classes("time_tracking_project_row"))
+                .style(UI_STYLES.get_inline_style("time_tracking", "project_row"))
             ):
                 ui.checkbox(
                     on_change=make_callback(
@@ -282,29 +291,57 @@ def ui_time_tracking():
                     ),
                     value=initial_state,
                 )
-                ui.label(str(project["project_name"])).classes("ml-2 truncate")
-                is_time = is_time_display(radio_display_selection.value)
-                value = project["total_time"] if is_time else project["user_bonus"]
+                ui.label(str(project["project_name"])).classes(
+                    UI_STYLES.get_widget_style("time_tracking_project_name")["classes"]
+                )
+
+                # Use cached column_name instead of recalculating
+                value = project[column_name]
                 total_string = format_value(value, is_time)
+
+                project_value_style = UI_STYLES.get_widget_style(
+                    "time_tracking_project_value"
+                )
                 value_label = (
                     ui.label(f"{total_string}")
-                    .classes("text-grey text-right whitespace-nowrap w-full")
-                    .style("max-width:100px; overflow-x:auto;")
+                    .classes(project_value_style["classes"])
+                    .style(project_value_style.get("style", ""))
                 )
                 value_labels.append((value_label, customer_id, project["project_id"]))
 
         async def make_customer_card(customer_id, customer_name, group):
+            """Create a customer card with all its projects."""
             with ui.card().classes(UI_STYLES.get_card_classes("xs", "card_padded")):
-                with ui.column().classes("items-start").style(CUSTOMER_CARD_FLEX):
+                with (
+                    ui.column()
+                    .classes(
+                        UI_STYLES.get_layout_classes("time_tracking_customer_column")
+                    )
+                    .style(UI_STYLES.get_inline_style("time_tracking", "customer_card"))
+                ):
                     total_string = get_total_string(customer_id)
                     with (
                         ui.row()
-                        .classes("w-full justify-between")
-                        .style("display:flex; align-items:center;")
+                        .classes(
+                            UI_STYLES.get_layout_classes(
+                                "time_tracking_customer_header"
+                            )
+                        )
+                        .style(
+                            UI_STYLES.get_inline_style(
+                                "time_tracking", "customer_header"
+                            )
+                        )
                     ):
-                        ui.label(str(customer_name)).classes("text-lg text-right")
+                        ui.label(str(customer_name)).classes(
+                            UI_STYLES.get_widget_style("time_tracking_customer_name")[
+                                "classes"
+                            ]
+                        )
                         label_total = ui.label(total_string).classes(
-                            "text-base text-grey text-right"
+                            UI_STYLES.get_widget_style("time_tracking_customer_total")[
+                                "classes"
+                            ]
                         )
                         customer_total_labels.append((label_total, customer_id))
                     for _, project in group.iterrows():
@@ -314,10 +351,8 @@ def ui_time_tracking():
         with container:
             with (
                 ui.row()
-                .classes("px-4 justify-between overflow-x-auto")
-                .style(
-                    f"flex-wrap:nowrap; width:100%; max-width:{CONTAINER_MAX_WIDTH}; margin:0 auto;"
-                )
+                .classes(UI_STYLES.get_layout_classes("time_tracking_container"))
+                .style(UI_STYLES.get_inline_style("time_tracking", "container"))
             ):
                 # Run customer cards in series for UI consistency
                 for (customer_id, customer_name), group in customers:
@@ -332,10 +367,7 @@ def ui_time_tracking():
 
         df = await get_ui_data()
         is_time = is_time_display(radio_display_selection.value)
-
-        def get_time_string(row):
-            value = row["total_time"] if is_time else row["user_bonus"]
-            return format_value(value, is_time)
+        column_name = get_column_name(is_time)
 
         # Build a lookup for (customer_id, project_id) to row
         df_lookup = {
@@ -346,13 +378,12 @@ def ui_time_tracking():
         for value_label, customer_id, project_id in value_labels:
             row = df_lookup.get((customer_id, project_id))
             if row is not None:
-                value_label.text = get_time_string(row)
+                value = row[column_name]
+                value_label.text = format_value(value, is_time)
 
         # Update customer total labels
         for label_total, customer_id in customer_total_labels:
-            total = df[df["customer_id"] == customer_id][
-                "total_time" if is_time else "user_bonus"
-            ].sum()
+            total = df[df["customer_id"] == customer_id][column_name].sum()
             label_total.text = format_value(total, is_time)
 
     # Register these functions globally so they can be accessed by other UI components
