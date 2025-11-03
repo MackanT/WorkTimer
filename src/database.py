@@ -224,10 +224,10 @@ class Database:
                         ,wage = (
                             select wage from customers where customer_id = new.customer_id
                         )
-                        ,bonus = (
+                        ,bonus = ifnull((
                             select bonus_percent from bonus
                                 where current_date between start_date and ifnull(end_date, '2099-12-31')
-                        )
+                        ), 0)
                     where time_id = new.time_id;
                 end;
                 """)
