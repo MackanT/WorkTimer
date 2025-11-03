@@ -42,9 +42,48 @@ def is_time_display(display_value: str) -> bool:
 
 def format_value(value: float, is_time: bool) -> str:
     """Format a value as time (hours) or bonus (SEK)."""
-    if is_time:
-        return f"{value:.2f} h"
-    return f"{value:.2f} SEK"
+    return f"{value:.2f} h" if is_time else f"{value:.2f} SEK"
+
+
+def create_date_range_picker(on_change_callback) -> tuple:
+    """
+    Create date range input with calendar picker.
+    
+    Returns:
+        Tuple of (date_input, date_picker) widgets
+    """
+    with ui.input("Date range").classes(
+        f"{UI_STYLES.get_widget_width('compact')} ml-4 items-center"
+    ) as date_input:
+        with ui.menu().props("no-parent-event") as menu:
+            date_picker = (
+                ui.date()
+                .props("range")
+                .bind_value(
+                    date_input,
+                    forward=lambda x: f"{x['from']} - {x['to']}"
+                    if isinstance(x, dict) and x
+                    else x if isinstance(x, str) else None,
+                    backward=lambda x: {
+                        "from": x.split(" - ")[0],
+                        "to": x.split(" - ")[1],
+                    }
+                    if " - " in (x or "")
+                    else None,
+                )
+            )
+            with ui.row().classes("justify-end"):
+                ui.button("Close", on_click=menu.close).props("flat")
+        with date_input.add_slot("append"):
+            ui.icon("edit_calendar").on("click", menu.open).classes(
+                "cursor-pointer items-center"
+            )
+    
+    # Bind change events
+    date_input.on("update:model-value", on_change_callback)
+    date_picker.on("update:model-value", on_change_callback)
+    
+    return date_input, date_picker
 
 
 # ============================================================================
@@ -63,45 +102,42 @@ def ui_time_tracking():
     - DevOps integration for saving work comments
     """
     # Get global instances
-    LOG = GlobalRegistry.get("LOG")
     QE = GlobalRegistry.get("QE")
     DO = GlobalRegistry.get("DO")
     run_async_task = GlobalRegistry.get("run_async_task")
     update_tab_indicator_now = GlobalRegistry.get("update_tab_indicator_now")
+
+    # State for checkbox event handling
+    ignore_next_checkbox_event = False
+
+    # ========================================================================
+    # UI Control Handlers
+    # ========================================================================
+
+    def set_custom_radio(e):
+        """Set time span to Custom when date picker changes."""
+        selected_time.value = "Custom"
+        asyncio.create_task(update_ui())
+
+    def on_radio_time_change(e):
+        """Update date range when time span radio changes."""
+        date_input.value = helpers.get_range_for(selected_time.value)
+        asyncio.create_task(update_ui())
+
+    def on_radio_type_change(e):
+        """Refresh UI when display type changes (Time/Bonus)."""
+        asyncio.create_task(update_ui())
+
+    # ========================================================================
+    # Filter Controls
+    # ========================================================================
 
     with ui.grid(columns=GRID_COLUMNS).classes("w-full gap-0 items-center"):
         ui.label("Time Span").classes("items-center")
         selected_time = (
             ui.radio(TIME_OPTIONS, value="Day").props("inline").classes("items-center")
         )
-        with ui.input("Date range").classes(
-            f"{UI_STYLES.get_widget_width('compact')} ml-4 items-center"
-        ) as date_input:
-            with ui.menu().props("no-parent-event") as menu:
-                date_picker = (
-                    ui.date()
-                    .props("range")
-                    .bind_value(
-                        date_input,
-                        forward=lambda x: f"{x['from']} - {x['to']}"
-                        if isinstance(x, dict) and x
-                        else x
-                        if isinstance(x, str)
-                        else None,
-                        backward=lambda x: {
-                            "from": x.split(" - ")[0],
-                            "to": x.split(" - ")[1],
-                        }
-                        if " - " in (x or "")
-                        else None,
-                    )
-                )
-                with ui.row().classes("justify-end"):
-                    ui.button("Close", on_click=menu.close).props("flat")
-            with date_input.add_slot("append"):
-                ui.icon("edit_calendar").on("click", menu.open).classes(
-                    "cursor-pointer items-center"
-                )
+        date_input, date_picker = create_date_range_picker(set_custom_radio)
 
         ui.label("Display Options").classes("mr-8 items-center")
         radio_display_selection = (
@@ -112,28 +148,16 @@ def ui_time_tracking():
 
     ui.separator().classes("my-2")
 
-    def set_custom_radio(e):
-        LOG.log_msg("DEBUG", f"Date picker selected: {date_input.value}")
-        selected_time.value = "Custom"
-        asyncio.create_task(update_ui())
-
-    def on_radio_time_change(e):
-        LOG.log_msg("DEBUG", f"Radio Date selected: {selected_time.value}")
-        date_input.value = helpers.get_range_for(selected_time.value)
-        asyncio.create_task(update_ui())
-
-    def on_radio_type_change(e):
-        LOG.log_msg("DEBUG", f"Radio Type selected: {radio_display_selection.value}")
-        asyncio.create_task(update_ui())
-
+    # Wire up event handlers
     date_input.value = helpers.get_range_for(selected_time.value)
-    date_input.on("update:model-value", set_custom_radio)
-    date_picker.on("update:model-value", set_custom_radio)
     selected_time.on("update:model-value", on_radio_time_change)
     radio_display_selection.on("update:model-value", on_radio_type_change)
 
     container = ui.element()
-    ignore_next_checkbox_event = False
+
+    # ========================================================================
+    # Checkbox Event Handling
+    # ========================================================================
 
     async def on_checkbox_change(event, checked, customer_id, project_id):
         """

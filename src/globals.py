@@ -209,6 +209,22 @@ class DevOpsEngine:
             task.cancel()
         self._scheduled_tasks.clear()
 
+    def has_customer_connection(self, customer_name: str) -> bool:
+        """
+        Check if a specific customer has DevOps integration configured.
+        
+        Args:
+            customer_name: Name of the customer to check
+            
+        Returns:
+            True if customer has active DevOps connection
+        """
+        return bool(
+            self.manager
+            and hasattr(self.manager, "clients")
+            and customer_name in self.manager.clients
+        )
+
     async def initialize(self):
         """Initialize DevOps connections and data (without starting scheduled tasks)."""
         try:

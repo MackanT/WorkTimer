@@ -473,19 +473,57 @@ def extract_table_name(query_text: str) -> str:
     return "unknown_table"
 
 
-def extract_devops_id(text: str) -> int | None:
-    """Extract DevOps ID from text containing pattern ': ID -'.
-
+def extract_id_from_text(
+    text: str, pattern: str = r":\s*(\d+)\s*-", group: int = 1
+) -> int | None:
+    """
+    Extract numeric ID from text using a regex pattern.
+    
+    Generic utility for extracting IDs from formatted strings like:
+    - "Epic: 123 - Description" (default pattern)
+    - "ID: 456" (pattern r"ID:\s*(\d+)")
+    - "[#789]" (pattern r"\[#(\d+)\]")
+    
     Args:
-        text: Text to search for DevOps ID
+        text: Text to search for ID
+        pattern: Regex pattern with a capture group for the ID (default: ': ID -')
+        group: Which capture group contains the ID (default: 1)
+        
+    Returns:
+        Extracted ID as integer, or None if not found
+        
+    Examples:
+        >>> extract_id_from_text("Epic: 123 - My Epic")
+        123
+        >>> extract_id_from_text("Task #456", pattern=r"#(\d+)")
+        456
+    """
+    if not text or not isinstance(text, str):
+        return None
+    
+    try:
+        match = re.search(pattern, text)
+        if match:
+            return int(match.group(group))
+    except (ValueError, IndexError, AttributeError):
+        return None
+    
+    return None
 
+
+def extract_devops_id(text: str) -> int | None:
+    """
+    Extract DevOps ID from text containing pattern ': ID -'.
+    
+    Convenience wrapper for extract_id_from_text() with DevOps-specific pattern.
+    
+    Args:
+        text: Text to search for DevOps ID (e.g., "Epic: 123 - Description")
+        
     Returns:
         Extracted ID as integer, or None if not found
     """
-    match = re.search(r":\s*(\d+)\s*-", text)
-    if match:
-        return int(match.group(1))
-    return None
+    return extract_id_from_text(text, pattern=r":\s*(\d+)\s*-")
 
 
 # ===== UI WIDGET FACTORIES =====

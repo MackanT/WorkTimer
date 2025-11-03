@@ -6,18 +6,34 @@ Provides standardized dialogs for common operations:
 - Confirmation dialogs
 """
 
+from typing import Callable, Optional
 from nicegui import ui
-from ..helpers import UI_STYLES
+from ..helpers import UI_STYLES, extract_devops_id, extract_id_from_text
 from ..globals import GlobalRegistry
-import re
+
+
+def _create_action_buttons(on_save, on_delete, on_close):
+    """Create standard Save/Delete/Close button row for dialogs."""
+    with ui.row().classes("justify-end gap-2"):
+        btn_classes = UI_STYLES.get_widget_width("button")
+        ui.button("Save", on_click=on_save).classes(btn_classes)
+        ui.button("Delete", on_click=on_delete).props("color=negative").classes(
+            f"q-btn--warning {btn_classes}"
+        )
+        ui.button("Close", on_click=on_close).props("flat").classes(btn_classes)
+
+
+# ============================================================================
+# Dialog Components
+# ============================================================================
 
 
 async def show_time_entry_dialog(
     customer_id: int,
     project_id: int,
-    on_save_callback=None,
-    on_delete_callback=None,
-    on_close_callback=None,
+    on_save_callback: Optional[Callable] = None,
+    on_delete_callback: Optional[Callable] = None,
+    on_close_callback: Optional[Callable] = None,
 ) -> None:
     """
     Show dialog for completing a time entry with comment and DevOps integration.
@@ -34,25 +50,23 @@ async def show_time_entry_dialog(
     DO = GlobalRegistry.get("DO")
     
     # Query project/customer info
-    sql_query = f"""
-    select distinct t.customer_name, t.project_name, p.git_id from time t
-    left join projects p on p.project_id = t.project_id
-    where t.customer_id = {customer_id}
-    and t.project_id = {project_id}
-    """
-    df = await QE.query_db(sql_query)
+    df = await QE.query_db(
+        f"""
+        select distinct t.customer_name, t.project_name, p.git_id 
+        from time t
+        left join projects p on p.project_id = t.project_id
+        where t.customer_id = {customer_id} and t.project_id = {project_id}
+        """
+    )
+    
+    # Extract values with defaults
     c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
     p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
     git_id = df.iloc[0]["git_id"] if not df.empty else 0
     has_git_id = git_id is not None and git_id > 0
 
-    # DevOps connection check
-    has_devops = bool(
-        hasattr(DO, "manager")
-        and DO.manager
-        and hasattr(DO.manager, "clients")
-        and c_name in DO.manager.clients
-    )
+    # Check DevOps connection using engine method
+    has_devops = DO.has_customer_connection(c_name) if DO else False
 
     with ui.dialog().props("persistent") as popup:
         with ui.card().classes(UI_STYLES.get_widget_width("extra_wide")):
@@ -97,21 +111,13 @@ async def show_time_entry_dialog(
 
             # Action buttons
             async def handle_save():
+                """Save time entry with parsed DevOps ID."""
                 git_id_val = None
                 store_to_devops = False
                 
                 if has_devops and id_input is not None:
-                    git_id_str = id_input.value
-                    if git_id_str and isinstance(git_id_str, str):
-                        match = re.search(r":\s*(\d+)\s*-", git_id_str)
-                        if match:
-                            try:
-                                git_id_val = int(match.group(1))
-                            except ValueError:
-                                git_id_val = None
-                    store_to_devops = (
-                        id_checkbox.value if id_checkbox is not None else False
-                    )
+                    git_id_val = extract_devops_id(id_input.value)
+                    store_to_devops = id_checkbox.value if id_checkbox else False
 
                 if LOG:
                     LOG.log_msg(
@@ -121,32 +127,25 @@ async def show_time_entry_dialog(
                     )
                 
                 if on_save_callback:
-                    await on_save_callback(
-                        git_id_val, comment_input.value, store_to_devops
-                    )
+                    await on_save_callback(git_id_val, comment_input.value, store_to_devops)
                 
                 popup.close()
 
             async def handle_delete():
+                """Delete the time entry."""
                 if on_delete_callback:
                     await on_delete_callback()
                 ui.notify("Entry deleted", color="negative")
                 popup.close()
 
             def handle_close():
+                """Close dialog without saving."""
                 if on_close_callback:
                     on_close_callback()
                 popup.close()
 
-            with ui.row().classes("justify-end gap-2"):
-                btn_classes = UI_STYLES.get_widget_width("button")
-                ui.button("Save", on_click=handle_save).classes(btn_classes)
-                ui.button("Delete", on_click=handle_delete).props(
-                    "color=negative"
-                ).classes(f"q-btn--warning {btn_classes}")
-                ui.button("Close", on_click=handle_close).props("flat").classes(
-                    btn_classes
-                )
+            # Button row
+            _create_action_buttons(handle_save, handle_delete, handle_close)
 
     popup.open()
 
