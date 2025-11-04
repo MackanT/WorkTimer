@@ -421,20 +421,37 @@ def ui_query_editor():
         try:
             df = await QE.query_db(query)
             if df is not None:
-                # Update grid with query results
+                # Handle duplicate column names by adding suffixes
+                cols = df.columns.tolist()
+                seen = {}
+                unique_cols = []
+                for col in cols:
+                    col_lower = str(col).lower()
+                    if col_lower in seen:
+                        seen[col_lower] += 1
+                        unique_cols.append(f"{col_lower}_{seen[col_lower]}")
+                    else:
+                        seen[col_lower] = 0
+                        unique_cols.append(col_lower)
+                
+                # Update grid with deduplicated column names
                 grid_box.options["columnDefs"] = [
-                    {"field": str(col).lower(), "headerName": str(col).lower()}
-                    for col in df.columns
+                    {"field": unique_cols[i], "headerName": str(col).lower()}
+                    for i, col in enumerate(df.columns)
                 ]
+                # Rename DataFrame columns to match unique names
+                df.columns = unique_cols
                 grid_box.options["rowData"] = df.to_dict(orient="records")
                 grid_box.update()
             else:
-                ui.notify(
-                    "Query executed successfully (no result set).", color="positive"
-                )
+                LOG.log_msg("INFO", "Query executed successfully (no result set).")
         except Exception as e:
-            ui.notify(f"Error: {e}", color="negative")
-            LOG.log_msg("ERROR", f"Query execution failed: {e}")
+            error_msg = f"Query execution failed: {e}"
+            LOG.log_msg("ERROR", error_msg)
+            # Show error in grid
+            grid_box.options["columnDefs"] = [{"field": "error", "headerName": "❌ Error"}]
+            grid_box.options["rowData"] = [{"error": str(e)}]
+            grid_box.update()
 
     # Execute initial query on load
     asyncio.run(execute_query())
