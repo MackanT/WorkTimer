@@ -381,7 +381,7 @@ def ui_add_data():
         # Create refresh callback that reloads DevOps data AND rebuilds forms
         async def on_success_refresh():
             await DO.update_devops(incremental=True)
-            await DO.load_df()
+            # Note: update_devops already calls load_df() internally
             # Rebuild both Add and Update forms
             build_add_form()
             build_update_form()

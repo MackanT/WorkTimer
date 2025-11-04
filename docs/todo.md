@@ -19,6 +19,7 @@
 - query editor, selecting mult. cols with same name -> C:\Users\MarcusToftås\OneDrive - Random Forest AB\Dokument\Other\WorkTimer\src\ui\query_editor.py:349: UserWarning: DataFrame columns are not unique, some columns will be omitted.
   grid_box.options["rowData"] = df.to_dict(orient="records")
 - sorting of tasks is "backwards" for earliest/latest. Null due-dates are backwards
+- make log auto-scroll
 
 
 ### Completed -- Old from before ReadMe
