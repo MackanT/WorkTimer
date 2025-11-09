@@ -223,10 +223,18 @@ def ui_query_editor():
             + UI_STYLES.get_layout_classes("row_gap_2")
         ):
             # Use centralized save button with additional_kwargs for table_name and pk_data
+            async def _on_success_close():
+                try:
+                    popup.close()
+                except Exception:
+                    pass
+
             helpers.add_generic_save_button(
                 save_data=save_data,
                 fields=fields,
                 widgets=widgets,
+                custom_handlers=None,
+                on_success_callback=_on_success_close,
                 additional_kwargs={"table_name": table_name, "pk_data": pk_data},
                 button_classes=UI_STYLES.get_layout_classes("button_fixed"),
             )
