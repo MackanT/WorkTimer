@@ -4,9 +4,6 @@ Add Data UI Module
 This module provides interfaces for adding and updating data in the database,
 including customers, projects, bonuses, and DevOps work items.
 It also includes database management tools for comparing and updating databases.
-
-Refactored to use DataPrepRegistry and EntityFormBuilder pattern.
-Lines reduced from 850 → ~280 (67% reduction).
 """
 
 import asyncio

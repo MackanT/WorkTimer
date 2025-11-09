@@ -326,7 +326,6 @@ def ui_query_editor():
 
         pk_data = (primary_key, row_data[primary_key])
 
-        # Fetch current row data
         table_row = await QE.function_db("get_query_edit_data", table_name, pk_data[1])
         if table_row.empty:
             ui.notify("Row not found", color="negative")
@@ -335,7 +334,6 @@ def ui_query_editor():
 
         table_row = table_row.iloc[0]
 
-        # Prepare data sources for field population
         data_sources = {}
 
         # Special handling for time table (needs project dropdown)
@@ -345,7 +343,6 @@ def ui_query_editor():
                 f"SELECT project_name FROM projects WHERE customer_id = {customer_id} AND is_current = 1"
             )
             data_sources["project_names"] = projects["project_name"].tolist()
-            data_sources["default_project"] = table_row.get("project_name")
 
         # Get field configuration
         fields = config_query["query"][table_name]["fields"]
@@ -433,7 +430,7 @@ def ui_query_editor():
                     else:
                         seen[col_lower] = 0
                         unique_cols.append(col_lower)
-                
+
                 # Update grid with deduplicated column names
                 grid_box.options["columnDefs"] = [
                     {"field": unique_cols[i], "headerName": str(col).lower()}
@@ -449,7 +446,9 @@ def ui_query_editor():
             error_msg = f"Query execution failed: {e}"
             LOG.log_msg("ERROR", error_msg)
             # Show error in grid
-            grid_box.options["columnDefs"] = [{"field": "error", "headerName": "❌ Error"}]
+            grid_box.options["columnDefs"] = [
+                {"field": "error", "headerName": "❌ Error"}
+            ]
             grid_box.options["rowData"] = [{"error": str(e)}]
             grid_box.update()
 

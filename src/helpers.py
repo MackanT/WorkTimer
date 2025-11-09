@@ -381,12 +381,12 @@ def parse_date_range(date_range_str: str) -> tuple[str | None, str | None]:
 def is_dataframe_empty(df: Optional[pd.DataFrame]) -> bool:
     """
     Check if a DataFrame is None or empty.
-    
+
     Common pattern used throughout the codebase to validate query results.
-    
+
     Args:
         df: DataFrame to check (can be None)
-        
+
     Returns:
         True if df is None or empty, False if it has data
     """
@@ -396,12 +396,12 @@ def is_dataframe_empty(df: Optional[pd.DataFrame]) -> bool:
 def has_dataframe_data(df: Optional[pd.DataFrame]) -> bool:
     """
     Check if a DataFrame has data (not None and not empty).
-    
+
     Inverse of is_dataframe_empty() for positive logic conditions.
-    
+
     Args:
         df: DataFrame to check (can be None)
-        
+
     Returns:
         True if df has data, False if None or empty
     """
@@ -1876,7 +1876,7 @@ def add_generic_save_button(
 
         # Standard database operation
         kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
-        
+
         # Convert any single-item list in kwargs to a string
         for k, v in kwargs.items():
             if isinstance(v, list):

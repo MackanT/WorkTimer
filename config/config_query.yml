@@ -30,6 +30,7 @@ query:
       - name: git_id
         label: Git ID
         type: number
+        step: 1
         options: []
         options_source: git_id
         optional: true
