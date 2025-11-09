@@ -353,6 +353,8 @@ def ui_query_editor():
             options_source = field.get("options_source")
             if options_source and options_source not in data_sources:
                 data_sources[options_source] = table_row.get(options_source)
+            if field["name"] == "project_name" and table_name == "time":
+                field["default"] = table_row.get("project_name")
 
         helpers.assign_dynamic_options(fields, data_sources=data_sources)
 
