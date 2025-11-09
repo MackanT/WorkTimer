@@ -9,7 +9,6 @@
 - Marker for ongoing projects?
 - Devops välja kolumn för kortet (todo, on hold, in progress etc!)
 - sätt task till "done" när en stänger on_checkmark
-- drop sort-order in Customers table
 
 ### Buggar
 - At midnight, date "today" does not switch automatically

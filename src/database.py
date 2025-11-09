@@ -263,7 +263,6 @@ class Database:
                     customer_name text,
                     start_date datetime,
                     wage real,
-                    sort_order integer default 1,
                     pat_token text,
                     org_url text,
                     valid_from datetime,
@@ -1102,7 +1101,6 @@ class Database:
                         * ifnull(t.wage, 0)
                         * ifnull(t.bonus, 0)
                     ), 0) as user_bonus
-                    ,min(coalesce(c.sort_order, 0)) as sort_order
                 from projects p
                 join customers c on c.customer_id = p.customer_id and c.is_current = 1
                 left join time t on t.customer_id = p.customer_id and t.project_id = p.project_id
@@ -1120,10 +1118,8 @@ class Database:
                 ct.project_id,
                 ct.project_name,
                 round(ct.total_time, 2) as total_time,
-                round(ct.user_bonus, 2) as user_bonus,
-                sort_order
-            from calculated_time ct
-            order by sort_order asc;
+                round(ct.user_bonus, 2) as user_bonus
+            from calculated_time ct;
         """
         result = self.fetch_query(query)
         return result
@@ -1306,18 +1302,18 @@ class Database:
     def _get_entity_name(self, entity_type: str, entity_id: int) -> str:
         """
         Generic helper to retrieve entity name by ID.
-        
+
         Args:
             entity_type: "customer" or "project"
             entity_id: ID of the entity
-            
+
         Returns:
             Entity name as string, or empty string if not found
         """
         table_name = f"{entity_type}s"  # customers, projects
         column_name = f"{entity_type}_name"
         id_column = f"{entity_type}_id"
-        
+
         return self._get_value_from_db(
             f"select {column_name} from {table_name} where {id_column} = ?",
             (entity_id,),
