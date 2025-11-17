@@ -131,10 +131,14 @@ def ui_time_tracking():
     # Filter Controls
     # ========================================================================
 
-    with ui.grid(columns=GRID_COLUMNS).classes(UI_STYLES.get_layout_classes("full_row_nogap")):
+    with ui.grid(columns=GRID_COLUMNS).classes(
+        UI_STYLES.get_layout_classes("full_row_nogap")
+    ):
         ui.label("Time Span").classes(UI_STYLES.get_layout_classes("row_centered"))
         selected_time = (
-            ui.radio(TIME_OPTIONS, value="Day").props("inline").classes(UI_STYLES.get_layout_classes("row_centered"))
+            ui.radio(TIME_OPTIONS, value="Day")
+            .props("inline")
+            .classes(UI_STYLES.get_layout_classes("row_centered"))
         )
         date_input, date_picker = create_date_range_picker(set_custom_radio)
 
