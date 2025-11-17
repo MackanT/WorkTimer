@@ -6,7 +6,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data_dpg.db:/app/data_dpg.db
+      - ./worktimer.db:/app/worktimer.db
     # environment:
     # Add any environment variables here if needed
     # EXAMPLE_VAR: value

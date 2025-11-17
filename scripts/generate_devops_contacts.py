@@ -119,8 +119,8 @@ def main():
         "--db_name",
         "--db",
         type=str,
-        default="data_dpg.db",
-        help="File name for database - (default: data_dpg.db)",
+        default="worktimer.db",
+        help="File name for database - (default: worktimer.db)",
     )
     parser.add_argument(
         "--location",

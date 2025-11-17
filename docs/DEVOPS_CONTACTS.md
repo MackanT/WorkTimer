@@ -49,7 +49,7 @@ After running, edit `config/devops_contacts.yml` and replace placeholder comment
 The generator supports the following options:
 
 - `--preview` — run the generation and print the result instead of saving
-- `--db_name <file>` — database file to read (default: `data_dpg.db`)
+- `--db_name <file>` — database file to read (default: `worktimer.db`)
 - `--location <file>` — output filename relative to `--folder` (default: `config/devops_contacts.yml`)
 
 Use these flags for testing; the defaults are suitable for normal usage.

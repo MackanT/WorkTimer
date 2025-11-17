@@ -184,7 +184,7 @@ Access this guide and additional documentation directly within the application.
 - Review Application Log for specific error messages
 
 **Database errors**
-- Ensure `data_dpg.db` file exists and is not locked by another process
+- Ensure `worktimer.db` file exists and is not locked by another process
 - Check that you have write permissions in the application directory
 - Review Application Log for SQL error details
 
@@ -239,6 +239,6 @@ The database file is mounted as a volume, so your data persists across container
 - **Comments**: Add meaningful comments when stopping timers to improve DevOps integration
 - **Custom Queries**: Save frequently-used SQL queries for quick access
 - **DevOps Sync**: Let automatic sync run—full refresh happens daily at 2 AM, incremental hourly
-- **Backup**: Regularly backup your `data_dpg.db` file before major operations
+- **Backup**: Regularly backup your `worktimer.db` file before major operations
 
 ---

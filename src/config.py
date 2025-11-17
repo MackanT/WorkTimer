@@ -19,7 +19,7 @@ class ConfigSettings(BaseModel):
     """Settings configuration from config_settings.yml"""
 
     debug_mode: bool = False
-    db_name: str = "data_dpg.db"
+    db_name: str = "worktimer.db"
 
 
 class DevOpsTagConfig(BaseModel):
