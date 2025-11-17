@@ -77,6 +77,7 @@ def ui_info():
             ):
                 ui.tab("README", icon="description")
                 ui.tab("Info", icon="info")
+                ui.tab("Devops Contacts", icon="merge")
         with splitter.after:
             with ui.tab_panels(info_tabs, value="README").classes(
                 UI_STYLES.get_layout_classes("full_size")
@@ -85,3 +86,5 @@ def ui_info():
                     helpers.render_markdown_card("README.md")
                 with ui.tab_panel("Info"):
                     helpers.render_markdown_card("INFO.md")
+                with ui.tab_panel("Devops Contacts"):
+                    helpers.render_markdown_card("DEVOPS_CONTACTS.md")
