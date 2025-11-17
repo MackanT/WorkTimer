@@ -117,7 +117,6 @@ class Logger:
                 lines.append(line)
             self.__class__.LOG_TEXTAREA.set_content("<br>".join(lines))
             self.__class__.LOG_TEXTAREA.update()
-            self.__class__.LOG_TEXTAREA.run_method("scrollTo", 0, 99999)
 
 
 class QueryEngine:
@@ -132,8 +131,8 @@ class QueryEngine:
         func = getattr(self.db, func_name)
         return await asyncio.to_thread(func, *args, **kwargs)
 
-    async def query_db(self, query: str):
-        return await asyncio.to_thread(self.db.smart_query, query)
+    async def query_db(self, query: str, params: tuple = ()):
+        return await asyncio.to_thread(self.db.smart_query, query, params)
 
     async def refresh(self):
         self.df = await self.function_db("get_query_list")
@@ -208,6 +207,22 @@ class DevOpsEngine:
         for task in self._scheduled_tasks:
             task.cancel()
         self._scheduled_tasks.clear()
+
+    def has_customer_connection(self, customer_name: str) -> bool:
+        """
+        Check if a specific customer has DevOps integration configured.
+
+        Args:
+            customer_name: Name of the customer to check
+
+        Returns:
+            True if customer has active DevOps connection
+        """
+        return bool(
+            self.manager
+            and hasattr(self.manager, "clients")
+            and customer_name in self.manager.clients
+        )
 
     async def initialize(self):
         """Initialize DevOps connections and data (without starting scheduled tasks)."""
@@ -342,13 +357,7 @@ class DevOpsEngine:
                 markdown=kwargs.get("markdown", False),
                 parent=kwargs.get("parent"),
             )
-            # Trigger incremental refresh after creating work item
-            if status:
-                self.log.log_msg(
-                    "INFO",
-                    "Triggering incremental DevOps refresh after work item creation",
-                )
-                asyncio.create_task(self.update_devops(incremental=True))
+            # Note: DevOps refresh is handled by on_success_callback in the UI
         elif func_name == "create_epic":
             status, msg = self.manager.create_epic(
                 customer_name=customer_name,
@@ -357,13 +366,7 @@ class DevOpsEngine:
                 additional_fields=kwargs.get("additional_fields"),
                 markdown=kwargs.get("markdown", False),
             )
-            # Trigger incremental refresh after creating work item
-            if status:
-                self.log.log_msg(
-                    "INFO",
-                    "Triggering incremental DevOps refresh after work item creation",
-                )
-                asyncio.create_task(self.update_devops(incremental=True))
+            # Note: DevOps refresh is handled by on_success_callback in the UI
         elif func_name == "create_feature":
             status, msg = self.manager.create_feature(
                 customer_name=customer_name,
@@ -373,13 +376,7 @@ class DevOpsEngine:
                 markdown=kwargs.get("markdown", False),
                 parent=kwargs.get("parent"),
             )
-            # Trigger incremental refresh after creating work item
-            if status:
-                self.log.log_msg(
-                    "INFO",
-                    "Triggering incremental DevOps refresh after work item creation",
-                )
-                asyncio.create_task(self.update_devops(incremental=True))
+            # Note: DevOps refresh is handled by on_success_callback in the UI
 
         if not status:
             self.log.log_msg("ERROR", msg)

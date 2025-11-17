@@ -3,13 +3,15 @@ import asyncio
 import yaml
 from nicegui import ui
 from datetime import date, timedelta
+from typing import Optional, Callable
 import re
 import numpy as np
+import pandas as pd
 import markdown as _markdown
 import bleach as _bleach
 from markdownify import markdownify as _markdownify
 
-from .globals import SaveData
+from .globals import GlobalRegistry, SaveData
 
 
 # ===== UI STYLE MANAGER =====
@@ -83,6 +85,15 @@ class UIStyles:
             Dict with 'classes' and 'style' keys
         """
         widget_config = self._styles["widget_styles"].get(widget_type, {})
+
+        # If config has 'classes' key directly, return it as-is (simple style config)
+        if "classes" in widget_config:
+            return {
+                "classes": widget_config.get("classes", ""),
+                "style": widget_config.get("style", ""),
+            }
+
+        # Otherwise use the mode-based config (complex style config)
         return {
             "classes": widget_config.get(mode, widget_config.get("base", "")),
             "style": widget_config.get("style", ""),
@@ -128,12 +139,53 @@ class UIStyles:
         layout_classes = self.get_layout_classes(layout_type)
         return f"{layout_classes} max-w-{max_width}xl"
 
+    def get_inline_style(self, module: str, style_name: str) -> str:
+        """Get inline CSS style for a specific module and component.
+
+        Args:
+            module: Module name (e.g., 'time_tracking')
+            style_name: Style component name (e.g., 'customer_card', 'project_row')
+
+        Returns:
+            Inline CSS style string
+        """
+        return self._styles.get("inline_styles", {}).get(module, {}).get(style_name, "")
+
 
 # Global instance
 UI_STYLES = UIStyles.get_instance()
 
 
 # ===== MARKDOWN & HTML RENDERING =====
+
+# Dark mode CSS for markdown rendering
+MARKDOWN_DARK_MODE_CSS = """
+<style>
+    h1 { font-size: 2em; font-weight: bold; margin: 0.67em 0; border-bottom: 2px solid #555; padding-bottom: 0.3em; color: #ffffff; }
+    h2 { font-size: 1.5em; font-weight: bold; margin: 0.75em 0; border-bottom: 1px solid #555; padding-bottom: 0.3em; color: #f0f0f0; }
+    h3 { font-size: 1.25em; font-weight: bold; margin: 0.83em 0; color: #f0f0f0; }
+    h4 { font-size: 1.1em; font-weight: bold; margin: 1em 0; color: #e8e8e8; }
+    h5 { font-size: 1em; font-weight: bold; margin: 1.17em 0; color: #e8e8e8; }
+    h6 { font-size: 0.9em; font-weight: bold; margin: 1.33em 0; color: #aaa; }
+    ul, ol { margin: 1em 0; padding-left: 2em; color: #e0e0e0; }
+    ul { list-style-type: disc; }
+    ol { list-style-type: decimal; }
+    li { margin: 0.25em 0; }
+    p { margin: 1em 0; color: #e0e0e0; }
+    blockquote { border-left: 4px solid #666; padding-left: 1em; margin: 1em 0; color: #aaa; font-style: italic; }
+    code { background-color: #2d2d2d; color: #f8f8f2; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 0.9em; }
+    pre { background-color: #2d2d2d; padding: 16px; border-radius: 6px; overflow-x: auto; border: 1px solid #444; }
+    pre code { background-color: transparent; padding: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+    th, td { border: 1px solid #555; padding: 8px; text-align: left; color: #e0e0e0; }
+    th { background-color: #2d2d2d; font-weight: bold; }
+    strong { font-weight: bold; color: #ffffff; }
+    em { font-style: italic; }
+    hr { border: none; border-top: 2px solid #555; margin: 2em 0; }
+    a { color: #64b5f6; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+</style>
+"""
 
 
 def render_and_sanitize_markdown(text: str) -> str:
@@ -152,9 +204,7 @@ def render_and_sanitize_markdown(text: str) -> str:
     raw_html = _markdown.markdown(
         text,
         extensions=[
-            "fenced_code",
-            "codehilite",
-            "tables",
+            "extra",  # Includes fenced_code, tables, and more
             "nl2br",  # Convert newlines to <br>
             "sane_lists",  # Better list handling
         ],
@@ -205,77 +255,10 @@ def render_and_sanitize_markdown(text: str) -> str:
         protocols=["http", "https", "mailto"],
     )
 
-    # Add comprehensive styling for markdown elements (dark mode)
+    # Return with dark mode styling
     return f"""
     <div style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #e0e0e0;">
-        <style>
-            h1 {{ font-size: 2em; font-weight: bold; margin: 0.67em 0; border-bottom: 2px solid #555; padding-bottom: 0.3em; color: #ffffff; }}
-            h2 {{ font-size: 1.5em; font-weight: bold; margin: 0.75em 0; border-bottom: 1px solid #555; padding-bottom: 0.3em; color: #f0f0f0; }}
-            h3 {{ font-size: 1.25em; font-weight: bold; margin: 0.83em 0; color: #f0f0f0; }}
-            h4 {{ font-size: 1.1em; font-weight: bold; margin: 1em 0; color: #e8e8e8; }}
-            h5 {{ font-size: 1em; font-weight: bold; margin: 1.17em 0; color: #e8e8e8; }}
-            h6 {{ font-size: 0.9em; font-weight: bold; margin: 1.33em 0; color: #aaa; }}
-            ul, ol {{ margin: 1em 0; padding-left: 2em; color: #e0e0e0; }}
-            ul {{ list-style-type: disc; }}
-            ol {{ list-style-type: decimal; }}
-            li {{ margin: 0.25em 0; }}
-            p {{ margin: 1em 0; color: #e0e0e0; }}
-            blockquote {{ 
-                border-left: 4px solid #666; 
-                padding-left: 1em; 
-                margin: 1em 0;
-                color: #aaa;
-                font-style: italic;
-            }}
-            code {{ 
-                background-color: #2d2d2d; 
-                color: #f8f8f2;
-                padding: 2px 6px; 
-                border-radius: 3px;
-                font-family: 'Courier New', monospace;
-                font-size: 0.9em;
-            }}
-            pre {{ 
-                background-color: #2d2d2d; 
-                padding: 16px; 
-                border-radius: 6px; 
-                overflow-x: auto;
-                border: 1px solid #444;
-            }}
-            pre code {{
-                background-color: transparent;
-                padding: 0;
-            }}
-            table {{
-                border-collapse: collapse;
-                width: 100%;
-                margin: 1em 0;
-            }}
-            th, td {{
-                border: 1px solid #555;
-                padding: 8px;
-                text-align: left;
-                color: #e0e0e0;
-            }}
-            th {{
-                background-color: #2d2d2d;
-                font-weight: bold;
-            }}
-            strong {{ font-weight: bold; color: #ffffff; }}
-            em {{ font-style: italic; }}
-            hr {{ 
-                border: none; 
-                border-top: 2px solid #555; 
-                margin: 2em 0; 
-            }}
-            a {{
-                color: #64b5f6;
-                text-decoration: none;
-            }}
-            a:hover {{
-                text-decoration: underline;
-            }}
-        </style>
+        {MARKDOWN_DARK_MODE_CSS}
         {cleaned_html}
     </div>
     """
@@ -294,8 +277,6 @@ def convert_html_to_markdown(html_text: str) -> str:
         return ""
 
     # Pre-process to remove script and style tags
-    import re
-
     html_text = re.sub(
         r"<script[^>]*>.*?</script>", "", html_text, flags=re.DOTALL | re.IGNORECASE
     )
@@ -312,20 +293,13 @@ def convert_html_to_markdown(html_text: str) -> str:
         default_title=True,  # Include title attributes
     ).strip()
 
-    # Clean up common HTML artifacts that might remain
+    # Clean up common HTML artifacts
     import html
 
     markdown_text = html.unescape(markdown_text)
 
     # Clean up excessive whitespace and normalize line breaks
-    lines = markdown_text.split("\n")
-    cleaned_lines = []
-
-    for line in lines:
-        line = line.rstrip()  # Remove trailing whitespace
-        cleaned_lines.append(line)
-
-    # Join lines and remove excessive blank lines
+    cleaned_lines = [line.rstrip() for line in markdown_text.split("\n")]
     result = "\n".join(cleaned_lines)
 
     # Replace multiple consecutive blank lines with just two
@@ -401,6 +375,39 @@ def parse_date_range(date_range_str: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+# ===== DATA VALIDATION =====
+
+
+def is_dataframe_empty(df: Optional[pd.DataFrame]) -> bool:
+    """
+    Check if a DataFrame is None or empty.
+
+    Common pattern used throughout the codebase to validate query results.
+
+    Args:
+        df: DataFrame to check (can be None)
+
+    Returns:
+        True if df is None or empty, False if it has data
+    """
+    return df is None or df.empty
+
+
+def has_dataframe_data(df: Optional[pd.DataFrame]) -> bool:
+    """
+    Check if a DataFrame has data (not None and not empty).
+
+    Inverse of is_dataframe_empty() for positive logic conditions.
+
+    Args:
+        df: DataFrame to check (can be None)
+
+    Returns:
+        True if df has data, False if None or empty
+    """
+    return df is not None and not df.empty
+
+
 # ===== INPUT VALIDATION & FEEDBACK =====
 
 
@@ -420,13 +427,8 @@ def check_input(widgets: dict, required_fields: list[str]) -> bool:
         if widget is None:
             continue  # Skip missing widgets
 
-        # Get widget value safely - some widgets don't have .value attribute
-        widget_value = None
-        if hasattr(widget, "value"):
-            widget_value = widget.value
-        elif isinstance(widget, list) and widget and hasattr(widget[0], "selected"):
-            # Handle chip groups - check if any chips are selected
-            widget_value = any(getattr(chip, "selected", False) for chip in widget)
+        # Get widget value safely
+        widget_value = _get_widget_value(widget)
 
         # Check if the widget has a value
         if not widget_value:
@@ -469,31 +471,109 @@ def print_success(
 
 
 def extract_table_name(query_text: str) -> str:
+    """Extract table name from SQL query.
+
+    Args:
+        query_text: SQL query string
+
+    Returns:
+        Table name or "unknown_table" if not found
+    """
     match = re.search(r"from\s+([^\s;]+)", query_text, re.IGNORECASE)
     if match:
         return match.group(1).strip()
     return "unknown_table"
 
 
-def extract_devops_id(text: str) -> int | None:
-    """Extract DevOps ID from text containing pattern ': ID -'.
+def extract_id_from_text(
+    text: str, pattern: str = r":\s*(\d+)\s*-", group: int = 1
+) -> int | None:
+    """
+    Extract numeric ID from text using a regex pattern.
+
+    Generic utility for extracting IDs from formatted strings like:
+    - "Epic: 123 - Description" (default pattern)
+    - "ID: 456" (pattern r"ID:\s*(\d+)")
+    - "[#789]" (pattern r"\[#(\d+)\]")
 
     Args:
-        text: Text to search for DevOps ID
+        text: Text to search for ID
+        pattern: Regex pattern with a capture group for the ID (default: ': ID -')
+        group: Which capture group contains the ID (default: 1)
+
+    Returns:
+        Extracted ID as integer, or None if not found
+
+    Examples:
+        >>> extract_id_from_text("Epic: 123 - My Epic")
+        123
+        >>> extract_id_from_text("Task #456", pattern=r"#(\d+)")
+        456
+    """
+    if not text or not isinstance(text, str):
+        return None
+
+    try:
+        match = re.search(pattern, text)
+        if match:
+            return int(match.group(group))
+    except (ValueError, IndexError, AttributeError):
+        return None
+
+    return None
+
+
+def extract_devops_id(text: str) -> int | None:
+    """
+    Extract DevOps ID from text containing pattern ': ID -'.
+
+    Convenience wrapper for extract_id_from_text() with DevOps-specific pattern.
+
+    Args:
+        text: Text to search for DevOps ID (e.g., "Epic: 123 - Description")
 
     Returns:
         Extracted ID as integer, or None if not found
     """
-    match = re.search(r":\s*(\d+)\s*-", text)
-    if match:
-        return int(match.group(1))
-    return None
+    return extract_id_from_text(text, pattern=r":\s*(\d+)\s*-")
 
 
 # ===== UI WIDGET FACTORIES =====
 
 
-def date_input(label, input_width: str = "w-64"):
+def _get_widget_value(widget):
+    """Extract value from a widget instance safely.
+
+    Args:
+        widget: Widget instance (can be single widget, chip group list, etc.)
+
+    Returns:
+        Widget value (string, number, boolean, list, etc.) or None
+    """
+    if widget is None:
+        return None
+
+    # Handle chip groups (list of chips)
+    if isinstance(widget, list) and widget and hasattr(widget[0], "selected"):
+        return any(getattr(chip, "selected", False) for chip in widget)
+
+    # Handle widgets with value attribute
+    if hasattr(widget, "value"):
+        return widget.value
+
+    return None
+
+
+def date_input(label: str, input_width: str = "w-64") -> ui.input:
+    """Create a date input widget with calendar picker.
+
+    Args:
+        label: Input field label
+        input_width: Tailwind CSS width class
+
+    Returns:
+        NiceGUI input widget with date picker
+    """
     with ui.input(label).props("readonly").classes(input_width) as date:
         with ui.menu().props("no-parent-event") as menu:
             with ui.date().bind_value(date):
@@ -504,8 +584,12 @@ def date_input(label, input_width: str = "w-64"):
     return date
 
 
-def setup_template_handling(widgets: dict):
-    """Set up template handling for codemirror widgets with templates."""
+def setup_template_handling(widgets: dict) -> None:
+    """Set up template handling for codemirror widgets with templates.
+
+    Args:
+        widgets: Dictionary of widget instances
+    """
     from datetime import date
 
     # Find codemirror widgets with template info
@@ -600,8 +684,13 @@ def setup_template_handling(widgets: dict):
     update_templates()
 
 
-def setup_conditional_visibility(widgets: dict, conditional_widgets: dict):
-    """Set up conditional visibility for widgets based on other widget values."""
+def setup_conditional_visibility(widgets: dict, conditional_widgets: dict) -> None:
+    """Set up conditional visibility for widgets based on other widget values.
+
+    Args:
+        widgets: Dictionary of all widget instances
+        conditional_widgets: Dictionary of widgets with conditional visibility rules
+    """
 
     def make_visibility_handler(conditional_widget_info):
         """Create a visibility handler for a conditional widget."""
@@ -653,24 +742,24 @@ def setup_conditional_visibility(widgets: dict, conditional_widgets: dict):
 
 
 def make_input_row(
-    fields,
-    layout_mode: str = None,
-    widgets: dict = None,
+    fields: list[dict],
+    layout_mode: str | None = None,
+    widgets: dict | None = None,
     defer_parent_wiring: bool = False,
-    render_functions: dict = None,
-):
-    """Create UI widgets for a list of field configs.
+    render_functions: dict | None = None,
+) -> dict | tuple[dict, list]:
+    """Create UI widgets for a list of field configurations.
 
     Args:
-        fields: List of field configuration dicts
+        fields: List of field configuration dicts with keys like 'type', 'label', 'name', etc.
         layout_mode: Optional layout mode override ("full" for wide layout, None for default per-widget sizing)
-        widgets: Optional dict to update with created widgets
+        widgets: Optional dict to update with created widgets (mutated in place)
         defer_parent_wiring: If True, returns pending relations instead of binding immediately
         render_functions: Optional dict of render functions for html type fields
 
     Returns:
-        If defer_parent_wiring: tuple (created_widgets, pending_relations)
-        Otherwise: created_widgets dict
+        If defer_parent_wiring=True: tuple of (created_widgets_dict, pending_relations_list)
+        Otherwise: created_widgets_dict only
     """
     created = {}
     pending_relations = []
@@ -682,7 +771,10 @@ def make_input_row(
             label += " (optional)"
 
         ftype = field["type"]
-        fname = field["name"]
+        # Fields can use either "name" or "field_id" as identifier
+        fname = field.get("name") or field.get("field_id")
+        if not fname:
+            raise ValueError(f"Field missing both 'name' and 'field_id': {field}")
 
         # Determine widget width using UI_STYLES
         if layout_mode:
@@ -712,7 +804,13 @@ def make_input_row(
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "number":
-            created[fname] = ui.number(label, min=0).classes(widget_classes)
+            # Get step from field config, default to 0.1 for decimal precision
+            step = field.get("step", 0.1)
+            # Format based on step: integers if step >= 1, else 1 decimal place
+            number_format = "%.0f" if step >= 1 else "%.1f"
+            created[fname] = ui.number(
+                label, min=0, step=step, format=number_format
+            ).classes(widget_classes)
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "date":
@@ -726,18 +824,38 @@ def make_input_row(
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "select":
-            if "parent" in field:
+            # Handle options: prefer static options if defined, otherwise empty for parent-driven
+            # Get options from config if they exist
+            config_options = field.get("options", [])
+
+            # Use static options if defined (non-empty list), regardless of parent
+            if (
+                config_options
+                and isinstance(config_options, list)
+                and len(config_options) > 0
+            ):
+                # Use static options from config (e.g., status, priority)
+                options = config_options
+            elif "parent" in field:
+                # No static options, will be populated by parent binding
                 options = []
             else:
-                options = field.get("options", {})
+                # Fallback to whatever options were defined
+                options = config_options if config_options else []
+
             if options is None:
                 options = []
             # Check if with_input is specified in field config, default to True
             with_input = field.get("with_input", True)
             select_widget = ui.select(options, label=label, with_input=with_input)
-            # If with_input is enabled, allow adding new values
+            # If with_input is enabled, check if custom values are allowed
             if with_input:
-                select_widget.props('new-value-mode="add-unique"')
+                # allow_custom defaults to True for backwards compatibility
+                # Set allow_custom: false to enable search without allowing new values
+                allow_custom = field.get("allow_custom", True)
+                if allow_custom:
+                    select_widget.props('new-value-mode="add-unique"')
+                # else: search enabled but no custom values allowed
             select_widget.classes(widget_classes)
             if "default" in field:
                 select_widget.value = field["default"]
@@ -858,10 +976,15 @@ def make_input_row(
 
 
 def create_task_card(
-    task_id, columns, completed=False, on_checkbox_click=None, on_edit_click=None, on_card_click=None, config_task_visuals=None
-):
-    """
-    Create a reusable task card component.
+    task_id: int | str,
+    columns: list[dict[str, str]],
+    completed: bool = False,
+    on_checkbox_click: Optional[Callable] = None,
+    on_edit_click: Optional[Callable] = None,
+    on_card_click: Optional[Callable] = None,
+    config_task_visuals: dict | None = None,
+) -> ui.card:
+    """Create a reusable task card component.
 
     Args:
         task_id: Unique identifier for the task
@@ -870,6 +993,7 @@ def create_task_card(
         on_checkbox_click: Function to call when checkbox is clicked (receives task_id, checked_state)
         on_edit_click: Function to call when edit button is clicked (receives task_id)
         on_card_click: Function to call when card area is clicked (receives task_id)
+        config_task_visuals: Optional config for task visual styling
 
     Returns:
         The created UI card element
@@ -889,7 +1013,7 @@ def create_task_card(
 
     # Extract specific field values from columns for better layout
     column_map = {col["label"]: col["value"] for col in columns}
-    
+
     title = column_map.get("Title", "Untitled")
     description = column_map.get("Description", "")
     status = column_map.get("Status", "")
@@ -901,8 +1025,8 @@ def create_task_card(
 
     # Add completion styling
     card_classes = "w-full p-3 cursor-pointer"
-    card_style = "min-width: 320px; max-width: 400px; height: fit-content;"
-    
+    card_style = "min-width: 320px; max-width: 400px;"
+
     if completed:
         card_classes += " opacity-75"
         card_style += " border-left: 4px solid #4caf50;"
@@ -915,16 +1039,16 @@ def create_task_card(
     ):
         # Top row: checkbox, title, edit-button
         with ui.row().classes("w-full justify-between items-center mb-2"):
-            checkbox = ui.checkbox(value=completed, on_change=handle_checkbox_change).classes(
-                "flex-none"
-            )
+            checkbox = ui.checkbox(
+                value=completed, on_change=handle_checkbox_change
+            ).classes("flex-none")
             checkbox.on("click", js_handler="(e) => e.stopPropagation()")
-            
+
             # Title in the middle, expandable
             ui.label(title).classes(
                 "flex-grow text-sm font-medium text-white truncate mx-2"
             )
-            
+
             edit_button = (
                 ui.button("", icon="edit", on_click=handle_edit_click)
                 .props("flat dense round")
@@ -938,75 +1062,401 @@ def create_task_card(
                 if customer:
                     # Get customer visual config
                     customer_config = {}
-                    if config_task_visuals and 'visual' in config_task_visuals:
-                        customer_config = config_task_visuals['visual'].get('customers', {}).get(customer, 
-                                        config_task_visuals['visual']['customers'].get('default', {}))
-                    
-                    customer_icon = customer_config.get('icon', 'group')
-                    customer_color = customer_config.get('color', 'blue-grey')
-                    ui.chip(customer, icon=customer_icon).props(f"dense color={customer_color}").classes("text-xs")
-                
+                    if config_task_visuals and "visual" in config_task_visuals:
+                        customer_config = (
+                            config_task_visuals["visual"]
+                            .get("customers", {})
+                            .get(
+                                customer,
+                                config_task_visuals["visual"]["customers"].get(
+                                    "default", {}
+                                ),
+                            )
+                        )
+
+                    customer_icon = customer_config.get("icon", "group")
+                    customer_color = customer_config.get("color", "blue-grey")
+                    ui.chip(customer, icon=customer_icon).props(
+                        f"dense color={customer_color}"
+                    ).classes("text-xs")
+
                 if project:
                     # Get project visual config
                     project_config = {}
-                    if config_task_visuals and 'visual' in config_task_visuals:
-                        project_config = config_task_visuals['visual'].get('projects', {}).get(project,
-                                       config_task_visuals['visual']['projects'].get('default', {}))
-                    
-                    project_icon = project_config.get('icon', 'folder')
-                    project_color = project_config.get('color', 'indigo')
-                    ui.chip(project, icon=project_icon).props(f"dense color={project_color}").classes("text-xs")
+                    if config_task_visuals and "visual" in config_task_visuals:
+                        project_config = (
+                            config_task_visuals["visual"]
+                            .get("projects", {})
+                            .get(
+                                project,
+                                config_task_visuals["visual"]["projects"].get(
+                                    "default", {}
+                                ),
+                            )
+                        )
 
-        # Third row: Big description box
-        if description:
-            with ui.element().classes("w-full mb-2"):
-                ui.label("Description:").classes("text-xs text-gray-400 mb-1")
-                with ui.element().classes("w-full p-2 bg-gray-800 rounded").style(
-                    "max-height: 100px; overflow-y: auto;"
-                ):
-                    ui.label(description).classes(
-                        "text-sm text-white"
-                    ).style(
+                    project_icon = project_config.get("icon", "folder")
+                    project_color = project_config.get("color", "indigo")
+                    ui.chip(project, icon=project_icon).props(
+                        f"dense color={project_color}"
+                    ).classes("text-xs")
+
+        # Third row: Big description box (fixed height for uniform cards)
+        with ui.element().classes("w-full mb-2"):
+            ui.label("Description:").classes("text-xs text-gray-400 mb-1")
+            with (
+                ui.element()
+                .classes("w-full p-2 bg-gray-800 rounded")
+                .style("height: 100px; overflow-y: auto;")
+            ):
+                if description:
+                    ui.label(description).classes("text-sm text-white").style(
                         "word-wrap: break-word; overflow-wrap: break-word; "
                         "white-space: pre-wrap; line-height: 1.4;"
                     )
+                else:
+                    ui.label("No description").classes("text-sm text-gray-500 italic")
 
         # Fourth row: status, priority, dates in a compact grid
-        with ui.row().classes("w-full items-center justify-between text-xs text-gray-300"):
+        with ui.row().classes(
+            "w-full items-center justify-between text-xs text-gray-300"
+        ):
             # Left side: Status and Priority
             with ui.row().classes("items-center gap-2"):
                 if status:
                     status_color = {
                         "To Do": "blue-grey",
-                        "In Progress": "orange", 
+                        "In Progress": "orange",
                         "In Review": "purple",
                         "Blocked": "red",
-                        "On Hold": "yellow"
+                        "On Hold": "yellow",
                     }.get(status, "grey")
-                    ui.chip(status).props(f"dense color={status_color}").classes("text-xs")
-                
+                    ui.chip(status).props(f"dense color={status_color}").classes(
+                        "text-xs"
+                    )
+
                 if priority:
                     priority_color = {
                         "Critical": "red",
-                        "High": "orange", 
+                        "High": "orange",
                         "Medium": "blue",
-                        "Low": "green"
+                        "Low": "green",
                     }.get(priority, "grey")
-                    ui.chip(priority).props(f"dense color={priority_color}").classes("text-xs")
-            
+                    ui.chip(priority).props(f"dense color={priority_color}").classes(
+                        "text-xs"
+                    )
+
             # Right side: Dates
             with ui.column().classes("items-end"):
                 if due_date:
                     ui.label(f"Due: {due_date}").classes("text-xs text-gray-400")
                 if created:
                     # Format created date to be more compact
-                    created_short = created.split(' ')[0] if ' ' in created else created
-                    ui.label(f"Created: {created_short}").classes("text-xs text-gray-500")
+                    created_short = created.split(" ")[0] if " " in created else created
+                    ui.label(f"Created: {created_short}").classes(
+                        "text-xs text-gray-500"
+                    )
 
     return card
 
 
 # ===== PARENT-CHILD WIDGET BINDING =====
+
+
+# ===== PARENT-CHILD BINDING HELPERS =====
+
+
+def _update_select_field(
+    widget, parent_val: str, field_config: dict, widgets: dict, data_sources: dict
+) -> None:
+    """Update select field based on parent value.
+
+    Args:
+        widget: The select widget to update
+        parent_val: Value from parent widget
+        field_config: Field configuration dictionary
+        widgets: Dictionary of all widgets
+        data_sources: Dictionary of data sources
+    """
+
+    # Check if field has static options defined in config
+    has_static_options = (
+        field_config.get("options")
+        and isinstance(field_config.get("options"), list)
+        and len(field_config.get("options")) > 0
+    )
+
+    if not has_static_options:
+        # Check if field has dynamic query configured
+        dynamic_query = field_config.get("dynamic_query")
+        if dynamic_query and parent_val:
+            # Dynamic query will be handled in the async update_child function
+            pass
+        else:
+            # Fallback to static options from data_sources
+            options_map = field_config.get("options", {})
+            if isinstance(options_map, dict):
+                widget.options = options_map.get(parent_val, [])
+            elif isinstance(options_map, list):
+                widget.options = options_map
+            else:
+                widget.options = []
+
+            # Special handling for nested data sources like parent_names
+            options_source = field_config.get("options_source")
+            if options_source and options_source in data_sources:
+                data = data_sources[options_source]
+                if isinstance(data, dict) and parent_val in data:
+                    if field_config.get("name") == "parent_name":
+                        # Special handling for parent_name field - needs work_item_type
+                        work_item_type_widget = widgets.get("work_item_type")
+                        if work_item_type_widget and work_item_type_widget.value:
+                            work_item_type = work_item_type_widget.value
+                            customer_data = data.get(parent_val, {})
+                            if isinstance(customer_data, dict):
+                                widget.options = customer_data.get(work_item_type, [])
+                            else:
+                                widget.options = []
+                        else:
+                            widget.options = []
+                    else:
+                        # Regular nested handling
+                        nested_data = data.get(parent_val, [])
+                        widget.options = (
+                            nested_data if isinstance(nested_data, list) else []
+                        )
+
+            # Update widget to apply new options before setting value
+            widget.update()
+
+    # Set default value from default_source if available (takes priority)
+    default_source = field_config.get("default_source")
+    if default_source and default_source in data_sources:
+        default_map = data_sources[default_source]
+        if isinstance(default_map, dict) and parent_val in default_map:
+            default_value = default_map[parent_val]
+            if default_value is not None:
+                widget.value = default_value
+                # Update again after setting value
+                widget.update()
+
+
+def _update_input_field(widget, parent_val: str, field_config: dict) -> None:
+    """Update input/text/number/date field based on parent value.
+
+    Args:
+        widget: The input widget to update
+        parent_val: Value from parent widget
+        field_config: Field configuration dictionary
+    """
+    ftype = field_config.get("type")
+    options_map = field_config.get("options", {})
+
+    # Dynamic query will be handled in async update_child function
+    # This function handles static fallback values
+
+    if ftype in ["input", "text"]:
+        if isinstance(options_map, dict):
+            widget.value = options_map.get(parent_val, "")
+        elif isinstance(options_map, list):
+            widget.value = options_map[0] if options_map else ""
+    elif ftype == "number":
+        if isinstance(options_map, dict):
+            val = options_map.get(parent_val, 0)
+            if isinstance(val, list):
+                widget.value = val[0] if val and isinstance(val[0], (int, float)) else 0
+            else:
+                widget.value = val if isinstance(val, (int, float)) else 0
+        elif isinstance(options_map, list):
+            val = options_map[0] if options_map else 0
+            widget.value = val if isinstance(val, (int, float)) else 0
+    elif ftype == "date":
+        if isinstance(options_map, dict):
+            widget.value = options_map.get(parent_val, "")
+        elif isinstance(options_map, list):
+            widget.value = options_map[0] if options_map else ""
+
+    widget.update()
+
+
+def _update_chip_group(
+    widget, parent_val: str, field_config: dict, widgets: dict, child: str
+) -> None:
+    """Update chip group based on parent value.
+
+    Args:
+        widget: The chip group widget(s) to update
+        parent_val: Value from parent widget
+        field_config: Field configuration dictionary
+        widgets: Dictionary of all widgets
+        child: Child widget name
+    """
+    options_map = field_config.get("options", {})
+    options = []
+    if isinstance(options_map, dict):
+        options = options_map.get(parent_val, [])
+    elif isinstance(options_map, list):
+        options = options_map
+
+    # Rebuild chips
+    if isinstance(widget, list) and widget:
+        with widget[0].parent:
+            for chip in widget:
+                chip.delete()
+            chips = []
+            for tag in options:
+                chips.append(
+                    ui.chip(
+                        tag.name,
+                        selectable=True,
+                        icon=tag.icon,
+                        color=tag.color,
+                    )
+                )
+            widgets[child] = chips
+
+
+def _update_markdown_preview(widget, widgets: dict, child: str, parent_val) -> None:
+    """Update markdown preview widget with new content.
+
+    Args:
+        widget: The markdown widget to update
+        widgets: Dictionary of all widgets
+        child: Child widget name
+        parent_val: Value from parent widget
+    """
+    # Prefer updating the preview widget if present (stored as child + '_preview')
+    preview_widget = widgets.get(f"{child}_preview") or widget
+    if preview_widget is None:
+        return
+
+    text = str(parent_val) if parent_val is not None else ""
+
+    # Try different methods to update the content
+    for fn in (
+        getattr(preview_widget, "set_content", None),
+        getattr(preview_widget, "set_markdown", None),
+        getattr(preview_widget, "set_text", None),
+        None,
+    ):
+        if callable(fn):
+            try:
+                fn(text)
+                return
+            except Exception:
+                continue
+
+    # Last resort: set value if available
+    if hasattr(preview_widget, "value"):
+        preview_widget.value = text
+        try:
+            preview_widget.update()
+        except Exception:
+            pass
+
+
+def _update_html_preview(
+    widget, widgets: dict, parent: str, field_config: dict, render_functions: dict
+) -> None:
+    """Update HTML preview widget with new content.
+
+    Args:
+        widget: The HTML widget to update
+        widgets: Dictionary of all widgets
+        parent: Parent widget name
+        field_config: Field configuration dictionary
+        render_functions: Dictionary of render functions
+    """
+    if widget is None:
+        return
+
+    # Get the parent widget to read its value
+    parent_widget = widgets.get(parent)
+    if parent_widget is None:
+        return
+
+    text = str(parent_widget.value) if parent_widget.value is not None else ""
+
+    # Check if there's a render function specified
+    render_func_name = field_config.get("render_function")
+    if render_func_name and render_func_name in render_functions:
+        # Use the render function to process the text
+        rendered_html = render_functions[render_func_name](text)
+        widget.set_content(rendered_html)
+    else:
+        # Direct HTML update
+        widget.set_content(text)
+
+
+async def _execute_dynamic_query(
+    query: str, parent_val: str, child: str, column: int = 0
+):
+    """Execute a dynamic query with parent value substitution.
+
+    Args:
+        query: SQL query with {parent_value} placeholder
+        parent_val: Value to substitute in query
+        child: Child widget name (for error logging)
+        column: Column index to extract from result
+
+    Returns:
+        Query result value or None if query fails
+    """
+    QE = GlobalRegistry.get("QE")
+    if not QE:
+        return None
+
+    try:
+        # Replace {parent_value} placeholder in query
+        query = query.replace("{parent_value}", str(parent_val))
+        result_df = await QE.query_db(query)
+
+        if has_dataframe_data(result_df):
+            # Extract value from specified column
+            return (
+                result_df.iloc[0, column]
+                if column < len(result_df.columns)
+                else result_df.iloc[0, 0]
+            )
+        return None
+    except Exception as e:
+        LOG = GlobalRegistry.get("LOG")
+        if LOG:
+            LOG.log_msg("ERROR", f"Dynamic query failed for {child}: {e}")
+        return None
+
+
+async def _execute_dynamic_query_for_options(
+    query: str, parent_val: str, child: str
+) -> list:
+    """Execute a dynamic query to fetch options for a select field.
+
+    Args:
+        query: SQL query with {parent_value} placeholder
+        parent_val: Value to substitute in query
+        child: Child widget name (for error logging)
+
+    Returns:
+        List of options or empty list if query fails
+    """
+    QE = GlobalRegistry.get("QE")
+    if not QE:
+        return []
+
+    try:
+        # Replace {parent_value} placeholder in query
+        query = query.replace("{parent_value}", str(parent_val))
+        result_df = await QE.query_db(query)
+
+        if has_dataframe_data(result_df):
+            # Assume first column contains the options
+            return result_df.iloc[:, 0].tolist()
+        return []
+    except Exception as e:
+        LOG = GlobalRegistry.get("LOG")
+        if LOG:
+            LOG.log_msg("ERROR", f"Dynamic query failed for {child}: {e}")
+        return []
 
 
 def bind_parent_relations(
@@ -1071,160 +1521,71 @@ def bind_parent_relations(
                 if ftype in ["html", "markdown"]:
                     await asyncio.sleep(0.05)
 
-                options_map = field_config.get("options", {})
                 parent_val = widgets[parent].value if parent in widgets else None
                 widget = widgets.get(child)
                 if widget is None:
                     return
+
+                # Handle different field types with helper functions
                 if ftype == "select":
-                    if isinstance(options_map, dict):
-                        widget.options = options_map.get(parent_val, [])
-                    elif isinstance(options_map, list):
-                        widget.options = options_map
-                    else:
-                        widget.options = []
-
-                    # Special handling for nested data sources like parent_names
-                    options_source = field_config.get("options_source")
-                    if options_source and options_source in data_sources:
-                        data = data_sources[options_source]
-                        if isinstance(data, dict) and parent_val in data:
-                            if field_config.get("name") == "parent_name":
-                                # Special handling for parent_name field - needs work_item_type
-                                work_item_type_widget = widgets.get("work_item_type")
-                                if (
-                                    work_item_type_widget
-                                    and work_item_type_widget.value
-                                ):
-                                    work_item_type = work_item_type_widget.value
-                                    customer_data = data.get(parent_val, {})
-                                    if isinstance(customer_data, dict):
-                                        widget.options = customer_data.get(
-                                            work_item_type, []
-                                        )
-                                    else:
-                                        widget.options = []
-                                else:
-                                    widget.options = []
-                            else:
-                                # Regular nested handling
-                                nested_data = data.get(parent_val, [])
-                                widget.options = (
-                                    nested_data if isinstance(nested_data, list) else []
-                                )
-
-                    # Set default value from default_source if available
-                    default_source = field_config.get("default_source")
-                    if default_source and default_source in data_sources:
-                        default_map = data_sources[default_source]
-                        if isinstance(default_map, dict) and parent_val in default_map:
-                            widget.value = default_map[parent_val]
-
-                    widget.update()
-                elif ftype == "input":
-                    if isinstance(options_map, dict):
-                        widget.value = options_map.get(parent_val, "")
-                    elif isinstance(options_map, list):
-                        widget.value = options_map[0] if options_map else ""
-                    widget.update()
-                elif ftype == "number":
-                    if isinstance(options_map, dict):
-                        val = options_map.get(parent_val, 0)
-                        if isinstance(val, list):
-                            widget.value = (
-                                val[0]
-                                if val and isinstance(val[0], (int, float))
-                                else 0
-                            )
-                        else:
-                            widget.value = val if isinstance(val, (int, float)) else 0
-                    elif isinstance(options_map, list):
-                        widget.value = (
-                            options_map[0]
-                            if options_map and isinstance(options_map[0], (int, float))
-                            else 0
+                    # Check if field has dynamic query configured
+                    dynamic_query = field_config.get("dynamic_query")
+                    if dynamic_query and parent_val:
+                        # Execute dynamic query to fetch options
+                        options = await _execute_dynamic_query_for_options(
+                            dynamic_query, parent_val, child
                         )
+                        widget.options = options
+                        widget.update()
                     else:
-                        widget.value = 0
-                    widget.update()
+                        # Use static options
+                        _update_select_field(
+                            widget, parent_val, field_config, widgets, data_sources
+                        )
+
+                elif ftype in ["input", "text", "number", "date"]:
+                    # Check for dynamic query
+                    dynamic_query = field_config.get("dynamic_query")
+                    dynamic_column = field_config.get("dynamic_column", 0)
+
+                    if dynamic_query and parent_val:
+                        # Execute dynamic query to fetch value
+                        value = await _execute_dynamic_query(
+                            dynamic_query, parent_val, child, dynamic_column
+                        )
+                        if value is not None:
+                            widget.value = value
+                        else:
+                            widget.value = (
+                                "" if ftype in ["input", "text", "date"] else 0
+                            )
+                        widget.update()
+                    else:
+                        # Fallback to static values
+                        _update_input_field(widget, parent_val, field_config)
+
                 elif ftype == "chip_group":
-                    options = []
-                    if isinstance(options_map, dict):
-                        options = options_map.get(parent_val, [])
-                    elif isinstance(options_map, list):
-                        options = options_map
-                    # Rebuild chips
-                    if isinstance(widget, list) and widget:
-                        with widget[0].parent:
-                            for chip in widget:
-                                chip.delete()
-                            chips = []
-                            for tag in options:
-                                chips.append(
-                                    ui.chip(
-                                        tag.name,
-                                        selectable=True,
-                                        icon=tag.icon,
-                                        color=tag.color,
-                                    )
-                                )
-                            widgets[child] = chips
+                    _update_chip_group(widget, parent_val, field_config, widgets, child)
+
                 elif ftype == "markdown":
-                    # Update markdown preview content when parent changes.
-                    # Prefer updating the preview widget if present (stored as child + '_preview').
-                    preview_widget = widgets.get(f"{child}_preview") or widgets.get(
-                        child
-                    )
-                    if preview_widget is None:
-                        return
-                    text = str(parent_val) if parent_val is not None else ""
-                    for fn in (
-                        getattr(preview_widget, "set_content", None),
-                        getattr(preview_widget, "set_markdown", None),
-                        getattr(preview_widget, "set_text", None),
-                        # fallback: some preview widgets support .value
-                        None,
-                    ):
-                        if callable(fn):
-                            try:
-                                fn(text)
-                                return
-                            except Exception:
-                                continue
-                    # last resort: set value if available
-                    if hasattr(preview_widget, "value"):
-                        preview_widget.value = text
-                        try:
-                            preview_widget.update()
-                        except Exception:
-                            pass
+                    _update_markdown_preview(widget, widgets, child, parent_val)
+
                 elif ftype == "html":
-                    # Update HTML preview content when parent changes with optional render function
-                    if widget is None:
-                        return
-
-                    # Get the parent widget to read its value
-                    parent_widget = widgets.get(parent)
-                    if parent_widget is None:
-                        return
-
-                    text = (
-                        str(parent_widget.value)
-                        if parent_widget.value is not None
-                        else ""
+                    _update_html_preview(
+                        widget, widgets, parent, field_config, render_functions
                     )
-
-                    # Check if there's a render function specified
-                    render_func_name = field_config.get("render_function")
-                    if render_func_name and render_func_name in render_functions:
-                        # Use the render function to process the text
-                        rendered_html = render_functions[render_func_name](text)
-                        widget.set_content(rendered_html)
-                    else:
-                        # Direct HTML update
-                        widget.set_content(text)
 
             return update_child
+
+        # Store update handler in a registry for manual triggering
+        update_handler = make_update_child()
+
+        # Store in GlobalRegistry under a key like "task_selector_children_updaters"
+        # This allows manual triggering when programmatically setting parent value
+        parent_updaters_key = f"{parent}_children_updaters"
+        parent_updaters = GlobalRegistry.get(parent_updaters_key) or []
+        parent_updaters.append({"child": child, "handler": update_handler})
+        GlobalRegistry.set(parent_updaters_key, parent_updaters)
 
         # Attach listener if parent exists.
         # Try several possible event names (NiceGUI components differ across versions)
@@ -1235,7 +1596,7 @@ def bind_parent_relations(
             if hasattr(parent_widget, "on"):
                 for event_name in ("update:model-value", "update", "change", "input"):
                     try:
-                        parent_widget.on(event_name, make_update_child())
+                        parent_widget.on(event_name, update_handler)
                         attached = True
                         # Don't break - try to attach multiple events for better coverage
                     except Exception:
@@ -1264,7 +1625,7 @@ def bind_parent_relations(
                                 last["value"] = v
                                 # call update handler (it reads current parent value from widgets)
                                 try:
-                                    await make_update_child()(None)
+                                    await update_handler(None)
                                 except Exception:
                                     pass
 
@@ -1277,7 +1638,9 @@ def bind_parent_relations(
 # ===== DATAFRAME UTILITIES =====
 
 
-def filter_df(df, filters=None, return_as="df", column=None):
+def filter_df(
+    df, filters: dict | None = None, return_as: str = "df", column: str | None = None
+):
     """Filter dataframe and return in various formats.
 
     Args:
@@ -1287,7 +1650,7 @@ def filter_df(df, filters=None, return_as="df", column=None):
         column: Column name to return when return_as is "list", "distinct_list", or "unique"
 
     Returns:
-        Filtered data in requested format
+        Filtered data in requested format (DataFrame, list, or unique list)
     """
     # Handle the case where we just want unique values without filtering
     if filters is None or len(filters) == 0:
@@ -1319,16 +1682,23 @@ def filter_df(df, filters=None, return_as="df", column=None):
     if return_as == "list" and column:
         return filtered[column].tolist()
     elif return_as in ["distinct_list", "unique"] and column:
-        return filtered[column].unique().tolist()
+        return filtered[column].dropna().unique().tolist()
     return filtered
 
 
 # Deprecated: Use filter_df(df, filters=None, return_as="unique", column=column_name) instead
-def get_unique_list(df, column):
+def get_unique_list(df, column: str) -> list:
     """Get unique values from a column.
 
     DEPRECATED: Use filter_df(df, filters=None, return_as="unique", column=column_name) instead.
     This function is kept for backward compatibility.
+
+    Args:
+        df: DataFrame to extract unique values from
+        column: Column name to get unique values from
+
+    Returns:
+        List of unique values from the column
     """
     return filter_df(df, filters=None, return_as="unique", column=column)
 
@@ -1336,7 +1706,13 @@ def get_unique_list(df, column):
 # ===== CONFIGURATION HELPERS =====
 
 
-def assign_dynamic_options(fields, data_sources):
+def assign_dynamic_options(fields: list, data_sources: dict) -> None:
+    """Assign dynamic options to fields based on data sources.
+
+    Args:
+        fields: List of field configuration dicts
+        data_sources: Dictionary of data sources for options
+    """
     for field in fields:
         if field.get("type") in ["date"] and "options_source" in field:
             options_source = field["options_source"]
@@ -1350,23 +1726,28 @@ def assign_dynamic_options(fields, data_sources):
                 # Empty dict, set empty options
                 field["options"] = []
             elif isinstance(data, dict):
-                # For nested structures like parent_names, we'll handle this during parent binding
-                field["options"] = []
+                # For nested structures (parent-child relationships):
+                # Store the dict in options so parent binding can access it
+                # This allows the binding code to work even if data_sources isn't available
+                field["options"] = data
             else:
                 field["options"] = data
 
         if field.get("type") in ["number"]:
             val = field.get("options", 0)
-            if isinstance(val, (np.integer, float)):
+            # If options is a dict (parent-child relationship), keep it as is
+            if isinstance(val, dict):
+                pass  # Keep the dict for parent handler
+            elif isinstance(val, (np.integer, float)):
                 field["options"] = int(val)
             elif isinstance(val, int):
                 field["options"] = val
             elif val is None:
                 field["options"] = 0
 
-        if "default_source" in field:
-            default_source = field["default_source"]
-            field["default"] = data_sources.get(default_source, None)
+        # Note: default_source is handled by parent-child binding, not here
+        # It requires a parent value to look up the correct default
+        # So we don't set field["default"] from default_source during initial form creation
 
 
 # ===== WIDGET VALUE PARSING =====
@@ -1400,18 +1781,30 @@ def parse_widget_values(widgets: dict) -> dict:
 
 
 def get_ui_elements(config: dict) -> list[str]:
+    """Extract UI element names from config.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        List of UI element names
+    """
     elements = []
     for key, value in config.items():
         if isinstance(value, dict) and "fields" in value and "action" in value:
             elements.append(key)
-
     return elements
 
 
 # ===== UI RENDERING HELPERS =====
 
 
-def render_markdown_card(filename):
+def render_markdown_card(filename: str) -> None:
+    """Render a markdown file in a card.
+
+    Args:
+        filename: Name of markdown file in docs/ directory
+    """
     # Look in docs/ directory for documentation files
     file_path = os.path.join(os.path.dirname(__file__), "..", "docs", filename)
     try:
@@ -1427,7 +1820,13 @@ def render_markdown_card(filename):
 
 
 def add_generic_save_button(
-    save_data, fields, widgets, custom_handlers=None, on_success_callback=None
+    save_data,
+    fields,
+    widgets,
+    custom_handlers=None,
+    on_success_callback=None,
+    additional_kwargs=None,
+    button_classes="mt-2",
 ):
     """
     Generic save button that handles both standard DB operations and custom handlers.
@@ -1438,11 +1837,12 @@ def add_generic_save_button(
         widgets: Dict of widget instances
         custom_handlers: Optional dict mapping function names to handler functions
         on_success_callback: Optional async callback to run after successful save
+        additional_kwargs: Optional dict of extra kwargs to pass to the DB function (e.g., table_name, pk_data)
+        button_classes: CSS classes to apply to the button (default: "mt-2")
     """
 
     async def on_save():
         # Import globals from the global registry
-        from .globals import GlobalRegistry
 
         LOG = GlobalRegistry.get("LOG")
         QE = GlobalRegistry.get("QE")
@@ -1476,15 +1876,24 @@ def add_generic_save_button(
 
         # Standard database operation
         kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
+
         # Convert any single-item list in kwargs to a string
         for k, v in kwargs.items():
             if isinstance(v, list):
                 if len(v) == 1:
                     kwargs[k] = v[0]
                 elif len(v) > 1:
-                    raise ValueError(
-                        f"Field '{k}' has multiple values: {v}. Only one value is allowed."
+                    ui.notify(
+                        f"Field '{k}' has multiple values: {v}",
+                        color="negative",
                     )
+                    if LOG:
+                        LOG.log_msg("WARNING", f"Field '{k}' has multiple values: {v}")
+                    return
+
+        # Add any additional kwargs (e.g., table_name, pk_data for query editor)
+        if additional_kwargs:
+            kwargs.update(additional_kwargs)
 
         await QE.function_db(func_name, **kwargs)
 
@@ -1512,28 +1921,27 @@ def add_generic_save_button(
         if on_success_callback:
             await on_success_callback()
 
-    ui.button(save_data.button_name, on_click=on_save).classes("mt-2")
+    ui.button(save_data.button_name, on_click=on_save).classes(button_classes)
 
 
 def build_generic_tab_panel(
-    entity_name,
-    tab_type,
-    container_dict,
-    config_source,
-    data_prep_func=None,
-    custom_handlers=None,
-    layout_builder=None,
-    on_success_callback=None,
-    render_functions=None,
-    container_size="md",
-):
-    """
-    Generic tab panel builder that handles all common logic.
+    entity_name: str,
+    tab_type: str,
+    container_dict: dict,
+    config_source: dict,
+    data_prep_func: Optional[Callable] = None,
+    custom_handlers: dict | None = None,
+    layout_builder: Optional[Callable] = None,
+    on_success_callback: Optional[Callable] = None,
+    render_functions: dict | None = None,
+    container_size: str = "md",
+) -> dict:
+    """Generic tab panel builder that handles all common logic.
 
     Args:
         entity_name: Name of entity in config (e.g., "customer", "project")
         tab_type: Type of tab (e.g., "Add", "Update", "Disable")
-        container_dict: Dictionary storing tab containers
+        container_dict: Dictionary storing tab containers (mutated in place)
         config_source: The config dict to use (config_ui or config_devops_ui)
         data_prep_func: Optional function to prepare data sources
         custom_handlers: Optional dict of custom save handlers
@@ -1543,7 +1951,7 @@ def build_generic_tab_panel(
         container_size: Container size name from UI_STYLES (e.g., "xs", "sm", "md", "lg", "xl", "xxl", "full")
 
     Returns:
-        widgets: Dictionary of created widget instances
+        Dictionary of created widget instances
     """
 
     # Container management

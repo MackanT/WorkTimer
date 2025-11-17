@@ -17,17 +17,24 @@ The script will:
 import yaml
 import sqlite3
 from pathlib import Path
+import argparse
 
-# Configuration
-DB_PATH = "data_dpg.db"  # Update if your DB has a different name
-CONFIG_FOLDER = "config"
-OUTPUT_FILE = f"{CONFIG_FOLDER}/devops_contacts.yml"
+
+def check_if_db_exists(db_path):
+    """Check if the database file exists."""
+    # URI mode with mode=ro makes sqlite raise if the file doesn't exist.
+    db_file = Path(db_path)
+    if not db_file.exists():
+        print(f"Error: database file not found: {db_path}")
+        return False
+    return True
 
 
 def get_customers_from_db(db_path):
     """Extract active customer names from the database."""
+
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         cursor = conn.cursor()
 
         # Get all active customers
@@ -88,19 +95,52 @@ def generate_config(customers, existing_config=None):
 
 def save_config(config, file_path):
     """Save config to YAML file."""
-    with open(file_path, "w") as f:
+    out_path = Path(file_path)
+    # Ensure parent folder exists (create if missing)
+    if not out_path.parent.exists():
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with out_path.open("w", encoding="utf-8") as f:
         yaml.dump(
             config, f, default_flow_style=False, sort_keys=False, allow_unicode=True
         )
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Validate metadata YAML locally (uses MetaData class, no SQL writes)"
+    )
+    parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Shows result but does not write to file",
+    )
+    parser.add_argument(
+        "--db_name",
+        "--db",
+        type=str,
+        default="worktimer.db",
+        help="File name for database - (default: worktimer.db)",
+    )
+    parser.add_argument(
+        "--location",
+        "--loc",
+        type=str,
+        default=Path("config") / "devops_contacts.yml",
+        help="Location for final output, folder + file-name incl. '.yml'. Only use for testing - (default: config/devops_contacts.yml)",
+    )
+
+    args = parser.parse_args()
+
+    if not check_if_db_exists(args.db_name):
+        return
+
     print("DevOps Contacts Generator")
     print("=" * 50)
 
     # Get customers from database
-    print(f"\n1. Reading customers from {DB_PATH}...")
-    customers = get_customers_from_db(DB_PATH)
+    print(f"\n1. Reading customers from {args.db_name}...")
+    customers = get_customers_from_db(args.db_name)
 
     if not customers:
         print("   ⚠ No customers found in database!")
@@ -109,8 +149,8 @@ def main():
     print(f"   Found {len(customers)} customer(s)")
 
     # Load existing config
-    print(f"\n2. Loading existing config from {OUTPUT_FILE}...")
-    existing_config = load_existing_config(OUTPUT_FILE)
+    print(f"\n2. Loading existing config from {args.location}...")
+    existing_config = load_existing_config(args.location)
 
     if existing_config:
         print(
@@ -124,24 +164,30 @@ def main():
     config = generate_config(customers, existing_config)
 
     # Save config
-    print(f"\n4. Saving to {OUTPUT_FILE}...")
-    save_config(config, OUTPUT_FILE)
+    if args.preview:
+        print("\nPreview of generated config:\n")
+        print(yaml.dump(config, default_flow_style=False, sort_keys=False))
+    else:
+        print(f"\n4. Saving to {args.location}...")
+        save_config(config, args.location)
 
-    print("\n" + "=" * 50)
-    print("✓ Complete!")
-    print("\nNext steps:")
-    print(f"1. Edit {OUTPUT_FILE}")
-    print("2. Replace comment placeholders with actual contact names and emails")
-    print(f"3. Add {OUTPUT_FILE.split('/')[-1]} to .gitignore if not already there")
-    print("\nExample entry:")
-    print("  customers:")
-    print('    "Customer Name":')
-    print("      contacts:")
-    print('        - "John Doe"')
-    print('        - "Jane Smith"')
-    print("      assignees:")
-    print('        - "dev1@company.com"')
-    print('        - "dev2@company.com"')
+        print("\n" + "=" * 50)
+        print("✓ Complete!")
+        print("\nNext steps:")
+        print(f"1. Edit {args.location}")
+        print("2. Replace comment placeholders with actual contact names and emails")
+        print(
+            f"3. Add {args.location.split('/')[-1]} to .gitignore if not already there"
+        )
+        print("\nExample entry:")
+        print("  customers:")
+        print('    "Customer Name":')
+        print("      contacts:")
+        print('        - "John Doe"')
+        print('        - "Jane Smith"')
+        print("      assignees:")
+        print('        - "dev1@company.com"')
+        print('        - "dev2@company.com"')
 
 
 if __name__ == "__main__":

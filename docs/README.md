@@ -2,38 +2,57 @@
 
 # WorkTimer
 
-A helper program to keep track of time spent on different tasks, with built-in DevOps integration.
+A modern web-based time tracking application with built-in task management and Azure DevOps integration. Track billable hours across customers and projects, manage to-do lists, create DevOps work items, and analyze your time with custom SQL queries—all through a clean, locally-hosted interface.
 
 ---
 
 ## Changelog
 
 ### 4.0.0 (2025-09-XX)
-- Rewritten UI interface with NiceGUI. Now a (locally hosted) web application
-  - Overall cleaner and nicer layout (full screen width compatible!)
-  - Color coding in query editor
-  - Multirow text input support
-  - Based on yaml config files, makes it easy to add new entries over time without having to modify code
-- Query Engine
-  - "Standard" queries are now stored in the database instead of in code
-  - Added option for users to save custom queries in the database for easier future usage
-- DevOps Engine
-  - Can now request and store table of all DevOps epics, features, and user stories for faster, more responsive UI
-  - Ending tasks now has user-story with drop-down list instead of ID input
-  - Added support to create user-story, featues and epics directly from the program
-  - Code does automatic full and incremental load from devops over time
-  - New yaml files to store employees and contacts at customer to give dropdown simplification in devops creation
-- Added database compare feature
-  - Schema compare current db-file with old db-file. Simplifies future migration
-  - Added option to run code in any db file and save results. Used in conjunction with compare to migrate old db to new format
-- Docker support
-  - Added support for running file via docker for a fully independent solution
-- Info
-  - Added FAQ and readme as visible items in the program
-  - Added much more powerful logging, different engines (devops, queryengine, worktimer now have separate logs with info on what code causes what log message)
-- Bug fixes
-  - Fixed many minor issues with add-data not setting column values correctly in some cases
-  - Updating customers (so they get new customer-id) now propogates and updates existing projects
+- **Rewritten UI interface** - Complete rewrite with NiceGUI as a locally hosted web application
+  - **Full-width compatible layout** - Cleaner, modern design that adapts to screen width
+  - **Color-coded query editor** - Syntax highlighting for SQL queries
+  - **Multirow text input** - Better support for long-form text entry
+  - **YAML-driven configuration** - Add new entries without code changes via config files
+  - **Centralized UI styling system** - All UI styles managed through `config_ui_styles.yml` for consistency
+  - **Modern log viewer** - Redesigned log window with dark theme, monospace fonts, and terminal icon
+- **To-Do System** - Built-in task management (non-DevOps)
+  - **Task tracking** - Store tasks with descriptions, due dates, priority, and status
+  - **Card and table view modes** - Toggle between visual card grid and detailed table view
+  - **Task visual customization** - Customer/project icons and colors via `task_visuals.yml`
+  - **Priority and status filtering** - Sort tasks by due date, priority, status, customer, or project
+  - **Inline task editing** - Click cards to switch to view/edit mode
+- **Query Engine Enhancements**
+  - **Database-stored queries** - Standard queries now in database instead of hardcoded
+  - **Custom query management** - Save, update, and delete user-defined queries
+  - **Query result row editing** - Edit individual rows directly from query results
+  - **Syntax validation** - Real-time SQL syntax checking before execution
+- **DevOps Engine Improvements**
+  - **Local work item cache** - Store epics, features, and user stories for faster UI response
+  - **User story dropdown** - Replace ID input with searchable dropdown when ending tasks
+  - **Work item creation** - Create user stories, features, and epics directly from the program
+  - **Automatic sync** - Full and incremental DevOps loads run automatically
+  - **Contact management** - YAML files for employees and customer contacts for dropdown simplification
+  - **Markdown preview** - Live preview of formatted descriptions when creating work items
+  - **Parent work item linking** - Automatically link user stories to features/epics
+- **Database Tools**
+  - **Schema comparison** - Compare current db with old db files for migration planning
+  - **Database script runner** - Execute SQL on any db file and save results for migration
+- **Docker Support**
+  - **Containerized deployment** - Run via Docker for fully independent solution
+- **Info & Documentation**
+  - **In-app documentation** - FAQ and README visible within the program
+  - **Enhanced logging** - Separate logs per engine (DevOps, QueryEngine, WorkTimer) with source tracking
+- **Code Architecture & Quality**
+  - **Modular UI structure** - UI split into separate modules (time_tracking, tasks, query_editor, add_data, utils)
+  - **Generic form builder** - `EntityFormBuilder` and `DataPrepRegistry` pattern for DRY form generation
+  - **Centralized helper functions** - Eliminated 250+ lines of duplicate code through helper consolidation
+  - **DataFrame validation helpers** - Reusable functions for checking empty DataFrames
+  - **Standardized save handlers** - Generic save button system reduces form boilerplate
+- **Bug Fixes**
+  - **Add-data column values** - Fixed multiple issues with incorrect column value handling
+  - **Customer ID propagation** - Updating customer IDs now propagates to existing projects
+  - **Card layout conflicts** - Removed conflicting CSS classes in card padding styles
 
 ### 3.0.1 (2025-09-15)
 - Added total counts on time in weekly and monthly selects

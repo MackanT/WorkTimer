@@ -5,3 +5,6 @@ _Old/*
 config/devops_contacts.yml
 config/task_visuals.yml
 copilot-instructions.md
+docs/REFACTORING_SUMMARY.md
+docs/ADD_DATA_REFACTORING.md
+docs/TASKS_REFACTOR_SUMMARY.md

@@ -111,7 +111,8 @@ task:
         options: []
         options_source: "customer_data"
         default: ""
-        with_input: false
+        with_input: true
+        allow_custom: false
 
       - name: "project_name"
         type: "select"
@@ -121,7 +122,8 @@ task:
         parent: "customer_name"
         options_source: "project_names"
         default: ""
-        with_input: false
+        with_input: true
+        allow_custom: false
 
       - name: "due_date"
         type: "date"
@@ -164,9 +166,11 @@ task:
         type: "select"
         label: "Select Task"
         optional: false
+        options: []
         options_source: "task_list"
         default: ""
-        with_input: false
+        with_input: true
+        allow_custom: false
 
       - name: "title"
         type: "input"
@@ -174,7 +178,9 @@ task:
         optional: false
         default: ""
         parent: "task_selector"
-        options_source: "task_title"
+        parent_update: true
+        dynamic_query: "SELECT title FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "description"
         type: "text"
@@ -182,7 +188,9 @@ task:
         optional: true
         default: ""
         parent: "task_selector"
-        options_source: "task_description"
+        parent_update: true
+        dynamic_query: "SELECT description FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "status"
         type: "select"
@@ -191,9 +199,11 @@ task:
         options:
           ["To Do", "In Progress", "In Review", "Blocked", "On Hold", "Idea"]
         default: "To Do"
-        parent: "task_selector"
-        options_source: "task_status"
         with_input: false
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT status FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "priority"
         type: "select"
@@ -201,18 +211,22 @@ task:
         optional: false
         options: ["Low", "Medium", "High", "Critical"]
         default: "Medium"
-        parent: "task_selector"
-        options_source: "task_priority"
         with_input: false
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT priority FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "assigned_to"
-        type: "select"
+        type: "input"
         label: "Assigned To"
         optional: true
         default: ""
-        parent: "task_selector"
-        options_source: "task_assigned_to"
         with_input: true
+        parent: "task_selector"
+        parent_update: true
+        dynamic_query: "SELECT assigned_to FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "due_date"
         type: "date"
@@ -220,7 +234,9 @@ task:
         optional: true
         default: ""
         parent: "task_selector"
-        options_source: "task_due_date"
+        parent_update: true
+        dynamic_query: "SELECT due_date FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "estimated_hours"
         type: "number"
@@ -228,7 +244,9 @@ task:
         optional: true
         default: 0
         parent: "task_selector"
-        options_source: "task_estimated_hours"
+        parent_update: true
+        dynamic_query: "SELECT estimated_hours FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
       - name: "tags"
         type: "input"
@@ -236,7 +254,9 @@ task:
         optional: true
         default: ""
         parent: "task_selector"
-        options_source: "task_tags"
+        parent_update: true
+        dynamic_query: "SELECT tags FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
+        dynamic_column: 0
 
     # Layout for update tab
     rows:

@@ -224,10 +224,10 @@ class Database:
                         ,wage = (
                             select wage from customers where customer_id = new.customer_id
                         )
-                        ,bonus = (
+                        ,bonus = ifnull((
                             select bonus_percent from bonus
                                 where current_date between start_date and ifnull(end_date, '2099-12-31')
-                        )
+                        ), 0)
                     where time_id = new.time_id;
                 end;
                 """)
@@ -263,7 +263,6 @@ class Database:
                     customer_name text,
                     start_date datetime,
                     wage real,
-                    sort_order integer default 1,
                     pat_token text,
                     org_url text,
                     valid_from datetime,
@@ -336,6 +335,13 @@ class Database:
                     self.log_engine.log_msg(
                         "ERROR", f"Error populating dates table: {e}"
                     )
+            else:
+                df_count = self.fetch_query("select count(*) as cnt from dates")
+                if df_count.empty or int(df_count.iloc[0]["cnt"]) == 0:
+                    add_dates(s_date="2020-01-01", e_date="2030-12-31")
+                    self.log_engine.log_msg(
+                        "INFO", "Found blank Dates table, successfully populated it."
+                    )
 
             ## Query Snippets table
             df_time = self.fetch_query(
@@ -359,6 +365,13 @@ class Database:
                 except Exception as e:
                     self.log_engine.log_msg(
                         "ERROR", f"Error populating queries table: {e}"
+                    )
+            else:
+                df_count = self.fetch_query("select count(*) as cnt from queries")
+                if df_count.empty or int(df_count.iloc[0]["cnt"]) == 0:
+                    add_default_queries()
+                    self.log_engine.log_msg(
+                        "INFO", "Found blank Queries table, successfully populated it."
                     )
 
             ## Tasks table
@@ -1102,7 +1115,6 @@ class Database:
                         * ifnull(t.wage, 0)
                         * ifnull(t.bonus, 0)
                     ), 0) as user_bonus
-                    ,min(coalesce(c.sort_order, 0)) as sort_order
                 from projects p
                 join customers c on c.customer_id = p.customer_id and c.is_current = 1
                 left join time t on t.customer_id = p.customer_id and t.project_id = p.project_id
@@ -1120,10 +1132,8 @@ class Database:
                 ct.project_id,
                 ct.project_name,
                 round(ct.total_time, 2) as total_time,
-                round(ct.user_bonus, 2) as user_bonus,
-                sort_order
-            from calculated_time ct
-            order by sort_order asc;
+                round(ct.user_bonus, 2) as user_bonus
+            from calculated_time ct;
         """
         result = self.fetch_query(query)
         return result
@@ -1303,19 +1313,32 @@ class Database:
 
     ### General DB Operations ###
 
-    def get_customer_name(self, customer_id: int) -> str:
+    def _get_entity_name(self, entity_type: str, entity_id: int) -> str:
+        """
+        Generic helper to retrieve entity name by ID.
+
+        Args:
+            entity_type: "customer" or "project"
+            entity_id: ID of the entity
+
+        Returns:
+            Entity name as string, or empty string if not found
+        """
+        table_name = f"{entity_type}s"  # customers, projects
+        column_name = f"{entity_type}_name"
+        id_column = f"{entity_type}_id"
+
         return self._get_value_from_db(
-            "select customer_name from customers where customer_id = ?",
-            (customer_id,),
+            f"select {column_name} from {table_name} where {id_column} = ?",
+            (entity_id,),
             data_type="str",
         )
 
+    def get_customer_name(self, customer_id: int) -> str:
+        return self._get_entity_name("customer", customer_id)
+
     def get_project_name(self, project_id: int) -> str:
-        return self._get_value_from_db(
-            "select project_name from projects where project_id = ?",
-            (project_id,),
-            data_type="str",
-        )
+        return self._get_entity_name("project", project_id)
 
     def execute_query(self, query: str, params: tuple = ()):
         try:

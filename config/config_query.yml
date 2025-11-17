@@ -30,14 +30,15 @@ query:
       - name: git_id
         label: Git ID
         type: number
+        step: 1
         options: []
         options_source: git_id
         optional: true
     action:
       function: update_data_from_query
       main_action: Updating time
-      main_param: None
-      secondary_action: None
+      main_param: project_name
+      secondary_action: ""
       button_name: "Update"
   customers:
     fields:
