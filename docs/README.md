@@ -8,7 +8,7 @@ A modern web-based time tracking application with built-in task management and A
 
 ## Changelog
 
-### 4.0.0 (2025-09-XX)
+### 4.0.0 (2025-11-17)
 - **Rewritten UI interface** - Complete rewrite with NiceGUI as a locally hosted web application
   - **Full-width compatible layout** - Cleaner, modern design that adapts to screen width
   - **Color-coded query editor** - Syntax highlighting for SQL queries
