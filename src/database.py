@@ -335,6 +335,13 @@ class Database:
                     self.log_engine.log_msg(
                         "ERROR", f"Error populating dates table: {e}"
                     )
+            else:
+                df_count = self.fetch_query("select count(*) as cnt from dates")
+                if df_count.empty or int(df_count.iloc[0]["cnt"]) == 0:
+                    add_dates(s_date="2020-01-01", e_date="2030-12-31")
+                    self.log_engine.log_msg(
+                        "INFO", "Found blank Dates table, successfully populated it."
+                    )
 
             ## Query Snippets table
             df_time = self.fetch_query(
@@ -358,6 +365,13 @@ class Database:
                 except Exception as e:
                     self.log_engine.log_msg(
                         "ERROR", f"Error populating queries table: {e}"
+                    )
+            else:
+                df_count = self.fetch_query("select count(*) as cnt from queries")
+                if df_count.empty or int(df_count.iloc[0]["cnt"]) == 0:
+                    add_default_queries()
+                    self.log_engine.log_msg(
+                        "INFO", "Found blank Queries table, successfully populated it."
                     )
 
             ## Tasks table
