@@ -9,17 +9,18 @@
 - Marker for ongoing projects?
 - Devops välja kolumn för kortet (todo, on hold, in progress etc!)
 - sätt task till "done" när en stänger on_checkmark
+- Tasks sortera/filtrera på customer/project
 
 ### Buggar
 - At midnight, date "today" does not switch automatically
 - Make "ongoing" timer code run also everytime we close a timer
-- Nightly full load error (?)
-    2025-10-31 03:11:45 | ERROR    | DevOps    :: Error fetching work items: Error occurred in request., ConnectionError: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
 - text wrapping in time tracking
-- query editor, selecting mult. cols with same name -> C:\Users\MarcusToftås\OneDrive - Random Forest AB\Dokument\Other\WorkTimer\src\ui\query_editor.py:349: UserWarning: DataFrame columns are not unique, some columns will be omitted.
   grid_box.options["rowData"] = df.to_dict(orient="records")
 - sorting of tasks is "backwards" for earliest/latest. Null due-dates are backwards
 - make log auto-scroll
+
+- Tasks, assigned to is always blank (text input on update!)
+- Tasks, on update priority and status selects only show current selection
 
 
 ### Completed -- Old from before ReadMe
