@@ -15,4 +15,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 EXPOSE 8080
 
-ENTRYPOINT ["uv", "run", "main.py"]
+ENTRYPOINT ["uv", "run", "-m", "src.main"]
