@@ -1898,15 +1898,35 @@ def add_generic_save_button(
         await QE.function_db(func_name, **kwargs)
 
         # If customer add/update, regenerate DevOps table
+        # Only perform DevOps update when there are DevOps customers/connections configured
         if func_name in ["insert_customer", "update_customer"]:
             if DO:
-                if LOG:
-                    LOG.log_msg("INFO", "Regenerating DevOps data...")
-                ui.notify(
-                    "Regenerating DevOps data... This may take a few moments.",
-                    color="info",
-                )
-                await DO.update_devops(incremental=True)
+                has_connections = False
+                try:
+                    mgr = getattr(DO, "manager", None)
+                    if mgr is not None and getattr(mgr, "clients", None):
+                        clients = mgr.clients
+                        if isinstance(clients, dict):
+                            has_connections = len(clients) > 0
+                        else:
+                            has_connections = bool(clients)
+                except Exception:
+                    has_connections = False
+
+                if has_connections:
+                    if LOG:
+                        LOG.log_msg("INFO", "Regenerating DevOps data...")
+                    ui.notify(
+                        "Regenerating DevOps data... This may take a few moments.",
+                        color="info",
+                    )
+                    await DO.update_devops(incremental=True)
+                else:
+                    if LOG:
+                        LOG.log_msg(
+                            "INFO",
+                            "No DevOps customers configured; skipping DevOps regeneration.",
+                        )
 
         msg_1, msg_2 = print_success(
             save_data.main_action,
