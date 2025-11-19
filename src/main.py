@@ -22,6 +22,8 @@ from .globals import (
 )
 from .ui.app_layout import setup_ui
 
+from dotenv import load_dotenv
+
 
 ## Utility Functions ##
 def run_async_task(func, *args, **kwargs):
@@ -107,6 +109,7 @@ def _register_configs(config_loader, data_config, settings):
 def main():
     """Initialize and run the WorkTimer application"""
     # Load and validate all configuration
+    load_dotenv()
     config_loader = ConfigLoader()
     configs = config_loader.load_all()
 
