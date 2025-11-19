@@ -136,4 +136,10 @@ def main():
 
 if __name__ in {"__main__", "__mp_main__"}:
     main()
-    ui.run(host="0.0.0.0", port=8080)
+    # @ui.page('/settings') # Example code for different names on different pages
+    # def settings_page():
+    #     ui.page_title('Settings')
+    #     ui.favicon('static/settings_icon.png')
+    #     ui.label('Settings page')
+    ui.page_title("WorkTimer")
+    ui.run(host="0.0.0.0", port=8080, favicon="icons//worktimer.ico")
