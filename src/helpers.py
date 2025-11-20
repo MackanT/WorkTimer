@@ -1531,12 +1531,45 @@ def bind_parent_relations(
                     # Check if field has dynamic query configured
                     dynamic_query = field_config.get("dynamic_query")
                     if dynamic_query and parent_val:
-                        # Execute dynamic query to fetch options
+                        # Execute dynamic query to fetch options or current value
                         options = await _execute_dynamic_query_for_options(
                             dynamic_query, parent_val, child
                         )
-                        widget.options = options
-                        widget.update()
+
+                        # If static options are defined in config, and the dynamic
+                        # query returned a single value that is one of the static
+                        # options, treat the dynamic result as the selected value
+                        # instead of replacing the whole options list. This keeps
+                        # the intended options_default while selecting the current
+                        # value from the DB.
+                        static_opts = field_config.get("options")
+                        if (
+                            isinstance(static_opts, list)
+                            and options
+                            and len(options) == 1
+                            and options[0] in static_opts
+                        ):
+                            # Ensure widget has the full static options available
+                            try:
+                                widget.options = static_opts
+                            except Exception:
+                                pass
+                            # Set the current value
+                            try:
+                                widget.value = options[0]
+                            except Exception:
+                                pass
+                            try:
+                                widget.update()
+                            except Exception:
+                                pass
+                        else:
+                            # Use dynamic options (fallback)
+                            widget.options = options
+                            try:
+                                widget.update()
+                            except Exception:
+                                pass
                     else:
                         # Use static options
                         _update_select_field(
