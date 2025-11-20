@@ -15,7 +15,7 @@ uv run -m src.main
 
 **Option 2: Docker (Recommended for 24/7 Operation)**
 ```bash
-docker compose up
+docker compose up -d
 ```
 
 Once started, open your browser to **`http://localhost:8080`**
