@@ -16,7 +16,9 @@ A modern web-based time tracking application with built-in task management and A
   - **Customer changes w. Devops** - Code previously attempted a devops refresh after adding or updating a customer. This crashed the program if no devops customers existed. Added catch to only run if needed.
   - **Docker db-initialization** - Code previously crashed if db-initializing proceeded via Docker as mounted file created a directory instead of sqlite file. Docker now mounts a directory instead in which the code generates the db. 
   - **Adding Customer Wage** - Fixed issue where float input fas used, is now corrected to int.
+  - **Adding Tasks** - Fixed bug where `Assigned To` was a drop-down selection without values. Is now a input for text instead.
   - **Updating Tasks** - Fixed bug where `Status` and `Priority` in were not set correct when updating. Before the current value was used as options instead of default-option, and the correct options were removed. Now standard options are shown and selected values is used as default.
+  - **Deleting Tasks** - Fixed bug where deleting tasks only set status to "Completed" instead of actually removing them.
 
 
 ### 4.0.0 (2025-11-17)

@@ -96,13 +96,9 @@ task:
         with_input: false
 
       - name: "assigned_to"
-        type: "select"
+        type: "input"
         label: "Assigned To"
         optional: true
-        parent: "customer_name"
-        options_source: "assignees"
-        default: ""
-        with_input: true
 
       - name: "customer_name"
         type: "select"
