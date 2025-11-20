@@ -1928,6 +1928,61 @@ def add_generic_save_button(
         if additional_kwargs:
             kwargs.update(additional_kwargs)
 
+        # Special-case: Forms often provide a 'task_selector' value like "Title (ID: 5)".
+        if func_name == "delete_task":
+            sel = kwargs.get("task_selector") or kwargs.get("task")
+            if sel:
+                try:
+                    task_id_val = extract_id_from_text(
+                        str(sel), pattern=r"\(ID:\s*(\d+)\)"
+                    )
+                except Exception:
+                    task_id_val = None
+
+                if task_id_val is not None:
+                    # Replace kwargs with expected parameter name
+                    kwargs.pop("task_selector", None)
+                    kwargs.pop("task", None)
+                    kwargs["task_id"] = task_id_val
+
+        # Log function call for easier debugging
+        if LOG:
+            try:
+                LOG.log_msg(
+                    "INFO",
+                    f"Calling DB function '{func_name}' with kwargs: {dict(kwargs)}",
+                )
+            except Exception:
+                pass
+
+        # Safety: require explicit confirmation for destructive actions
+        if func_name == "delete_task":
+            confirm = kwargs.get("confirm_delete")
+            confirmed = False
+            if isinstance(confirm, str):
+                confirmed = confirm.strip().lower() in ("1", "true", "yes", "on")
+            else:
+                confirmed = bool(confirm)
+
+            if not confirmed:
+                ui.notify(
+                    "Please confirm deletion (toggle 'Confirm Deletion') before deleting.",
+                    color="warning",
+                )
+                if LOG:
+                    LOG.log_msg(
+                        "WARNING",
+                        "Attempted delete_task without confirmation; aborting.",
+                    )
+                return
+
+            # Ensure numeric task_id present (we may have extracted it earlier)
+            if "task_id" not in kwargs:
+                ui.notify("Could not determine task id to delete", color="negative")
+                if LOG:
+                    LOG.log_msg("ERROR", "delete_task called without task_id")
+                return
+
         await QE.function_db(func_name, **kwargs)
 
         # If customer add/update, regenerate DevOps table
