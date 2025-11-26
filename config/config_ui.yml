@@ -11,6 +11,7 @@ customer:
       - name: wage
         label: Wage
         type: number
+        step: 1
         optional: false
       - name: start_date
         label: Start Date

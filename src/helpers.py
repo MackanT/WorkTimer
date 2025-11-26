@@ -1531,12 +1531,45 @@ def bind_parent_relations(
                     # Check if field has dynamic query configured
                     dynamic_query = field_config.get("dynamic_query")
                     if dynamic_query and parent_val:
-                        # Execute dynamic query to fetch options
+                        # Execute dynamic query to fetch options or current value
                         options = await _execute_dynamic_query_for_options(
                             dynamic_query, parent_val, child
                         )
-                        widget.options = options
-                        widget.update()
+
+                        # If static options are defined in config, and the dynamic
+                        # query returned a single value that is one of the static
+                        # options, treat the dynamic result as the selected value
+                        # instead of replacing the whole options list. This keeps
+                        # the intended options_default while selecting the current
+                        # value from the DB.
+                        static_opts = field_config.get("options")
+                        if (
+                            isinstance(static_opts, list)
+                            and options
+                            and len(options) == 1
+                            and options[0] in static_opts
+                        ):
+                            # Ensure widget has the full static options available
+                            try:
+                                widget.options = static_opts
+                            except Exception:
+                                pass
+                            # Set the current value
+                            try:
+                                widget.value = options[0]
+                            except Exception:
+                                pass
+                            try:
+                                widget.update()
+                            except Exception:
+                                pass
+                        else:
+                            # Use dynamic options (fallback)
+                            widget.options = options
+                            try:
+                                widget.update()
+                            except Exception:
+                                pass
                     else:
                         # Use static options
                         _update_select_field(
@@ -1895,18 +1928,93 @@ def add_generic_save_button(
         if additional_kwargs:
             kwargs.update(additional_kwargs)
 
+        # Special-case: Forms often provide a 'task_selector' value like "Title (ID: 5)".
+        if func_name == "delete_task":
+            sel = kwargs.get("task_selector") or kwargs.get("task")
+            if sel:
+                try:
+                    task_id_val = extract_id_from_text(
+                        str(sel), pattern=r"\(ID:\s*(\d+)\)"
+                    )
+                except Exception:
+                    task_id_val = None
+
+                if task_id_val is not None:
+                    # Replace kwargs with expected parameter name
+                    kwargs.pop("task_selector", None)
+                    kwargs.pop("task", None)
+                    kwargs["task_id"] = task_id_val
+
+        # Log function call for easier debugging
+        if LOG:
+            try:
+                LOG.log_msg(
+                    "INFO",
+                    f"Calling DB function '{func_name}' with kwargs: {dict(kwargs)}",
+                )
+            except Exception:
+                pass
+
+        # Safety: require explicit confirmation for destructive actions
+        if func_name == "delete_task":
+            confirm = kwargs.get("confirm_delete")
+            confirmed = False
+            if isinstance(confirm, str):
+                confirmed = confirm.strip().lower() in ("1", "true", "yes", "on")
+            else:
+                confirmed = bool(confirm)
+
+            if not confirmed:
+                ui.notify(
+                    "Please confirm deletion (toggle 'Confirm Deletion') before deleting.",
+                    color="warning",
+                )
+                if LOG:
+                    LOG.log_msg(
+                        "WARNING",
+                        "Attempted delete_task without confirmation; aborting.",
+                    )
+                return
+
+            # Ensure numeric task_id present (we may have extracted it earlier)
+            if "task_id" not in kwargs:
+                ui.notify("Could not determine task id to delete", color="negative")
+                if LOG:
+                    LOG.log_msg("ERROR", "delete_task called without task_id")
+                return
+
         await QE.function_db(func_name, **kwargs)
 
         # If customer add/update, regenerate DevOps table
+        # Only perform DevOps update when there are DevOps customers/connections configured
         if func_name in ["insert_customer", "update_customer"]:
             if DO:
-                if LOG:
-                    LOG.log_msg("INFO", "Regenerating DevOps data...")
-                ui.notify(
-                    "Regenerating DevOps data... This may take a few moments.",
-                    color="info",
-                )
-                await DO.update_devops(incremental=True)
+                has_connections = False
+                try:
+                    mgr = getattr(DO, "manager", None)
+                    if mgr is not None and getattr(mgr, "clients", None):
+                        clients = mgr.clients
+                        if isinstance(clients, dict):
+                            has_connections = len(clients) > 0
+                        else:
+                            has_connections = bool(clients)
+                except Exception:
+                    has_connections = False
+
+                if has_connections:
+                    if LOG:
+                        LOG.log_msg("INFO", "Regenerating DevOps data...")
+                    ui.notify(
+                        "Regenerating DevOps data... This may take a few moments.",
+                        color="info",
+                    )
+                    await DO.update_devops(incremental=True)
+                else:
+                    if LOG:
+                        LOG.log_msg(
+                            "INFO",
+                            "No DevOps customers configured; skipping DevOps regeneration.",
+                        )
 
         msg_1, msg_2 = print_success(
             save_data.main_action,

@@ -4,9 +4,9 @@ services:
     image: worktimer-app:latest
     ports:
       - "8080:8080"
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DEBUG_MODE=${DEBUG_MODE}
     volumes:
-      - ./worktimer.db:/app/worktimer.db
-    # environment:
-    # Add any environment variables here if needed
-    # EXAMPLE_VAR: value
+      - ./data:/app/data
     restart: unless-stopped

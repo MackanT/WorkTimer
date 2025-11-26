@@ -777,8 +777,18 @@ def ui_tasks():
 
                                     async def confirm_delete():
                                         QE = GlobalRegistry.get("QE")
+                                        LOG = GlobalRegistry.get("LOG")
                                         if QE:
                                             try:
+                                                # Log intent to call delete for traceability
+                                                try:
+                                                    if LOG:
+                                                        LOG.log_msg(
+                                                            "DEBUG",
+                                                            f"Calling DB function 'delete_task' with task_id={task_id}",
+                                                        )
+                                                except Exception:
+                                                    pass
                                                 await QE.function_db(
                                                     "delete_task", task_id=task_id
                                                 )
