@@ -19,9 +19,6 @@
 - sorting of tasks is "backwards" for earliest/latest. Null due-dates are backwards
 - make log auto-scroll
 
-- Tasks, assigned to is always blank (text input on update!)
-- Tasks, on update priority and status selects only show current selection
-
 
 ### Completed -- Old from before ReadMe
 - clean up of customer sort order (not needed anymore)
