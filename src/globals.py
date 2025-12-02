@@ -109,14 +109,56 @@ class Logger:
             self.update_log_textarea()
 
     def update_log_textarea(self):
-        if self.__class__.LOG_TEXTAREA:
+        if not self.__class__.LOG_TEXTAREA:
+            return
+
+        # If the UI element supports push/clear (NiceGUI ui.log), use that
+        elem = self.__class__.LOG_TEXTAREA
+        try:
+            if hasattr(elem, "push"):
+                # Clear existing entries then push buffered lines
+                if hasattr(elem, "clear"):
+                    try:
+                        elem.clear()
+                    except Exception:
+                        pass
+
+                for entry in self.__class__.LOG_BUFFER:
+                    color = self.__class__.LOG_COLORS.get(entry["level"], "white")
+                    classes = f"text-{color}" if color else None
+                    try:
+                        # push handles plain text and optional classes for styling
+                        if classes:
+                            elem.push(entry["msg"], classes=classes)
+                        else:
+                            elem.push(entry["msg"])
+                    except Exception:
+                        # If push fails, fall back to setting html content
+                        pass
+                try:
+                    elem.update()
+                except Exception:
+                    pass
+                return
+        except Exception:
+            # If anything went wrong using ui.log API, continue to fallback
+            pass
+
+        # Fallback for textarea-like elements with set_content
+        try:
             lines = []
             for entry in self.__class__.LOG_BUFFER:
                 color = self.__class__.LOG_COLORS.get(entry["level"], "white")
                 line = f'<span style="color:{color}; font-family:monospace; white-space:pre;">{entry["msg"]}</span>'
                 lines.append(line)
-            self.__class__.LOG_TEXTAREA.set_content("<br>".join(lines))
-            self.__class__.LOG_TEXTAREA.update()
+            # older widgets expose set_content/update
+            if hasattr(elem, "set_content"):
+                elem.set_content("<br>".join(lines))
+            if hasattr(elem, "update"):
+                elem.update()
+        except Exception:
+            # Ignore errors to avoid breaking logging
+            pass
 
 
 class QueryEngine:
