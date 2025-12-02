@@ -77,9 +77,10 @@ async def show_time_entry_dialog(
             id_input = None
             id_checkbox = None
             if has_devops:
-                id_options = DO.df[(DO.df["customer_name"] == c_name)][
-                    ["display_name", "id"]
-                ].dropna()
+                id_options = DO.df[
+                    (DO.df["customer_name"] == c_name)
+                    & (DO.df["state"].isin(["Active", "New"]))
+                ][["display_name", "id"]].dropna()
                 id_input = ui.select(
                     id_options["display_name"].tolist(),
                     with_input=True,
