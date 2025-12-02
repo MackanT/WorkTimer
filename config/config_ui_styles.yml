@@ -113,6 +113,9 @@ layouts:
   # Full width (static, no flex)
   full_width: "w-full"
 
+  # Tabs - sticky at top so the tab bar remains visible while scrolling
+  tabs_sticky_top: "w-full sticky top-0 z-50 bg-[#121212] text-white border-b"
+
   # Full width + height
   full_size: "w-full h-full"
 

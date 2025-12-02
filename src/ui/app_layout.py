@@ -32,7 +32,7 @@ def setup_ui():
     dark.enable()
 
     # Create main tabs
-    with ui.tabs().classes(UI_STYLES.get_layout_classes("full_width")) as tabs:
+    with ui.tabs().classes(UI_STYLES.get_layout_classes("tabs_sticky_top")) as tabs:
         tab_time = ui.tab("Time Tracking", icon="schedule")
         tab_data_input = ui.tab("Data Input", icon="input")
         tasks_input = ui.tab("To-Do", icon="check_box")
