@@ -315,11 +315,18 @@ def ui_time_tracking():
 
         async def make_customer_card(customer_id, customer_name, group):
             """Create a customer card with all its projects."""
-            with ui.card().classes(UI_STYLES.get_card_classes("xs", "card_padded")):
+            with (
+                ui.card()
+                .classes(UI_STYLES.get_card_classes("xs", "card_padded"))
+                .style(
+                    "display:flex; flex-direction:column; height:calc(100vh - 200px); box-sizing:border-box;"
+                )
+            ):
+                # Column must be able to shrink properly when content overflows
                 with (
                     ui.column()
                     .classes(
-                        UI_STYLES.get_layout_classes("time_tracking_customer_column")
+                        f"{UI_STYLES.get_layout_classes('time_tracking_customer_column')} flex-1 min-h-0 overflow-hidden"
                     )
                     .style(UI_STYLES.get_inline_style("time_tracking", "customer_card"))
                 ):
@@ -341,15 +348,30 @@ def ui_time_tracking():
                             UI_STYLES.get_widget_style("time_tracking_customer_name")[
                                 "classes"
                             ]
-                        )
-                        label_total = ui.label(total_string).classes(
-                            UI_STYLES.get_widget_style("time_tracking_customer_total")[
-                                "classes"
-                            ]
+                        ).style("grid-column: 1 / span 2; text-align: left;")
+
+                        # Total on the right column, use same classes as project values
+                        label_total = (
+                            ui.label(total_string)
+                            .classes(
+                                UI_STYLES.get_widget_style(
+                                    "time_tracking_customer_total"
+                                )["classes"]
+                            )
+                            .style(
+                                UI_STYLES.get_widget_style(
+                                    "time_tracking_customer_total"
+                                ).get("style", "")
+                            )
                         )
                         customer_total_labels.append((label_total, customer_id))
-                    for _, project in group.iterrows():
-                        await make_project_row(project, customer_id)
+                    with (
+                        ui.element()
+                        .classes("w-full overflow-auto flex-1 min-h-0")
+                        .style("padding-right: 1rem; scrollbar-gutter: stable;")
+                    ):
+                        for _, project in group.iterrows():
+                            await make_project_row(project, customer_id)
 
         customers = df.groupby(["customer_id", "customer_name"])
         with container:
