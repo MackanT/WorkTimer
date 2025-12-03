@@ -15,25 +15,25 @@ from .. import helpers
 
 class DevOpsWorkItemHandlers:
     """Handlers for DevOps work item operations."""
-    
+
     def __init__(self, DO, LOG):
         """
         Initialize DevOps handlers.
-        
+
         Args:
             DO: DevOpsEngine instance
             LOG: Logger instance
         """
         self.DO = DO
         self.LOG = LOG
-    
+
     def add_work_item(self, widgets):
         """
         Create a work item (Epic, Feature, or User Story) based on the selected type.
-        
+
         Args:
             widgets: Dictionary of form widgets
-            
+
         Returns:
             Tuple of (success: bool, message: str)
         """
@@ -74,17 +74,19 @@ class DevOpsWorkItemHandlers:
             markdown=True,
             parent=parent_id,
         )
-        state = "INFO" if success else "ERROR"
-        self.LOG.log_msg(state, message)
+        if success:
+            self.LOG.info(message)
+        else:
+            self.LOG.error(message)
         return success, message
 
     async def update_work_item_description(self, widgets):
         """
         Save the updated description back to DevOps.
-        
+
         Args:
             widgets: Dictionary of form widgets
-            
+
         Returns:
             Tuple of (success: bool, message: str)
         """
@@ -104,23 +106,23 @@ class DevOpsWorkItemHandlers:
                 c_name, work_item_id, description, markdown=is_markdown
             )
             if status:
-                self.LOG.log_msg("INFO", f"Description updated for work item {work_item_id}")
+                self.LOG.info(f"Description updated for work item {work_item_id}")
                 return (
                     True,
                     f"Description updated successfully for work item {work_item_id}",
                 )
             else:
-                self.LOG.log_msg("ERROR", f"Failed to update description: {msg}")
+                self.LOG.error(f"Failed to update description: {msg}")
                 return False, f"Failed to update: {msg}"
         return False, "DevOps manager not available"
 
     async def update_work_item(self, widgets):
         """
         Save the updated work item fields back to DevOps.
-        
+
         Args:
             widgets: Dictionary of form widgets
-            
+
         Returns:
             Tuple of (success: bool, message: str)
         """
@@ -162,25 +164,25 @@ class DevOpsWorkItemHandlers:
                 c_name, work_item_id, fields_to_update, markdown=is_markdown
             )
             if status:
-                self.LOG.log_msg("INFO", f"Work item {work_item_id} updated successfully")
+                self.LOG.info(f"Work item {work_item_id} updated successfully")
                 return (
                     True,
                     f"Work item {work_item_id} updated successfully",
                 )
             else:
-                self.LOG.log_msg("ERROR", f"Failed to update work item: {msg}")
+                self.LOG.error(f"Failed to update work item: {msg}")
                 return False, f"Failed to update: {msg}"
         return False, "DevOps manager not available"
 
     def setup_update_tab_handlers(self, widgets):
         """
         Set up special event handlers for the Update tab.
-        
+
         Handles:
         - Description editor/preview synchronization
         - Work item details loading when selection changes
         - Auto-populate state, assigned_to, priority fields
-        
+
         Args:
             widgets: Dictionary of form widgets
         """
@@ -196,6 +198,7 @@ class DevOpsWorkItemHandlers:
 
         # Set up work item details loader
         if work_item_widget and customer_widget and editor_widget and preview_html:
+
             async def load_work_item_details(e):
                 """Load all work item details when work item is selected."""
                 c_name = customer_widget.value
@@ -238,36 +241,35 @@ class DevOpsWorkItemHandlers:
                         )
 
                         # Update other fields
-                        self._set_widget_value_safe(state_widget, details.get("state"), "string")
                         self._set_widget_value_safe(
-                            assigned_to_widget,
-                            details.get("assigned_to_raw") or details.get("assigned_to"),
-                            "assignee"
+                            state_widget, details.get("state"), "string"
                         )
                         self._set_widget_value_safe(
-                            priority_widget,
-                            details.get("priority"),
-                            "int"
+                            assigned_to_widget,
+                            details.get("assigned_to_raw")
+                            or details.get("assigned_to"),
+                            "assignee",
+                        )
+                        self._set_widget_value_safe(
+                            priority_widget, details.get("priority"), "int"
                         )
                     else:
                         ui.notify(
                             f"Failed to load work item details: {details}",
                             color="negative",
                         )
-                        self.LOG.log_msg(
-                            "ERROR", f"Failed to load work item details: {details}"
-                        )
+                        self.LOG.error(f"Failed to load work item details: {details}")
 
             work_item_widget.on("update:model-value", load_work_item_details)
 
     def setup_add_tab_handlers(self, widgets):
         """
         Set up special event handlers for the Add tab.
-        
+
         Handles:
         - Auto-populate Source and Contact fields in description editor
         - Preview synchronization
-        
+
         Args:
             widgets: Dictionary of form widgets
         """
@@ -276,7 +278,7 @@ class DevOpsWorkItemHandlers:
         source_widget = widgets.get("source")
         contact_widget = widgets.get("contact_person")
 
-        # Initialize preview 
+        # Initialize preview
         if editor_widget and preview_widget:
             initial_content = editor_widget.value or ""
             preview_widget.set_content(
@@ -286,11 +288,12 @@ class DevOpsWorkItemHandlers:
 
         # Set up field updaters
         if editor_widget and (source_widget or contact_widget):
+
             def update_editor_field(field_name, new_value):
                 """Update a specific field in the markdown editor."""
                 current_text = editor_widget.value or ""
                 pattern = rf"^(\*\*{re.escape(field_name)}:\*\*)(.*)$"
-                
+
                 match = re.search(pattern, current_text, re.MULTILINE)
                 if match:
                     replacement = rf"\1 {new_value}"
@@ -306,19 +309,23 @@ class DevOpsWorkItemHandlers:
                     # Note: preview will be updated automatically by on_value_change handler
 
             if source_widget:
+
                 def on_source_change(e):
                     update_editor_field("Source", source_widget.value or "")
+
                 source_widget.on("update:model-value", on_source_change)
 
             if contact_widget:
+
                 def on_contact_change(e):
                     update_editor_field("Contact", contact_widget.value or "")
+
                 contact_widget.on("update:model-value", on_contact_change)
 
     def _set_widget_value_safe(self, widget, value, value_type="string"):
         """
         Safely set widget value with type-specific handling.
-        
+
         Args:
             widget: NiceGUI widget to update
             value: Value to set
@@ -326,16 +333,18 @@ class DevOpsWorkItemHandlers:
         """
         if not widget or value is None:
             return
-        
+
         try:
             if value_type == "assignee":
                 # Special handling for assignee widgets
                 # Try to extract email if value is a dict
                 if isinstance(value, dict):
-                    assignee_value = value.get("uniqueName", value.get("displayName", ""))
+                    assignee_value = value.get(
+                        "uniqueName", value.get("displayName", "")
+                    )
                 else:
                     assignee_value = value
-                
+
                 # Check if value is in dropdown options
                 widget_options = getattr(widget, "options", [])
                 if assignee_value in widget_options:
@@ -345,17 +354,17 @@ class DevOpsWorkItemHandlers:
                     # For combobox widgets, we can set custom values
                     widget.set_value(assignee_value)
                     widget.value = assignee_value
-            
+
             elif value_type == "int":
                 # Convert to int if needed
                 int_value = int(value) if value is not None else None
                 if int_value is not None:
                     widget.set_value(int_value)
                     widget.value = int_value
-            
+
             else:  # string or default
                 widget.set_value(value)
                 widget.value = value
-                
+
         except Exception as e:
-            self.LOG.log_msg("WARNING", f"Failed to set widget value (type={value_type}): {e}")
+            self.LOG.warning(f"Failed to set widget value (type={value_type}): {e}")

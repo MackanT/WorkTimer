@@ -161,7 +161,7 @@ class Database:
 
         try:
             # Log the initialization process
-            self.log_engine.log_msg("INFO", "Initializing database...")
+            self.log_engine.info("Initializing database...")
 
             ## Time Table
             df_temp = self.fetch_query(
@@ -187,7 +187,7 @@ class Database:
                     comment text
                 )
                 """)
-                self.log_engine.log_msg("INFO", "Table 'time' created successfully.")
+                self.log_engine.info("Table 'time' created successfully.")
 
                 ## Trigger for Time Table
                 self.execute_query("""
@@ -203,8 +203,8 @@ class Database:
                     where time_id = new.time_id;
                 end;
                 """)
-                self.log_engine.log_msg(
-                    "INFO", "Trigger 'trigger_time_after_update' created successfully."
+                self.log_engine.info(
+                    "Trigger 'trigger_time_after_update' created successfully."
                 )
 
                 # Single trigger for project_name after INSERT or UPDATE of project_id
@@ -247,9 +247,8 @@ class Database:
                     where time_id = new.time_id;
                 end;
                 """)
-                self.log_engine.log_msg(
-                    "INFO",
-                    "Triggers for customer_name, project_name, wage and bonus created successfully.",
+                self.log_engine.info(
+                    "Triggers for customer_name, project_name, wage and bonus created successfully."
                 )
 
             ## Customers Table
@@ -271,9 +270,7 @@ class Database:
                     inserted_at datetime
                 )
                 """)
-                self.log_engine.log_msg(
-                    "INFO", "Table 'customers' created successfully."
-                )
+                self.log_engine.info("Table 'customers' created successfully.")
 
             ## Projects Table
             df_time = self.fetch_query(
@@ -289,9 +286,7 @@ class Database:
                     is_current boolean
                 )
                 """)
-                self.log_engine.log_msg(
-                    "INFO", "Table 'projects' created successfully."
-                )
+                self.log_engine.info("Table 'projects' created successfully.")
 
             ## Bonus Table
             df_time = self.fetch_query(
@@ -306,7 +301,7 @@ class Database:
                     end_date text
                 )
                 """)
-                self.log_engine.log_msg("INFO", "Table 'bonus' created successfully.")
+                self.log_engine.info("Table 'bonus' created successfully.")
 
             ## Dates Table
             df_time = self.fetch_query(
@@ -323,24 +318,20 @@ class Database:
                     day integer
                 )
                 """)
-                self.log_engine.log_msg("INFO", "Table 'dates' created successfully.")
+                self.log_engine.info("Table 'dates' created successfully.")
 
                 # Populate the dates table
                 try:
                     add_dates(s_date="2020-01-01", e_date="2030-12-31")
-                    self.log_engine.log_msg(
-                        "INFO", "Dates table populated successfully."
-                    )
+                    self.log_engine.info("Dates table populated successfully.")
                 except Exception as e:
-                    self.log_engine.log_msg(
-                        "ERROR", f"Error populating dates table: {e}"
-                    )
+                    self.log_engine.error(f"Error populating dates table: {e}")
             else:
                 df_count = self.fetch_query("select count(*) as cnt from dates")
                 if df_count.empty or int(df_count.iloc[0]["cnt"]) == 0:
                     add_dates(s_date="2020-01-01", e_date="2030-12-31")
-                    self.log_engine.log_msg(
-                        "INFO", "Found blank Dates table, successfully populated it."
+                    self.log_engine.info(
+                        "Found blank Dates table, successfully populated it."
                     )
 
             ## Query Snippets table
@@ -355,23 +346,19 @@ class Database:
                     is_default boolean
                 )
                 """)
-                self.log_engine.log_msg("INFO", "Table 'queries' created successfully.")
+                self.log_engine.info("Table 'queries' created successfully.")
 
                 try:
                     add_default_queries()
-                    self.log_engine.log_msg(
-                        "INFO", "Queries table populated successfully."
-                    )
+                    self.log_engine.info("Queries table populated successfully.")
                 except Exception as e:
-                    self.log_engine.log_msg(
-                        "ERROR", f"Error populating queries table: {e}"
-                    )
+                    self.log_engine.error(f"Error populating queries table: {e}")
             else:
                 df_count = self.fetch_query("select count(*) as cnt from queries")
                 if df_count.empty or int(df_count.iloc[0]["cnt"]) == 0:
                     add_default_queries()
-                    self.log_engine.log_msg(
-                        "INFO", "Found blank Queries table, successfully populated it."
+                    self.log_engine.info(
+                        "Found blank Queries table, successfully populated it."
                     )
 
             ## Tasks table
@@ -416,13 +403,13 @@ class Database:
                     foreign key (parent_task_id) references tasks(task_id)
                 )
                 """)
-                self.log_engine.log_msg("INFO", "Table 'tasks' created successfully.")
+                self.log_engine.info("Table 'tasks' created successfully.")
 
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Error initializing database: {e}")
+            self.log_engine.error(f"Error initializing database: {e}")
         finally:
             self.conn.commit()
-            self.log_engine.log_msg("INFO", "Database loaded without errors!")
+            self.log_engine.info("Database loaded without errors!")
 
     ### Time Table Operations ###
 
@@ -461,8 +448,7 @@ class Database:
                     date_key,
                 ),
             )
-            self.log_engine.log_msg(
-                "INFO",
+            self.log_engine.info(
                 f"Starting timer for customer: {customer_name} - project: {project_name}",
             )
         else:
@@ -480,8 +466,7 @@ class Database:
             """,
                 (now, comment, git_id, last_row_id),
             )
-            self.log_engine.log_msg(
-                "INFO",
+            self.log_engine.info(
                 f"Ending timer for customer: {customer_name} - project: {project_name}",
             )
 
@@ -500,8 +485,7 @@ class Database:
         """,
             (customer_id, project_id),
         )
-        self.log_engine.log_msg(
-            "INFO",
+        self.log_engine.info(
             f"Deleted latest time entry for customer: {customer_name} - project: {project_name}",
         )
 
@@ -543,8 +527,7 @@ class Database:
             """,
                 (valid_to, customer_name),
             )
-            self.log_engine.log_msg(
-                "INFO",
+            self.log_engine.info(
                 f"Disabled '{customer_name}' old id: {old_customer_id}",
             )
 
@@ -565,7 +548,7 @@ class Database:
                 now,
             ),
         )
-        self.log_engine.log_msg("INFO", f"Inserted new customer '{customer_name}'")
+        self.log_engine.info(f"Inserted new customer '{customer_name}'")
 
         # Get the new customer_id
         new_customer_id = self._get_value_from_db(
@@ -590,8 +573,7 @@ class Database:
             )
             if not df.empty:
                 project_list = df["project_name"].tolist()
-                self.log_engine.log_msg(
-                    "INFO",
+                self.log_engine.info(
                     f"Updated projects {project_list} to use {customer_name} new id: {new_customer_id}",
                 )
 
@@ -624,8 +606,7 @@ class Database:
             (new_customer_name, customer_name),
         )
 
-        self.log_engine.log_msg(
-            "INFO",
+        self.log_engine.info(
             f"Updated customer name from '{customer_name}' to '{new_customer_name}'",
         )
 
@@ -638,7 +619,7 @@ class Database:
         """,
             (customer_name,),
         )
-        self.log_engine.log_msg("INFO", f"Disabled customer '{customer_name}'")
+        self.log_engine.info(f"Disabled customer '{customer_name}'")
 
     def enable_customer(self, customer_name: str):
         self.execute_query(
@@ -657,7 +638,7 @@ class Database:
         """,
             (customer_name, customer_name),
         )
-        self.log_engine.log_msg("INFO", f"Enabled customer '{customer_name}'")
+        self.log_engine.info(f"Enabled customer '{customer_name}'")
 
     ### Project Table Operations ###
 
@@ -677,8 +658,7 @@ class Database:
         )
 
         if not existing_projects.empty and existing_projects["is_current"].iloc[0] == 1:
-            self.log_engine.log_msg(
-                "WARNING",
+            self.log_engine.warning(
                 f"Project '{project_name}' for customer '{customer_name}' already exists",
             )
             return
@@ -687,8 +667,7 @@ class Database:
             self.execute_query(
                 "update projects set is_current = 1 where project_id = ?", (project_id,)
             )
-            self.log_engine.log_msg(
-                "INFO",
+            self.log_engine.info(
                 f"Enabled project '{project_name}' for customer '{customer_name}'",
             )
         else:
@@ -699,8 +678,7 @@ class Database:
             """,
                 (customer_id, project_name, git_id),
             )
-            self.log_engine.log_msg(
-                "INFO",
+            self.log_engine.info(
                 f"Inserted new project '{project_name}' for customer '{customer_name}'",
             )
 
@@ -733,8 +711,8 @@ class Database:
         """,
             (new_project_name, project_name, customer_name),
         )
-        self.log_engine.log_msg(
-            "INFO", f"Updated project '{project_name}' for customer '{customer_name}'"
+        self.log_engine.info(
+            f"Updated project '{project_name}' for customer '{customer_name}'"
         )
 
     def disable_project(self, customer_name: str, project_name: str):
@@ -748,8 +726,8 @@ class Database:
         """,
             (project_name, customer_name),
         )
-        self.log_engine.log_msg(
-            "INFO", f"Disabled project '{project_name}' for customer '{customer_name}'"
+        self.log_engine.info(
+            f"Disabled project '{project_name}' for customer '{customer_name}'"
         )
 
     def enable_project(self, customer_name: str, project_name: str):
@@ -763,8 +741,8 @@ class Database:
         """,
             (project_name, customer_name),
         )
-        self.log_engine.log_msg(
-            "INFO", f"Enabled project '{project_name}' for customer '{customer_name}'"
+        self.log_engine.info(
+            f"Enabled project '{project_name}' for customer '{customer_name}'"
         )
 
     ### Bonus Table Operations ###
@@ -781,8 +759,7 @@ class Database:
             "insert into bonus (start_date, bonus_percent) values (?, ?)",
             (start_date, round(amount, 3)),
         )
-        self.log_engine.log_msg(
-            "INFO",
+        self.log_engine.info(
             f"Inserted new bonus percent {bonus_percent}% starting from {start_date}",
         )
 
@@ -837,8 +814,8 @@ class Database:
                 (task_id,),
             )
 
-            self.log_engine.log_msg(
-                "INFO", f"Task '{title}' created successfully with ID {task_id}"
+            self.log_engine.info(
+                f"Task '{title}' created successfully with ID {task_id}"
             )
 
             # Return success, message, and the complete task data
@@ -846,7 +823,7 @@ class Database:
             return True, f"Task '{title}' created successfully", task_dict
         except Exception as e:
             error_msg = f"Failed to create task '{title}': {e}"
-            self.log_engine.log_msg("ERROR", error_msg)
+            self.log_engine.error(error_msg)
             return False, error_msg, None
 
     def update_task(
@@ -912,7 +889,7 @@ class Database:
 
             if not set_clauses:
                 warning_msg = "No fields to update for task"
-                self.log_engine.log_msg("WARNING", warning_msg)
+                self.log_engine.warning(warning_msg)
                 return False, warning_msg
 
             query = f"update tasks set {', '.join(set_clauses)} where task_id = ?"
@@ -920,11 +897,11 @@ class Database:
 
             self.execute_query(query, tuple(params))
             success_msg = f"Task {task_id} updated successfully"
-            self.log_engine.log_msg("INFO", success_msg)
+            self.log_engine.info(success_msg)
             return True, success_msg
         except Exception as e:
             error_msg = f"Failed to update task {task_id}: {e}"
-            self.log_engine.log_msg("ERROR", error_msg)
+            self.log_engine.error(error_msg)
             return False, error_msg
 
     def delete_task(self, task_id: int):
@@ -936,7 +913,7 @@ class Database:
             )
             if task.empty:
                 warning_msg = f"Task {task_id} not found"
-                self.log_engine.log_msg("WARNING", warning_msg)
+                self.log_engine.warning(warning_msg)
                 return False, warning_msg
 
             task_title = task.iloc[0]["title"]
@@ -944,11 +921,11 @@ class Database:
             # Delete the task
             self.execute_query("delete from tasks where task_id = ?", (task_id,))
             success_msg = f"Task '{task_title}' (ID: {task_id}) deleted successfully"
-            self.log_engine.log_msg("INFO", success_msg)
+            self.log_engine.info(success_msg)
             return True, success_msg
         except Exception as e:
             error_msg = f"Failed to delete task {task_id}: {e}"
-            self.log_engine.log_msg("ERROR", error_msg)
+            self.log_engine.error(error_msg)
             return False, error_msg
 
     def set_task_completion(self, task_id: int, completed: bool):
@@ -960,7 +937,7 @@ class Database:
             )
             if task_check.empty:
                 warning_msg = f"Task {task_id} not found"
-                self.log_engine.log_msg("WARNING", warning_msg)
+                self.log_engine.warning(warning_msg)
                 return False, warning_msg
 
             # Update completion status and completed_at timestamp
@@ -987,12 +964,12 @@ class Database:
 
             task_title = task_check.iloc[0]["title"]
             success_msg = f"Task '{task_title}' (ID: {task_id}) {action}"
-            self.log_engine.log_msg("INFO", success_msg)
+            self.log_engine.info(success_msg)
             return True, success_msg
 
         except Exception as e:
             error_msg = f"Failed to update completion for task {task_id}: {e}"
-            self.log_engine.log_msg("ERROR", error_msg)
+            self.log_engine.error(error_msg)
             return False, error_msg
 
     def get_task_by_id(self, task_id: int):
@@ -1008,7 +985,7 @@ class Database:
             )
             return result.iloc[0] if not result.empty else None
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Failed to get task {task_id}: {e}")
+            self.log_engine.error(f"Failed to get task {task_id}: {e}")
             return None
 
     def get_tasks_by_customer(self, customer_name: str = None):
@@ -1033,7 +1010,7 @@ class Database:
             result = self.fetch_query(query, params)
             return result
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Failed to get tasks: {e}")
+            self.log_engine.error(f"Failed to get tasks: {e}")
             return pd.DataFrame()
 
     ### Query Operations ###
@@ -1062,28 +1039,23 @@ class Database:
                 - 'merge': Update existing rows and add new ones (upsert)
         """
         if df.empty or len(df.columns) == 0:
-            self.log_engine.log_msg(
-                "WARNING", "No DevOps data to update. No changes made."
-            )
+            self.log_engine.warning("No DevOps data to update. No changes made.")
             return
 
         if mode not in ["replace", "append", "merge"]:
-            self.log_engine.log_msg(
-                "ERROR",
+            self.log_engine.error(
                 f"Invalid mode '{mode}'. Must be 'replace', 'append', or 'merge'.",
             )
             return
 
         if mode == "replace":
-            self.log_engine.log_msg(
-                "INFO", f"Replacing devops table with {len(df)} records"
-            )
+            self.log_engine.info(f"Replacing devops table with {len(df)} records")
             df.to_sql("devops", self.conn, if_exists="replace", index=False)
         elif mode == "append":
-            self.log_engine.log_msg("INFO", f"Appending {len(df)} new devops records")
+            self.log_engine.info(f"Appending {len(df)} new devops records")
             df.to_sql("devops", self.conn, if_exists="append", index=False)
         elif mode == "merge":
-            self.log_engine.log_msg("INFO", f"Merging {len(df)} devops records")
+            self.log_engine.info(f"Merging {len(df)} devops records")
             # Delete existing records that will be updated
             cursor = self.conn.cursor()
             for _, row in df.iterrows():
@@ -1346,14 +1318,14 @@ class Database:
             cursor.execute(query, params)
             self.conn.commit()
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Error executing query: {query}\n{e}")
+            self.log_engine.error(f"Error executing query: {query}\n{e}")
             raise
 
     def fetch_query(self, query: str, params: tuple = ()):
         try:
             return pd.read_sql(query, self.conn, params=params)
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Error fetching query: {query}\n{e}")
+            self.log_engine.error(f"Error fetching query: {query}\n{e}")
             raise
 
     def smart_query(self, query: str, params: tuple = ()):
@@ -1372,7 +1344,7 @@ class Database:
                 self.conn.commit()
                 return None
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Error running query: {query}\n{e}")
+            self.log_engine.error(f"Error running query: {query}\n{e}")
             raise
 
     def _get_value_from_db(
@@ -1391,7 +1363,7 @@ class Database:
         elif data_type == "float":
             return float(val) if val is not None else 0.0
         else:
-            self.log_engine.log_msg("ERROR", "Invalid data type specified.")
+            self.log_engine.error("Invalid data type specified.")
             raise ValueError("Invalid data type specified.")
 
     def close(self):

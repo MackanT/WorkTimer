@@ -16,13 +16,15 @@ from .globals import (
     DevOpsEngine,
     DevOpsTag,
     GlobalRegistry,
-    Logger,
     QueryEngine,
     UIRefreshEngine,
+    setup_logger,
 )
 from .ui.app_layout import setup_ui
 
 from dotenv import load_dotenv
+
+from nicegui.events import KeyEventArguments
 
 
 ## Utility Functions ##
@@ -54,11 +56,11 @@ def run_async_task(func, *args, **kwargs):
 ## Application Initialization ##
 def _initialize_engines(settings, data_config):
     """Initialize all application engines and register them in GlobalRegistry"""
-    # Initialize loggers
-    log = Logger.get_logger("WorkTimer", debug=settings.debug_mode)
-    log.log_msg("INFO", "Starting WorkTimer!")
-    db_log = Logger.get_logger("Database", debug=settings.debug_mode)
-    do_log = Logger.get_logger("DevOps", debug=settings.debug_mode)
+    # Initialize loggers using standard Python logging
+    log = setup_logger("WorkTimer", debug=settings.debug_mode)
+    log.info("Starting WorkTimer!")
+    db_log = setup_logger("Database", debug=settings.debug_mode)
+    do_log = setup_logger("DevOps", debug=settings.debug_mode)
 
     # Initialize database engine
     query_engine = QueryEngine(file_name=settings.db_name, log_engine=db_log)
@@ -106,6 +108,22 @@ def _register_configs(config_loader, data_config, settings):
     GlobalRegistry.set("DEVOPS_TAGS", devops_tags)
 
 
+def handle_key(e: KeyEventArguments):
+    LOG = GlobalRegistry.get("LOG")
+    if e.key == "f" and not e.action.repeat:
+        if e.action.keyup:
+            LOG.info("'f' key was released")
+    elif e.key == "g" and not e.action.repeat:
+        if e.action.keyup:
+            LOG.debug("'g' key was released")
+    if e.key == "h" and not e.action.repeat:
+        if e.action.keyup:
+            LOG.warning("'h' key was released")
+    if e.key == "j" and not e.action.repeat:
+        if e.action.keyup:
+            LOG.error("'j' key was released")
+
+
 def main():
     """Initialize and run the WorkTimer application"""
     # Load and validate all configuration
@@ -121,6 +139,9 @@ def main():
 
     # Register configurations
     _register_configs(config_loader, data_config, settings)
+
+    # DEBUG: Set up key event handling
+    ui.keyboard(on_key=handle_key)
 
     # Disable F5 refresh in browser
     ui.add_head_html("""

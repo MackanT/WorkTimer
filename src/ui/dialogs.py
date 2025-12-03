@@ -120,8 +120,7 @@ async def show_time_entry_dialog(
                     store_to_devops = id_checkbox.value if id_checkbox else False
 
                 if LOG:
-                    LOG.log_msg(
-                        "DEBUG",
+                    LOG.debug(
                         f"Time entry save: git_id={git_id_val}, devops={store_to_devops}, "
                         f"customer={customer_id}, project={project_id}",
                     )

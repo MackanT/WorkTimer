@@ -181,7 +181,7 @@ def ui_time_tracking():
             except Exception as e:
                 LOG = GlobalRegistry.get("LOG")
                 if LOG:
-                    LOG.log_msg("ERROR", f"Error starting timer: {e}")
+                    LOG.error(f"Error starting timer: {e}")
 
             # Fetch fresh callback from registry in case it wasn't set earlier
             update_cb = GlobalRegistry.get("update_tab_indicator_now")
@@ -191,9 +191,7 @@ def ui_time_tracking():
                 except Exception as e:
                     LOG = GlobalRegistry.get("LOG")
                     if LOG:
-                        LOG.log_msg(
-                            "ERROR", f"Error calling update_tab_indicator_now: {e}"
-                        )
+                        LOG.error(f"Error calling update_tab_indicator_now: {e}")
             return
 
         # Unchecked - show dialog for saving comment/DevOps
@@ -212,7 +210,7 @@ def ui_time_tracking():
             except Exception as e:
                 LOG = GlobalRegistry.get("LOG")
                 if LOG:
-                    LOG.log_msg("ERROR", f"Error saving timer: {e}")
+                    LOG.error(f"Error saving timer: {e}")
 
             # Save to DevOps if requested
             if store_to_devops and git_id_val and git_id_val > 0:
@@ -237,8 +235,7 @@ def ui_time_tracking():
                 except Exception as e:
                     LOG = GlobalRegistry.get("LOG")
                     if LOG:
-                        LOG.log_msg(
-                            "ERROR",
+                        LOG.error(
                             f"Error calling update_tab_indicator_now after save: {e}",
                         )
 

@@ -42,7 +42,7 @@ def get_customer_project_data() -> dict:
 
     if not AD or helpers.is_dataframe_empty(AD.df):
         if LOG:
-            LOG.log_msg("WARNING", "No customer/project data available")
+            LOG.warning("No customer/project data available")
         return {"customer_data": [], "project_names": {}}
 
     # Get active customers and projects from AD.df
@@ -117,8 +117,7 @@ async def populate_task_list_async():
 
     if not db or not update_widgets:
         if LOG:
-            LOG.log_msg(
-                "WARNING",
+            LOG.warning(
                 f"Cannot populate task list: db={bool(db)}, widgets={bool(update_widgets)}",
             )
         return
@@ -141,10 +140,10 @@ async def populate_task_list_async():
                 task_selector.update()
         else:
             if LOG:
-                LOG.log_msg("WARNING", "populate_task_list_async: No tasks found")
+                LOG.warning("populate_task_list_async: No tasks found")
     except Exception as e:
         if LOG:
-            LOG.log_msg("ERROR", f"populate_task_list_async failed: {e}")
+            LOG.error(f"populate_task_list_async failed: {e}")
 
 
 async def handle_update_task(widgets: dict) -> tuple[bool, str]:
@@ -195,15 +194,13 @@ async def handle_update_task(widgets: dict) -> tuple[bool, str]:
         await QE.function_db("update_task", **kwargs)
 
         if LOG:
-            LOG.log_msg(
-                "INFO", f"Successfully updated task {task_id}: {kwargs['title']}"
-            )
+            LOG.info(f"Successfully updated task {task_id}: {kwargs['title']}")
 
         return True, f"Task '{kwargs['title']}' updated successfully"
 
     except Exception as e:
         if LOG:
-            LOG.log_msg("ERROR", f"Failed to update task: {e}")
+            LOG.error(f"Failed to update task: {e}")
         return False, f"Failed to update task: {str(e)}"
 
 
@@ -240,7 +237,7 @@ async def fetch_tasks(
 
     if not db:
         if LOG:
-            LOG.log_msg("ERROR", "Database not available")
+            LOG.error("Database not available")
         return []
 
     # Build WHERE clause based on show_completed flag
@@ -291,7 +288,7 @@ def on_task_checkbox_click(task_id: int, checked: bool):
 
         if not db:
             if LOG:
-                LOG.log_msg("ERROR", "Database not available")
+                LOG.error("Database not available")
             return
 
         try:
@@ -303,7 +300,7 @@ def on_task_checkbox_click(task_id: int, checked: bool):
             await refresh_tasks()
         except Exception as e:
             if LOG:
-                LOG.log_msg("ERROR", f"Failed to update task completion: {e}")
+                LOG.error(f"Failed to update task completion: {e}")
 
     asyncio.create_task(_update_task())
 
@@ -566,7 +563,7 @@ async def refresh_tasks():
 
     if not tasks_container:
         if LOG:
-            LOG.log_msg("WARNING", "Tasks container not found for refresh")
+            LOG.warning("Tasks container not found for refresh")
         return
 
     sort_by = sort_select.value if sort_select else "Due Date (Earliest First)"
@@ -598,7 +595,7 @@ def ui_tasks():
 
     if not task_config:
         if LOG:
-            LOG.log_msg("ERROR", "config_tasks not found in GlobalRegistry")
+            LOG.error("config_tasks not found in GlobalRegistry")
         return
 
     # EntityFormBuilder expects config with entity_name as key
@@ -783,8 +780,7 @@ def ui_tasks():
                                                 # Log intent to call delete for traceability
                                                 try:
                                                     if LOG:
-                                                        LOG.log_msg(
-                                                            "DEBUG",
+                                                        LOG.debug(
                                                             f"Calling DB function 'delete_task' with task_id={task_id}",
                                                         )
                                                 except Exception:

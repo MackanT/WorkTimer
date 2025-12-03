@@ -44,13 +44,13 @@ def ui_query_editor():
         """Validate query name is not empty and optionally check existence."""
         if not name or not name.strip():
             ui.notify("Query name required", color="negative")
-            LOG.log_msg("WARNING", "Query name is required!")
+            LOG.warning("Query name is required!")
             return False
 
         existing_names = QE.df["query_name"].tolist()
         if check_exists and name in existing_names:
             ui.notify("Query name already exists", color="negative")
-            LOG.log_msg("WARNING", f"Query name '{name}' already exists!")
+            LOG.warning(f"Query name '{name}' already exists!")
             return False
 
         return True
@@ -62,7 +62,7 @@ def ui_query_editor():
             return True
         except Exception:
             ui.notify("Query is invalid", color="negative")
-            LOG.log_msg("WARNING", "Query syntax is invalid!")
+            LOG.warning("Query syntax is invalid!")
             return False
 
     async def refresh_query_list():
@@ -127,12 +127,12 @@ def ui_query_editor():
                     "insert into queries (query_name, query_sql) values (?, ?)",
                     (name, query),
                 )
-                LOG.log_msg("INFO", f"Custom query '{name}' saved successfully!")
+                LOG.info(f"Custom query '{name}' saved successfully!")
                 await refresh_query_list()
                 ui.notify(f"Query '{name}' saved!", color="positive")
             except Exception as e:
                 error_msg = str(e)
-                LOG.log_msg("ERROR", f"Failed to save query '{name}': {error_msg}")
+                LOG.error(f"Failed to save query '{name}': {error_msg}")
                 ui.notify(f"Error saving query: {error_msg}", color="negative")
             finally:
                 popup.close()
@@ -144,7 +144,7 @@ def ui_query_editor():
         custom_queries = get_custom_queries()
         if not custom_queries:
             ui.notify("No custom query exists", color="negative")
-            LOG.log_msg("WARNING", "No custom query exists to update!")
+            LOG.warning("No custom query exists to update!")
             return
 
         query = editor.value
@@ -161,12 +161,12 @@ def ui_query_editor():
                     "update queries set query_sql = ? where query_name = ?",
                     (query, name),
                 )
-                LOG.log_msg("INFO", f"Custom query '{name}' updated successfully!")
+                LOG.info(f"Custom query '{name}' updated successfully!")
                 await refresh_query_list()
                 ui.notify(f"Query '{name}' updated!", color="positive")
             except Exception as e:
                 error_msg = str(e)
-                LOG.log_msg("ERROR", f"Failed to update query '{name}': {error_msg}")
+                LOG.error(f"Failed to update query '{name}': {error_msg}")
                 ui.notify(f"Error updating query: {error_msg}", color="negative")
             finally:
                 popup.close()
@@ -192,12 +192,12 @@ def ui_query_editor():
                     "delete from queries where query_name = ?",
                     (name,),
                 )
-                LOG.log_msg("INFO", f"Custom query '{name}' deleted successfully!")
+                LOG.info(f"Custom query '{name}' deleted successfully!")
                 await refresh_query_list()
                 ui.notify(f"Query '{name}' deleted!", color="positive")
             except Exception as e:
                 error_msg = str(e)
-                LOG.log_msg("ERROR", f"Failed to delete query '{name}': {error_msg}")
+                LOG.error(f"Failed to delete query '{name}': {error_msg}")
                 ui.notify(f"Error deleting query: {error_msg}", color="negative")
             finally:
                 popup.close()
@@ -315,7 +315,7 @@ def ui_query_editor():
             ui.notify(
                 f"Table '{table_name}' is not registered for editing!", color="negative"
             )
-            LOG.log_msg("WARNING", f"Table '{table_name}' is not editable!")
+            LOG.warning(f"Table '{table_name}' is not editable!")
             return
 
         # Determine primary key column
@@ -327,9 +327,7 @@ def ui_query_editor():
                 f"Cannot find primary key '{primary_key}' in your query!",
                 color="negative",
             )
-            LOG.log_msg(
-                "WARNING", f"Primary key '{primary_key}' not found in query results!"
-            )
+            LOG.warning(f"Primary key '{primary_key}' not found in query results!")
             return
 
         pk_data = (primary_key, row_data[primary_key])
@@ -337,7 +335,7 @@ def ui_query_editor():
         table_row = await QE.function_db("get_query_edit_data", table_name, pk_data[1])
         if table_row.empty:
             ui.notify("Row not found", color="negative")
-            LOG.log_msg("WARNING", f"Row with {primary_key}={pk_data[1]} not found!")
+            LOG.warning(f"Row with {primary_key}={pk_data[1]} not found!")
             return
 
         table_row = table_row.iloc[0]
@@ -451,10 +449,10 @@ def ui_query_editor():
                 grid_box.options["rowData"] = df.to_dict(orient="records")
                 grid_box.update()
             else:
-                LOG.log_msg("INFO", "Query executed successfully (no result set).")
+                LOG.info("Query executed successfully (no result set).")
         except Exception as e:
             error_msg = f"Query execution failed: {e}"
-            LOG.log_msg("ERROR", error_msg)
+            LOG.error(error_msg)
             # Show error in grid
             grid_box.options["columnDefs"] = [
                 {"field": "error", "headerName": "❌ Error"}
