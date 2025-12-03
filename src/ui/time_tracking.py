@@ -103,7 +103,6 @@ def ui_time_tracking():
     # Get global instances
     QE = GlobalRegistry.get("QE")
     DO = GlobalRegistry.get("DO")
-    run_async_task = GlobalRegistry.get("run_async_task")
     update_tab_indicator_now = GlobalRegistry.get("update_tab_indicator_now")
 
     # State for checkbox event handling
@@ -177,13 +176,24 @@ def ui_time_tracking():
         project_id_int = int(project_id)
 
         if checked:
-            run_async_task(
-                lambda: asyncio.run(
-                    QE.function_db("insert_time_row", customer_id_int, project_id_int)
-                )
-            )
-            # Update tab indicator immediately when starting a timer
-            asyncio.create_task(update_tab_indicator_now())
+            try:
+                await QE.function_db("insert_time_row", customer_id_int, project_id_int)
+            except Exception as e:
+                LOG = GlobalRegistry.get("LOG")
+                if LOG:
+                    LOG.log_msg("ERROR", f"Error starting timer: {e}")
+
+            # Fetch fresh callback from registry in case it wasn't set earlier
+            update_cb = GlobalRegistry.get("update_tab_indicator_now")
+            if update_cb:
+                try:
+                    await update_cb()
+                except Exception as e:
+                    LOG = GlobalRegistry.get("LOG")
+                    if LOG:
+                        LOG.log_msg(
+                            "ERROR", f"Error calling update_tab_indicator_now: {e}"
+                        )
             return
 
         # Unchecked - show dialog for saving comment/DevOps
@@ -191,17 +201,18 @@ def ui_time_tracking():
 
         async def handle_save(git_id_val, comment, store_to_devops):
             """Save time entry with comment and optionally to DevOps."""
-            run_async_task(
-                lambda: asyncio.run(
-                    QE.function_db(
-                        "insert_time_row",
-                        customer_id_int,
-                        project_id_int,
-                        git_id=git_id_val,
-                        comment=comment,
-                    )
+            try:
+                await QE.function_db(
+                    "insert_time_row",
+                    customer_id_int,
+                    project_id_int,
+                    git_id=git_id_val,
+                    comment=comment,
                 )
-            )
+            except Exception as e:
+                LOG = GlobalRegistry.get("LOG")
+                if LOG:
+                    LOG.log_msg("ERROR", f"Error saving timer: {e}")
 
             # Save to DevOps if requested
             if store_to_devops and git_id_val and git_id_val > 0:
@@ -218,7 +229,18 @@ def ui_time_tracking():
                     col = "positive" if status else "negative"
                     ui.notify(msg, color=col)
 
-            await update_tab_indicator_now()
+            # call the latest callback from registry
+            update_cb2 = GlobalRegistry.get("update_tab_indicator_now")
+            if update_cb2:
+                try:
+                    await update_cb2()
+                except Exception as e:
+                    LOG = GlobalRegistry.get("LOG")
+                    if LOG:
+                        LOG.log_msg(
+                            "ERROR",
+                            f"Error calling update_tab_indicator_now after save: {e}",
+                        )
 
         async def handle_delete():
             """Delete the time entry."""
@@ -319,7 +341,7 @@ def ui_time_tracking():
                 ui.card()
                 .classes(UI_STYLES.get_card_classes("xs", "card_padded"))
                 .style(
-                    "display:flex; flex-direction:column; height:calc(100vh - 200px); box-sizing:border-box;"
+                    "display:flex; flex-direction:column; height:calc(100vh - 300px); box-sizing:border-box;"
                 )
             ):
                 # Column must be able to shrink properly when content overflows
@@ -365,6 +387,10 @@ def ui_time_tracking():
                             )
                         )
                         customer_total_labels.append((label_total, customer_id))
+
+                    # Visual separator between header and project list
+                    ui.separator().classes("w-full border-b border-gray-700 my-2")
+
                     with (
                         ui.element()
                         .classes("w-full overflow-auto flex-1 min-h-0")
