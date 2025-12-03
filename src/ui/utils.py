@@ -6,9 +6,10 @@ Contains simple utility UI components:
 - Info/README viewer
 """
 
+import logging
 from nicegui import ui
 
-from ..globals import GlobalRegistry, Logger
+from ..globals import GlobalRegistry, LogElementHandler, LOG_FORMAT, LOG_DATE_FORMAT
 from .. import helpers
 from ..helpers import UI_STYLES
 
@@ -22,6 +23,45 @@ LOG_CARD_MAX_WIDTH = "98vw"
 
 # Info viewer splitter ratio (sidebar width percentage)
 INFO_SPLITTER_RATIO = 20
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+
+def _attach_log_handlers(log_element):
+    """Attach all application loggers to the UI log element.
+    
+    Follows NiceGUI's recommended pattern: get each logger by name,
+    create a handler, attach it, and register cleanup on disconnect.
+    
+    Args:
+        log_element: NiceGUI ui.log element to receive messages
+    """
+    # Get all loggers that were created during initialization
+    logger_names = ["WorkTimer", "Database", "DevOps"]
+    handlers = []
+    
+    for name in logger_names:
+        logger = logging.getLogger(name)
+        # Create handler with formatter
+        handler = LogElementHandler(log_element)
+        formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+        handler.setFormatter(formatter)
+        # Attach to logger
+        logger.addHandler(handler)
+        handlers.append((logger, handler))
+    
+    # Clean up handlers when client disconnects (prevents memory leaks)
+    def cleanup():
+        for logger, handler in handlers:
+            try:
+                logger.removeHandler(handler)
+            except Exception:
+                pass
+    
+    ui.context.client.on_disconnect(cleanup)
+
 
 # ============================================================================
 # UI Components
@@ -55,9 +95,8 @@ def ui_log():
             except Exception:
                 pass
 
-            # Wire the global Logger to this log widget (adapter-aware)
-            Logger.set_log_textarea(log_widget)
-            LOG.update_log_textarea()
+            # Attach all loggers to this UI element (NiceGUI pattern)
+            _attach_log_handlers(log_widget)
 
 
 def ui_info():
