@@ -108,6 +108,11 @@ def ui_time_tracking():
     # State for checkbox event handling
     ignore_next_checkbox_event = False
 
+    # State for sort order editing
+    edit_mode = {"enabled": False}
+    customer_order = []  # Will store (customer_id, customer_name) tuples
+    project_orders = {}  # Will store {customer_id: [(project_id, project_name), ...]}
+
     # ========================================================================
     # UI Control Handlers
     # ========================================================================
@@ -126,34 +131,64 @@ def ui_time_tracking():
         """Refresh UI when display type changes (Time/Bonus)."""
         asyncio.create_task(update_ui())
 
+    async def toggle_edit_mode():
+        """Toggle between normal and edit mode for sorting."""
+        edit_mode["enabled"] = not edit_mode["enabled"]
+        edit_button.props(f"color={'primary' if edit_mode['enabled'] else 'default'}")
+        if edit_mode["enabled"]:
+            edit_button.set_text("Save Order")
+            ui.notify("Edit mode: Use ↑↓ arrows to reorder", type="info")
+        else:
+            # Save sort order to database
+            try:
+                await QE.function_db("save_sort_order", customer_order, project_orders)
+                edit_button.set_text("Edit Order")
+                ui.notify("Sort order saved successfully!", type="positive")
+            except Exception as e:
+                LOG = GlobalRegistry.get("LOG")
+                if LOG:
+                    LOG.error(f"Error saving sort order: {e}")
+                edit_button.set_text("Edit Order")
+                ui.notify("Error saving sort order", type="negative")
+        await render_ui()
+
     # ========================================================================
     # Filter Controls
     # ========================================================================
 
-    with ui.grid(columns=GRID_COLUMNS).classes(
-        UI_STYLES.get_layout_classes("full_row_nogap")
-    ):
-        ui.label("Time Span").classes(UI_STYLES.get_layout_classes("row_centered"))
-        selected_time = (
-            ui.radio(TIME_OPTIONS, value="Day")
-            .props("inline")
-            .classes(UI_STYLES.get_layout_classes("row_centered"))
-        )
-        date_input, date_picker = create_date_range_picker(set_custom_radio)
+    # Top row: Time span controls on left, Edit Order button on right
+    with ui.row().classes("w-full justify-between items-center gap-4"):
+        # Left side: Time span controls
+        with ui.row().classes("items-center gap-4"):
+            ui.label("Time Span").classes("items-center")
+            selected_time = (
+                ui.radio(TIME_OPTIONS, value="Day")
+                .props("inline")
+                .classes("items-center")
+            )
+            date_input, date_picker = create_date_range_picker(set_custom_radio)
 
-        ui.label("Display Options").classes("mr-8 items-center")
-        radio_display_selection = (
-            ui.radio(DISPLAY_OPTIONS, value="Time")
-            .props("inline")
-            .classes(UI_STYLES.get_layout_classes("row_centered"))
-        )
+        # Right side: Edit Order button
+        with ui.row().classes("items-center gap-2"):
+            ui.icon("info").classes("text-blue-400").tooltip(
+                "Edit mode allows you to reorder customers and projects using arrow buttons"
+            )
+            edit_button = ui.button(
+                "Edit Order", icon="edit", on_click=toggle_edit_mode
+            ).props("outline")
+
+    # Bottom row: Display toggle (show bonus instead of time)
+    with ui.row().classes("w-full items-center gap-3 mt-2"):
+        ui.label("Show Bonus").classes("text-sm")
+        show_bonus_toggle = ui.switch(value=False, on_change=on_radio_type_change)
+        ui.label("(SEK instead of hours)").classes("text-xs text-gray-400")
 
     ui.separator().classes(UI_STYLES.get_layout_classes("margin_y_2"))
 
     # Wire up event handlers
     date_input.value = helpers.get_range_for(selected_time.value)
     selected_time.on("update:model-value", on_radio_time_change)
-    radio_display_selection.on("update:model-value", on_radio_type_change)
+    # radio_display_selection.on("update:model-value", on_radio_type_change)
 
     container = ui.element()
 
@@ -286,7 +321,7 @@ def ui_time_tracking():
         container.clear()
 
         # Cache display mode to avoid repeated calls
-        is_time = is_time_display(radio_display_selection.value)
+        is_time = not show_bonus_toggle.value  # Inverted: toggle ON = show bonus
         column_name = get_column_name(is_time)
 
         def get_total_string(customer_id):
@@ -294,8 +329,10 @@ def ui_time_tracking():
             total = df[df["customer_id"] == customer_id][column_name].sum()
             return format_value(total, is_time)
 
-        async def make_project_row(project, customer_id):
-            """Create a single project row with checkbox and value."""
+        async def make_project_row(
+            project, customer_id, project_index=None, total_projects=None
+        ):
+            """Create a single project row with checkbox/arrows and value."""
             sql_query = (
                 f"select * from time where customer_id = {customer_id} "
                 f"and project_id = {project['project_id']} and end_time is null"
@@ -308,12 +345,50 @@ def ui_time_tracking():
                 .classes(UI_STYLES.get_layout_classes("time_tracking_project_row"))
                 .style(UI_STYLES.get_inline_style("time_tracking", "project_row"))
             ):
-                ui.checkbox(
-                    on_change=make_callback(
-                        project["customer_id"], project["project_id"]
-                    ),
-                    value=initial_state,
-                )
+                # Show arrows in edit mode, checkbox in normal mode
+                if edit_mode["enabled"]:
+
+                    def move_project_up():
+                        if project_index > 0:
+                            projects = project_orders[customer_id]
+                            projects[project_index], projects[project_index - 1] = (
+                                projects[project_index - 1],
+                                projects[project_index],
+                            )
+                            asyncio.create_task(render_ui())
+
+                    def move_project_down():
+                        if project_index < total_projects - 1:
+                            projects = project_orders[customer_id]
+                            projects[project_index], projects[project_index + 1] = (
+                                projects[project_index + 1],
+                                projects[project_index],
+                            )
+                            asyncio.create_task(render_ui())
+
+                    with ui.row().classes("gap-0"):
+                        ui.button(icon="arrow_upward", on_click=move_project_up).props(
+                            "flat dense size=sm"
+                        ).classes("text-blue-400").bind_enabled_from(
+                            edit_mode, "enabled", lambda x: x and project_index > 0
+                        )
+                        ui.button(
+                            icon="arrow_downward", on_click=move_project_down
+                        ).props("flat dense size=sm").classes(
+                            "text-blue-400"
+                        ).bind_enabled_from(
+                            edit_mode,
+                            "enabled",
+                            lambda x: x and project_index < total_projects - 1,
+                        )
+                else:
+                    ui.checkbox(
+                        on_change=make_callback(
+                            project["customer_id"], project["project_id"]
+                        ),
+                        value=initial_state,
+                    )
+
                 ui.label(str(project["project_name"])).classes(
                     UI_STYLES.get_widget_style("time_tracking_project_name")["classes"]
                 )
@@ -332,7 +407,9 @@ def ui_time_tracking():
                 )
                 value_labels.append((value_label, customer_id, project["project_id"]))
 
-        async def make_customer_card(customer_id, customer_name, group):
+        async def make_customer_card(
+            customer_id, customer_name, group, customer_index=None, total_customers=None
+        ):
             """Create a customer card with all its projects."""
             with (
                 ui.card()
@@ -363,6 +440,52 @@ def ui_time_tracking():
                             )
                         )
                     ):
+                        # Show customer reorder arrows in edit mode
+                        if edit_mode["enabled"]:
+
+                            def move_customer_up():
+                                if customer_index > 0:
+                                    (
+                                        customer_order[customer_index],
+                                        customer_order[customer_index - 1],
+                                    ) = (
+                                        customer_order[customer_index - 1],
+                                        customer_order[customer_index],
+                                    )
+                                    asyncio.create_task(render_ui())
+
+                            def move_customer_down():
+                                if customer_index < total_customers - 1:
+                                    (
+                                        customer_order[customer_index],
+                                        customer_order[customer_index + 1],
+                                    ) = (
+                                        customer_order[customer_index + 1],
+                                        customer_order[customer_index],
+                                    )
+                                    asyncio.create_task(render_ui())
+
+                            with ui.row().classes("gap-1 mr-2"):
+                                ui.button(
+                                    icon="arrow_upward", on_click=move_customer_up
+                                ).props("flat dense size=sm").classes(
+                                    "text-green-400"
+                                ).bind_enabled_from(
+                                    edit_mode,
+                                    "enabled",
+                                    lambda x: x and customer_index > 0,
+                                )
+                                ui.button(
+                                    icon="arrow_downward", on_click=move_customer_down
+                                ).props("flat dense size=sm").classes(
+                                    "text-green-400"
+                                ).bind_enabled_from(
+                                    edit_mode,
+                                    "enabled",
+                                    lambda x: x
+                                    and customer_index < total_customers - 1,
+                                )
+
                         ui.label(str(customer_name)).classes(
                             UI_STYLES.get_widget_style("time_tracking_customer_name")[
                                 "classes"
@@ -388,24 +511,73 @@ def ui_time_tracking():
                     # Visual separator between header and project list
                     ui.separator().classes("w-full border-b border-gray-700 my-2")
 
+                    # Get ordered projects for this customer from database sort_order
+                    if customer_id not in project_orders:
+                        # Sort by project_sort_order from the database
+                        customer_projects = group.sort_values("project_sort_order")
+                        project_orders[customer_id] = [
+                            (row["project_id"], row["project_name"])
+                            for _, row in customer_projects.iterrows()
+                        ]
+
                     with (
                         ui.element()
                         .classes("w-full overflow-auto flex-1 min-h-0")
                         .style("padding-right: 1rem; scrollbar-gutter: stable;")
                     ):
-                        for _, project in group.iterrows():
-                            await make_project_row(project, customer_id)
+                        # Render projects in the saved order
+                        ordered_projects = project_orders[customer_id]
+                        total_projects = len(ordered_projects)
+                        for proj_idx, (proj_id, proj_name) in enumerate(
+                            ordered_projects
+                        ):
+                            # Find the matching row from the dataframe
+                            project_row = group[group["project_id"] == proj_id].iloc[0]
+                            await make_project_row(
+                                project_row,
+                                customer_id,
+                                project_index=proj_idx,
+                                total_projects=total_projects,
+                            )
 
-        customers = df.groupby(["customer_id", "customer_name"])
+        customers_from_db = df[
+            ["customer_id", "customer_name", "customer_sort_order"]
+        ].drop_duplicates()
+        customers_from_db = customers_from_db.sort_values("customer_sort_order")
+
+        customers_dict = {
+            cust_id: (cust_id, cust_name)
+            for cust_id, cust_name in zip(
+                customers_from_db["customer_id"], customers_from_db["customer_name"]
+            )
+        }
+
+        # Only reinitialize if we have new/different customers
+        if not customer_order or set(c[0] for c in customer_order) != set(
+            customers_dict.keys()
+        ):
+            customer_order.clear()
+            customer_order.extend(customers_dict.values())
+
         with container:
             with (
                 ui.row()
                 .classes(UI_STYLES.get_layout_classes("time_tracking_container"))
                 .style(UI_STYLES.get_inline_style("time_tracking", "container"))
             ):
-                # Run customer cards in series for UI consistency
-                for (customer_id, customer_name), group in customers:
-                    await make_customer_card(customer_id, customer_name, group)
+                # Render customers in the saved order
+                total_customers = len(customer_order)
+                for cust_idx, (customer_id, customer_name) in enumerate(customer_order):
+                    # Find the matching group from the dataframe
+                    group = df[df["customer_id"] == customer_id]
+                    if not group.empty:
+                        await make_customer_card(
+                            customer_id,
+                            customer_name,
+                            group,
+                            customer_index=cust_idx,
+                            total_customers=total_customers,
+                        )
 
     async def update_ui():
         """Update the UI labels for project and customer totals based on the latest data."""
@@ -415,7 +587,7 @@ def ui_time_tracking():
                 date_input.value = expected_range
 
         df = await get_ui_data()
-        is_time = is_time_display(radio_display_selection.value)
+        is_time = not show_bonus_toggle.value  # Inverted: toggle ON = show bonus
         column_name = get_column_name(is_time)
 
         # Build a lookup for (customer_id, project_id) to row

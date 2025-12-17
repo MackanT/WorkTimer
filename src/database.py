@@ -267,7 +267,8 @@ class Database:
                     valid_from datetime,
                     valid_to datetime,
                     is_current integer,
-                    inserted_at datetime
+                    inserted_at datetime,
+                    sort_order integer default 999
                 )
                 """)
                 self.log_engine.info("Table 'customers' created successfully.")
@@ -283,7 +284,8 @@ class Database:
                     customer_id integer,
                     project_name text,
                     git_id integer default 0,
-                    is_current boolean
+                    is_current boolean,
+                    sort_order integer default 999
                 )
                 """)
                 self.log_engine.info("Table 'projects' created successfully.")
@@ -1104,8 +1106,13 @@ class Database:
                 ct.project_id,
                 ct.project_name,
                 round(ct.total_time, 2) as total_time,
-                round(ct.user_bonus, 2) as user_bonus
-            from calculated_time ct;
+                round(ct.user_bonus, 2) as user_bonus,
+                c.sort_order as customer_sort_order,
+                p.sort_order as project_sort_order
+            from calculated_time ct
+            join customers c on c.customer_id = ct.customer_id
+            join projects p on p.project_id = ct.project_id
+            order by c.sort_order, ct.customer_name, p.sort_order, ct.project_name;
         """
         result = self.fetch_query(query)
         return result
@@ -1139,6 +1146,36 @@ class Database:
         result = self.fetch_query(query, (project_id,))
         return result
 
+    def save_sort_order(self, customer_order: list, project_orders: dict):
+        """
+        Save the sort order for customers and projects.
+
+        Args:
+            customer_order: List of (customer_id, customer_name) tuples in desired order
+            project_orders: Dict mapping customer_id to list of (project_id, project_name) tuples
+        """
+        try:
+            # Update customer sort order
+            for idx, (customer_id, _) in enumerate(customer_order):
+                self.execute_query(
+                    "update customers set sort_order = ? where customer_id = ?",
+                    (idx, customer_id),
+                )
+
+            # Update project sort order
+            for customer_id, projects in project_orders.items():
+                for idx, (project_id, _) in enumerate(projects):
+                    self.execute_query(
+                        "update projects set sort_order = ? where project_id = ?",
+                        (idx, project_id),
+                    )
+
+            self.conn.commit()
+            self.log_engine.info("Sort order saved successfully.")
+            return True
+        except Exception as e:
+            self.log_engine.error(f"Error saving sort order: {e}")
+            return False
     ### Schema Comparison Operations ###
 
     @staticmethod
