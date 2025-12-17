@@ -1176,6 +1176,322 @@ class Database:
         except Exception as e:
             self.log_engine.error(f"Error saving sort order: {e}")
             return False
+
+    def get_expected_schema(self):
+        """
+        Define the expected database schema.
+
+        Returns:
+            Dict with 'tables' and 'triggers' keys.
+            tables: {table_name: [(col_name, col_type, default_value, init_sql), ...]}
+            triggers: {trigger_name: trigger_sql}
+        """
+        return {
+            "tables": {
+                "time": [
+                    ("time_id", "INTEGER", None, None),
+                    ("customer_id", "INTEGER", None, None),
+                    ("customer_name", "TEXT", None, None),
+                    ("project_id", "INTEGER", None, None),
+                    ("project_name", "TEXT", None, None),
+                    ("date_key", "INTEGER", None, None),
+                    ("start_time", "DATETIME", None, None),
+                    ("end_time", "DATETIME", None, None),
+                    ("total_time", "REAL", None, None),
+                    ("wage", "REAL", None, None),
+                    ("bonus", "REAL", None, None),
+                    ("cost", "REAL", None, None),
+                    ("user_bonus", "REAL", None, None),
+                    ("git_id", "INTEGER", "0", None),
+                    ("comment", "TEXT", None, None),
+                ],
+                "customers": [
+                    ("customer_id", "INTEGER", None, None),
+                    ("customer_name", "TEXT", None, None),
+                    ("start_date", "DATETIME", None, None),
+                    ("wage", "REAL", None, None),
+                    ("pat_token", "TEXT", None, None),
+                    ("org_url", "TEXT", None, None),
+                    ("valid_from", "DATETIME", None, None),
+                    ("valid_to", "DATETIME", None, None),
+                    ("is_current", "INTEGER", None, None),
+                    ("inserted_at", "DATETIME", None, None),
+                    (
+                        "sort_order",
+                        "INTEGER",
+                        "999",
+                        """
+                        update customers
+                        set sort_order = (
+                            select count(*)
+                            from customers c2
+                            where c2.customer_name < customers.customer_name
+                        )
+                    """,
+                    ),
+                ],
+                "projects": [
+                    ("project_id", "INTEGER", None, None),
+                    ("customer_id", "INTEGER", None, None),
+                    ("project_name", "TEXT", None, None),
+                    ("git_id", "INTEGER", "0", None),
+                    ("is_current", "BOOLEAN", None, None),
+                    (
+                        "sort_order",
+                        "INTEGER",
+                        "999",
+                        """
+                        update projects
+                        set sort_order = (
+                            select count(*)
+                            from projects p2
+                            where p2.customer_id = projects.customer_id
+                            and p2.project_name < projects.project_name
+                        )
+                    """,
+                    ),
+                ],
+                "bonus": [
+                    ("bonus_id", "INTEGER", None, None),
+                    ("bonus_percent", "REAL", None, None),
+                    ("start_date", "TEXT", None, None),
+                    ("end_date", "TEXT", None, None),
+                ],
+                "dates": [
+                    ("date_key", "INTEGER", None, None),
+                    ("date", "TEXT", None, None),
+                    ("year", "INTEGER", None, None),
+                    ("month", "INTEGER", None, None),
+                    ("week", "INTEGER", None, None),
+                    ("day", "INTEGER", None, None),
+                ],
+                "queries": [
+                    ("query_name", "TEXT", None, None),
+                    ("query_sql", "TEXT", None, None),
+                    ("is_default", "BOOLEAN", None, None),
+                ],
+                "tasks": [
+                    ("task_id", "INTEGER", None, None),
+                    ("title", "TEXT", None, None),
+                    ("description", "TEXT", None, None),
+                    ("status", "TEXT", "'To Do'", None),
+                    ("priority", "TEXT", "'Medium'", None),
+                    ("completed", "BOOLEAN", "false", None),
+                    ("assigned_to", "TEXT", None, None),
+                    ("customer_name", "TEXT", None, None),
+                    ("project_name", "TEXT", None, None),
+                    ("parent_task_id", "INTEGER", None, None),
+                    ("due_date", "DATE", None, None),
+                    ("estimated_hours", "REAL", "0", None),
+                    ("actual_hours", "REAL", "0", None),
+                    ("progress_percentage", "INTEGER", "0", None),
+                    ("tags", "TEXT", None, None),
+                    ("created_at", "TIMESTAMP", "current_timestamp", None),
+                    ("updated_at", "TIMESTAMP", "current_timestamp", None),
+                    ("completed_at", "TIMESTAMP", None, None),
+                    ("created_by", "TEXT", None, None),
+                    ("updated_by", "TEXT", None, None),
+                ],
+            },
+            "triggers": {
+                "trigger_time_after_update": """
+                    create trigger if not exists trigger_time_after_update
+                    after update on time
+                    for each row
+                    begin
+                        update time
+                        set
+                            total_time = (julianday(new.end_time) - julianday(new.start_time)) * 24,
+                            cost = new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24),
+                            user_bonus = new.bonus * new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24)
+                        where time_id = new.time_id;
+                    end;
+                """,
+                "trigger_time_insert_row": """
+                    create trigger if not exists trigger_time_insert_row
+                    after insert on time
+                    for each row
+                    begin
+                        update time
+                        set 
+                             project_name = (
+                                select project_name from projects where project_id = new.project_id
+                             )
+                            ,customer_name = (
+                                select customer_name from customers where customer_id = new.customer_id
+                            )
+                            ,wage = (
+                                select wage from customers where customer_id = new.customer_id
+                            )
+                            ,bonus = ifnull((
+                                select bonus_percent from bonus
+                                    where current_date between start_date and ifnull(end_date, '2099-12-31')
+                            ), 0)
+                        where time_id = new.time_id;
+                    end;
+                """,
+                "trigger_time_update_row": """
+                    create trigger if not exists trigger_time_update_row
+                    after update of project_id on time
+                    for each row
+                    begin
+                        update time
+                        set 
+                             project_name = (
+                                select project_name from projects where project_id = new.project_id
+                             )
+                            ,customer_name = (
+                                select customer_name from customers where customer_id = new.customer_id
+                             )
+                        where time_id = new.time_id;
+                    end;
+                """,
+            },
+        }
+
+    def validate_and_migrate_schema(self, auto_migrate=False):
+        """
+        Validate the current database schema against the expected schema.
+        Optionally apply migrations to fix discrepancies.
+
+        Args:
+            auto_migrate: If True, automatically apply migrations. If False, only report issues.
+
+        Returns:
+            Dict with validation results and applied migrations
+        """
+        schema_def = self.get_expected_schema()
+        expected_schema = schema_def.get("tables", {})
+        expected_triggers = schema_def.get("triggers", {})
+        cursor = self.conn.cursor()
+        results = {
+            "missing_columns": [],
+            "missing_triggers": [],
+            "applied_migrations": [],
+            "errors": [],
+        }
+
+        try:
+            # Validate table columns
+            for table_name, expected_columns in expected_schema.items():
+                # Check if table exists
+                cursor.execute(
+                    "select name from sqlite_master where type='table' and name=?",
+                    (table_name,),
+                )
+                if not cursor.fetchone():
+                    self.log_engine.warning(
+                        f"Table '{table_name}' not found - skipping validation (will be created on first use)"
+                    )
+                    continue
+
+                # Get current columns
+                cursor.execute(f"pragma table_info('{table_name}')")
+                current_cols = {
+                    row[1]: row[2] for row in cursor.fetchall()
+                }  # {name: type}
+
+                # Check each expected column
+                for col_name, col_type, default_value, init_sql in expected_columns:
+                    if col_name not in current_cols:
+                        # Missing column found
+                        results["missing_columns"].append(
+                            {
+                                "table": table_name,
+                                "column": col_name,
+                                "type": col_type,
+                                "default": default_value,
+                            }
+                        )
+
+                        if auto_migrate:
+                            try:
+                                # Add the column
+                                default_clause = (
+                                    f" default {default_value}" if default_value else ""
+                                )
+                                alter_sql = f"alter table {table_name} add column {col_name} {col_type}{default_clause}"
+                                self.execute_query(alter_sql)
+
+                                self.log_engine.info(
+                                    f"Added column '{col_name}' to table '{table_name}'"
+                                )
+
+                                # Run initialization SQL if provided
+                                if init_sql:
+                                    self.execute_query(dedent(init_sql))
+                                    self.log_engine.info(
+                                        f"Initialized values for '{table_name}.{col_name}'"
+                                    )
+
+                                results["applied_migrations"].append(
+                                    {
+                                        "table": table_name,
+                                        "column": col_name,
+                                        "action": "added",
+                                        "initialized": bool(init_sql),
+                                    }
+                                )
+
+                            except Exception as e:
+                                error_msg = f"Failed to add column '{col_name}' to '{table_name}': {e}"
+                                self.log_engine.error(error_msg)
+                                results["errors"].append(error_msg)
+
+            # Validate triggers
+            cursor.execute("select name from sqlite_master where type='trigger'")
+            existing_triggers = {row[0] for row in cursor.fetchall()}
+
+            for trigger_name, trigger_sql in expected_triggers.items():
+                if trigger_name not in existing_triggers:
+                    results["missing_triggers"].append(trigger_name)
+
+                    if auto_migrate:
+                        try:
+                            self.execute_query(dedent(trigger_sql))
+                            self.log_engine.info(f"Created trigger '{trigger_name}'")
+                            results["applied_migrations"].append(
+                                {"trigger": trigger_name, "action": "created"}
+                            )
+                        except Exception as e:
+                            error_msg = (
+                                f"Failed to create trigger '{trigger_name}': {e}"
+                            )
+                            self.log_engine.error(error_msg)
+                            results["errors"].append(error_msg)
+
+            if auto_migrate:
+                self.conn.commit()
+
+            # Log summary
+            total_issues = len(results["missing_columns"]) + len(
+                results["missing_triggers"]
+            )
+            if total_issues > 0:
+                if auto_migrate:
+                    self.log_engine.info(
+                        f"Schema migration complete: {len(results['applied_migrations'])} changes applied"
+                    )
+                else:
+                    self.log_engine.warning(
+                        f"Schema validation found {total_issues} issues. "
+                        "Run with auto_migrate=True to fix."
+                    )
+            else:
+                self.log_engine.info(
+                    "Schema validation passed - database is up to date"
+                )
+                self.log_engine.info(
+                    "Schema validation passed - database is up to date"
+                )
+
+        except Exception as e:
+            error_msg = f"Error during schema validation: {e}"
+            self.log_engine.error(error_msg)
+            results["errors"].append(error_msg)
+
+        return results
+
     ### Schema Comparison Operations ###
 
     @staticmethod
