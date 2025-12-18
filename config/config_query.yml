@@ -26,7 +26,7 @@ query:
         type: text
         options: []
         options_source: comment
-        optional: false
+        optional: true
       - name: git_id
         label: Git ID
         type: number
