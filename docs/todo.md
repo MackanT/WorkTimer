@@ -9,15 +9,12 @@
 - Marker for ongoing projects?
 - Devops välja kolumn för kortet (todo, on hold, in progress etc!)
 - sätt task till "done" när en stänger on_checkmark
-- Tasks sortera/filtrera på customer/project
 
 ### Buggar
 - At midnight, date "today" does not switch automatically
-- Make "ongoing" timer code run also everytime we close a timer
 - text wrapping in time tracking
-  grid_box.options["rowData"] = df.to_dict(orient="records")
 - sorting of tasks is "backwards" for earliest/latest. Null due-dates are backwards
-- make log auto-scroll
+- Adding additional project does not show up when there already are to many (?)
 
 
 ### Completed -- Old from before ReadMe

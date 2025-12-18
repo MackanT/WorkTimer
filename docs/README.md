@@ -8,7 +8,19 @@ A modern web-based time tracking application with built-in task management and A
 
 ## Changelog
 
-### 4.0.1 (2025-11-DD)
+### 4.0.2 (2025-12-17)
+- **Minor improvements**
+  - Top navigation bar is now locked at top of screen
+  - When logging devops-id to task, only New and Active items are shown
+  - rewrote loging to be simpler and follow standard python logging
+  - Switched log to use ui.log with better futureproofing + auto-scroll function
+  - Added scrollable feature to time tracker customer card and made it a bit more compact
+  - Active timer icon is now more responsive and triggers directly
+  - Added option to resort customers and projects in time-tracker
+  - Added new scehma-fixer function to automatically loop over db, and find any missing columns and or triggers with option to auto-apply them
+  - Fixed bug where one could not update a old time via ui if comment was blank
+
+### 4.0.1 (2025-11-26)
 - **Centralized Settings**
  - Environment variables and other global settings are now stored in `.env` file to ensure both Docker and Python code can use the same values - Previously these were stored in both a `config_settings.yml` file for python and a `docker-compose.yml` file for Docker.
 - **Bug Fixes**
