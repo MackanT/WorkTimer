@@ -37,7 +37,7 @@ async def show_time_entry_dialog(
 ) -> None:
     """
     Show dialog for completing a time entry with comment and DevOps integration.
-    
+
     Args:
         customer_id: Customer ID for the time entry
         project_id: Project ID for the time entry
@@ -48,7 +48,7 @@ async def show_time_entry_dialog(
     LOG = GlobalRegistry.get("LOG")
     QE = GlobalRegistry.get("QE")
     DO = GlobalRegistry.get("DO")
-    
+
     # Query project/customer info
     df = await QE.query_db(
         f"""
@@ -58,7 +58,7 @@ async def show_time_entry_dialog(
         where t.customer_id = {customer_id} and t.project_id = {project_id}
         """
     )
-    
+
     # Extract values with defaults
     c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
     p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
@@ -77,24 +77,24 @@ async def show_time_entry_dialog(
             id_input = None
             id_checkbox = None
             if has_devops:
-                id_options = DO.df[(DO.df["customer_name"] == c_name)][
-                    ["display_name", "id"]
-                ].dropna()
+                id_options = DO.df[
+                    (DO.df["customer_name"] == c_name)
+                    & (DO.df["state"].isin(["Active", "New"]))
+                ][["display_name", "id"]].dropna()
                 id_input = ui.select(
                     id_options["display_name"].tolist(),
                     with_input=True,
                     label="DevOps-ID",
                 ).classes("w-full -mb-2")
-                
+
                 if has_git_id:
                     match = id_options[id_options["id"] == git_id]
                     id_input.value = (
-                        match["display_name"].iloc[0]
-                        if not match.empty
-                        else None
+                        match["display_name"].iloc[0] if not match.empty else None
                     )
 
                 with ui.row().classes("w-full items-center justify-between -mt-2"):
+
                     def toggle_switch():
                         id_checkbox.value = not id_checkbox.value
                         id_checkbox.update()
@@ -114,21 +114,22 @@ async def show_time_entry_dialog(
                 """Save time entry with parsed DevOps ID."""
                 git_id_val = None
                 store_to_devops = False
-                
+
                 if has_devops and id_input is not None:
                     git_id_val = extract_devops_id(id_input.value)
                     store_to_devops = id_checkbox.value if id_checkbox else False
 
                 if LOG:
-                    LOG.log_msg(
-                        "DEBUG",
+                    LOG.debug(
                         f"Time entry save: git_id={git_id_val}, devops={store_to_devops}, "
                         f"customer={customer_id}, project={project_id}",
                     )
-                
+
                 if on_save_callback:
-                    await on_save_callback(git_id_val, comment_input.value, store_to_devops)
-                
+                    await on_save_callback(
+                        git_id_val, comment_input.value, store_to_devops
+                    )
+
                 popup.close()
 
             async def handle_delete():
@@ -160,7 +161,7 @@ async def show_confirmation_dialog(
 ) -> None:
     """
     Show a simple confirmation dialog.
-    
+
     Args:
         title: Dialog title
         message: Confirmation message
@@ -172,14 +173,16 @@ async def show_confirmation_dialog(
     with ui.dialog() as dialog, ui.card():
         ui.label(title).classes("text-h6 mb-2")
         ui.label(message).classes("mb-4")
-        
+
         async def handle_confirm():
             if on_confirm:
                 await on_confirm()
             dialog.close()
-        
+
         with ui.row().classes("w-full justify-end gap-2"):
             ui.button(cancel_text, on_click=dialog.close).props("flat")
-            ui.button(confirm_text, on_click=handle_confirm).props(f"color={confirm_color}")
-    
+            ui.button(confirm_text, on_click=handle_confirm).props(
+                f"color={confirm_color}"
+            )
+
     dialog.open()

@@ -338,6 +338,18 @@ def ui_add_data():
         await AD.refresh()
         refresh_all_entity_forms()
 
+        # Trigger a full re-render of the time tracking UI since customers/projects may have changed
+        # We need to use render_ui (not update_ui) because update_ui only refreshes values,
+        # while render_ui rebuilds the entire structure including new customers/projects ## TODO still not fully working.....
+        render_ui_func = GlobalRegistry.get("time_tracking_render_ui")
+        if render_ui_func:
+            try:
+                # Use asyncio.create_task to avoid blocking and potential timing issues
+                asyncio.create_task(render_ui_func())
+            except Exception as e:
+                if LOG:
+                    LOG.error(f"Error refreshing time tracking UI: {e}")
+
     def build_entity_tabs(entity_name: str, tab_types: list[str], container_dict: dict):
         """Build tabs for an entity using EntityFormBuilder."""
         builder = EntityFormBuilder(entity_name, config_ui)

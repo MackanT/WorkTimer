@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "worktimer"
-version = "0.1.0"
+version = "4.0.2"
 authors = [
   { name = "Marcus Toftås", email = "mackan.toftas@live.com" }
 ]

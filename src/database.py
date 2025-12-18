@@ -161,7 +161,7 @@ class Database:
 
         try:
             # Log the initialization process
-            self.log_engine.log_msg("INFO", "Initializing database...")
+            self.log_engine.info("Initializing database...")
 
             ## Time Table
             df_temp = self.fetch_query(
@@ -187,7 +187,7 @@ class Database:
                     comment text
                 )
                 """)
-                self.log_engine.log_msg("INFO", "Table 'time' created successfully.")
+                self.log_engine.info("Table 'time' created successfully.")
 
                 ## Trigger for Time Table
                 self.execute_query("""
@@ -203,8 +203,8 @@ class Database:
                     where time_id = new.time_id;
                 end;
                 """)
-                self.log_engine.log_msg(
-                    "INFO", "Trigger 'trigger_time_after_update' created successfully."
+                self.log_engine.info(
+                    "Trigger 'trigger_time_after_update' created successfully."
                 )
 
                 # Single trigger for project_name after INSERT or UPDATE of project_id
@@ -247,9 +247,8 @@ class Database:
                     where time_id = new.time_id;
                 end;
                 """)
-                self.log_engine.log_msg(
-                    "INFO",
-                    "Triggers for customer_name, project_name, wage and bonus created successfully.",
+                self.log_engine.info(
+                    "Triggers for customer_name, project_name, wage and bonus created successfully."
                 )
 
             ## Customers Table
@@ -268,12 +267,11 @@ class Database:
                     valid_from datetime,
                     valid_to datetime,
                     is_current integer,
-                    inserted_at datetime
+                    inserted_at datetime,
+                    sort_order integer default 999
                 )
                 """)
-                self.log_engine.log_msg(
-                    "INFO", "Table 'customers' created successfully."
-                )
+                self.log_engine.info("Table 'customers' created successfully.")
 
             ## Projects Table
             df_time = self.fetch_query(
@@ -286,12 +284,11 @@ class Database:
                     customer_id integer,
                     project_name text,
                     git_id integer default 0,
-                    is_current boolean
+                    is_current boolean,
+                    sort_order integer default 999
                 )
                 """)
-                self.log_engine.log_msg(
-                    "INFO", "Table 'projects' created successfully."
-                )
+                self.log_engine.info("Table 'projects' created successfully.")
 
             ## Bonus Table
             df_time = self.fetch_query(
@@ -306,7 +303,7 @@ class Database:
                     end_date text
                 )
                 """)
-                self.log_engine.log_msg("INFO", "Table 'bonus' created successfully.")
+                self.log_engine.info("Table 'bonus' created successfully.")
 
             ## Dates Table
             df_time = self.fetch_query(
@@ -323,24 +320,20 @@ class Database:
                     day integer
                 )
                 """)
-                self.log_engine.log_msg("INFO", "Table 'dates' created successfully.")
+                self.log_engine.info("Table 'dates' created successfully.")
 
                 # Populate the dates table
                 try:
                     add_dates(s_date="2020-01-01", e_date="2030-12-31")
-                    self.log_engine.log_msg(
-                        "INFO", "Dates table populated successfully."
-                    )
+                    self.log_engine.info("Dates table populated successfully.")
                 except Exception as e:
-                    self.log_engine.log_msg(
-                        "ERROR", f"Error populating dates table: {e}"
-                    )
+                    self.log_engine.error(f"Error populating dates table: {e}")
             else:
                 df_count = self.fetch_query("select count(*) as cnt from dates")
                 if df_count.empty or int(df_count.iloc[0]["cnt"]) == 0:
                     add_dates(s_date="2020-01-01", e_date="2030-12-31")
-                    self.log_engine.log_msg(
-                        "INFO", "Found blank Dates table, successfully populated it."
+                    self.log_engine.info(
+                        "Found blank Dates table, successfully populated it."
                     )
 
             ## Query Snippets table
@@ -355,23 +348,19 @@ class Database:
                     is_default boolean
                 )
                 """)
-                self.log_engine.log_msg("INFO", "Table 'queries' created successfully.")
+                self.log_engine.info("Table 'queries' created successfully.")
 
                 try:
                     add_default_queries()
-                    self.log_engine.log_msg(
-                        "INFO", "Queries table populated successfully."
-                    )
+                    self.log_engine.info("Queries table populated successfully.")
                 except Exception as e:
-                    self.log_engine.log_msg(
-                        "ERROR", f"Error populating queries table: {e}"
-                    )
+                    self.log_engine.error(f"Error populating queries table: {e}")
             else:
                 df_count = self.fetch_query("select count(*) as cnt from queries")
                 if df_count.empty or int(df_count.iloc[0]["cnt"]) == 0:
                     add_default_queries()
-                    self.log_engine.log_msg(
-                        "INFO", "Found blank Queries table, successfully populated it."
+                    self.log_engine.info(
+                        "Found blank Queries table, successfully populated it."
                     )
 
             ## Tasks table
@@ -416,13 +405,13 @@ class Database:
                     foreign key (parent_task_id) references tasks(task_id)
                 )
                 """)
-                self.log_engine.log_msg("INFO", "Table 'tasks' created successfully.")
+                self.log_engine.info("Table 'tasks' created successfully.")
 
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Error initializing database: {e}")
+            self.log_engine.error(f"Error initializing database: {e}")
         finally:
             self.conn.commit()
-            self.log_engine.log_msg("INFO", "Database loaded without errors!")
+            self.log_engine.info("Database loaded without errors!")
 
     ### Time Table Operations ###
 
@@ -461,8 +450,7 @@ class Database:
                     date_key,
                 ),
             )
-            self.log_engine.log_msg(
-                "INFO",
+            self.log_engine.info(
                 f"Starting timer for customer: {customer_name} - project: {project_name}",
             )
         else:
@@ -480,8 +468,7 @@ class Database:
             """,
                 (now, comment, git_id, last_row_id),
             )
-            self.log_engine.log_msg(
-                "INFO",
+            self.log_engine.info(
                 f"Ending timer for customer: {customer_name} - project: {project_name}",
             )
 
@@ -500,8 +487,7 @@ class Database:
         """,
             (customer_id, project_id),
         )
-        self.log_engine.log_msg(
-            "INFO",
+        self.log_engine.info(
             f"Deleted latest time entry for customer: {customer_name} - project: {project_name}",
         )
 
@@ -543,8 +529,7 @@ class Database:
             """,
                 (valid_to, customer_name),
             )
-            self.log_engine.log_msg(
-                "INFO",
+            self.log_engine.info(
                 f"Disabled '{customer_name}' old id: {old_customer_id}",
             )
 
@@ -565,7 +550,7 @@ class Database:
                 now,
             ),
         )
-        self.log_engine.log_msg("INFO", f"Inserted new customer '{customer_name}'")
+        self.log_engine.info(f"Inserted new customer '{customer_name}'")
 
         # Get the new customer_id
         new_customer_id = self._get_value_from_db(
@@ -590,8 +575,7 @@ class Database:
             )
             if not df.empty:
                 project_list = df["project_name"].tolist()
-                self.log_engine.log_msg(
-                    "INFO",
+                self.log_engine.info(
                     f"Updated projects {project_list} to use {customer_name} new id: {new_customer_id}",
                 )
 
@@ -624,8 +608,7 @@ class Database:
             (new_customer_name, customer_name),
         )
 
-        self.log_engine.log_msg(
-            "INFO",
+        self.log_engine.info(
             f"Updated customer name from '{customer_name}' to '{new_customer_name}'",
         )
 
@@ -638,7 +621,7 @@ class Database:
         """,
             (customer_name,),
         )
-        self.log_engine.log_msg("INFO", f"Disabled customer '{customer_name}'")
+        self.log_engine.info(f"Disabled customer '{customer_name}'")
 
     def enable_customer(self, customer_name: str):
         self.execute_query(
@@ -657,7 +640,7 @@ class Database:
         """,
             (customer_name, customer_name),
         )
-        self.log_engine.log_msg("INFO", f"Enabled customer '{customer_name}'")
+        self.log_engine.info(f"Enabled customer '{customer_name}'")
 
     ### Project Table Operations ###
 
@@ -677,8 +660,7 @@ class Database:
         )
 
         if not existing_projects.empty and existing_projects["is_current"].iloc[0] == 1:
-            self.log_engine.log_msg(
-                "WARNING",
+            self.log_engine.warning(
                 f"Project '{project_name}' for customer '{customer_name}' already exists",
             )
             return
@@ -687,8 +669,7 @@ class Database:
             self.execute_query(
                 "update projects set is_current = 1 where project_id = ?", (project_id,)
             )
-            self.log_engine.log_msg(
-                "INFO",
+            self.log_engine.info(
                 f"Enabled project '{project_name}' for customer '{customer_name}'",
             )
         else:
@@ -699,8 +680,7 @@ class Database:
             """,
                 (customer_id, project_name, git_id),
             )
-            self.log_engine.log_msg(
-                "INFO",
+            self.log_engine.info(
                 f"Inserted new project '{project_name}' for customer '{customer_name}'",
             )
 
@@ -733,8 +713,8 @@ class Database:
         """,
             (new_project_name, project_name, customer_name),
         )
-        self.log_engine.log_msg(
-            "INFO", f"Updated project '{project_name}' for customer '{customer_name}'"
+        self.log_engine.info(
+            f"Updated project '{project_name}' for customer '{customer_name}'"
         )
 
     def disable_project(self, customer_name: str, project_name: str):
@@ -748,8 +728,8 @@ class Database:
         """,
             (project_name, customer_name),
         )
-        self.log_engine.log_msg(
-            "INFO", f"Disabled project '{project_name}' for customer '{customer_name}'"
+        self.log_engine.info(
+            f"Disabled project '{project_name}' for customer '{customer_name}'"
         )
 
     def enable_project(self, customer_name: str, project_name: str):
@@ -763,8 +743,8 @@ class Database:
         """,
             (project_name, customer_name),
         )
-        self.log_engine.log_msg(
-            "INFO", f"Enabled project '{project_name}' for customer '{customer_name}'"
+        self.log_engine.info(
+            f"Enabled project '{project_name}' for customer '{customer_name}'"
         )
 
     ### Bonus Table Operations ###
@@ -781,8 +761,7 @@ class Database:
             "insert into bonus (start_date, bonus_percent) values (?, ?)",
             (start_date, round(amount, 3)),
         )
-        self.log_engine.log_msg(
-            "INFO",
+        self.log_engine.info(
             f"Inserted new bonus percent {bonus_percent}% starting from {start_date}",
         )
 
@@ -837,8 +816,8 @@ class Database:
                 (task_id,),
             )
 
-            self.log_engine.log_msg(
-                "INFO", f"Task '{title}' created successfully with ID {task_id}"
+            self.log_engine.info(
+                f"Task '{title}' created successfully with ID {task_id}"
             )
 
             # Return success, message, and the complete task data
@@ -846,7 +825,7 @@ class Database:
             return True, f"Task '{title}' created successfully", task_dict
         except Exception as e:
             error_msg = f"Failed to create task '{title}': {e}"
-            self.log_engine.log_msg("ERROR", error_msg)
+            self.log_engine.error(error_msg)
             return False, error_msg, None
 
     def update_task(
@@ -912,7 +891,7 @@ class Database:
 
             if not set_clauses:
                 warning_msg = "No fields to update for task"
-                self.log_engine.log_msg("WARNING", warning_msg)
+                self.log_engine.warning(warning_msg)
                 return False, warning_msg
 
             query = f"update tasks set {', '.join(set_clauses)} where task_id = ?"
@@ -920,11 +899,11 @@ class Database:
 
             self.execute_query(query, tuple(params))
             success_msg = f"Task {task_id} updated successfully"
-            self.log_engine.log_msg("INFO", success_msg)
+            self.log_engine.info(success_msg)
             return True, success_msg
         except Exception as e:
             error_msg = f"Failed to update task {task_id}: {e}"
-            self.log_engine.log_msg("ERROR", error_msg)
+            self.log_engine.error(error_msg)
             return False, error_msg
 
     def delete_task(self, task_id: int):
@@ -936,7 +915,7 @@ class Database:
             )
             if task.empty:
                 warning_msg = f"Task {task_id} not found"
-                self.log_engine.log_msg("WARNING", warning_msg)
+                self.log_engine.warning(warning_msg)
                 return False, warning_msg
 
             task_title = task.iloc[0]["title"]
@@ -944,11 +923,11 @@ class Database:
             # Delete the task
             self.execute_query("delete from tasks where task_id = ?", (task_id,))
             success_msg = f"Task '{task_title}' (ID: {task_id}) deleted successfully"
-            self.log_engine.log_msg("INFO", success_msg)
+            self.log_engine.info(success_msg)
             return True, success_msg
         except Exception as e:
             error_msg = f"Failed to delete task {task_id}: {e}"
-            self.log_engine.log_msg("ERROR", error_msg)
+            self.log_engine.error(error_msg)
             return False, error_msg
 
     def set_task_completion(self, task_id: int, completed: bool):
@@ -960,7 +939,7 @@ class Database:
             )
             if task_check.empty:
                 warning_msg = f"Task {task_id} not found"
-                self.log_engine.log_msg("WARNING", warning_msg)
+                self.log_engine.warning(warning_msg)
                 return False, warning_msg
 
             # Update completion status and completed_at timestamp
@@ -987,12 +966,12 @@ class Database:
 
             task_title = task_check.iloc[0]["title"]
             success_msg = f"Task '{task_title}' (ID: {task_id}) {action}"
-            self.log_engine.log_msg("INFO", success_msg)
+            self.log_engine.info(success_msg)
             return True, success_msg
 
         except Exception as e:
             error_msg = f"Failed to update completion for task {task_id}: {e}"
-            self.log_engine.log_msg("ERROR", error_msg)
+            self.log_engine.error(error_msg)
             return False, error_msg
 
     def get_task_by_id(self, task_id: int):
@@ -1008,7 +987,7 @@ class Database:
             )
             return result.iloc[0] if not result.empty else None
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Failed to get task {task_id}: {e}")
+            self.log_engine.error(f"Failed to get task {task_id}: {e}")
             return None
 
     def get_tasks_by_customer(self, customer_name: str = None):
@@ -1033,7 +1012,7 @@ class Database:
             result = self.fetch_query(query, params)
             return result
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Failed to get tasks: {e}")
+            self.log_engine.error(f"Failed to get tasks: {e}")
             return pd.DataFrame()
 
     ### Query Operations ###
@@ -1062,28 +1041,23 @@ class Database:
                 - 'merge': Update existing rows and add new ones (upsert)
         """
         if df.empty or len(df.columns) == 0:
-            self.log_engine.log_msg(
-                "WARNING", "No DevOps data to update. No changes made."
-            )
+            self.log_engine.warning("No DevOps data to update. No changes made.")
             return
 
         if mode not in ["replace", "append", "merge"]:
-            self.log_engine.log_msg(
-                "ERROR",
+            self.log_engine.error(
                 f"Invalid mode '{mode}'. Must be 'replace', 'append', or 'merge'.",
             )
             return
 
         if mode == "replace":
-            self.log_engine.log_msg(
-                "INFO", f"Replacing devops table with {len(df)} records"
-            )
+            self.log_engine.info(f"Replacing devops table with {len(df)} records")
             df.to_sql("devops", self.conn, if_exists="replace", index=False)
         elif mode == "append":
-            self.log_engine.log_msg("INFO", f"Appending {len(df)} new devops records")
+            self.log_engine.info(f"Appending {len(df)} new devops records")
             df.to_sql("devops", self.conn, if_exists="append", index=False)
         elif mode == "merge":
-            self.log_engine.log_msg("INFO", f"Merging {len(df)} devops records")
+            self.log_engine.info(f"Merging {len(df)} devops records")
             # Delete existing records that will be updated
             cursor = self.conn.cursor()
             for _, row in df.iterrows():
@@ -1132,8 +1106,13 @@ class Database:
                 ct.project_id,
                 ct.project_name,
                 round(ct.total_time, 2) as total_time,
-                round(ct.user_bonus, 2) as user_bonus
-            from calculated_time ct;
+                round(ct.user_bonus, 2) as user_bonus,
+                c.sort_order as customer_sort_order,
+                p.sort_order as project_sort_order
+            from calculated_time ct
+            join customers c on c.customer_id = ct.customer_id
+            join projects p on p.project_id = ct.project_id
+            order by c.sort_order, ct.customer_name, p.sort_order, ct.project_name;
         """
         result = self.fetch_query(query)
         return result
@@ -1166,6 +1145,352 @@ class Database:
         """
         result = self.fetch_query(query, (project_id,))
         return result
+
+    def save_sort_order(self, customer_order: list, project_orders: dict):
+        """
+        Save the sort order for customers and projects.
+
+        Args:
+            customer_order: List of (customer_id, customer_name) tuples in desired order
+            project_orders: Dict mapping customer_id to list of (project_id, project_name) tuples
+        """
+        try:
+            # Update customer sort order
+            for idx, (customer_id, _) in enumerate(customer_order):
+                self.execute_query(
+                    "update customers set sort_order = ? where customer_id = ?",
+                    (idx, customer_id),
+                )
+
+            # Update project sort order
+            for customer_id, projects in project_orders.items():
+                for idx, (project_id, _) in enumerate(projects):
+                    self.execute_query(
+                        "update projects set sort_order = ? where project_id = ?",
+                        (idx, project_id),
+                    )
+
+            self.conn.commit()
+            self.log_engine.info("Sort order saved successfully.")
+            return True
+        except Exception as e:
+            self.log_engine.error(f"Error saving sort order: {e}")
+            return False
+
+    def get_expected_schema(self):
+        """
+        Define the expected database schema.
+
+        Returns:
+            Dict with 'tables' and 'triggers' keys.
+            tables: {table_name: [(col_name, col_type, default_value, init_sql), ...]}
+            triggers: {trigger_name: trigger_sql}
+        """
+        return {
+            "tables": {
+                "time": [
+                    ("time_id", "INTEGER", None, None),
+                    ("customer_id", "INTEGER", None, None),
+                    ("customer_name", "TEXT", None, None),
+                    ("project_id", "INTEGER", None, None),
+                    ("project_name", "TEXT", None, None),
+                    ("date_key", "INTEGER", None, None),
+                    ("start_time", "DATETIME", None, None),
+                    ("end_time", "DATETIME", None, None),
+                    ("total_time", "REAL", None, None),
+                    ("wage", "REAL", None, None),
+                    ("bonus", "REAL", None, None),
+                    ("cost", "REAL", None, None),
+                    ("user_bonus", "REAL", None, None),
+                    ("git_id", "INTEGER", "0", None),
+                    ("comment", "TEXT", None, None),
+                ],
+                "customers": [
+                    ("customer_id", "INTEGER", None, None),
+                    ("customer_name", "TEXT", None, None),
+                    ("start_date", "DATETIME", None, None),
+                    ("wage", "REAL", None, None),
+                    ("pat_token", "TEXT", None, None),
+                    ("org_url", "TEXT", None, None),
+                    ("valid_from", "DATETIME", None, None),
+                    ("valid_to", "DATETIME", None, None),
+                    ("is_current", "INTEGER", None, None),
+                    ("inserted_at", "DATETIME", None, None),
+                    (
+                        "sort_order",
+                        "INTEGER",
+                        "999",
+                        """
+                        update customers
+                        set sort_order = (
+                            select count(*)
+                            from customers c2
+                            where c2.customer_name < customers.customer_name
+                        )
+                    """,
+                    ),
+                ],
+                "projects": [
+                    ("project_id", "INTEGER", None, None),
+                    ("customer_id", "INTEGER", None, None),
+                    ("project_name", "TEXT", None, None),
+                    ("git_id", "INTEGER", "0", None),
+                    ("is_current", "BOOLEAN", None, None),
+                    (
+                        "sort_order",
+                        "INTEGER",
+                        "999",
+                        """
+                        update projects
+                        set sort_order = (
+                            select count(*)
+                            from projects p2
+                            where p2.customer_id = projects.customer_id
+                            and p2.project_name < projects.project_name
+                        )
+                    """,
+                    ),
+                ],
+                "bonus": [
+                    ("bonus_id", "INTEGER", None, None),
+                    ("bonus_percent", "REAL", None, None),
+                    ("start_date", "TEXT", None, None),
+                    ("end_date", "TEXT", None, None),
+                ],
+                "dates": [
+                    ("date_key", "INTEGER", None, None),
+                    ("date", "TEXT", None, None),
+                    ("year", "INTEGER", None, None),
+                    ("month", "INTEGER", None, None),
+                    ("week", "INTEGER", None, None),
+                    ("day", "INTEGER", None, None),
+                ],
+                "queries": [
+                    ("query_name", "TEXT", None, None),
+                    ("query_sql", "TEXT", None, None),
+                    ("is_default", "BOOLEAN", None, None),
+                ],
+                "tasks": [
+                    ("task_id", "INTEGER", None, None),
+                    ("title", "TEXT", None, None),
+                    ("description", "TEXT", None, None),
+                    ("status", "TEXT", "'To Do'", None),
+                    ("priority", "TEXT", "'Medium'", None),
+                    ("completed", "BOOLEAN", "false", None),
+                    ("assigned_to", "TEXT", None, None),
+                    ("customer_name", "TEXT", None, None),
+                    ("project_name", "TEXT", None, None),
+                    ("parent_task_id", "INTEGER", None, None),
+                    ("due_date", "DATE", None, None),
+                    ("estimated_hours", "REAL", "0", None),
+                    ("actual_hours", "REAL", "0", None),
+                    ("progress_percentage", "INTEGER", "0", None),
+                    ("tags", "TEXT", None, None),
+                    ("created_at", "TIMESTAMP", "current_timestamp", None),
+                    ("updated_at", "TIMESTAMP", "current_timestamp", None),
+                    ("completed_at", "TIMESTAMP", None, None),
+                    ("created_by", "TEXT", None, None),
+                    ("updated_by", "TEXT", None, None),
+                ],
+            },
+            "triggers": {
+                "trigger_time_after_update": """
+                    create trigger if not exists trigger_time_after_update
+                    after update on time
+                    for each row
+                    begin
+                        update time
+                        set
+                            total_time = (julianday(new.end_time) - julianday(new.start_time)) * 24,
+                            cost = new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24),
+                            user_bonus = new.bonus * new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24)
+                        where time_id = new.time_id;
+                    end;
+                """,
+                "trigger_time_insert_row": """
+                    create trigger if not exists trigger_time_insert_row
+                    after insert on time
+                    for each row
+                    begin
+                        update time
+                        set 
+                             project_name = (
+                                select project_name from projects where project_id = new.project_id
+                             )
+                            ,customer_name = (
+                                select customer_name from customers where customer_id = new.customer_id
+                            )
+                            ,wage = (
+                                select wage from customers where customer_id = new.customer_id
+                            )
+                            ,bonus = ifnull((
+                                select bonus_percent from bonus
+                                    where current_date between start_date and ifnull(end_date, '2099-12-31')
+                            ), 0)
+                        where time_id = new.time_id;
+                    end;
+                """,
+                "trigger_time_update_row": """
+                    create trigger if not exists trigger_time_update_row
+                    after update of project_id on time
+                    for each row
+                    begin
+                        update time
+                        set 
+                             project_name = (
+                                select project_name from projects where project_id = new.project_id
+                             )
+                            ,customer_name = (
+                                select customer_name from customers where customer_id = new.customer_id
+                             )
+                        where time_id = new.time_id;
+                    end;
+                """,
+            },
+        }
+
+    def validate_and_migrate_schema(self, auto_migrate=False):
+        """
+        Validate the current database schema against the expected schema.
+        Optionally apply migrations to fix discrepancies.
+
+        Args:
+            auto_migrate: If True, automatically apply migrations. If False, only report issues.
+
+        Returns:
+            Dict with validation results and applied migrations
+        """
+        schema_def = self.get_expected_schema()
+        expected_schema = schema_def.get("tables", {})
+        expected_triggers = schema_def.get("triggers", {})
+        cursor = self.conn.cursor()
+        results = {
+            "missing_columns": [],
+            "missing_triggers": [],
+            "applied_migrations": [],
+            "errors": [],
+        }
+
+        try:
+            # Validate table columns
+            for table_name, expected_columns in expected_schema.items():
+                # Check if table exists
+                cursor.execute(
+                    "select name from sqlite_master where type='table' and name=?",
+                    (table_name,),
+                )
+                if not cursor.fetchone():
+                    self.log_engine.warning(
+                        f"Table '{table_name}' not found - skipping validation (will be created on first use)"
+                    )
+                    continue
+
+                # Get current columns
+                cursor.execute(f"pragma table_info('{table_name}')")
+                current_cols = {
+                    row[1]: row[2] for row in cursor.fetchall()
+                }  # {name: type}
+
+                # Check each expected column
+                for col_name, col_type, default_value, init_sql in expected_columns:
+                    if col_name not in current_cols:
+                        # Missing column found
+                        results["missing_columns"].append(
+                            {
+                                "table": table_name,
+                                "column": col_name,
+                                "type": col_type,
+                                "default": default_value,
+                            }
+                        )
+
+                        if auto_migrate:
+                            try:
+                                # Add the column
+                                default_clause = (
+                                    f" default {default_value}" if default_value else ""
+                                )
+                                alter_sql = f"alter table {table_name} add column {col_name} {col_type}{default_clause}"
+                                self.execute_query(alter_sql)
+
+                                self.log_engine.info(
+                                    f"Added column '{col_name}' to table '{table_name}'"
+                                )
+
+                                # Run initialization SQL if provided
+                                if init_sql:
+                                    self.execute_query(dedent(init_sql))
+                                    self.log_engine.info(
+                                        f"Initialized values for '{table_name}.{col_name}'"
+                                    )
+
+                                results["applied_migrations"].append(
+                                    {
+                                        "table": table_name,
+                                        "column": col_name,
+                                        "action": "added",
+                                        "initialized": bool(init_sql),
+                                    }
+                                )
+
+                            except Exception as e:
+                                error_msg = f"Failed to add column '{col_name}' to '{table_name}': {e}"
+                                self.log_engine.error(error_msg)
+                                results["errors"].append(error_msg)
+
+            # Validate triggers
+            cursor.execute("select name from sqlite_master where type='trigger'")
+            existing_triggers = {row[0] for row in cursor.fetchall()}
+
+            for trigger_name, trigger_sql in expected_triggers.items():
+                if trigger_name not in existing_triggers:
+                    results["missing_triggers"].append(trigger_name)
+
+                    if auto_migrate:
+                        try:
+                            self.execute_query(dedent(trigger_sql))
+                            self.log_engine.info(f"Created trigger '{trigger_name}'")
+                            results["applied_migrations"].append(
+                                {"trigger": trigger_name, "action": "created"}
+                            )
+                        except Exception as e:
+                            error_msg = (
+                                f"Failed to create trigger '{trigger_name}': {e}"
+                            )
+                            self.log_engine.error(error_msg)
+                            results["errors"].append(error_msg)
+
+            if auto_migrate:
+                self.conn.commit()
+
+            # Log summary
+            total_issues = len(results["missing_columns"]) + len(
+                results["missing_triggers"]
+            )
+            if total_issues > 0:
+                if auto_migrate:
+                    self.log_engine.info(
+                        f"Schema migration complete: {len(results['applied_migrations'])} changes applied"
+                    )
+                else:
+                    self.log_engine.warning(
+                        f"Schema validation found {total_issues} issues. "
+                        "Run with auto_migrate=True to fix."
+                    )
+            else:
+                self.log_engine.info(
+                    "Schema validation passed - database is up to date"
+                )
+                self.log_engine.info(
+                    "Schema validation passed - database is up to date"
+                )
+
+        except Exception as e:
+            error_msg = f"Error during schema validation: {e}"
+            self.log_engine.error(error_msg)
+            results["errors"].append(error_msg)
+
+        return results
 
     ### Schema Comparison Operations ###
 
@@ -1346,14 +1671,14 @@ class Database:
             cursor.execute(query, params)
             self.conn.commit()
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Error executing query: {query}\n{e}")
+            self.log_engine.error(f"Error executing query: {query}\n{e}")
             raise
 
     def fetch_query(self, query: str, params: tuple = ()):
         try:
             return pd.read_sql(query, self.conn, params=params)
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Error fetching query: {query}\n{e}")
+            self.log_engine.error(f"Error fetching query: {query}\n{e}")
             raise
 
     def smart_query(self, query: str, params: tuple = ()):
@@ -1372,7 +1697,7 @@ class Database:
                 self.conn.commit()
                 return None
         except Exception as e:
-            self.log_engine.log_msg("ERROR", f"Error running query: {query}\n{e}")
+            self.log_engine.error(f"Error running query: {query}\n{e}")
             raise
 
     def _get_value_from_db(
@@ -1391,7 +1716,7 @@ class Database:
         elif data_type == "float":
             return float(val) if val is not None else 0.0
         else:
-            self.log_engine.log_msg("ERROR", "Invalid data type specified.")
+            self.log_engine.error("Invalid data type specified.")
             raise ValueError("Invalid data type specified.")
 
     def close(self):

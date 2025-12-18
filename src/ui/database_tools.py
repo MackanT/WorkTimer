@@ -4,6 +4,7 @@ Database Tools UI Module
 Provides database management tools:
 - Schema comparison between databases
 - SQL query runner on uploaded databases
+- Schema validation and migration
 """
 
 import os
@@ -14,6 +15,7 @@ from nicegui import events, ui
 
 from .. import helpers
 from ..database import Database
+from ..globals import GlobalRegistry
 
 
 def build_database_compare_tab(main_db_name: str):
@@ -65,9 +67,90 @@ def build_database_update_tab():
     Allows users to upload a .db file, run SQL queries on it, and download the modified database.
     """
     UI_STYLES = helpers.UI_STYLES
+    QE = GlobalRegistry.get("QE")
 
     uploaded_db_path = None
     original_db_filename = None
+
+    async def validate_main_schema():
+        """Validate the main database schema and optionally migrate it."""
+        result_box.set_content("Running schema validation...")
+        result_box.update()
+
+        try:
+            results = await QE.function_db(
+                "validate_and_migrate_schema", auto_migrate=auto_migrate_switch.value
+            )
+
+            # Format results
+            output = []
+            output.append("=" * 70)
+            output.append("SCHEMA VALIDATION RESULTS")
+            output.append("=" * 70)
+            output.append(
+                f"Auto-migrate: {'ON' if auto_migrate_switch.value else 'OFF (dry run)'}"
+            )
+            output.append("")
+
+            if results["missing_columns"]:
+                output.append("Missing Columns:")
+                for col in results["missing_columns"]:
+                    output.append(
+                        f"  • {col['table']}.{col['column']} ({col['type']}, default={col['default']})"
+                    )
+                output.append("")
+
+            if results["missing_triggers"]:
+                output.append("Missing Triggers:")
+                for trigger in results["missing_triggers"]:
+                    output.append(f"  • {trigger}")
+                output.append("")
+
+            if results["applied_migrations"]:
+                output.append("Applied Migrations:")
+                for mig in results["applied_migrations"]:
+                    if "column" in mig:
+                        status = "initialized" if mig["initialized"] else "added"
+                        output.append(f"  ✓ {status}: {mig['table']}.{mig['column']}")
+                    elif "trigger" in mig:
+                        output.append(f"  ✓ created trigger: {mig['trigger']}")
+                output.append("")
+
+            if results["errors"]:
+                output.append("ERRORS:")
+                for error in results["errors"]:
+                    output.append(f"  ✗ {error}")
+                output.append("")
+
+            total_issues = len(results["missing_columns"]) + len(
+                results["missing_triggers"]
+            )
+            if total_issues == 0:
+                output.append("✓ Schema validation passed - database is up to date!")
+                ui.notify("Schema is up to date!", type="positive")
+            elif results["applied_migrations"]:
+                output.append(
+                    f"✓ Schema migration complete: {len(results['applied_migrations'])} changes applied"
+                )
+                ui.notify(
+                    f"{len(results['applied_migrations'])} migrations applied",
+                    type="positive",
+                )
+            else:
+                output.append(
+                    f"Schema validation found {total_issues} issues (not fixed - dry run mode)"
+                )
+                ui.notify(f"{total_issues} issues found", type="warning")
+
+            output.append("=" * 70)
+            result_box.set_content("\\n".join(output))
+            result_box.update()
+
+        except Exception as e:
+            error_msg = f"Error during validation: {e}"
+            result_box.set_content(error_msg)
+            result_box.update()
+            ui.notify(error_msg, type="negative")
 
     def handle_upload(e: events.UploadEventArguments):
         nonlocal uploaded_db_path, original_db_filename
@@ -123,6 +206,25 @@ def build_database_update_tab():
         )
         ui.download(uploaded_db_path, filename)
 
+    # Schema Validation Section
+    with ui.card().classes(
+        UI_STYLES.get_card_classes("xs", "card").replace("mx-auto", "ml-0")
+    ):
+        ui.label("Schema Validation & Migration").classes(
+            UI_STYLES.get_layout_classes("title").replace("mb-4", "mb-2 dense")
+        )
+        ui.label(
+            "Validate the main database schema against expected structure"
+        ).classes("text-sm text-gray-400 mb-2")
+        with ui.row().classes("w-full items-center gap-3 mb-2"):
+            ui.label("Auto-migrate").classes("text-sm")
+            auto_migrate_switch = ui.switch(value=False)
+            ui.label("(Apply fixes automatically)").classes("text-xs text-gray-400")
+        ui.button(
+            "Validate Schema", icon="check_circle", on_click=validate_main_schema
+        ).props("color=primary")
+
+    # SQL Runner Section
     with ui.card().classes(
         UI_STYLES.get_card_classes("xs", "card").replace("mx-auto", "ml-0")
     ):

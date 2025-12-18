@@ -1422,7 +1422,7 @@ async def _execute_dynamic_query(
     except Exception as e:
         LOG = GlobalRegistry.get("LOG")
         if LOG:
-            LOG.log_msg("ERROR", f"Dynamic query failed for {child}: {e}")
+            LOG.error(f"Dynamic query failed for {child}: {e}")
         return None
 
 
@@ -1455,7 +1455,7 @@ async def _execute_dynamic_query_for_options(
     except Exception as e:
         LOG = GlobalRegistry.get("LOG")
         if LOG:
-            LOG.log_msg("ERROR", f"Dynamic query failed for {child}: {e}")
+            LOG.error(f"Dynamic query failed for {child}: {e}")
         return []
 
 
@@ -1921,7 +1921,7 @@ def add_generic_save_button(
                         color="negative",
                     )
                     if LOG:
-                        LOG.log_msg("WARNING", f"Field '{k}' has multiple values: {v}")
+                        LOG.warning(f"Field '{k}' has multiple values: {v}")
                     return
 
         # Add any additional kwargs (e.g., table_name, pk_data for query editor)
@@ -1948,8 +1948,7 @@ def add_generic_save_button(
         # Log function call for easier debugging
         if LOG:
             try:
-                LOG.log_msg(
-                    "INFO",
+                LOG.info(
                     f"Calling DB function '{func_name}' with kwargs: {dict(kwargs)}",
                 )
             except Exception:
@@ -1970,8 +1969,7 @@ def add_generic_save_button(
                     color="warning",
                 )
                 if LOG:
-                    LOG.log_msg(
-                        "WARNING",
+                    LOG.warning(
                         "Attempted delete_task without confirmation; aborting.",
                     )
                 return
@@ -1980,7 +1978,7 @@ def add_generic_save_button(
             if "task_id" not in kwargs:
                 ui.notify("Could not determine task id to delete", color="negative")
                 if LOG:
-                    LOG.log_msg("ERROR", "delete_task called without task_id")
+                    LOG.error("delete_task called without task_id")
                 return
 
         await QE.function_db(func_name, **kwargs)
@@ -2003,7 +2001,7 @@ def add_generic_save_button(
 
                 if has_connections:
                     if LOG:
-                        LOG.log_msg("INFO", "Regenerating DevOps data...")
+                        LOG.info("Regenerating DevOps data...")
                     ui.notify(
                         "Regenerating DevOps data... This may take a few moments.",
                         color="info",
@@ -2011,8 +2009,7 @@ def add_generic_save_button(
                     await DO.update_devops(incremental=True)
                 else:
                     if LOG:
-                        LOG.log_msg(
-                            "INFO",
+                        LOG.info(
                             "No DevOps customers configured; skipping DevOps regeneration.",
                         )
 
@@ -2023,8 +2020,8 @@ def add_generic_save_button(
             widgets=widgets,
         )
         if LOG:
-            LOG.log_msg("INFO", msg_1)
-            LOG.log_msg("INFO", msg_2)
+            LOG.info(msg_1)
+            LOG.info(msg_2)
 
         if on_success_callback:
             await on_success_callback()

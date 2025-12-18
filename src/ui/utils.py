@@ -6,9 +6,10 @@ Contains simple utility UI components:
 - Info/README viewer
 """
 
+import logging
 from nicegui import ui
 
-from ..globals import GlobalRegistry, Logger
+from ..globals import GlobalRegistry, LogElementHandler, LOG_FORMAT, LOG_DATE_FORMAT
 from .. import helpers
 from ..helpers import UI_STYLES
 
@@ -22,6 +23,45 @@ LOG_CARD_MAX_WIDTH = "98vw"
 
 # Info viewer splitter ratio (sidebar width percentage)
 INFO_SPLITTER_RATIO = 20
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+
+def _attach_log_handlers(log_element):
+    """Attach all application loggers to the UI log element.
+    
+    Follows NiceGUI's recommended pattern: get each logger by name,
+    create a handler, attach it, and register cleanup on disconnect.
+    
+    Args:
+        log_element: NiceGUI ui.log element to receive messages
+    """
+    # Get all loggers that were created during initialization
+    logger_names = ["WorkTimer", "Database", "DevOps"]
+    handlers = []
+    
+    for name in logger_names:
+        logger = logging.getLogger(name)
+        # Create handler with formatter
+        handler = LogElementHandler(log_element)
+        formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+        handler.setFormatter(formatter)
+        # Attach to logger
+        logger.addHandler(handler)
+        handlers.append((logger, handler))
+    
+    # Clean up handlers when client disconnects (prevents memory leaks)
+    def cleanup():
+        for logger, handler in handlers:
+            try:
+                logger.removeHandler(handler)
+            except Exception:
+                pass
+    
+    ui.context.client.on_disconnect(cleanup)
+
 
 # ============================================================================
 # UI Components
@@ -39,29 +79,24 @@ def ui_log():
             )
         return
 
-    # Modern card with better spacing and max width
     with ui.card().classes(f"w-full max-w-[{LOG_CARD_MAX_WIDTH}] mx-auto my-4 p-6"):
         # Header with icon and title
         with ui.row().classes("w-full items-center gap-3 mb-4"):
             ui.icon("terminal", size="md").classes("text-blue-400")
             ui.label("Application Log").classes("text-h5 text-white font-medium")
 
-        # Log display container - styled like task description boxes
+        # Log display container
         with ui.element().classes("w-full"):
-            log_textarea = (
-                ui.html(content="")
-                .classes("w-full bg-gray-800 text-white p-4 rounded-lg overflow-auto")
-                .style(
-                    f"height: {LOG_CARD_HEIGHT}; "
-                    "font-family: 'Consolas', 'Monaco', 'Courier New', monospace; "
-                    "font-size: 13px; "
-                    "line-height: 1.6; "
-                    "word-wrap: break-word; "
-                    "white-space: pre-wrap;"
-                )
+            log_widget = ui.log(max_lines=None).classes(
+                "w-full bg-[#282a36] text-white p-4 rounded-lg overflow-auto"
             )
-            Logger.set_log_textarea(log_textarea)
-            LOG.update_log_textarea()
+            try:
+                log_widget.style(f"height: {LOG_CARD_HEIGHT};")
+            except Exception:
+                pass
+
+            # Attach all loggers to this UI element (NiceGUI pattern)
+            _attach_log_handlers(log_widget)
 
 
 def ui_info():

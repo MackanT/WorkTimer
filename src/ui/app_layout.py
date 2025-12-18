@@ -32,7 +32,7 @@ def setup_ui():
     dark.enable()
 
     # Create main tabs
-    with ui.tabs().classes(UI_STYLES.get_layout_classes("full_width")) as tabs:
+    with ui.tabs().classes(UI_STYLES.get_layout_classes("tabs_sticky_top")) as tabs:
         tab_time = ui.tab("Time Tracking", icon="schedule")
         tab_data_input = ui.tab("Data Input", icon="input")
         tasks_input = ui.tab("To-Do", icon="check_box")
@@ -48,7 +48,7 @@ def setup_ui():
             if update_ui_func:
                 await update_ui_func()
         except Exception as e:
-            LOG.log_msg("ERROR", f"Error refreshing UI: {e}")
+            LOG.error(f"Error refreshing UI: {e}")
 
     def update_tab_indicator(has_active_timers):
         """Update the Time Tracking tab icon based on active timers."""
@@ -58,7 +58,7 @@ def setup_ui():
             else:
                 tab_time.props("icon=schedule")
         except Exception as e:
-            LOG.log_msg("ERROR", f"Error updating tab indicator: {e}")
+            LOG.error(f"Error updating tab indicator: {e}")
 
     async def update_tab_indicator_now():
         """Immediately check active timers and update the tab indicator."""
@@ -66,7 +66,7 @@ def setup_ui():
             active_count = await UI._check_active_timers()
             update_tab_indicator(active_count > 0)
         except Exception as e:
-            LOG.log_msg("ERROR", f"Error updating tab indicator immediately: {e}")
+            LOG.error(f"Error updating tab indicator immediately: {e}")
 
     # Register for use in other modules
     GlobalRegistry.set("update_tab_indicator_now", update_tab_indicator_now)
@@ -78,7 +78,7 @@ def setup_ui():
     # Start both UI refresh and DevOps scheduled tasks after the app starts
     async def startup_tasks():
         """Start background tasks after the app has started."""
-        LOG.log_msg("INFO", "Starting UI refresh task after app startup")
+        LOG.info("Starting UI refresh task after app startup")
         await UI.start_ui_refresh()
 
         # Start DevOps scheduled tasks after NiceGUI is fully initialized
