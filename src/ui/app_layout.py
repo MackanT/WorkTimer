@@ -79,6 +79,16 @@ def setup_ui():
     async def startup_tasks():
         """Start background tasks after the app has started."""
         LOG.info("Starting UI refresh task after app startup")
+
+        # Register the main asyncio event loop so background threads can schedule
+        # coroutine work back into the UI event loop safely.
+        try:
+            main_loop = asyncio.get_running_loop()
+            GlobalRegistry.set("MAIN_LOOP", main_loop)
+            LOG.info("Registered MAIN_LOOP for cross-thread scheduling")
+        except Exception as e:
+            LOG.error(f"Could not register main event loop: {e}")
+
         await UI.start_ui_refresh()
 
         # Start DevOps scheduled tasks after NiceGUI is fully initialized

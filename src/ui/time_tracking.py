@@ -315,6 +315,11 @@ def ui_time_tracking():
 
     async def render_ui():
         """Render the main time tracking UI, grouped by customer and project."""
+        # Debug logging to track render calls
+        LOG = GlobalRegistry.get("LOG")
+        if LOG:
+            LOG.info("Running render_ui (start)")
+
         value_labels.clear()
         customer_total_labels.clear()
         df = await get_ui_data()
@@ -512,12 +517,27 @@ def ui_time_tracking():
                     ui.separator().classes("w-full border-b border-gray-700 my-2")
 
                     # Get ordered projects for this customer from database sort_order
+                    # Sort by project_sort_order from the database
+                    customer_projects = group.sort_values("project_sort_order")
+                    db_ordered = [
+                        (row["project_id"], row["project_name"])
+                        for _, row in customer_projects.iterrows()
+                    ]
+
                     if customer_id not in project_orders:
-                        # Sort by project_sort_order from the database
-                        customer_projects = group.sort_values("project_sort_order")
+                        # No existing order - initialize from DB
+                        project_orders[customer_id] = db_ordered
+                    else:
+                        # Merge DB changes into existing order: append any new projects
+                        existing = project_orders[customer_id]
+                        existing_ids = [p[0] for p in existing]
+                        for pid, pname in db_ordered:
+                            if pid not in existing_ids:
+                                existing.append((pid, pname))
+                        # Remove projects that no longer exist in DB
+                        db_ids = [p[0] for p in db_ordered]
                         project_orders[customer_id] = [
-                            (row["project_id"], row["project_name"])
-                            for _, row in customer_projects.iterrows()
+                            p for p in existing if p[0] in db_ids
                         ]
 
                     with (
@@ -578,6 +598,10 @@ def ui_time_tracking():
                             customer_index=cust_idx,
                             total_customers=total_customers,
                         )
+
+        LOG = GlobalRegistry.get("LOG")
+        if LOG:
+            LOG.info("Completed render_ui (end)")
 
     async def update_ui():
         """Update the UI labels for project and customer totals based on the latest data."""

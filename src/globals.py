@@ -443,3 +443,71 @@ class UIRefreshEngine:
         for task in self._refresh_tasks:
             task.cancel()
         self._refresh_tasks.clear()
+
+    def trigger_ui_refresh(self) -> None:
+        """Schedule an immediate UI refresh (safe from sync code).
+
+        This will call the registered UI refresh callback once. If called from a
+        background thread (eg. DB worker), the coroutine will be scheduled on
+        the main NiceGUI event loop stored in GlobalRegistry["MAIN_LOOP"].
+        """
+        if not self._ui_refresh_callback:
+            self.log.warning("No UI refresh callback registered; skipping immediate refresh")
+            return
+
+        # Prefer scheduling onto the main loop if available (thread-safe)
+        main_loop = GlobalRegistry.get("MAIN_LOOP")
+        try:
+            if main_loop:
+                asyncio.run_coroutine_threadsafe(self._ui_refresh_callback(), main_loop)
+                self.log.info("Scheduled immediate UI refresh on main loop")
+            else:
+                # Fallback: try to create a task on current loop (may raise if none)
+                asyncio.create_task(self._ui_refresh_callback())
+                self.log.info("Scheduled immediate UI refresh on current loop")
+        except Exception as e:
+            self.log.error(f"Error scheduling immediate UI refresh: {e}")
+
+    async def update_tab_indicator_now(self):
+        """Immediate check and update of the tab indicator."""
+        try:
+            active_count = await self._check_active_timers()
+            if self._tab_indicator_callback:
+                self._tab_indicator_callback(active_count > 0)
+        except Exception as e:
+            self.log.error(f"Error updating tab indicator now: {e}")
+
+    def trigger_tab_indicator_update(self) -> None:
+        """Schedule an immediate tab indicator update (safe from sync code)."""
+        main_loop = GlobalRegistry.get("MAIN_LOOP")
+        try:
+            if main_loop:
+                asyncio.run_coroutine_threadsafe(self.update_tab_indicator_now(), main_loop)
+                self.log.info("Scheduled immediate tab indicator update on main loop")
+            else:
+                asyncio.create_task(self.update_tab_indicator_now())
+                self.log.info("Scheduled immediate tab indicator update on current loop")
+        except Exception as e:
+            self.log.error(f"Error scheduling immediate tab indicator update: {e}")
+
+    def trigger_render(self) -> None:
+        """Schedule a full render of the Time Tracking UI (safe from sync code).
+
+        This is used when structural changes happen (new projects/customers) and
+        a full re-render is required rather than a light update.
+        """
+        render_func = GlobalRegistry.get("time_tracking_render_ui")
+        if not render_func:
+            self.log.warning("No render callback registered; skipping render")
+            return
+
+        main_loop = GlobalRegistry.get("MAIN_LOOP")
+        try:
+            if main_loop:
+                asyncio.run_coroutine_threadsafe(render_func(), main_loop)
+                self.log.info("Scheduled full UI render on main loop")
+            else:
+                asyncio.create_task(render_func())
+                self.log.info("Scheduled full UI render on current loop")
+        except Exception as e:
+            self.log.error(f"Error scheduling full UI render: {e}")

@@ -430,6 +430,17 @@ class Database:
             self.conn.commit()
             self.log_engine.info("Database loaded without errors!")
 
+    def _update_ui(self, exception: str) -> None:
+        try:
+            from .globals import GlobalRegistry
+
+            UI = GlobalRegistry.get("UI")
+            if UI:
+                UI.trigger_render()
+                UI.trigger_tab_indicator_update()
+        except Exception as e:
+            self.log_engine.error(f"{exception}: {e}")
+
     ### Time Table Operations ###
 
     def insert_time_row(
@@ -568,6 +579,7 @@ class Database:
             ),
         )
         self.log_engine.info(f"Inserted new customer '{customer_name}'")
+        self._update_ui("Error triggering UI refresh after inserting customer")
 
         # Get the new customer_id
         new_customer_id = self._get_value_from_db(
@@ -628,6 +640,7 @@ class Database:
         self.log_engine.info(
             f"Updated customer name from '{customer_name}' to '{new_customer_name}'",
         )
+        self._update_ui("Error triggering UI refresh after updating customer")
 
     def disable_customer(self, customer_name: str):
         self.execute_query(
@@ -639,6 +652,8 @@ class Database:
             (customer_name,),
         )
         self.log_engine.info(f"Disabled customer '{customer_name}'")
+
+        self._update_ui("Error triggering UI refresh after disabling customer")
 
     def enable_customer(self, customer_name: str):
         self.execute_query(
@@ -658,6 +673,8 @@ class Database:
             (customer_name, customer_name),
         )
         self.log_engine.info(f"Enabled customer '{customer_name}'")
+
+        self._update_ui("Error triggering UI refresh after enabling customer")
 
     ### Project Table Operations ###
 
@@ -689,6 +706,7 @@ class Database:
             self.log_engine.info(
                 f"Enabled project '{project_name}' for customer '{customer_name}'",
             )
+            self._update_ui("Error triggering UI refresh after enabling project")
         else:
             self.execute_query(
                 """
@@ -700,6 +718,7 @@ class Database:
             self.log_engine.info(
                 f"Inserted new project '{project_name}' for customer '{customer_name}'",
             )
+            self._update_ui("Error triggering UI refresh after inserting project")
 
     def update_project(
         self,
@@ -734,6 +753,8 @@ class Database:
             f"Updated project '{project_name}' for customer '{customer_name}'"
         )
 
+        self._update_ui("Error triggering UI refresh after updating project")
+
     def disable_project(self, customer_name: str, project_name: str):
         self.execute_query(
             """
@@ -749,6 +770,8 @@ class Database:
             f"Disabled project '{project_name}' for customer '{customer_name}'"
         )
 
+        self._update_ui("Error triggering UI refresh after disabling project")
+
     def enable_project(self, customer_name: str, project_name: str):
         self.execute_query(
             """
@@ -763,6 +786,8 @@ class Database:
         self.log_engine.info(
             f"Enabled project '{project_name}' for customer '{customer_name}'"
         )
+
+        self._update_ui("Error triggering UI refresh after enabling project")
 
     ### Bonus Table Operations ###
 
@@ -781,6 +806,8 @@ class Database:
         self.log_engine.info(
             f"Inserted new bonus percent {bonus_percent}% starting from {start_date}",
         )
+
+        self._update_ui("Error triggering UI refresh after inserting bonus")
 
     ### Task Table Operations ###
 
