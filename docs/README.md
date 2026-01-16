@@ -8,6 +8,11 @@ A modern web-based time tracking application with built-in task management and A
 
 ## Changelog
 
+### 4.0.3 (2026-01-17)
+- **Minor improvements**
+  - Fixed bug where adding customers with wage=0 did not work
+  - Fixed bug where devops changes were not auto-triggered by incremental refreshes of devops data
+
 ### 4.0.2 (2025-12-17)
 - **Minor improvements**
   - Top navigation bar is now locked at top of screen
@@ -19,8 +24,6 @@ A modern web-based time tracking application with built-in task management and A
   - Added option to resort customers and projects in time-tracker
   - Added new scehma-fixer function to automatically loop over db, and find any missing columns and or triggers with option to auto-apply them
   - Fixed bug where one could not update a old time via ui if comment was blank
-  - Fixed bug where adding customers with wage=0 did not work
-  - Fixed bug where devops changes were not auto-triggered by incremental refreshes of devops data
 
 ### 4.0.1 (2025-11-26)
 - **Centralized Settings**
