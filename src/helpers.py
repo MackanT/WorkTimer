@@ -430,8 +430,16 @@ def check_input(widgets: dict, required_fields: list[str]) -> bool:
         # Get widget value safely
         widget_value = _get_widget_value(widget)
 
-        # Check if the widget has a value
-        if not widget_value:
+        # Check if the widget has a value. Treat 0 and False as valid values.
+        missing = False
+        if widget_value is None:
+            missing = True
+        elif isinstance(widget_value, str) and widget_value.strip() == "":
+            missing = True
+        elif isinstance(widget_value, (list, tuple)) and len(widget_value) == 0:
+            missing = True
+
+        if missing:
             ui.notify(
                 f"{field.replace('_', ' ').title()} is required!",
                 color="negative",
