@@ -6,6 +6,8 @@ import asyncio
 import logging
 import datetime
 
+from nicegui import ui
+
 
 # Global registry for shared instances
 class GlobalRegistry:
@@ -276,14 +278,23 @@ class DevOpsEngine:
                 await self.query_engine.function_db(
                     "update_devops_data", df=devops_df, mode="append"
                 )
+                user_msg = (
+                    f"DevOps refresh complete — appended {len(devops_df)} new records"
+                )
             elif incremental and devops_df.empty:
                 self.log.info("No new devops records to append")
+                user_msg = "DevOps refresh complete — no new records"
             else:
                 await self.query_engine.function_db(
                     "update_devops_data", df=devops_df, mode="replace"
                 )
+                user_msg = (
+                    f"DevOps full refresh complete — loaded {len(devops_df)} records"
+                )
 
             await self.load_df()
+
+            self.log.info(f"DevOps update result: {user_msg}")
         else:
             self.log.error(f"Error when updating the devops data: {devops_df}")
 
@@ -297,6 +308,18 @@ class DevOpsEngine:
                 lambda row: f"{row['type']}: {int(row['id'])} - {row['title']}", axis=1
             )
             self.log.info(f"DevOps dataframe loaded with {len(self.df)} rows")
+
+            # If a UI rebuild callback is registered, trigger it so UI widgets (dropdowns)
+            # that depend on DevOps data can refresh their options.
+            try:
+                rebuild = GlobalRegistry.get("devops_rebuild_forms")
+                if rebuild:
+                    rebuild()
+                    self.log.info(
+                        "Triggered devops UI rebuild callback after loading devops df"
+                    )
+            except Exception as e:
+                self.log.error(f"Error triggering devops UI rebuild callback: {e}")
 
     def devops_helper(self, func_name: str, customer_name: str, *args, **kwargs):
         if not self.manager:

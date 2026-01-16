@@ -108,6 +108,34 @@ def _register_configs(config_loader, data_config, settings):
     GlobalRegistry.set("DEVOPS_TAGS", devops_tags)
 
 
+def trigger_devops_incremental_refresh() -> None:
+    """Trigger an incremental DevOps refresh in the background.
+
+    Uses the registered `run_async_task` helper if available so this can be
+    called from UI buttons or other events without blocking the main thread.
+    """
+    LOG = GlobalRegistry.get("LOG")
+    DO = GlobalRegistry.get("DO")
+    run_async = GlobalRegistry.get("run_async_task")
+
+    if DO:
+        try:
+            if run_async:
+                run_async(DO.update_devops, incremental=True)
+            else:
+                import asyncio
+
+                asyncio.create_task(DO.update_devops(incremental=True))
+            if LOG:
+                LOG.info("Triggered DevOps incremental refresh")
+        except Exception as ex:
+            if LOG:
+                LOG.error(f"Failed to trigger DevOps refresh: {ex}")
+        else:
+            if LOG:
+                LOG.warning("No DevOps engine configured when triggering DevOps refresh")
+
+
 def handle_key(e: KeyEventArguments):
     LOG = GlobalRegistry.get("LOG")
     if e.key == "f" and not e.action.repeat:
@@ -121,7 +149,9 @@ def handle_key(e: KeyEventArguments):
             LOG.warning("'h' key was released")
     if e.key == "j" and not e.action.repeat:
         if e.action.keyup:
-            LOG.error("'j' key was released")
+            LOG.info("'j' key was released - triggering DevOps incremental refresh")
+            # Use central function so the same behavior can be triggered from buttons
+            trigger_devops_incremental_refresh()
 
 
 def main():

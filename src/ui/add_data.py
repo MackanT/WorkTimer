@@ -424,6 +424,16 @@ def ui_add_data():
             devops_handlers.setup_update_tab_handlers(widgets)
             return widgets
 
+        def _rebuild_devops_forms():
+            try:
+                build_add_form()
+                build_update_form()
+            except Exception as e:
+                if LOG:
+                    LOG.error(f"Error rebuilding DevOps forms: {e}")
+
+        GlobalRegistry.set("devops_rebuild_forms", _rebuild_devops_forms)
+
         with (
             ui.tabs()
             .props("inline-label align=left")
