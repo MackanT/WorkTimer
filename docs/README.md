@@ -12,6 +12,7 @@ A modern web-based time tracking application with built-in task management and A
 - **Minor improvements**
   - Fixed bug where adding customers with wage=0 did not work
   - Fixed bug where devops changes were not auto-triggered by incremental refreshes of devops data
+  - Added so devops table is created if not present on program startup
 
 ### 4.0.2 (2025-12-17)
 - **Minor improvements**

@@ -363,6 +363,23 @@ class Database:
                         "Found blank Queries table, successfully populated it."
                     )
 
+            ## DevOps Table
+            df_devops = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'devops'"
+            )
+            if df_devops.empty:
+                self.execute_query("""
+                create table if not exists devops (
+                    customer_name text,
+                    type text,
+                    id integer,
+                    title text,
+                    state text,
+                    parent_id integer
+                )
+                """)
+                self.log_engine.info("Table 'devops' created successfully.")
+
             ## Tasks table
             df_tasks = self.fetch_query(
                 "select * from sqlite_master where type = 'table' and name = 'tasks'"
@@ -1269,6 +1286,14 @@ class Database:
                     ("query_name", "TEXT", None, None),
                     ("query_sql", "TEXT", None, None),
                     ("is_default", "BOOLEAN", None, None),
+                ],
+                "devops": [
+                    ("customer_name", "TEXT", None, None),
+                    ("type", "TEXT", None, None),
+                    ("id", "INTEGER", None, None),
+                    ("title", "TEXT", None, None),
+                    ("state", "TEXT", None, None),
+                    ("parent_id", "INTEGER", None, None),
                 ],
                 "tasks": [
                     ("task_id", "INTEGER", None, None),
