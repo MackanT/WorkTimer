@@ -15,6 +15,9 @@
 - text wrapping in time tracking
 - sorting of tasks is "backwards" for earliest/latest. Null due-dates are backwards
 - Adding additional project does not show up when there already are to many (?)
+- Om internet inte finns initialt så startar inte devops clienten upp senare
+- Kan inte lägga till ny kund med wage <> 0
+- Devops skapa objekt drop-down lista uppdateras inte när ex. startsidans objekt uppdateras
 
 
 ### Completed -- Old from before ReadMe
