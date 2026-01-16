@@ -20,6 +20,28 @@ docker compose up -d
 
 Once started, open your browser to **`http://localhost:8080`**
 
+### ⚠️ Important — Docker and `uv`
+- If you are using Docker, **start Docker first** before running the application.
+- **Note:** install the `uv` package manager if you do not have it installed:
+
+```bash
+pip install uv
+```
+
+- **Restart your terminal** (cmd / PowerShell / VS Code terminal / etc) after installation so the `uv` command becomes available.
+- Verify `uv` is installed and working with:
+
+```bash
+uv --version
+```
+
+- Use the following command to fetch and sync the Python packages required by the project:
+
+```bash
+uv sync
+```
+
+
 ### Initial Setup
 
 1. **Add Your First Customer**
@@ -205,6 +227,11 @@ Run WorkTimer in a container for 24/7 availability without local Python installa
 ### Prerequisites
 - Docker Desktop installed ([download here](https://www.docker.com/products/docker-desktop))
 - `docker-compose.yml` and `Dockerfile` in project root
+- `uv` must be installed on the host as well (used for syncing packages):
+
+```bash
+pip install uv
+```
 
 ### Deployment Steps
 
