@@ -36,7 +36,7 @@ def setup_ui():
         tab_time = ui.tab("Time Tracking", icon="schedule")
         tab_data_input = ui.tab("Data Input", icon="input")
         tasks_input = ui.tab("To-Do", icon="check_box")
-        tab_query_editors = ui.tab("Query Editors", icon="code")
+        tab_query_editors = ui.tab("Query Editor", icon="code")
         tab_log = ui.tab("Log", icon="terminal")
         tab_info = ui.tab("Info", icon="info")
 

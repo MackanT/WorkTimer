@@ -467,5 +467,9 @@ def ui_query_editor():
         """Handle keyboard shortcuts - F5 to execute query."""
         if e.key.f5 and not e.key.shift and e.action.keydown:
             asyncio.create_task(execute_query())
+        elif (
+            e.modifiers.ctrl and e.modifiers.shift and e.key.enter and e.action.keydown
+        ):
+            asyncio.create_task(execute_query())
 
     ui.keyboard(on_key=handle_key)
