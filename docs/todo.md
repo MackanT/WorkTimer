@@ -14,8 +14,9 @@
 - At midnight, date "today" does not switch automatically
 - text wrapping in time tracking
 - sorting of tasks is "backwards" for earliest/latest. Null due-dates are backwards
-- Adding additional project does not show up when there already are to many (?)
 - Om internet inte finns initialt så startar inte devops clienten upp senare
+- no info when running for ex. delete command in query
+- Learn about asyncio..... When and where to run in main/background thread...
 
 
 ### Completed -- Old from before ReadMe
