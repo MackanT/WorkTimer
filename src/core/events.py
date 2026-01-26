@@ -32,7 +32,7 @@ class EventBus:
         MUST be called from within a page function (inside @ui.page).
         """
         try:
-            self._ui_context = ui.context.get()
+            self._ui_context = ui.context.client
             self.logger.info("UI context captured successfully")
         except Exception as e:
             self.logger.error(f"Failed to capture UI context: {e}")

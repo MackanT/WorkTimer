@@ -63,7 +63,7 @@ def _initialize_engines(settings, data_config):
     do_log = setup_logger("DevOps", debug=settings.debug_mode)
 
     # Initialize database engine
-    query_engine = QueryEngine(file_name=settings.db_name, log_engine=db_log)
+    query_engine = QueryEngine(file_name=settings.db_path, log_engine=db_log)
     asyncio.run(query_engine.refresh())
 
     # Initialize data engine
@@ -101,7 +101,7 @@ def _register_configs(config_loader, data_config, settings):
         "config_task_visuals", config_loader.get_raw_dict("task_visuals")
     )
     GlobalRegistry.set("config_query", config_loader.get_raw_dict("query"))
-    GlobalRegistry.set("MAIN_DB", settings.db_name)
+    GlobalRegistry.set("MAIN_DB", settings.db_path)
 
     # Build DevOps tags list from config
     devops_tags = [DevOpsTag(**tag.model_dump()) for tag in data_config.devops_tags]
@@ -133,7 +133,9 @@ def trigger_devops_incremental_refresh() -> None:
                 LOG.error(f"Failed to trigger DevOps refresh: {ex}")
         else:
             if LOG:
-                LOG.warning("No DevOps engine configured when triggering DevOps refresh")
+                LOG.warning(
+                    "No DevOps engine configured when triggering DevOps refresh"
+                )
 
 
 def handle_key(e: KeyEventArguments):

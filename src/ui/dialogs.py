@@ -31,6 +31,9 @@ def _create_action_buttons(on_save, on_delete, on_close):
 async def show_time_entry_dialog(
     customer_id: int,
     project_id: int,
+    query_engine,
+    devops_engine,
+    logger,
     on_save_callback: Optional[Callable] = None,
     on_delete_callback: Optional[Callable] = None,
     on_close_callback: Optional[Callable] = None,
@@ -41,13 +44,16 @@ async def show_time_entry_dialog(
     Args:
         customer_id: Customer ID for the time entry
         project_id: Project ID for the time entry
+        query_engine: Query engine instance
+        devops_engine: DevOps engine instance
+        logger: Logger instance
         on_save_callback: Async function to call on save with (git_id, comment, store_to_devops)
         on_delete_callback: Async function to call on delete
         on_close_callback: Function to call on close/cancel
     """
-    LOG = GlobalRegistry.get("LOG")
-    QE = GlobalRegistry.get("QE")
-    DO = GlobalRegistry.get("DO")
+    QE = query_engine
+    DO = devops_engine
+    LOG = logger
 
     # Query project/customer info
     df = await QE.query_db(

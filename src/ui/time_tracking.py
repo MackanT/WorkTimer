@@ -288,6 +288,9 @@ def ui_time_tracking():
         await show_time_entry_dialog(
             customer_id=customer_id_int,
             project_id=project_id_int,
+            query_engine=QE,
+            devops_engine=DO,
+            logger=GlobalRegistry.get("LOG"),
             on_save_callback=handle_save,
             on_delete_callback=handle_delete,
             on_close_callback=handle_close,

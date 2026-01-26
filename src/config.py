@@ -20,7 +20,7 @@ class ConfigSettings(BaseModel):
     """Settings configuration from config_settings.yml"""
 
     debug_mode: bool = False
-    db_name: str = "worktimer.db"
+    db_path: str = "worktimer.db"
 
 
 class DevOpsTagConfig(BaseModel):
@@ -260,16 +260,16 @@ class ConfigLoader:
         print("\n=== Loading Configuration Files ===")
 
         # Load settings (required)
-        db_name = os.getenv("DB_NAME", "test.db")  # default just in case
+        db_name = os.getenv("DB_NAME", "worktimer.db")  # default just in case
         db_path = os.path.join("data", db_name)
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
         self.configs["settings"] = ConfigSettings(
-            db_name=db_path,
+            db_path=db_path,
             debug_mode=os.getenv("DEBUG_MODE", "false").lower() == "true",
         )
         print(
-            f"  DB: {self.configs['settings'].db_name}, Debug: {self.configs['settings'].debug_mode}"
+            f"  DB: {self.configs['settings'].db_path}, Debug: {self.configs['settings'].debug_mode}"
         )
 
         # Load data config (required)
