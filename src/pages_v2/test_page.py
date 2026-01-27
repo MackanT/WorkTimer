@@ -17,7 +17,7 @@ from ..core import AppCore, get_config_loader
 from ..services import DatabaseService
 
 
-@ui.page('/test')
+
 async def test_page():
     """Test page demonstrating V2 architecture features."""
     
@@ -27,6 +27,7 @@ async def test_page():
     # Initialize if needed
     if not core._initialized:
         await core.initialize_engines()
+
     
     # Dark mode
     dark = ui.dark_mode()

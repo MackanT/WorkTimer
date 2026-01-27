@@ -452,7 +452,9 @@ class UIRefreshEngine:
         the main NiceGUI event loop stored in GlobalRegistry["MAIN_LOOP"].
         """
         if not self._ui_refresh_callback:
-            self.log.warning("No UI refresh callback registered; skipping immediate refresh")
+            self.log.warning(
+                "No UI refresh callback registered; skipping immediate refresh"
+            )
             return
 
         # Prefer scheduling onto the main loop if available (thread-safe)
@@ -482,11 +484,15 @@ class UIRefreshEngine:
         main_loop = GlobalRegistry.get("MAIN_LOOP")
         try:
             if main_loop:
-                asyncio.run_coroutine_threadsafe(self.update_tab_indicator_now(), main_loop)
+                asyncio.run_coroutine_threadsafe(
+                    self.update_tab_indicator_now(), main_loop
+                )
                 self.log.info("Scheduled immediate tab indicator update on main loop")
             else:
                 asyncio.create_task(self.update_tab_indicator_now())
-                self.log.info("Scheduled immediate tab indicator update on current loop")
+                self.log.info(
+                    "Scheduled immediate tab indicator update on current loop"
+                )
         except Exception as e:
             self.log.error(f"Error scheduling immediate tab indicator update: {e}")
 

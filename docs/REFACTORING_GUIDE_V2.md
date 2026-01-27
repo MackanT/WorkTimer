@@ -31,9 +31,6 @@ ui.run()
 async def time_tracking_page():
     # Each client gets their own AppCore
     core = AppCore.get_or_create()
-    
-    # Per-client state via app.storage.user
-    core.set_active_customer_id(123)
 ```
 
 **Benefit:** Complete isolation - users never interfere with each other.
@@ -348,21 +345,6 @@ def worker_thread():
 def worker_thread():
     event_bus.notify("Done")
 ```
-
-### Issue: State shared between clients
-
-**Cause:** Using module-level globals
-
-**Fix:** Store in `app.storage.user`:
-```python
-# ❌ Wrong
-active_customer = 123  # Shared!
-
-# ✅ Correct
-core.set_active_customer_id(123)  # Per-client
-```
-
----
 
 ## Performance Considerations
 

@@ -13,32 +13,36 @@ from dotenv import load_dotenv
 
 # Import only what we need for startup
 from src.core import get_config_loader
-from src.pages_v2 import time_tracking_page
+from src.pages_v2 import (
+    time_tracking_page,
+    add_data_page,
+    query_editor_page,
+    log_page,
+    info_page,
+    tasks_page,
+    test_page,
+)
 
 
 def initialize_app():
-    """
-    Initialize the application.
+    """Initialize the application."""
 
-    This is minimal - just configuration loading.
-    Everything else happens per-client in @ui.page functions.
-    """
     # Load environment variables
     load_dotenv()
 
-    # Pre-load configuration (configs are immutable, so sharing is safe)
+    # Pre-load configuration
+    print("=== WorkTimer V5 Initialization ===")
     config_loader = get_config_loader()
     configs = config_loader.load_all()
 
     print("=" * 60)
-    print("WorkTimer V2 - Refactored Architecture")
+    print("WorkTimer V5")
     print("=" * 60)
     print(f"Database: {configs['settings'].db_path}")
     print(f"Debug mode: {configs['settings'].debug_mode}")
-    print(f"Multi-client support: Enabled (with storage_secret)")
-    print(f"Thread safety: Enabled via ui.context")
+    print("Multi-client support: Enabled (with storage_secret)")
+    print("Thread safety: Enabled via ui.context")
     print("=" * 60)
-    print("\nAccess the application at: http://localhost:8080")
     print("\nPress Ctrl+C to stop the server.")
     print("=" * 60)
 
@@ -100,7 +104,7 @@ def main():
         title="WorkTimer V5",
         favicon="icons/worktimer.ico",
         reload=False,  # Set to True for development hot-reload
-        show=False,  # Don't auto-open browser
+        show=False,
         storage_secret="worktimer-v5-secret-change-in-production",  # Required for app.storage.user
     )
 

@@ -9,6 +9,7 @@
 - Marker for ongoing projects?
 - Devops välja kolumn för kortet (todo, on hold, in progress etc!)
 - sätt task till "done" när en stänger on_checkmark
+- Kunna kopiera ut resultat från query-editorn
 
 ### Buggar
 - At midnight, date "today" does not switch automatically
@@ -17,6 +18,8 @@
 - Om internet inte finns initialt så startar inte devops clienten upp senare
 - no info when running for ex. delete command in query
 - Learn about asyncio..... When and where to run in main/background thread...
+- Devops slås inte på första gången en enablear en kund med devops integration
+- Creating table does not send "success message" (samma för alla med "no result set")
 
 
 ### Completed -- Old from before ReadMe

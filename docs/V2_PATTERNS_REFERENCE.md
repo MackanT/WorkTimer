@@ -352,9 +352,6 @@ async def customer_detail_page(customer_id: int):
     if not core._initialized:
         await core.initialize_engines()
     
-    # Store in per-client storage
-    core.set_active_customer_id(customer_id)
-    
     # Load customer data
     db_service = DatabaseService(core)
     

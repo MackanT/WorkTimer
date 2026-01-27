@@ -22,6 +22,7 @@ dependencies = [
     "markdown>=3.4.4",
     "bleach>=6.0.0",
     "markdownify>=1.2.0",
+    "setuptools>=80.10.2",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

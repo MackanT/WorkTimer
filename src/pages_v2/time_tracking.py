@@ -1,8 +1,7 @@
 """
-Time Tracking Page - Refactored V2
+Time Tracking Page
 
-Full time tracking interface with customer/project cards matching the original V1 design,
-but using the V2 architecture for multi-client support and thread safety.
+Full time tracking interface with customer/project cards, timers, and DevOps integration.
 """
 
 from nicegui import ui, app
@@ -14,6 +13,7 @@ from ..core import AppCore, get_config_loader
 from ..helpers import UI_STYLES
 from .. import helpers
 from ..ui.dialogs import show_time_entry_dialog
+
 
 # ============================================================================
 # Constants
@@ -83,7 +83,6 @@ def create_date_range_picker(on_change_callback) -> tuple:
 # ============================================================================
 
 
-@ui.page("/")
 async def time_tracking_page():
     """
     Main time tracking page
@@ -145,6 +144,7 @@ async def time_tracking_page():
         """Update date range when time span radio changes."""
         date_input.value = helpers.get_range_for(selected_time.value)
         asyncio.create_task(update_ui())
+        core.logger.info(f"Time span changed to: {selected_time.value}")
 
     def on_radio_type_change(e):
         """Refresh UI when display type changes (Time/Bonus)."""

@@ -257,6 +257,10 @@ class ConfigLoader:
 
     def load_all(self) -> Dict[str, Any]:
         """Load and validate all configuration files"""
+        # Return cached configs if already loaded
+        if self.configs:
+            return self.configs
+
         print("\n=== Loading Configuration Files ===")
 
         # Load settings (required)

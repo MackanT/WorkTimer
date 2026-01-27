@@ -5,6 +5,7 @@ Each client gets their own AppCore instance with isolated state.
 This enables true multi-client support with no shared state pollution.
 """
 
+from collections import deque
 import logging
 from typing import Optional, Dict
 from nicegui import app
@@ -14,7 +15,6 @@ from ..devops import DevOpsManager
 from .events import PageEventBus
 
 # Module-level storage for AppCore instances (per-client, by client ID)
-# This avoids JSON serialization issues with app.storage.user
 _app_cores: Dict[str, "AppCore"] = {}
 
 
@@ -52,28 +52,85 @@ class AppCore:
         self.task_visuals = config_loader.get_raw_dict("task_visuals")
         self.debug = self.settings.debug_mode
 
+        # Initialize event bus
+        self.event_bus = PageEventBus()
+
+        self.log_buffer = deque(maxlen=500)
+
+        def global_log_handler(
+            message: str, level: str = "INFO", timestamp: str = "", logger: str = "App"
+        ):
+            log_entry = {
+                "message": message,
+                "level": level,
+                "timestamp": timestamp,
+                "logger": logger,
+                "formatted": f"{timestamp} | {level:<8} | {logger:<9} :: {message}",
+            }
+            self.log_buffer.append(log_entry)
+
+        self.event_bus.register("log_message", global_log_handler)
+
         # Initialize logging
         self.logger = self._setup_logger("AppCore")
         self.logger.info("Initializing new AppCore instance")
 
-        # Initialize event bus (will auto-capture context)
-        self.event_bus = PageEventBus(logger=self._setup_logger("EventBus"))
+        self._attach_root_logger_handler()
 
         # Initialize engines (these are per-client now!)
         self.query_engine = None
         self.devops_engine = None
         self.add_data_engine = None
-
-        # Lazy initialization flag
         self._initialized = False
 
+        self.logger.info("AppCore initialized")
+
+    def _attach_root_logger_handler(self):
+        """Attach EventBus handler to root logger for global log capture."""
+        try:
+            from .events import EventBusLogHandler
+
+            root_logger = logging.getLogger()
+
+            # Remove any existing EventBusLogHandlers first
+            for handler in root_logger.handlers[:]:
+                if isinstance(handler, EventBusLogHandler):
+                    root_logger.removeHandler(handler)
+
+            # Add our handler
+            root_handler = EventBusLogHandler(self.event_bus)
+            root_handler.setLevel(logging.DEBUG if self.debug else logging.INFO)
+            root_logger.addHandler(root_handler)
+            root_logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
+
+            self.logger.debug("Root logger attached to EventBus")
+        except Exception as e:
+            # Non-fatal - log to stderr as fallback
+            print(f"Warning: Failed to attach root logger: {e}")
+
     def _setup_logger(self, name: str) -> logging.Logger:
-        """Set up a logger with appropriate level."""
+        """Set up a logger with appropriate level and EventBus handler."""
         logger = logging.getLogger(name)
-        if self.debug:
-            logger.setLevel(logging.DEBUG)
-        else:
-            logger.setLevel(logging.INFO)
+
+        from .events import EventBusLogHandler
+
+        # Check if EventBus handler already exists
+        has_eventbus_handler = any(
+            isinstance(h, EventBusLogHandler) for h in logger.handlers
+        )
+
+        if not has_eventbus_handler:
+            # Set logger level
+            logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
+
+            # Add EventBus handler
+            if hasattr(self, "event_bus") and self.event_bus:
+                handler = EventBusLogHandler(self.event_bus)
+                handler.setLevel(logging.DEBUG if self.debug else logging.INFO)
+                logger.addHandler(handler)
+                # Don't propagate to avoid duplicate messages
+                logger.propagate = False
+
         return logger
 
     async def initialize_engines(self):
@@ -122,11 +179,6 @@ class AppCore:
             self._initialized = True
             self.logger.info("All engines initialized successfully")
 
-            # Notify user
-            self.event_bus.notify(
-                "WorkTimer initialized successfully!", type_="positive"
-            )
-
         except Exception as e:
             self.logger.error(f"Failed to initialize engines: {e}")
             self.event_bus.notify(f"Initialization failed: {e}", type_="negative")
@@ -173,24 +225,6 @@ class AppCore:
 
         return core
 
-    def get_active_customer_id(self) -> Optional[int]:
-        """Get the currently selected customer ID for this client."""
-        return app.storage.user.get("active_customer_id")
-
-    def set_active_customer_id(self, customer_id: int):
-        """Set the currently selected customer ID for this client."""
-        app.storage.user["active_customer_id"] = customer_id
-        self.logger.debug(f"Set active customer to {customer_id}")
-
-    def get_active_project_id(self) -> Optional[int]:
-        """Get the currently selected project ID for this client."""
-        return app.storage.user.get("active_project_id")
-
-    def set_active_project_id(self, project_id: int):
-        """Set the currently selected project ID for this client."""
-        app.storage.user["active_project_id"] = project_id
-        self.logger.debug(f"Set active project to {project_id}")
-
 
 # Singleton config loader (configs are immutable, so sharing is safe)
 _config_loader: Optional[ConfigLoader] = None
@@ -201,8 +235,10 @@ def get_config_loader() -> ConfigLoader:
     Get the shared config loader instance.
 
     Configs are immutable, so sharing across clients is safe and efficient.
+    Loads configs once on first call and caches them.
     """
     global _config_loader
     if _config_loader is None:
         _config_loader = ConfigLoader()
+        _config_loader.load_all()
     return _config_loader
