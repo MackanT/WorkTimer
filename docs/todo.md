@@ -22,6 +22,10 @@
 - Creating table does not send "success message" (samma för alla med "no result set")
 
 
+### Bugs V2
+- Sort order button is "floating" and moves around when clicked
+
+
 ### Completed -- Old from before ReadMe
 - clean up of customer sort order (not needed anymore)
 - "error" command completed successfully (after for ex update query) (not needed anymore)

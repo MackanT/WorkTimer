@@ -97,16 +97,31 @@ class AppCore:
                 if isinstance(handler, EventBusLogHandler):
                     root_logger.removeHandler(handler)
 
-            # Add our handler
+            # Add EventBus handler for UI
             root_handler = EventBusLogHandler(self.event_bus)
             root_handler.setLevel(logging.DEBUG if self.debug else logging.INFO)
             root_logger.addHandler(root_handler)
+            
+            # Add StreamHandler for terminal output
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.DEBUG if self.debug else logging.INFO)
+            # Format for terminal
+            formatter = logging.Formatter(
+                '%(asctime)s | %(levelname)-8s | %(name)-12s :: %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            console_handler.setFormatter(formatter)
+            root_logger.addHandler(console_handler)
+            
             root_logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
 
-            self.logger.debug("Root logger attached to EventBus")
+            self.logger.debug("Root logger attached to EventBus and console")
+            print(f"[AppCore] Logging initialized - Debug mode: {self.debug}")
         except Exception as e:
             # Non-fatal - log to stderr as fallback
             print(f"Warning: Failed to attach root logger: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _setup_logger(self, name: str) -> logging.Logger:
         """Set up a logger with appropriate level and EventBus handler."""

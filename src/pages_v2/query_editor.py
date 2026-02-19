@@ -11,8 +11,10 @@ from nicegui.events import KeyEventArguments
 from ..core.app import AppCore, get_config_loader
 from ..globals import SaveData
 from .. import helpers
+from ..ui.navigation import create_navigation
 
 
+@ui.page("/query_editor")
 async def query_editor_page():
     """Query Editor page - for running SQL queries"""
 
@@ -22,6 +24,17 @@ async def query_editor_page():
 
     dark = ui.dark_mode()
     dark.enable()
+
+    # Navigation
+    create_navigation()
+
+    from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
+    from nicegui import app
+
+    setup_debug_keyboard_handlers(core)
+
+    if "query_editor_query" not in app.storage.user:
+        app.storage.user["query_editor_query"] = "time"
 
     # Initialize engines if needed (first time only)
     if not core._initialized:
@@ -60,6 +73,63 @@ async def query_editor_page():
     async def refresh_query_list():
         await QE.refresh()
         render_query_buttons()
+
+    def add_save_button(
+        save_data, fields, widgets, table_name, pk_data, popup, query_engine
+    ):
+        """Add save button for row editing"""
+
+        async def on_save():
+            """Handle save operation using query engine."""
+            required_fields = [
+                field["name"] for field in fields if not field.get("optional", False)
+            ]
+            if not helpers.check_input(widgets, required_fields):
+                return
+
+            kwargs = {}
+            for field in fields:
+                field_name = field["name"]
+                if field_name in widgets:
+                    kwargs[field_name] = widgets[field_name].value
+
+            kwargs["table_name"] = table_name
+            kwargs["pk_data"] = pk_data
+
+            try:
+                await query_engine.function_db(save_data.function, **kwargs)
+                msg_1, msg_2 = helpers.print_success(
+                    table_name, save_data.main_param, save_data.main_action, widgets
+                )
+                LOG.info(msg_1)
+                if msg_2:
+                    LOG.info(msg_2)
+
+                popup.close()
+
+                try:
+                    core.event_bus.emit("ui_refresh_requested")
+                except Exception:
+                    pass
+
+            except Exception as e:
+                LOG.error(f"Error saving row: {e}")
+                ui.notify(f"Error saving: {str(e)}", type="negative")
+
+        def close_popup():
+            popup.close()
+
+        with ui.row().classes(
+            helpers.UI_STYLES.get_layout_classes("row_end")
+            + " "
+            + helpers.UI_STYLES.get_layout_classes("row_gap_2")
+        ):
+            ui.button(save_data.button_name, on_click=on_save).props("flat").classes(
+                helpers.UI_STYLES.get_layout_classes("button_fixed")
+            )
+            ui.button("Cancel", on_click=close_popup).props("flat").classes(
+                helpers.UI_STYLES.get_layout_classes("button_fixed")
+            )
 
     def create_query_dialog(
         title: str, input_type: str, options: list = None, on_confirm=None
@@ -223,13 +293,15 @@ async def query_editor_page():
             with ui.card().classes(helpers.UI_STYLES.get_widget_width("medium")):
                 widgets = helpers.make_input_row(fields)
                 save_data = SaveData(**action)
-                # add_save_button from helpers is used in old UI; we reuse here
-                from ..ui.query_editor import add_save_button as _add_save_button
 
-                _add_save_button(save_data, fields, widgets, table_name, pk_data, popup)
+                add_save_button(
+                    save_data, fields, widgets, table_name, pk_data, popup, QE
+                )
             popup.open()
 
     async def on_cell_clicked(event):
+        if not edit_mode_enabled.value:
+            return
         row_data = event.args["data"]
         await show_row_edit_popup(row_data)
 
@@ -256,28 +328,58 @@ async def query_editor_page():
             ui.label("Custom:").classes("text-sm font-semibold text-gray-400")
             custom_queries = ui.row().classes("gap-2 flex-wrap")
 
-        # Execute button above editor
-        with ui.row().classes(helpers.UI_STYLES.get_layout_classes("row_end")):
+        with ui.row().classes("w-full justify-between items-center"):
             ui.button(
-                "Execute Query (f5)",
+                "Execute Query (F5)",
                 icon="play_arrow",
                 on_click=lambda: asyncio.create_task(execute_query()),
             ).props("color=primary size=sm")
+            with ui.row().classes("items-center gap-4"):
+                ui.label("Edit Mode:").classes("text-sm text-gray-400")
+                edit_mode_enabled = (
+                    ui.switch(value=True)
+                    .props("color=primary")
+                    .tooltip(
+                        "When ON: Click cells to edit. When OFF: Select ranges to copy-paste"
+                    )
+                )
 
-        # Initial query: prefer 'time' preset if present
-        initial_query = ""
-        try:
-            initial_query = QE.df[QE.df["query_name"] == "time"]["query_sql"].values[0]
-        except Exception:
-            initial_query = ""
+        # Initial query: always use 'time' preset if not saved
+        initial_query = app.storage.user.get("query_editor_query", "")
+        if not initial_query:
+            try:
+                initial_query = QE.df[QE.df["query_name"] == "time"][
+                    "query_sql"
+                ].values[0]
+            except Exception:
+                initial_query = "select * from time order by time_id desc limit 100"
 
         editor = ui.codemirror(
             initial_query, language="SQLite", theme="dracula"
         ).classes("h-48 w-full")
 
+        editor.bind_value(app.storage.user, "query_editor_query")
+
+        # Grid starts empty - will be populated by execute_query
         grid_box = (
             ui.aggrid(
-                {"columnDefs": [{"field": ""}], "rowData": []}, theme="alpine-dark"
+                {
+                    "columnDefs": [{"field": ""}],
+                    "rowData": [],
+                    "defaultColDef": {
+                        "editable": True,
+                        "sortable": True,
+                        "filter": True,
+                        "resizable": True,
+                    },
+                    "enableRangeSelection": True,
+                    "enableCellTextSelection": True,
+                    "suppressRowClickSelection": True,
+                    "enableClipboard": True,
+                    "copyHeadersToClipboard": False,
+                    "suppressCopyRowsToClipboard": True,
+                },
+                theme="alpine-dark",
             )
             .classes("h-96 w-full")
             .on("cellClicked", on_cell_clicked)
@@ -330,13 +432,36 @@ async def query_editor_page():
                         seen[col_lower] = 0
                         unique_cols.append(col_lower)
 
-                grid_box.options["columnDefs"] = [
-                    {"field": unique_cols[i], "headerName": str(col).lower()}
+                # Check edit mode state
+                is_edit_mode = edit_mode_enabled.value
+
+                column_defs = [
+                    {
+                        "field": unique_cols[i],
+                        "headerName": str(col).lower(),
+                        "editable": is_edit_mode,
+                        "sortable": True,
+                        "filter": True,
+                    }
                     for i, col in enumerate(df.columns)
                 ]
+                grid_box.options["columnDefs"] = column_defs
+
+                grid_box.options["enableRangeSelection"] = True
+                grid_box.options["enableClipboard"] = True
+                grid_box.options["suppressRowClickSelection"] = True
+                grid_box.options["suppressCopyRowsToClipboard"] = True
+
                 df.columns = unique_cols
-                grid_box.options["rowData"] = df.to_dict(orient="records")
+                row_data = df.to_dict(orient="records")
+                grid_box.options["rowData"] = row_data
                 grid_box.update()
+
+                # Auto-size columns to fit viewport - use run_method for proper context
+                try:
+                    grid_box.run_method("sizeColumnsToFit")
+                except Exception:
+                    pass  # Silently fail if method not available
             else:
                 LOG.info("Query executed successfully (no result set).")
         except Exception as e:
@@ -358,14 +483,23 @@ async def query_editor_page():
         except Exception:
             pass
 
-    # Keyboard shortcuts
+    # Prevent F5 from refreshing the page using JavaScript
+    ui.run_javascript("""
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
+                e.preventDefault();
+            }
+        });
+    """)
+
+    # Keyboard shortcuts - F5 runs query instead of refreshing
     def handle_key(e: KeyEventArguments):
-        if e.key.f5 and not e.key.shift and e.action.keydown:
+        if e.key.f5 and e.action.keydown:
             asyncio.create_task(execute_query())
         elif e.modifiers.ctrl and e.key.enter and e.action.keydown:
             asyncio.create_task(execute_query())
 
     ui.keyboard(on_key=handle_key)
 
-    # Execute initial query
+    # Execute initial query to populate grid
     asyncio.create_task(execute_query())

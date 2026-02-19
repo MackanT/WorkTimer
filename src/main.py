@@ -151,9 +151,11 @@ def handle_key(e: KeyEventArguments):
             LOG.warning("'h' key was released")
     if e.key == "j" and not e.action.repeat:
         if e.action.keyup:
-            LOG.info("'j' key was released - triggering DevOps incremental refresh")
+            LOG.info(
+                "'j' key was released - triggering DevOps incremental refresh - temp disabled!"
+            )
             # Use central function so the same behavior can be triggered from buttons
-            trigger_devops_incremental_refresh()
+            # trigger_devops_incremental_refresh()
 
 
 def main():

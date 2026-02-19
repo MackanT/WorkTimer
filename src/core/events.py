@@ -234,7 +234,7 @@ class EventBus:
         message: str,
         type_: str = "info",
         position: str = "bottom",
-        close_button: bool = True,
+        close_button: bool = False,
     ):
         """
         Show a notification from any thread.

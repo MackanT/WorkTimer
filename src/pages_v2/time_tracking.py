@@ -2,17 +2,24 @@
 Time Tracking Page
 
 Full time tracking interface with customer/project cards, timers, and DevOps integration.
+- Uses event-driven state updates instead of direct UI mutations
+- State stored in PageState dataclass, UI renders from state
+- Timer changes emit events that trigger state updates
+- Granular updates where possible (update_data) vs full rebuilds (render_ui)
 """
 
-from nicegui import ui, app
+from nicegui import ui
 import asyncio
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Tuple
+from dataclasses import dataclass, field
+from nicegui.events import KeyEventArguments
 
 from ..core import AppCore, get_config_loader
 from ..helpers import UI_STYLES
 from .. import helpers
 from ..ui.dialogs import show_time_entry_dialog
+from ..ui.navigation import create_navigation
 
 
 # ============================================================================
@@ -20,6 +27,65 @@ from ..ui.dialogs import show_time_entry_dialog
 # ============================================================================
 
 TIME_OPTIONS = ["Day", "Week", "Month", "Year", "All-Time", "Custom"]
+
+# ============================================================================
+# State Management
+# ============================================================================
+
+
+@dataclass
+class PageState:
+    """
+    Centralized state for time tracking page.
+
+    UI renders from this state. Updates trigger via events.
+    """
+
+    # Display settings
+    selected_time: str = "Day"
+    date_range: str = ""
+    show_bonus: bool = False
+    edit_mode_enabled: bool = False
+
+    # Sort orders
+    customer_order: list = field(default_factory=list)
+    project_orders: Dict[int, list] = field(default_factory=dict)
+
+    # Data cache (keyed by customer_id and (customer_id, project_id))
+    customer_totals: Dict[int, float] = field(default_factory=dict)
+    project_values: Dict[Tuple[int, int], float] = field(default_factory=dict)
+
+    # UI data (full dataframe cache)
+    ui_data_df = None
+
+    def get_project_value(
+        self, customer_id: int, project_id: int, column_name: str
+    ) -> float:
+        """Get project value from dataframe."""
+        if self.ui_data_df is None:
+            return 0.0
+        row = self.ui_data_df[
+            (self.ui_data_df["customer_id"] == customer_id)
+            & (self.ui_data_df["project_id"] == project_id)
+        ]
+        if row.empty:
+            return 0.0
+        return float(row.iloc[0][column_name])
+
+    def get_customer_total(self, customer_id: int, column_name: str) -> float:
+        """Get customer total from dataframe."""
+        if self.ui_data_df is None:
+            return 0.0
+        return float(
+            self.ui_data_df[self.ui_data_df["customer_id"] == customer_id][
+                column_name
+            ].sum()
+        )
+
+    def update_data(self, df):
+        """Update data cache from new dataframe."""
+        self.ui_data_df = df
+
 
 # ============================================================================
 # Helper Functions
@@ -83,12 +149,14 @@ def create_date_range_picker(on_change_callback) -> tuple:
 # ============================================================================
 
 
+@ui.page("/")
 async def time_tracking_page():
     """
     Main time tracking page
 
     Uses per-client AppCore for isolation while maintaining the original
     customer/project card interface with timers and DevOps integration.
+    uses PageState for all data, events for updates.
     """
     # Get or create app core for this client
     core = AppCore.get_or_create(config_loader=get_config_loader())
@@ -105,30 +173,53 @@ async def time_tracking_page():
     dark = ui.dark_mode()
     dark.enable()
 
+    # Navigation
+    create_navigation()
+
+    from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
+
+    setup_debug_keyboard_handlers(core)
+
+    # ========================================================================
+    # Page State - ALL data stored here, UI renders from this
+    # ========================================================================
+    state = PageState()
+
     # Per-client state for checkbox event handling
     ignore_next_checkbox_event = False
 
-    # Per-client state for sort order editing
-    edit_mode = {"enabled": False}
-    customer_order = []
-    project_orders = {}
+    # ========================================================================
+    # Event Handlers - State Updates
+    # ========================================================================
 
-    # Per-client UI state tracking
-    value_labels = []
-    customer_total_labels = []
+    async def on_timer_started(customer_id: int, project_id: int):
+        """Handle timer start event - update UI data."""
+        core.event_bus.emit(
+            "time_entry_started", customer_id=customer_id, project_id=project_id
+        )
+        await update_tab_indicator_now()
+
+    async def on_timer_stopped(customer_id: int, project_id: int):
+        """Handle timer stop event - refresh data."""
+        core.event_bus.emit(
+            "time_entry_stopped", customer_id=customer_id, project_id=project_id
+        )
+        # Update values incrementally without full rebuild
+        await update_values_only()
+        await update_tab_indicator_now()
 
     # ========================================================================
     # Tab Indicator Update Function
     # ========================================================================
 
     async def update_tab_indicator_now():
-        """Update the active timer indicator (if needed)."""
+        """Update the active timer indicator and emit event."""
         # Check for active timers
         query = "SELECT COUNT(*) as count FROM time WHERE end_time IS NULL"
         result = await QE.query_db(query)
         active_count = result.iloc[0]["count"] if not result.empty else 0
 
-        # Could update a tab indicator here if implemented
+        core.event_bus.emit("active_timer_count_changed", count=active_count)
         return active_count
 
     # ========================================================================
@@ -138,77 +229,96 @@ async def time_tracking_page():
     def set_custom_radio(e):
         """Set time span to Custom when date picker changes."""
         selected_time.value = "Custom"
-        asyncio.create_task(update_ui())
+        state.selected_time = "Custom"
+        asyncio.create_task(update_values_only())
 
     def on_radio_time_change(e):
         """Update date range when time span radio changes."""
-        date_input.value = helpers.get_range_for(selected_time.value)
-        asyncio.create_task(update_ui())
-        core.logger.info(f"Time span changed to: {selected_time.value}")
+        state.selected_time = selected_time.value
+        date_input.value = helpers.get_range_for(state.selected_time)
+        state.date_range = date_input.value
+        asyncio.create_task(update_values_only())
+        core.logger.info(f"Time span changed to: {state.selected_time}")
 
     def on_radio_type_change(e):
         """Refresh UI when display type changes (Time/Bonus)."""
-        asyncio.create_task(update_ui())
+        state.show_bonus = show_bonus_toggle.value
+        asyncio.create_task(update_values_only())  # Only update values, no rebuild
 
     async def toggle_edit_mode():
         """Toggle between normal and edit mode for sorting."""
-        edit_mode["enabled"] = not edit_mode["enabled"]
-        edit_button.props(f"color={'primary' if edit_mode['enabled'] else 'default'}")
-        if edit_mode["enabled"]:
-            edit_button.set_text("Save Order")
+        state.edit_mode_enabled = not state.edit_mode_enabled
+
+        if state.edit_mode_enabled:
             core.event_bus.notify("Edit mode: Use ↑↓ arrows to reorder", type_="info")
+            await render_ui()
+            edit_button.set_text("Save Order")
+            edit_button.props("color=primary")
         else:
             # Save sort order to database
             try:
-                await QE.function_db("save_sort_order", customer_order, project_orders)
-                edit_button.set_text("Edit Order")
+                await QE.function_db(
+                    "save_sort_order", state.customer_order, state.project_orders
+                )
                 core.event_bus.notify(
                     "Sort order saved successfully!", type_="positive"
                 )
             except Exception as e:
                 core.logger.error(f"Error saving sort order: {e}")
-                edit_button.set_text("Edit Order")
                 core.event_bus.notify("Error saving sort order", type_="negative")
-        await render_ui()
+            # Rebuild to show checkboxes
+            await render_ui()
+            edit_button.set_text("Edit Order")
+            edit_button.props("color=default")
 
     # ========================================================================
     # Filter Controls
     # ========================================================================
 
-    # Top row: Time span controls on left, Edit Order button on right
-    with ui.row().classes("w-full justify-between items-center gap-4"):
-        # Left side: Time span controls
-        with ui.row().classes("items-center gap-4"):
-            ui.label("Time Span").classes("items-center")
-            selected_time = (
-                ui.radio(TIME_OPTIONS, value="Day")
-                .props("inline")
-                .classes("items-center")
+    @ui.refreshable
+    def render_controls():
+        """Render control panel - stable across data refreshes."""
+        # Full width container for controls
+        with ui.column().classes("w-full"):
+            # Top row: Time span controls on left, Edit Order button on right
+            with ui.row().classes("w-full items-center gap-4"):
+                # Left side: Time span controls
+                with ui.row().classes("items-center gap-4"):
+                    ui.label("Time Span").classes("items-center")
+                    selected_time = (
+                        ui.radio(TIME_OPTIONS, value="Day")
+                        .props("inline")
+                        .classes("items-center")
+                    )
+                    date_input, date_picker = create_date_range_picker(set_custom_radio)
+
+                # Right side: Edit Order button
+                with ui.row().classes("items-center gap-2 ml-auto"):
+                    ui.icon("info").classes("text-blue-400").tooltip(
+                        "Edit mode allows you to reorder customers and projects using arrow buttons"
+                    )
+                    edit_button = ui.button(
+                        "Edit Order", icon="edit", on_click=toggle_edit_mode
+                    ).props("outline")
+
+            # Bottom row: Display toggle (show bonus instead of time)
+            with ui.row().classes("w-full items-center gap-3 mt-2"):
+                ui.label("Show Bonus").classes("text-sm")
+                show_bonus_toggle = ui.switch(
+                    value=False, on_change=on_radio_type_change
+                )
+                ui.label("(SEK instead of hours)").classes("text-xs text-gray-400")
+
+            ui.separator().classes(
+                f"w-full {UI_STYLES.get_layout_classes('margin_y_2')}"
             )
-            date_input, date_picker = create_date_range_picker(set_custom_radio)
 
-        # Right side: Edit Order button
-        with ui.row().classes("items-center gap-2"):
-            ui.icon("info").classes("text-blue-400").tooltip(
-                "Edit mode allows you to reorder customers and projects using arrow buttons"
-            )
-            edit_button = ui.button(
-                "Edit Order", icon="edit", on_click=toggle_edit_mode
-            ).props("outline")
+        return selected_time, date_input, date_picker, show_bonus_toggle, edit_button
 
-    # Bottom row: Display toggle (show bonus instead of time)
-    with ui.row().classes("w-full items-center gap-3 mt-2"):
-        ui.label("Show Bonus").classes("text-sm")
-        show_bonus_toggle = ui.switch(value=False, on_change=on_radio_type_change)
-        ui.label("(SEK instead of hours)").classes("text-xs text-gray-400")
-
-    ui.separator().classes(UI_STYLES.get_layout_classes("margin_y_2"))
-
-    # Wire up event handlers
-    date_input.value = helpers.get_range_for(selected_time.value)
-    selected_time.on("update:model-value", on_radio_time_change)
-
-    container = ui.element()
+    # Render controls once
+    selected_time, date_input, date_picker, show_bonus_toggle, edit_button = (
+        render_controls()
+    )
 
     # ========================================================================
     # Checkbox Event Handling
@@ -227,9 +337,10 @@ async def time_tracking_page():
         if checked:
             try:
                 await QE.function_db("insert_time_row", customer_id_int, project_id_int)
-                await update_tab_indicator_now()
+                await on_timer_started(customer_id_int, project_id_int)
             except Exception as e:
                 core.logger.error(f"Error starting timer: {e}")
+                core.event_bus.notify(f"Error starting timer: {e}", type_="negative")
             return
 
         # Unchecked - show dialog for saving comment/DevOps
@@ -245,8 +356,14 @@ async def time_tracking_page():
                     git_id=git_id_val,
                     comment=comment,
                 )
+                await on_timer_stopped(customer_id_int, project_id_int)
+
+                core.event_bus.notify("Entry saved successfully!", type_="positive")
+
             except Exception as e:
                 core.logger.error(f"Error saving timer: {e}")
+                core.event_bus.notify(f"Error saving timer: {e}", type_="negative")
+                return
 
             # Save to DevOps if requested
             if store_to_devops and git_id_val and git_id_val > 0:
@@ -263,12 +380,10 @@ async def time_tracking_page():
                     col = "positive" if status else "negative"
                     core.event_bus.notify(msg, type_=col)
 
-            await update_tab_indicator_now()
-
         async def handle_delete():
             """Delete the time entry."""
             await QE.function_db("delete_time_row", customer_id_int, project_id_int)
-            await update_tab_indicator_now()
+            await on_timer_stopped(customer_id_int, project_id_int)
 
         def handle_close():
             """Close dialog without saving - reset checkbox."""
@@ -295,7 +410,7 @@ async def time_tracking_page():
     # ========================================================================
 
     async def get_ui_data():
-        """Fetch UI data for the selected date range."""
+        """Fetch UI data for the selected date range from database."""
         date_range_str = date_input.value
         start_date, end_date = helpers.parse_date_range(date_range_str)
 
@@ -307,26 +422,79 @@ async def time_tracking_page():
             "get_customer_ui_list", start_date=start_date, end_date=end_date
         )
 
+    async def update_data():
+        """
+        Update data state without full UI rebuild.
+
+        Fetches fresh data and updates state. UI uses refreshable sections
+        that react to state changes.
+        """
+        df = await get_ui_data()
+        state.update_data(df)
+        # Trigger refresh of data-bound UI sections
+        project_container.refresh()
+        core.logger.debug("Data updated in state")
+
+    # Storage for label widgets for incremental updates
+    value_label_refs = {}
+    customer_total_label_refs = {}
+
+    async def update_values_only():
+        """
+        Update only the displayed values without rebuilding UI structure.
+
+        Much faster than full rebuild - just updates text in existing labels.
+        Used when toggling time/bonus or after timer stops.
+        """
+        df = await get_ui_data()
+        state.update_data(df)
+
+        # Determine display mode
+        is_time = not state.show_bonus
+        column_name = get_column_name(is_time)
+
+        # Update project value labels
+        for (cust_id, proj_id), label in value_label_refs.items():
+            value = state.get_project_value(cust_id, proj_id, column_name)
+            label.set_text(format_value(value, is_time))
+
+        # Update customer total labels
+        for cust_id, label in customer_total_label_refs.items():
+            total = state.get_customer_total(cust_id, column_name)
+            label.set_text(format_value(total, is_time))
+
+        core.logger.debug("Values updated incrementally")
+
     # ========================================================================
     # Render Functions
     # ========================================================================
 
     async def render_ui():
-        """Render the main time tracking UI, grouped by customer and project."""
-        core.logger.info("Running render_ui (start)")
+        """
+        Render the main time tracking UI, grouped by customer and project.
 
-        value_labels.clear()
-        customer_total_labels.clear()
+        Called only when:
+        - Initial page load
+        - Edit mode toggle (reorder UI changes)
+        - Time range changes (major data change)
+        """
+        core.logger.debug("Running render_ui (full rebuild)")
+
         df = await get_ui_data()
+        state.update_data(df)
         container.clear()
 
+        # Clear label references for new render
+        value_label_refs.clear()
+        customer_total_label_refs.clear()
+
         # Cache display mode
-        is_time = not show_bonus_toggle.value
+        is_time = not state.show_bonus
         column_name = get_column_name(is_time)
 
         def get_total_string(customer_id):
-            """Get formatted total for a customer."""
-            total = df[df["customer_id"] == customer_id][column_name].sum()
+            """Get formatted total for a customer from state."""
+            total = state.get_customer_total(customer_id, column_name)
             return format_value(total, is_time)
 
         async def make_project_row(
@@ -338,7 +506,7 @@ async def time_tracking_page():
                 f"and project_id = {project['project_id']} and end_time is null"
             )
             df_counts = await QE.query_db(sql_query)
-            initial_state = bool(len(df_counts) > 0)
+            initial_state_val = bool(len(df_counts) > 0)
 
             with (
                 ui.row()
@@ -346,11 +514,11 @@ async def time_tracking_page():
                 .style(UI_STYLES.get_inline_style("time_tracking", "project_row"))
             ):
                 # Show arrows in edit mode, checkbox in normal mode
-                if edit_mode["enabled"]:
+                if state.edit_mode_enabled:
 
                     def move_project_up():
                         if project_index > 0:
-                            projects = project_orders[customer_id]
+                            projects = state.project_orders[customer_id]
                             projects[project_index], projects[project_index - 1] = (
                                 projects[project_index - 1],
                                 projects[project_index],
@@ -359,7 +527,7 @@ async def time_tracking_page():
 
                     def move_project_down():
                         if project_index < total_projects - 1:
-                            projects = project_orders[customer_id]
+                            projects = state.project_orders[customer_id]
                             projects[project_index], projects[project_index + 1] = (
                                 projects[project_index + 1],
                                 projects[project_index],
@@ -370,15 +538,17 @@ async def time_tracking_page():
                         ui.button(icon="arrow_upward", on_click=move_project_up).props(
                             "flat dense size=sm"
                         ).classes("text-blue-400").bind_enabled_from(
-                            edit_mode, "enabled", lambda x: x and project_index > 0
+                            state,
+                            "edit_mode_enabled",
+                            lambda x: x and project_index > 0,
                         )
                         ui.button(
                             icon="arrow_downward", on_click=move_project_down
                         ).props("flat dense size=sm").classes(
                             "text-blue-400"
                         ).bind_enabled_from(
-                            edit_mode,
-                            "enabled",
+                            state,
+                            "edit_mode_enabled",
                             lambda x: x and project_index < total_projects - 1,
                         )
                 else:
@@ -386,7 +556,7 @@ async def time_tracking_page():
                         on_change=make_callback(
                             project["customer_id"], project["project_id"]
                         ),
-                        value=initial_state,
+                        value=initial_state_val,
                     )
 
                 ui.label(str(project["project_name"])).classes(
@@ -404,7 +574,7 @@ async def time_tracking_page():
                     .classes(project_value_style["classes"])
                     .style(project_value_style.get("style", ""))
                 )
-                value_labels.append((value_label, customer_id, project["project_id"]))
+                value_label_refs[(customer_id, project["project_id"])] = value_label
 
         async def make_customer_card(
             customer_id, customer_name, group, customer_index=None, total_customers=None
@@ -414,7 +584,7 @@ async def time_tracking_page():
                 ui.card()
                 .classes(UI_STYLES.get_card_classes("xs", "card_padded"))
                 .style(
-                    "display:flex; flex-direction:column; height:calc(100vh - 300px); box-sizing:border-box;"
+                    "display:flex; flex-direction:column; height:calc(100vh - 310px); box-sizing:border-box;"
                 )
             ):
                 with (
@@ -439,27 +609,27 @@ async def time_tracking_page():
                         )
                     ):
                         # Show customer reorder arrows in edit mode
-                        if edit_mode["enabled"]:
+                        if state.edit_mode_enabled:
 
                             def move_customer_up():
                                 if customer_index > 0:
                                     (
-                                        customer_order[customer_index],
-                                        customer_order[customer_index - 1],
+                                        state.customer_order[customer_index],
+                                        state.customer_order[customer_index - 1],
                                     ) = (
-                                        customer_order[customer_index - 1],
-                                        customer_order[customer_index],
+                                        state.customer_order[customer_index - 1],
+                                        state.customer_order[customer_index],
                                     )
                                     asyncio.create_task(render_ui())
 
                             def move_customer_down():
                                 if customer_index < total_customers - 1:
                                     (
-                                        customer_order[customer_index],
-                                        customer_order[customer_index + 1],
+                                        state.customer_order[customer_index],
+                                        state.customer_order[customer_index + 1],
                                     ) = (
-                                        customer_order[customer_index + 1],
-                                        customer_order[customer_index],
+                                        state.customer_order[customer_index + 1],
+                                        state.customer_order[customer_index],
                                     )
                                     asyncio.create_task(render_ui())
 
@@ -469,8 +639,8 @@ async def time_tracking_page():
                                 ).props("flat dense size=sm").classes(
                                     "text-green-400"
                                 ).bind_enabled_from(
-                                    edit_mode,
-                                    "enabled",
+                                    state,
+                                    "edit_mode_enabled",
                                     lambda x: x and customer_index > 0,
                                 )
                                 ui.button(
@@ -478,8 +648,8 @@ async def time_tracking_page():
                                 ).props("flat dense size=sm").classes(
                                     "text-green-400"
                                 ).bind_enabled_from(
-                                    edit_mode,
-                                    "enabled",
+                                    state,
+                                    "edit_mode_enabled",
                                     lambda x: x
                                     and customer_index < total_customers - 1,
                                 )
@@ -490,7 +660,7 @@ async def time_tracking_page():
                             ]
                         ).style("grid-column: 1 / span 2; text-align: left;")
 
-                        label_total = (
+                        customer_total_label = (
                             ui.label(total_string)
                             .classes(
                                 UI_STYLES.get_widget_style(
@@ -503,7 +673,7 @@ async def time_tracking_page():
                                 ).get("style", "")
                             )
                         )
-                        customer_total_labels.append((label_total, customer_id))
+                        customer_total_label_refs[customer_id] = customer_total_label
 
                     ui.separator().classes("w-full border-b border-gray-700 my-2")
 
@@ -514,17 +684,17 @@ async def time_tracking_page():
                         for _, row in customer_projects.iterrows()
                     ]
 
-                    if customer_id not in project_orders:
-                        project_orders[customer_id] = db_ordered
+                    if customer_id not in state.project_orders:
+                        state.project_orders[customer_id] = db_ordered
                     else:
                         # Merge DB changes
-                        existing = project_orders[customer_id]
+                        existing = state.project_orders[customer_id]
                         existing_ids = [p[0] for p in existing]
                         for pid, pname in db_ordered:
                             if pid not in existing_ids:
                                 existing.append((pid, pname))
                         db_ids = [p[0] for p in db_ordered]
-                        project_orders[customer_id] = [
+                        state.project_orders[customer_id] = [
                             p for p in existing if p[0] in db_ids
                         ]
 
@@ -533,7 +703,7 @@ async def time_tracking_page():
                         .classes("w-full overflow-auto flex-1 min-h-0")
                         .style("padding-right: 1rem; scrollbar-gutter: stable;")
                     ):
-                        ordered_projects = project_orders[customer_id]
+                        ordered_projects = state.project_orders[customer_id]
                         total_projects = len(ordered_projects)
                         for proj_idx, (proj_id, proj_name) in enumerate(
                             ordered_projects
@@ -560,11 +730,11 @@ async def time_tracking_page():
         }
 
         # Initialize customer order if needed
-        if not customer_order or set(c[0] for c in customer_order) != set(
+        if not state.customer_order or set(c[0] for c in state.customer_order) != set(
             customers_dict.keys()
         ):
-            customer_order.clear()
-            customer_order.extend(customers_dict.values())
+            state.customer_order.clear()
+            state.customer_order.extend(customers_dict.values())
 
         with container:
             with (
@@ -572,8 +742,10 @@ async def time_tracking_page():
                 .classes(UI_STYLES.get_layout_classes("time_tracking_container"))
                 .style(UI_STYLES.get_inline_style("time_tracking", "container"))
             ):
-                total_customers = len(customer_order)
-                for cust_idx, (customer_id, customer_name) in enumerate(customer_order):
+                total_customers = len(state.customer_order)
+                for cust_idx, (customer_id, customer_name) in enumerate(
+                    state.customer_order
+                ):
                     group = df[df["customer_id"] == customer_id]
                     if not group.empty:
                         await make_customer_card(
@@ -584,35 +756,39 @@ async def time_tracking_page():
                             total_customers=total_customers,
                         )
 
-        core.logger.info("Completed render_ui (end)")
+        core.logger.debug("Completed render_ui (full rebuild)")
 
-    async def update_ui():
-        """Update the UI labels for project and customer totals."""
-        if selected_time.value != "Custom":
-            expected_range = helpers.get_range_for(selected_time.value)
-            if date_input.value != expected_range:
-                date_input.value = expected_range
+    async def refresh_ui():
+        """
+        Refresh UI after data/filter changes.
 
-        df = await get_ui_data()
-        is_time = not show_bonus_toggle.value
-        column_name = get_column_name(is_time)
+        Does a full rebuild for now. In future, could be optimized ## TODO do this!
+        to use refreshable sections for granular updates.
+        """
+        await render_ui()
 
-        # Build lookup
-        df_lookup = {
-            (row["customer_id"], row["project_id"]): row for _, row in df.iterrows()
-        }
+    # ========================================================================
+    # Initialize UI Elements
+    # ========================================================================
 
-        # Update project value labels
-        for value_label, customer_id, project_id in value_labels:
-            row = df_lookup.get((customer_id, project_id))
-            if row is not None:
-                value = row[column_name]
-                value_label.text = format_value(value, is_time)
+    # Wire up event handlers
+    date_input.value = helpers.get_range_for(selected_time.value)
+    state.date_range = date_input.value
+    selected_time.on("update:model-value", on_radio_time_change)
 
-        # Update customer total labels
-        for label_total, customer_id in customer_total_labels:
-            total = df[df["customer_id"] == customer_id][column_name].sum()
-            label_total.text = format_value(total, is_time)
+    # Refreshable container for data updates without full rebuild
+    @ui.refreshable
+    def project_container():
+        """Refreshable container placeholder for future granular updates."""
+        # For now, just a placeholder - full rebuild still used
+        pass
+
+    # Main container for customer cards
+    container = ui.element()
+
+    # Initial data load
+    initial_df = await get_ui_data()
+    state.update_data(initial_df)
 
     # Initial render
     await render_ui()

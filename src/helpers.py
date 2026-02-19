@@ -582,7 +582,7 @@ def date_input(label: str, input_width: str = "w-64") -> ui.input:
     Returns:
         NiceGUI input widget with date picker
     """
-    with ui.input(label).props("readonly").classes(input_width) as date:
+    with ui.input(label).props("readonly outlined").classes(input_width) as date:
         with ui.menu().props("no-parent-event") as menu:
             with ui.date().bind_value(date):
                 with ui.row().classes("justify-end"):
@@ -804,11 +804,11 @@ def make_input_row(
                 default_val = options_val
 
         if ftype == "input":
-            created[fname] = ui.input(label).classes(widget_classes)
+            created[fname] = ui.input(label).props("outlined").classes(widget_classes)
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "text":
-            created[fname] = ui.textarea(label).classes(widget_classes)
+            created[fname] = ui.textarea(label).props("outlined").classes(widget_classes)
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "number":
@@ -818,7 +818,7 @@ def make_input_row(
             number_format = "%.0f" if step >= 1 else "%.1f"
             created[fname] = ui.number(
                 label, min=0, step=step, format=number_format
-            ).classes(widget_classes)
+            ).props("outlined").classes(widget_classes)
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "date":
@@ -826,7 +826,7 @@ def make_input_row(
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "datetime":
-            created[fname] = ui.input(label, placeholder="YYYY-MM-DD HH:MM:SS").classes(
+            created[fname] = ui.input(label, placeholder="YYYY-MM-DD HH:MM:SS").props("outlined").classes(
                 widget_classes
             )
             if default_val is not None:
@@ -855,7 +855,7 @@ def make_input_row(
                 options = []
             # Check if with_input is specified in field config, default to True
             with_input = field.get("with_input", True)
-            select_widget = ui.select(options, label=label, with_input=with_input)
+            select_widget = ui.select(options, label=label, with_input=with_input).props("outlined")
             # If with_input is enabled, check if custom values are allowed
             if with_input:
                 # allow_custom defaults to True for backwards compatibility

@@ -9,7 +9,9 @@ This is the main file doing the following work:
 """
 
 from nicegui import ui
+from nicegui.events import KeyEventArguments
 from dotenv import load_dotenv
+import logging
 
 # Import only what we need for startup
 from src.core import get_config_loader
@@ -63,6 +65,17 @@ def setup_global_ui():
     });
     </script>
     """)
+
+    # Set up keyboard event handler for testing
+    def handle_key(e: KeyEventArguments):
+        if e.key == "j" and not e.action.repeat:
+            if e.action.keyup:
+                # Get a logger and log test message
+                logger = logging.getLogger("KeyHandler")
+                logger.info("This is a test log message triggered by 'j' key")
+                print("[KeyHandler] Test log message sent")
+
+    ui.keyboard(on_key=handle_key)
 
 
 # ============== PAGE ROUTES ==============

@@ -15,6 +15,22 @@ from ..ui.navigation import create_navigation
 def root_page():
     """Root page that hosts sub-pages for a SPA-like navigation."""
 
+    # Inject global styles once — persists for entire SPA session since <head> is
+    # not cleared between sub-page navigations.
+    ui.add_head_html("""
+        <style>
+            /* Softer outlined input borders — lives in root so it persists
+               across all SPA navigation without re-injection.
+               Use full 'border' shorthand to override Quasar's per-side rules. */
+            .q-field--outlined .q-field__control:before {
+                border: 1px solid rgba(255,255,255,0.22) !important;
+            }
+            .q-field--outlined.q-field--focused .q-field__control:before {
+                border-color: rgba(100,181,246,0.65) !important;
+            }
+        </style>
+    """)
+
     # Persistent top navigation
     create_navigation()
 
