@@ -99,8 +99,8 @@ async def add_data_page():
                     await render_entity_tabs(core, "bonus", ["add"])
 
                 # Database tab
-                with ui.tab_panel("database"):
-                    await render_database_tabs(core)
+                # with ui.tab_panel("database"):
+                #     await render_database_tabs(core)
 
     ui.timer(
         0.0,
@@ -146,12 +146,22 @@ async def render_entity_tabs(core: AppCore, entity_type: str, operations: list):
             op_label = op.capitalize()
             ui.tab(op, label=op_label)
 
+    refresh_fns: dict = {}
     with ui.tab_panels(sub_tabs, value=operations[0]).classes("w-full"):
         for op in operations:
             with ui.tab_panel(op):
-                await render_entity_form(
+                refresh_fn = await render_entity_form(
                     core, entity_type, op, entity_config.get(op, {})
                 )
+                refresh_fns[op] = refresh_fn
+
+    async def on_tab_change(e):
+        val = e.args if not isinstance(e.args, dict) else e.args.get("value", "")
+        fn = refresh_fns.get(str(val))
+        if fn:
+            await fn()
+
+    sub_tabs.on("update:model-value", on_tab_change)
 
 
 async def render_entity_form(
@@ -171,13 +181,20 @@ async def render_entity_form(
     helpers.assign_dynamic_options(fields, data_sources=data_sources)
 
     # Create form
-    with ui.card().classes("w-fit ml-0 my-0 p-4"):
+    with (
+        ui.card()
+        .classes("w-fit ml-0 my-0 p-4")
+        .style("max-height: calc(100vh - 200px); overflow-y: auto;")
+    ):
         ui.label(f"{operation.capitalize()} {entity_type.capitalize()}").classes(
             helpers.UI_STYLES.get_layout_classes("title")
         )
 
-        # Create input widgets
-        widgets = helpers.make_input_row(fields)
+        widgets, pending_relations = helpers.make_input_row(
+            fields, defer_parent_wiring=True
+        )
+        if pending_relations:
+            helpers.bind_parent_relations(widgets, pending_relations, {}, data_sources)
 
         # Submit button
         async def on_submit():
@@ -206,10 +223,25 @@ async def render_entity_form(
                 if msg_2:
                     LOG.info(msg_2)
 
-                # Clear form
+                # Clear form values
                 for widget in widgets.values():
                     if hasattr(widget, "value"):
                         widget.value = "" if isinstance(widget.value, str) else None
+
+                if (
+                    hasattr(core, "_entity_refresh_fns")
+                    and entity_type in core._entity_refresh_fns
+                ):
+                    core.logger.debug(f"Refreshing all {entity_type} tabs")
+                    for op, refresh_fn in core._entity_refresh_fns[entity_type].items():
+                        if refresh_fn:
+                            try:
+                                await refresh_fn()
+                                core.logger.debug(f"Refreshed {entity_type}.{op}")
+                            except Exception as e:
+                                core.logger.error(
+                                    f"Error refreshing {entity_type}.{op}: {e}"
+                                )
 
                 # Trigger UI refresh
                 core.event_bus.emit("ui_refresh_requested")
@@ -222,6 +254,19 @@ async def render_entity_form(
             ui.button(
                 action.get("button_name", "Submit"), icon="save", on_click=on_submit
             ).props("color=primary")
+
+    async def refresh_top_level_selects():
+        fresh = await prepare_data_sources(core, entity_type, operation)
+        for f in fields:
+            if f.get("type") == "select" and not f.get("parent"):
+                src = f.get("options_source")
+                if src and src in fresh and isinstance(fresh[src], list):
+                    w = widgets.get(f["name"])
+                    if w and hasattr(w, "options"):
+                        w.options = fresh[src]
+                        w.update()
+
+    return refresh_top_level_selects
 
 
 async def render_devops_tabs(core: AppCore):
@@ -268,8 +313,11 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
             helpers.UI_STYLES.get_card_classes("full", "card").replace(
                 "mx-auto", "ml-0"
             )
+            + " overflow-y-auto"
         )
-        .style("width: 100%; min-width: 0; box-sizing: border-box;")
+        .style(
+            "width: 100%; min-width: 0; box-sizing: border-box; max-height: calc(100vh - 180px);"
+        )
     ):
         ui.label(f"{operation.capitalize()} DevOps Work Item").classes(
             helpers.UI_STYLES.get_layout_classes("title")
@@ -440,9 +488,9 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     data_sources["new_customer_name"] = {}
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
-                        data_sources["org_url"][cname] = [row["org_url"] or ""]
-                        data_sources["pat_token"][cname] = [row["pat_token"] or ""]
-                        data_sources["new_customer_name"][cname] = [cname]
+                        data_sources["org_url"][cname] = row["org_url"] or ""
+                        data_sources["pat_token"][cname] = row["pat_token"] or ""
+                        data_sources["new_customer_name"][cname] = cname
 
             elif operation == "reenable":
                 # Get disabled customers
@@ -473,46 +521,70 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
             )
 
             if operation in ["update", "disable"]:
-                # Get active projects
-                proj_df = await QE.query_db(
-                    "SELECT project_name FROM projects WHERE is_current = 1"
+                # Get active projects grouped by customer (for parent-dependent dropdown)
+                grouped_df = await QE.query_db(
+                    """SELECT p.project_name, c.customer_name
+                       FROM projects p
+                       JOIN customers c ON p.customer_id = c.customer_id
+                       WHERE p.is_current = 1"""
                 )
-                data_sources["project_data"] = (
-                    proj_df["project_name"].tolist() if not proj_df.empty else []
-                )
+                project_names_by_cust: dict = {}
+                for _, row in grouped_df.iterrows():
+                    project_names_by_cust.setdefault(row["customer_name"], []).append(
+                        row["project_name"]
+                    )
+                data_sources["project_names"] = project_names_by_cust
+                # Keep flat list for backward compat
+                data_sources["project_data"] = [
+                    p for lst in project_names_by_cust.values() for p in lst
+                ]
 
                 if operation == "update":
-                    # Get project details per project
+                    # Get project details per project for auto-population
                     full_df = await QE.query_db(
-                        """SELECT p.project_name, c.customer_name, p.project_type 
-                           FROM projects p 
-                           JOIN customers c ON p.customer_id = c.customer_id 
+                        """SELECT p.project_name, p.git_id
+                           FROM projects p
                            WHERE p.is_current = 1"""
                     )
                     data_sources["new_project_name"] = {}
-                    data_sources["customer_names"] = {}
-                    data_sources["project_types"] = {}
+                    data_sources["new_git_id"] = {}
                     for _, row in full_df.iterrows():
                         pname = row["project_name"]
-                        data_sources["new_project_name"][pname] = [pname]
-                        data_sources["customer_names"][pname] = [row["customer_name"]]
-                        data_sources["project_types"][pname] = [
-                            row["project_type"] or ""
-                        ]
+                        # Plain strings/numbers so _update_input_field sets correct values
+                        data_sources["new_project_name"][pname] = pname
+                        git_val = row["git_id"]
+                        data_sources["new_git_id"][pname] = (
+                            int(git_val)
+                            if git_val is not None and git_val == git_val
+                            else 0
+                        )
 
             elif operation == "reenable":
-                # Get disabled projects
-                df = await QE.query_db(
-                    "SELECT DISTINCT project_name FROM projects WHERE is_current = 0"
+                # Disabled projects grouped by customer (exclude any now-active ones)
+                dis_df = await QE.query_db(
+                    """SELECT DISTINCT p.project_name, c.customer_name
+                       FROM projects p
+                       JOIN customers c ON p.customer_id = c.customer_id
+                       WHERE p.is_current = 0"""
                 )
-                active_df = await QE.query_db(
+                active_df2 = await QE.query_db(
                     "SELECT project_name FROM projects WHERE is_current = 1"
                 )
-                active_names = set(
-                    active_df["project_name"].tolist() if not active_df.empty else []
+                active_proj = set(
+                    active_df2["project_name"].tolist() if not active_df2.empty else []
                 )
-                all_disabled = set(df["project_name"].tolist() if not df.empty else [])
-                data_sources["project_data"] = sorted(list(all_disabled - active_names))
+                project_names_by_cust = {}
+                for _, row in (dis_df if not dis_df.empty else dis_df).iterrows():
+                    pname = row["project_name"]
+                    if pname in active_proj:
+                        continue
+                    project_names_by_cust.setdefault(row["customer_name"], []).append(
+                        pname
+                    )
+                data_sources["project_names"] = project_names_by_cust
+                data_sources["project_data"] = [
+                    p for lst in project_names_by_cust.values() for p in lst
+                ]
 
             data_sources["today"] = date.today().isoformat()
 
@@ -634,10 +706,14 @@ async def render_database_tabs(core: AppCore):
     ):
         # Compare tab
         with ui.tab_panel("compare"):
-            with ui.card().classes(
-                helpers.UI_STYLES.get_card_classes("xs", "card").replace(
-                    "mx-auto", "ml-0"
+            with (
+                ui.card()
+                .classes(
+                    helpers.UI_STYLES.get_card_classes("xs", "card").replace(
+                        "mx-auto", "ml-0"
+                    )
                 )
+                .style("max-height: calc(100vh - 200px); overflow-y: auto;")
             ):
                 ui.label(
                     "Upload a .db file to compare with the main database."
@@ -669,10 +745,14 @@ async def render_database_tabs(core: AppCore):
 
         # Update tab
         with ui.tab_panel("update"):
-            with ui.card().classes(
-                helpers.UI_STYLES.get_card_classes("xs", "card").replace(
-                    "mx-auto", "ml-0"
+            with (
+                ui.card()
+                .classes(
+                    helpers.UI_STYLES.get_card_classes("xs", "card").replace(
+                        "mx-auto", "ml-0"
+                    )
                 )
+                .style("max-height: calc(100vh - 200px); overflow-y: auto;")
             ):
                 ui.label("Run SQL queries on uploaded database").classes(
                     helpers.UI_STYLES.get_layout_classes("title")
