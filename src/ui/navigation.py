@@ -14,6 +14,9 @@ def create_navigation() -> None:
 
     Uses app.storage.client to ensure navigation is only created once per client session.
     """
+
+    ui.query(".nicegui-content").classes("p-0 gap-0")
+
     try:
         # Check if navigation already created for this client session
         if app.storage.client.get("navigation_created", False):
@@ -64,7 +67,6 @@ def create_navigation() -> None:
                         icon=item["icon"],
                         on_click=lambda path=item["path"]: ui.navigate.to(path),
                     ).props("flat data-path='{}'".format(item["path"]))
-                    # Default styling (JS will toggle active classes)
                     button.classes("text-gray-300 hover:bg-gray-700")
 
         # Inject JS to update active nav button - use ui.timer to ensure page is ready
@@ -100,7 +102,6 @@ def create_navigation() -> None:
         """),
             once=True,
         )
-        print("[Navigation] Navigation created successfully")
     except Exception as e:
         print(f"[Navigation] ERROR creating navigation: {e}")
         import traceback

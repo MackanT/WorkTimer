@@ -45,4 +45,4 @@ def root_page():
             "/info": info_page,
             "/test": test_page,
         }
-    )
+    ).classes("w-full h-full px-6 py-3 gap-0")

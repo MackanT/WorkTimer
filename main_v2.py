@@ -103,6 +103,7 @@ def setup_global_ui():
 
 def main():
     """Main entry point."""
+
     # Initialize app
     initialize_app()
 

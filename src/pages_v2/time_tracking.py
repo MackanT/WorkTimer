@@ -118,17 +118,21 @@ def create_date_range_picker(on_change_callback) -> tuple:
                 .props("range")
                 .bind_value(
                     date_input,
-                    forward=lambda x: f"{x['from']} - {x['to']}"
-                    if isinstance(x, dict) and x
-                    else x
-                    if isinstance(x, str)
-                    else None,
-                    backward=lambda x: {
-                        "from": x.split(" - ")[0],
-                        "to": x.split(" - ")[1],
-                    }
-                    if " - " in (x or "")
-                    else None,
+                    forward=lambda x: (
+                        f"{x['from']} - {x['to']}"
+                        if isinstance(x, dict) and x
+                        else x
+                        if isinstance(x, str)
+                        else None
+                    ),
+                    backward=lambda x: (
+                        {
+                            "from": x.split(" - ")[0],
+                            "to": x.split(" - ")[1],
+                        }
+                        if " - " in (x or "")
+                        else None
+                    ),
                 )
             )
             with ui.row().classes(UI_STYLES.get_layout_classes("row_end")):
@@ -275,42 +279,52 @@ async def time_tracking_page():
     # Filter Controls
     # ========================================================================
 
-    @ui.refreshable
     def render_controls():
         """Render control panel - stable across data refreshes."""
-        # Full width container for controls
-        with ui.column().classes("w-full"):
-            # Top row: Time span controls on left, Edit Order button on right
-            with ui.row().classes("w-full items-center gap-4"):
-                # Left side: Time span controls
-                with ui.row().classes("items-center gap-4"):
-                    ui.label("Time Span").classes("items-center")
-                    selected_time = (
-                        ui.radio(TIME_OPTIONS, value="Day")
-                        .props("inline")
-                        .classes("items-center")
-                    )
-                    date_input, date_picker = create_date_range_picker(set_custom_radio)
+        with ui.row().classes(
+            "w-full items-center gap-6 px-4 py-3 border-b border-gray-600 -mt-1"
+        ):
+            # Group 1: Time span
+            with ui.element("div").classes("flex items-center gap-2"):
+                ui.label("Time Span").classes(
+                    "text-xs text-gray-400 uppercase tracking-wide whitespace-nowrap"
+                )
+                selected_time = (
+                    ui.radio(TIME_OPTIONS, value="Day")
+                    .props("inline dense")
+                    .classes("items-center")
+                )
 
-                # Right side: Edit Order button
-                with ui.row().classes("items-center gap-2 ml-auto"):
-                    ui.icon("info").classes("text-blue-400").tooltip(
-                        "Edit mode allows you to reorder customers and projects using arrow buttons"
-                    )
-                    edit_button = ui.button(
-                        "Edit Order", icon="edit", on_click=toggle_edit_mode
-                    ).props("outline")
+            ui.element("div").classes("h-6 w-px bg-gray-600")
 
-            # Bottom row: Display toggle (show bonus instead of time)
-            with ui.row().classes("w-full items-center gap-3 mt-2"):
-                ui.label("Show Bonus").classes("text-sm")
+            # Group 2: Date range
+            with ui.element("div").classes("flex items-center gap-2"):
+                ui.label("Range").classes(
+                    "text-xs text-gray-400 uppercase tracking-wide whitespace-nowrap"
+                )
+                date_input, date_picker = create_date_range_picker(set_custom_radio)
+
+            ui.element("div").classes("h-6 w-px bg-gray-600")
+
+            # Group 3: Show Bonus toggle
+            with ui.element("div").classes("flex items-center gap-2"):
+                ui.label("Bonus").classes(
+                    "text-xs text-gray-400 uppercase tracking-wide whitespace-nowrap"
+                )
                 show_bonus_toggle = ui.switch(
                     value=False, on_change=on_radio_type_change
                 )
-                ui.label("(SEK instead of hours)").classes("text-xs text-gray-400")
 
-            ui.separator().classes(
-                f"w-full {UI_STYLES.get_layout_classes('margin_y_2')}"
+            ui.space()
+
+            # Group 4: Edit button
+            edit_button = (
+                ui.button("Edit Order", icon="edit", on_click=toggle_edit_mode)
+                .props("outline")
+                .classes("whitespace-nowrap")
+                .tooltip(
+                    "Edit mode allows you to reorder customers and projects using arrow buttons"
+                )
             )
 
         return selected_time, date_input, date_picker, show_bonus_toggle, edit_button
@@ -510,8 +524,14 @@ async def time_tracking_page():
 
             with (
                 ui.row()
-                .classes(UI_STYLES.get_layout_classes("time_tracking_project_row"))
-                .style(UI_STYLES.get_inline_style("time_tracking", "project_row"))
+                .classes(
+                    UI_STYLES.get_layout_classes("time_tracking_project_row")
+                    + " items-center"
+                )
+                .style(
+                    (UI_STYLES.get_inline_style("time_tracking", "project_row") or "")
+                    + " display: grid; grid-template-columns: auto 1fr auto; gap: 0.5rem; width: 100%;"
+                )
             ):
                 # Show arrows in edit mode, checkbox in normal mode
                 if state.edit_mode_enabled:
@@ -561,6 +581,8 @@ async def time_tracking_page():
 
                 ui.label(str(project["project_name"])).classes(
                     UI_STYLES.get_widget_style("time_tracking_project_name")["classes"]
+                ).style(
+                    "overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
                 )
 
                 value = project[column_name]
@@ -572,7 +594,9 @@ async def time_tracking_page():
                 value_label = (
                     ui.label(f"{total_string}")
                     .classes(project_value_style["classes"])
-                    .style(project_value_style.get("style", ""))
+                    .style(
+                        project_value_style.get("style", "") + " white-space: nowrap;"
+                    )
                 )
                 value_label_refs[(customer_id, project["project_id"])] = value_label
 
@@ -584,13 +608,13 @@ async def time_tracking_page():
                 ui.card()
                 .classes(UI_STYLES.get_card_classes("xs", "card_padded"))
                 .style(
-                    "display:flex; flex-direction:column; height:calc(100vh - 310px); box-sizing:border-box;"
+                    "display:flex; flex-direction:column; height:calc(100vh - 310px); min-width:280px; box-sizing:border-box;"
                 )
             ):
                 with (
                     ui.column()
                     .classes(
-                        f"{UI_STYLES.get_layout_classes('time_tracking_customer_column')} flex-1 min-h-0 overflow-hidden"
+                        f"{UI_STYLES.get_layout_classes('time_tracking_customer_column')} flex-1 min-h-0"
                     )
                     .style(UI_STYLES.get_inline_style("time_tracking", "customer_card"))
                 ):
@@ -608,57 +632,65 @@ async def time_tracking_page():
                             )
                         )
                     ):
-                        # Show customer reorder arrows in edit mode
-                        if state.edit_mode_enabled:
+                        # Left side: arrows (if edit mode) + customer name
+                        with ui.element().style(
+                            "display: flex; align-items: center; gap: 0.25rem; overflow: hidden;"
+                        ):
+                            # Show customer reorder arrows in edit mode
+                            if state.edit_mode_enabled:
 
-                            def move_customer_up():
-                                if customer_index > 0:
-                                    (
-                                        state.customer_order[customer_index],
-                                        state.customer_order[customer_index - 1],
-                                    ) = (
-                                        state.customer_order[customer_index - 1],
-                                        state.customer_order[customer_index],
+                                def move_customer_up():
+                                    if customer_index > 0:
+                                        (
+                                            state.customer_order[customer_index],
+                                            state.customer_order[customer_index - 1],
+                                        ) = (
+                                            state.customer_order[customer_index - 1],
+                                            state.customer_order[customer_index],
+                                        )
+                                        asyncio.create_task(render_ui())
+
+                                def move_customer_down():
+                                    if customer_index < total_customers - 1:
+                                        (
+                                            state.customer_order[customer_index],
+                                            state.customer_order[customer_index + 1],
+                                        ) = (
+                                            state.customer_order[customer_index + 1],
+                                            state.customer_order[customer_index],
+                                        )
+                                        asyncio.create_task(render_ui())
+
+                                with ui.row().classes("gap-0"):
+                                    ui.button(
+                                        icon="arrow_upward", on_click=move_customer_up
+                                    ).props("flat dense size=sm").classes(
+                                        "text-green-400"
+                                    ).bind_enabled_from(
+                                        state,
+                                        "edit_mode_enabled",
+                                        lambda x: x and customer_index > 0,
                                     )
-                                    asyncio.create_task(render_ui())
-
-                            def move_customer_down():
-                                if customer_index < total_customers - 1:
-                                    (
-                                        state.customer_order[customer_index],
-                                        state.customer_order[customer_index + 1],
-                                    ) = (
-                                        state.customer_order[customer_index + 1],
-                                        state.customer_order[customer_index],
+                                    ui.button(
+                                        icon="arrow_downward",
+                                        on_click=move_customer_down,
+                                    ).props("flat dense size=sm").classes(
+                                        "text-green-400"
+                                    ).bind_enabled_from(
+                                        state,
+                                        "edit_mode_enabled",
+                                        lambda x: (
+                                            x and customer_index < total_customers - 1
+                                        ),
                                     )
-                                    asyncio.create_task(render_ui())
 
-                            with ui.row().classes("gap-1 mr-2"):
-                                ui.button(
-                                    icon="arrow_upward", on_click=move_customer_up
-                                ).props("flat dense size=sm").classes(
-                                    "text-green-400"
-                                ).bind_enabled_from(
-                                    state,
-                                    "edit_mode_enabled",
-                                    lambda x: x and customer_index > 0,
-                                )
-                                ui.button(
-                                    icon="arrow_downward", on_click=move_customer_down
-                                ).props("flat dense size=sm").classes(
-                                    "text-green-400"
-                                ).bind_enabled_from(
-                                    state,
-                                    "edit_mode_enabled",
-                                    lambda x: x
-                                    and customer_index < total_customers - 1,
-                                )
-
-                        ui.label(str(customer_name)).classes(
-                            UI_STYLES.get_widget_style("time_tracking_customer_name")[
-                                "classes"
-                            ]
-                        ).style("grid-column: 1 / span 2; text-align: left;")
+                            ui.label(str(customer_name)).classes(
+                                UI_STYLES.get_widget_style(
+                                    "time_tracking_customer_name"
+                                )["classes"]
+                            ).style(
+                                "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;"
+                            )
 
                         customer_total_label = (
                             ui.label(total_string)
@@ -671,6 +703,7 @@ async def time_tracking_page():
                                 UI_STYLES.get_widget_style(
                                     "time_tracking_customer_total"
                                 ).get("style", "")
+                                + " white-space: nowrap;"
                             )
                         )
                         customer_total_label_refs[customer_id] = customer_total_label
@@ -736,12 +769,10 @@ async def time_tracking_page():
             state.customer_order.clear()
             state.customer_order.extend(customers_dict.values())
 
+        # Clear and rebuild container
+        container.clear()
         with container:
-            with (
-                ui.row()
-                .classes(UI_STYLES.get_layout_classes("time_tracking_container"))
-                .style(UI_STYLES.get_inline_style("time_tracking", "container"))
-            ):
+            with ui.row(wrap=False):
                 total_customers = len(state.customer_order)
                 for cust_idx, (customer_id, customer_name) in enumerate(
                     state.customer_order
@@ -779,16 +810,19 @@ async def time_tracking_page():
     # Refreshable container for data updates without full rebuild
     @ui.refreshable
     def project_container():
-        """Refreshable container placeholder for future granular updates."""
-        # For now, just a placeholder - full rebuild still used
         pass
 
-    # Main container for customer cards
-    container = ui.element()
+    ui.query("html").style("overflow: hidden;")
+    ui.query("body").style("overflow: hidden;")
 
-    # Initial data load
+    ## DEBUG: Uncomment to add red outline to all elements for layout debugging
+    # ui.add_css("""
+    #     * { outline: 1px solid red; }
+    # """)
+
+    container = ui.scroll_area().classes("w-full").style("height: calc(100vh - 150px)")
+
     initial_df = await get_ui_data()
     state.update_data(initial_df)
 
-    # Initial render
     await render_ui()
