@@ -13,6 +13,8 @@ from ..config import ConfigLoader
 from ..database import Database
 from ..devops import DevOpsManager
 from .events import PageEventBus
+import asyncio
+from nicegui import ui
 
 # Module-level storage for AppCore instances (per-client, by client ID)
 _app_cores: Dict[str, "AppCore"] = {}
@@ -51,6 +53,9 @@ class AppCore:
         self.devops_contacts = config_loader.get_raw_dict("devops_contacts")
         self.task_visuals = config_loader.get_raw_dict("task_visuals")
         self.debug = self.settings.debug_mode
+
+        self._background_tasks = {}
+        self.theme = config_loader.get_raw_dict("theme")
 
         # Initialize event bus
         self.event_bus = PageEventBus()
@@ -101,18 +106,18 @@ class AppCore:
             root_handler = EventBusLogHandler(self.event_bus)
             root_handler.setLevel(logging.DEBUG if self.debug else logging.INFO)
             root_logger.addHandler(root_handler)
-            
+
             # Add StreamHandler for terminal output
             console_handler = logging.StreamHandler()
             console_handler.setLevel(logging.DEBUG if self.debug else logging.INFO)
             # Format for terminal
             formatter = logging.Formatter(
-                '%(asctime)s | %(levelname)-8s | %(name)-12s :: %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
+                "%(asctime)s | %(levelname)-8s | %(name)-12s :: %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
             )
             console_handler.setFormatter(formatter)
             root_logger.addHandler(console_handler)
-            
+
             root_logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
 
             self.logger.debug("Root logger attached to EventBus and console")
@@ -121,6 +126,7 @@ class AppCore:
             # Non-fatal - log to stderr as fallback
             print(f"Warning: Failed to attach root logger: {e}")
             import traceback
+
             traceback.print_exc()
 
     def _setup_logger(self, name: str) -> logging.Logger:
@@ -240,6 +246,21 @@ class AppCore:
 
         return core
 
+    @classmethod
+    async def get_or_initialize(
+        cls, config_loader: Optional[ConfigLoader] = None
+    ) -> "AppCore":
+        """
+        Get or create AppCore, initialize engines if needed, and apply theme.
+        One-stop shop for page setup.
+        """
+        core = cls.get_or_create(config_loader=config_loader or get_config_loader())
+        if not core._initialized:
+            await core.initialize_engines()
+
+        core.apply_theme()
+
+        return core
 
 # Singleton config loader (configs are immutable, so sharing is safe)
 _config_loader: Optional[ConfigLoader] = None
