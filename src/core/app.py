@@ -262,6 +262,33 @@ class AppCore:
 
         return core
 
+    def _setup_page_timers(self, page_name: str, *task_fns):
+        """
+        Cancel existing tasks for a page and start new ones.
+
+        Args:
+            page_name: Unique identifier for the page (e.g. "time_tracking")
+            *task_fns: Async functions to run as background tasks
+        """
+
+        for task in self._background_tasks.get(page_name, []):
+            if not task.done():
+                self.logger.debug(f"Cancelling task: {task.get_coro().__qualname__}")
+                task.cancel()
+
+        self._background_tasks[page_name] = [
+            asyncio.create_task(fn()) for fn in task_fns
+        ]
+        self.logger.debug(f"Started {len(task_fns)} task(s) for page '{page_name}'")
+
+        ## Debug: Print all current tasks with "value_refresh_timer" in their name
+        # current_tasks = asyncio.all_tasks()
+        # same_name = [
+        #     t
+        #     for t in current_tasks
+        #     if t.get_name() and "value_refresh_timer" in str(t.get_coro().__qualname__)
+        # ]
+        # print(f"Value refresh timer started - {len(same_name)} instance(s) running")
 
     def apply_theme(self):
         """Apply Quasar color theme for current page context."""
