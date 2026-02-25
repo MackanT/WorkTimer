@@ -175,6 +175,27 @@ class VisualConfig(BaseModel):
     color: str = "grey"
 
 
+class ThemeConfig(BaseModel):
+    """Theme configuration for webpage"""
+
+    primary: str = "#fbbf24"  # amber-400
+    secondary: str = "#94a3b8"  # slate-400
+    dark: str = "#1e293b"  # slate-800
+    dark_page: str = "#0f172a"  # slate-950
+
+    positive: str = "#34d399"
+    negative: str = "#f87171"
+    info: str = "#38bdf8"
+    warning: str = "#fbbf24"
+
+    accent: str = "amber-400"
+    muted: str = "slate-400"
+    divider: str = "slate-600"
+    toolbar_bg: str = "slate-800"
+    nav_bg: str = "slate-900"
+    border: str = "amber-500/30"
+
+
 class ConfigTaskVisuals(BaseModel):
     """Task visuals configuration from task_visuals.yml"""
 
@@ -323,6 +344,10 @@ class ConfigLoader:
             self.configs["devops_contacts"] = ConfigDevOpsContacts(
                 customers={}, default=DevOpsContactConfig(contacts=[], assignees=[])
             )
+
+        # Load theme config (required)
+        theme_yaml = self._load_yaml("config_theme.yml", required=True)
+        self.configs["theme"] = ThemeConfig(**theme_yaml)
 
         print("=== Configuration Loading Complete ===\n")
         return self.configs

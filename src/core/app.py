@@ -262,6 +262,25 @@ class AppCore:
 
         return core
 
+
+    def apply_theme(self):
+        """Apply Quasar color theme for current page context."""
+
+        dark = ui.dark_mode()
+        dark.enable()
+
+        ui.colors(
+            primary=self.theme.get("primary"),
+            secondary=self.theme.get("secondary"),
+            dark=self.theme.get("dark"),
+            dark_page=self.theme.get("dark_page"),
+            positive=self.theme.get("positive"),
+            negative=self.theme.get("negative"),
+            info=self.theme.get("info"),
+            warning=self.theme.get("warning"),
+        )
+
+
 # Singleton config loader (configs are immutable, so sharing is safe)
 _config_loader: Optional[ConfigLoader] = None
 
