@@ -5,25 +5,50 @@ Provides a consistent top banner navigation for all pages.
 """
 
 from nicegui import ui, app
-from ..helpers import UI_STYLES
 
 
-def create_navigation() -> None:
+class NavigationBar:
+    """Manages navigation bar state and rendering"""
+
+    def __init__(self):
+        self.buttons = {}
+        self.active_path = None
+        print("CREATE NAV BAR")
+
+    def set_active(self, path: str, theme: dict):
+        """Update the active navigation button"""
+        self.active_path = path
+        nav_active = theme.get("accent")
+        nav_text = theme.get("muted")
+        nav_hover = theme.get("toolbar_bg")
+
+        for btn_path, btn in self.buttons.items():
+            # Remove all potential classes
+            btn.classes(
+                remove=f"bg-{nav_active} text-white text-{nav_text} hover:bg-{nav_hover}"
+            )
+
+            # Apply correct classes
+            if btn_path == path:
+                btn.classes(add=f"bg-{nav_active} text-white")
+            else:
+                btn.classes(add=f"text-{nav_text} hover:bg-{nav_hover}")
+
+
+# Create a global navigation instance
+_nav_bar = NavigationBar()
+
+
+def create_navigation(theme: dict = None) -> None:
     """
     Create the top navigation banner with buttons to all main areas.
-
     Uses app.storage.client to ensure navigation is only created once per client session.
     """
-
     ui.query(".nicegui-content").classes("p-0 gap-0")
 
     try:
-        # Check if navigation already created for this client session
         if app.storage.client.get("navigation_created", False):
-            print("[Navigation] Navigation already created for this client, skipping")
             return
-
-        # Mark as created for this client
         app.storage.client["navigation_created"] = True
 
         # Define navigation items
@@ -52,9 +77,12 @@ def create_navigation() -> None:
             {"label": "Test", "icon": "science", "path": "/test", "key": "test"},
         ]
 
+        nav_text = theme.get("muted")
+        nav_hover = theme.get("toolbar_bg")
+
         # Create header-like navigation bar using regular elements
         with ui.row().classes(
-            "worktimer-navigation w-full items-center justify-between bg-gray-800 px-6 py-3 sticky top-0 z-50 shadow-lg"
+            f"worktimer-navigation w-full items-center justify-between bg-{theme.get('nav_bg')} px-6 py-3 sticky top-0 z-50 shadow-lg"
         ):
             with ui.row().classes("items-center gap-1"):
                 # App title
@@ -62,46 +90,30 @@ def create_navigation() -> None:
 
                 # Navigation buttons
                 for item in nav_items:
+
+                    def create_click_handler(path):
+                        def handler():
+                            _nav_bar.set_active(path, theme)
+                            ui.navigate.to(path)
+
+                        return handler
+
                     button = ui.button(
                         item["label"],
                         icon=item["icon"],
-                        on_click=lambda path=item["path"]: ui.navigate.to(path),
-                    ).props("flat data-path='{}'".format(item["path"]))
-                    button.classes("text-gray-300 hover:bg-gray-700")
+                        on_click=create_click_handler(item["path"]),
+                    ).props("flat")
 
-        # Inject JS to update active nav button - use ui.timer to ensure page is ready
-        ui.timer(
-            0.1,
-            lambda: ui.run_javascript(r"""
-        (function(){
-            function updateNav(){
-                const path = window.location.pathname || '/';
-                document.querySelectorAll('[data-path]').forEach(btn=>{
-                    const p = btn.getAttribute('data-path') || '/';
-                    if(p === path){
-                        btn.classList.add('bg-blue-700','text-white');
-                        btn.classList.remove('text-gray-300','hover:bg-gray-700');
-                    } else {
-                        btn.classList.remove('bg-blue-700','text-white');
-                        btn.classList.add('text-gray-300','hover:bg-gray-700');
-                    }
-                });
-            }
-            updateNav();
-            window.addEventListener('popstate', updateNav);
-            // patch pushState/replaceState to trigger update
-            ['pushState','replaceState'].forEach(fn=>{
-                const orig = history[fn];
-                history[fn] = function(){
-                    const res = orig.apply(this, arguments);
-                    window.dispatchEvent(new Event('popstate'));
-                    return res;
-                }
-            });
-        })();
-        """),
-            once=True,
-        )
+                    button.classes(f"text-{nav_text} hover:bg-{nav_hover}")
+
+                    # Store button reference
+                    _nav_bar.buttons[item["path"]] = button
+
+        # Set initial active state based on current path
+        # Get current path from the page or default to "/"
+        current_path = app.storage.client.get("current_path", "/")
+        _nav_bar.set_active(current_path, theme)
+
     except Exception as e:
         print(f"[Navigation] ERROR creating navigation: {e}")
         import traceback
