@@ -93,11 +93,6 @@ class PageState:
 # ============================================================================
 
 
-# def is_time_display(display_value: bool) -> bool:
-#     """Check if display mode is 'Time' (vs 'Bonus')."""
-#     return not display_value  # Inverted: toggle OFF = show time
-
-
 def format_value(value: float, is_time: bool) -> str:
     """Format a value as time (hours) or bonus (SEK)."""
     return f"{value:.2f} h" if is_time else f"{value:,.0f} SEK"
@@ -166,7 +161,7 @@ async def time_tracking_page():
 
     core = await AppCore.get_or_initialize()
 
-    create_navigation()
+    create_navigation(core.theme)
     setup_debug_keyboard_handlers(core)
 
     # ========================================================================
@@ -305,7 +300,7 @@ async def time_tracking_page():
     def render_controls():
         """Render control panel - stable across data refreshes."""
         with ui.row().classes(
-            f"w-full items-center gap-6 px-6 py-3 bg-{core.theme.get('toolbar_bg')} rounded-lg"  # border-b border-{core.theme.get('border')
+            f"w-full items-center gap-6 px-6 py-3 bg-{core.theme.get('toolbar_bg')} rounded-lg"
         ):
             # Group 1: Time span
             with ui.element("div").classes("flex items-center gap-2"):
