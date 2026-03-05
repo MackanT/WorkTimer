@@ -197,18 +197,21 @@ async def time_tracking_page():
 
     async def value_refresh_timer():
         """Background timer - refreshes values every minute."""
-        while True:
-            try:
+        try:
+            while True:
                 await asyncio.sleep(60)
                 await update_time_tracker()
                 core.logger.debug("Background: Values refreshed (1-minute timer)")
-            except Exception as e:
-                core.logger.error(f"Error in value refresh timer: {e}")
+        except asyncio.CancelledError:
+            core.logger.debug("Value refresh timer cancelled (client disconnected)")
+            return
+        except Exception as e:
+            core.logger.error(f"Error in value refresh timer: {e}")
 
     async def midnight_refresh_timer():
         """Background timer - triggers full refresh at midnight for 'Day' view."""
-        while True:
-            try:
+        try:
+            while True:
                 now = datetime.now()
                 tomorrow = (now + timedelta(days=1)).replace(
                     hour=0, minute=0, second=0, microsecond=0
@@ -225,9 +228,11 @@ async def time_tracking_page():
                     core.event_bus.notify("Date changed to new day", type_="info")
                 else:
                     core.logger.debug("Midnight: Not on Day view, skipping refresh")
-
-            except Exception as e:
-                core.logger.error(f"Error in midnight refresh timer: {e}")
+        except asyncio.CancelledError:
+            core.logger.debug("Midnight refresh timer cancelled (client disconnected)")
+            return
+        except Exception as e:
+            core.logger.error(f"Error in midnight refresh timer: {e}")
 
     # ========================================================================
     # Tab Indicator Update Function
@@ -597,6 +602,7 @@ async def time_tracking_page():
                 .style(
                     "display:flex; flex-direction:column; height:calc(100vh - 220px); min-width:280px; box-sizing:border-box;"
                 )
+                .props("flat")
             ):
                 with (
                     ui.column()

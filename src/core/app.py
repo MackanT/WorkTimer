@@ -239,8 +239,18 @@ class AppCore:
 
         # Clean up when client disconnects
         def cleanup():
+            # Cancel all background tasks for this core
+            for page_name, tasks in list(core._background_tasks.items()):
+                for task in tasks:
+                    if not task.done() and not task.cancelled():
+                        core.logger.debug(f"Cleanup: Cancelling {page_name} task")
+                        task.cancel()
+            core._background_tasks.clear()
+
+            # Remove core instance
             if client_id in _app_cores:
                 del _app_cores[client_id]
+                core.logger.debug(f"Client {client_id} disconnected, core cleaned up")
 
         context.client.on_disconnect(cleanup)
 
@@ -264,22 +274,24 @@ class AppCore:
 
     def _setup_page_timers(self, page_name: str, *task_fns):
         """
-        Cancel existing tasks for a page and start new ones.
+        Cancel existing timers for a page and start new ones.
 
         Args:
             page_name: Unique identifier for the page (e.g. "time_tracking")
             *task_fns: Async functions to run as background tasks
         """
 
-        for task in self._background_tasks.get(page_name, []):
-            if not task.done():
-                self.logger.debug(f"Cancelling task: {task.get_coro().__qualname__}")
-                task.cancel()
+        for timer in self._background_tasks.get(page_name, []):
+            timer.cancel()
 
+        # Start new client-bound tasks using asyncio.create_task
+        # These will be tracked and auto-cancelled on disconnect via cleanup()
         self._background_tasks[page_name] = [
             asyncio.create_task(fn()) for fn in task_fns
         ]
-        self.logger.debug(f"Started {len(task_fns)} task(s) for page '{page_name}'")
+        self.logger.debug(
+            f"Started {len(task_fns)} background task(s) for page '{page_name}'"
+        )
 
         ## Debug: Print all current tasks with "value_refresh_timer" in their name
         # current_tasks = asyncio.all_tasks()
