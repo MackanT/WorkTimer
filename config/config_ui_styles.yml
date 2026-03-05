@@ -59,19 +59,19 @@ container_widths:
 # Common layout class combinations for consistency
 layouts:
   # Form row: horizontal layout with spacing, forced to full width
-  form_row: "w-full gap-4 min-w-0 overflow-hidden"
+  form_row: "w-full gap-4 min-w-0"
 
   # Form column: vertical layout with spacing, forced to full width
-  form_column: "w-full gap-4 min-w-0 overflow-hidden"
+  form_column: "w-full gap-4 min-w-0"
 
-  # Card container: standard card styling with overflow control to respect max-width
-  card: "w-full mx-auto my-0 p-4 overflow-hidden"
+  # Card container: standard card styling
+  card: "w-full mx-auto my-0 p-4"
 
   # Card with extra padding: for important content sections (note: removed conflicting mx-6)
-  card_padded: "w-full mx-auto my-4 p-6 overflow-hidden"
+  card_padded: "w-full mx-auto my-4 p-6"
 
   # Card with vertical margin: for spaced sections
-  card_spaced: "w-full mx-auto my-8 p-4 overflow-hidden"
+  card_spaced: "w-full mx-auto my-8 p-4"
 
   # Button with fixed width: for consistent button sizing
   button_fixed: "w-24"
@@ -101,13 +101,13 @@ layouts:
   time_tracking_customer_column: "items-start"
 
   # Time tracking - customer header row
-  time_tracking_customer_header: "w-full justify-between"
+  time_tracking_customer_header: "w-full items-center"
 
   # Time tracking - project row
   time_tracking_project_row: "items-center w-full"
 
-  # Time tracking - main container row
-  time_tracking_container: "px-4 justify-between overflow-x-auto"
+  # Time tracking - main container row (no overflow here - handled by parent wrapper)
+  time_tracking_container: "px-4 justify-between"
 
   # ===== COMMON UTILITY LAYOUTS =====
   # Full width (static, no flex)
@@ -252,14 +252,14 @@ default_sizes:
 inline_styles:
   # Time tracking module
   time_tracking:
-    # Customer card flex layout
-    customer_card: "flex:1 1 320px; min-width:320px; max-width:420px; margin:0 12px; box-sizing:border-box;"
+    # Customer card flex layout - constrain max width and prevent overflow
+    customer_card: "flex:1 1 320px; min-width:280px; max-width:420px; margin:0 12px; box-sizing:border-box; overflow:hidden;"
     # Main container max width
     container: "flex-wrap:nowrap; width:100%; max-width:1800px; margin:0 auto;"
-    # Customer header row
-    customer_header: "display:flex; align-items:center;"
-    # Project row grid
-    project_row: "display: grid; grid-template-columns: 20px 1fr 100px; align-items: center; margin-bottom:2px; min-height:20px;"
+    # Customer header row - grid layout ensures proper alignment
+    customer_header: "display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: center; width: 100%;"
+    # Project row grid - constrain within card width
+    project_row: "display: grid; grid-template-columns: 20px 1fr 100px; align-items: center; margin-bottom:2px; min-height:20px; width: 100%;"
 
 # ===== LAYOUT MODE DETECTION =====
 # Widget types that trigger "wide layout mode" for their container

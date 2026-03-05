@@ -12,6 +12,7 @@ customer:
         label: Wage
         type: number
         step: 1
+        min: 0
         optional: false
       - name: start_date
         label: Start Date
@@ -119,6 +120,7 @@ project:
         label: "Git ID"
         type: number
         step: 1
+        min: 0
         optional: True
     action:
       function: "insert_project"
@@ -152,6 +154,7 @@ project:
         label: "New Git ID"
         type: number
         step: 1
+        min: 0
         options: []
         options_source: new_git_id
         parent: project_name
@@ -309,11 +312,12 @@ devops_work_item:
         optional: False
         default: True
       - name: description_editor
-        label: Description Editor
-        type: codemirror
-        type_language: markdown
+        label: Description
+        type: editor_with_preview
+        language: markdown
         optional: False
         parent_fields: [source, contact_person]
+        render_function: render_and_sanitize_markdown
         templates:
           Epic: |
             **Created Date:** {today}
@@ -359,20 +363,13 @@ devops_work_item:
 
             ## Validation
 
-      - field_id: description_preview
-        label: Preview
-        type: html
-        optional: True
-        parent: description_editor
-        parent_update: True
-        render_function: render_and_sanitize
     rows:
       - [customer_name, work_item_type, work_item_title]
       - [parent_name, assigned_to]
       - [contact_person, source]
       - [state, priority]
       - [tags]
-      - [description_editor, description_preview]
+      - [description_editor]
     action:
       function: add_work_item
       main_action: Work Item
@@ -422,21 +419,15 @@ devops_work_item:
           - 4
         optional: True
       - name: description_editor
-        label: Description Editor
-        type: codemirror
-        type_language: markdown
+        label: Description
+        type: editor_with_preview
+        language: markdown
         optional: False
-      - name: description_preview
-        label: Preview
-        type: html
-        optional: True
-        parent: description_editor
-        parent_update: True
-        render_function: render_and_sanitize
+        render_function: render_and_sanitize_markdown
     rows:
       - [customer_name, work_item]
       - [state, assigned_to, priority]
-      - [description_editor, description_preview]
+      - [description_editor]
     action:
       function: update_work_item
       main_action: Work Item
@@ -455,6 +446,8 @@ bonus:
       - name: bonus_percent
         label: Bonus Percentage (%)
         type: number
+        step: 1
+        min: 0
         optional: false
       - name: start_date
         label: Start Date

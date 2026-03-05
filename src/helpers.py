@@ -808,7 +808,9 @@ def make_input_row(
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "text":
-            created[fname] = ui.textarea(label).props("outlined").classes(widget_classes)
+            created[fname] = (
+                ui.textarea(label).props("outlined").classes(widget_classes)
+            )
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "number":
@@ -816,9 +818,11 @@ def make_input_row(
             step = field.get("step", 0.1)
             # Format based on step: integers if step >= 1, else 1 decimal place
             number_format = "%.0f" if step >= 1 else "%.1f"
-            created[fname] = ui.number(
-                label, min=0, step=step, format=number_format
-            ).props("outlined").classes(widget_classes)
+            created[fname] = (
+                ui.number(label, min=0, step=step, format=number_format)
+                .props("outlined")
+                .classes(widget_classes)
+            )
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "date":
@@ -826,8 +830,10 @@ def make_input_row(
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "datetime":
-            created[fname] = ui.input(label, placeholder="YYYY-MM-DD HH:MM:SS").props("outlined").classes(
-                widget_classes
+            created[fname] = (
+                ui.input(label, placeholder="YYYY-MM-DD HH:MM:SS")
+                .props("outlined")
+                .classes(widget_classes)
             )
             if default_val is not None:
                 created[fname].value = default_val
@@ -855,7 +861,9 @@ def make_input_row(
                 options = []
             # Check if with_input is specified in field config, default to True
             with_input = field.get("with_input", True)
-            select_widget = ui.select(options, label=label, with_input=with_input).props("outlined")
+            select_widget = ui.select(
+                options, label=label, with_input=with_input
+            ).props("outlined")
             # If with_input is enabled, check if custom values are allowed
             if with_input:
                 # allow_custom defaults to True for backwards compatibility
