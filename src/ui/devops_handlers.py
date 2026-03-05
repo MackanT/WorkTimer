@@ -179,7 +179,6 @@ class DevOpsWorkItemHandlers:
         Set up special event handlers for the Update tab.
 
         Handles:
-        - Description editor/preview synchronization
         - Work item details loading when selection changes
         - Auto-populate state, assigned_to, priority fields
 
@@ -187,17 +186,14 @@ class DevOpsWorkItemHandlers:
             widgets: Dictionary of form widgets
         """
         editor_widget = widgets.get("description_editor")
-        preview_html = widgets.get("description_preview")
         work_item_widget = widgets.get("work_item")
         customer_widget = widgets.get("customer_name")
         state_widget = widgets.get("state")
         assigned_to_widget = widgets.get("assigned_to")
         priority_widget = widgets.get("priority")
 
-        # Note: Preview updates automatically via parent-child binding with polling
-
         # Set up work item details loader
-        if work_item_widget and customer_widget and editor_widget and preview_html:
+        if work_item_widget and customer_widget and editor_widget:
 
             async def load_work_item_details(e):
                 """Load all work item details when work item is selected."""
@@ -235,10 +231,6 @@ class DevOpsWorkItemHandlers:
                             description_clean = html.unescape(description_raw)
 
                         editor_widget.value = description_clean
-                        editor_widget.update()
-                        preview_html.set_content(
-                            helpers.render_and_sanitize_markdown(description_clean)
-                        )
 
                         # Update other fields
                         self._set_widget_value_safe(
