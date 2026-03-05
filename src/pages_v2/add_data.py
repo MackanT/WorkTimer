@@ -8,45 +8,39 @@ Fully config-driven using config_ui.yml structure.
 
 from datetime import date
 from nicegui import ui
-from ..core.app import AppCore, get_config_loader
+from ..core.app import AppCore
 from .. import helpers
 from ..ui.navigation import create_navigation
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
+from ..ui.dynamic_widgets import WIDGET_CLASSES
 
 
 @ui.page("/add_data")
 async def add_data_page():
     """Add Data page - for creating new entities"""
 
-    # Get or create AppCore for this client
-    config_loader = get_config_loader()
-    core = AppCore.get_or_create(config_loader)
+    core = await AppCore.get_or_initialize()
 
-    # Enable dark mode
-    dark = ui.dark_mode()
-    dark.enable()
-
-    # Navigation
-    create_navigation()
-
-    # Initialize engines if needed
-    if not core._initialized:
-        await core.initialize_engines()
+    create_navigation(core.theme)
 
     # Shortcuts
     config_ui = core.config_loader.get_raw_dict("ui")
 
-    # Main content: splitter fills remaining viewport height below nav bar
-    with ui.splitter(value=20).classes("add-data-splitter") as splitter:
-        # Left side: Vertical tabs
-        with splitter.before:
+    # ========================================================================
+    # Toolbar Controls
+    # ========================================================================
+    def render_controls():
+        """Render control panel - stable across data refreshes."""
+        with ui.row().classes(
+            f"w-full items-center gap-6 px-6 py-3 bg-{core.theme.get('toolbar_bg')} rounded-lg"
+        ):
             with (
-                ui.tabs()
-                .props("vertical")
-                .classes(
-                    helpers.UI_STYLES.get_layout_classes("full_width")
-                ) as main_tabs
-            ):
+                ui.tabs(value="customer")
+                .props(
+                    f'horizontal dense active-color="{core.theme.get("accent")}" indicator-color="{core.theme.get("accent")}"'
+                )
+                .classes("text-xs text-white uppercase tracking-wide whitespace-nowrap")
+            ) as main_tabs:
                 # Get icons from config
                 customer_icon = (
                     config_ui.get("customer", {}).get("meta", {}).get("icon", "person")
@@ -64,72 +58,62 @@ async def add_data_page():
                     .get("meta", {})
                     .get("icon", "cloud")
                 )
-
                 ui.tab("customer", label="Customer", icon=customer_icon)
                 ui.tab("project", label="Project", icon=project_icon)
-                ui.tab("devops", label="DevOps", icon=devops_icon)
                 ui.tab("bonus", label="Bonus", icon=bonus_icon)
-                ui.tab("database", label="Database", icon="storage")
+                ui.tab("devops", label="DevOps", icon=devops_icon)
 
-        # Right side: Tab content
-        with splitter.after:
-            with (
-                ui.tab_panels(main_tabs, value="customer")
-                .props("vertical")
-                .classes("w-full h-full overflow-y-auto")
-            ):
-                # Customer tab
-                with ui.tab_panel("customer"):
-                    await render_entity_tabs(
-                        core, "customer", ["add", "update", "disable", "reenable"]
-                    )
+                return main_tabs
 
-                # Project tab
-                with ui.tab_panel("project"):
-                    await render_entity_tabs(
-                        core, "project", ["add", "update", "disable", "reenable"]
-                    )
+    main_tabs = render_controls()
 
-                # DevOps tab
-                with ui.tab_panel("devops"):
-                    await render_devops_tabs(core)
+    # Wire up tab change to trigger refresh
+    async def on_tab_change(e):
+        tab_name = e.value
+        # Refresh all forms in the newly visible tab
+        if (
+            hasattr(core, "_entity_refresh_fns")
+            and tab_name in core._entity_refresh_fns
+        ):
+            for op, refresh_fn in core._entity_refresh_fns[tab_name].items():
+                if refresh_fn:
+                    try:
+                        await refresh_fn()
+                        core.logger.debug(f"Refreshed {tab_name}.{op} on tab change")
+                    except Exception as e:
+                        core.logger.error(f"Error refreshing {tab_name}.{op}: {e}")
 
-                # Bonus tab
-                with ui.tab_panel("bonus"):
-                    await render_entity_tabs(core, "bonus", ["add"])
+    main_tabs.on_value_change(on_tab_change)
 
-                # Database tab
-                # with ui.tab_panel("database"):
-                #     await render_database_tabs(core)
+    with (
+        ui.tab_panels(main_tabs, value="customer")
+        .props("vertical")
+        .classes("w-full")
+        .style(
+            "background: transparent; height: calc(100vh - 150px); max-height: calc(100vh - 150px);"
+        )
+    ):
+        # Customer tab
+        with ui.tab_panel("customer"):
+            await render_entity_tabs(
+                core, "customer", ["add", "update", "disable", "reenable"]
+            )
+        # Project tab
+        with ui.tab_panel("project"):
+            await render_entity_tabs(
+                core, "project", ["add", "update", "disable", "reenable"]
+            )
+        # Bonus tab
+        with ui.tab_panel("bonus"):
+            await render_entity_tabs(core, "bonus", ["add"])
 
-    ui.timer(
-        0.0,
-        lambda: ui.run_javascript("""
-        (function(){
-            function fit() {
-                var nav = document.querySelector('.worktimer-navigation');
-                var sp  = document.querySelector('.add-data-splitter');
-                if (!nav || !sp) return;
-                var top = nav.getBoundingClientRect().bottom;
-                sp.style.setProperty('position', 'fixed', 'important');
-                sp.style.setProperty('top', top + 'px', 'important');
-                sp.style.setProperty('left', '0', 'important');
-                sp.style.setProperty('width', '100vw', 'important');
-                sp.style.setProperty('height', (window.innerHeight - top) + 'px', 'important');
-                sp.style.setProperty('overflow', 'hidden', 'important');
-                sp.style.setProperty('z-index', '10', 'important');
-            }
-            fit();
-            // Replace resize handler on each page render (handles re-navigation)
-            if (window._addDataResizeHandler) {
-                window.removeEventListener('resize', window._addDataResizeHandler);
-            }
-            window._addDataResizeHandler = function() { fit(); };
-            window.addEventListener('resize', window._addDataResizeHandler);
-        })();
-        """),
-        once=True,
-    )
+        # DevOps tab
+        with ui.tab_panel("devops"):
+            await render_devops_tabs(core)
+
+        # Database tab
+        # with ui.tab_panel("database"):
+        #     await render_database_tabs(core)
 
 
 async def render_entity_tabs(core: AppCore, entity_type: str, operations: list):
@@ -137,31 +121,18 @@ async def render_entity_tabs(core: AppCore, entity_type: str, operations: list):
     config_ui = core.config_loader.get_raw_dict("ui")
     entity_config = config_ui.get(entity_type, {})
 
-    with (
-        ui.tabs()
-        .props("inline-label align=left scrollable dense")
-        .classes("w-full") as sub_tabs
-    ):
+    # Initialize storage for refresh functions if not exists
+    if not hasattr(core, "_entity_refresh_fns"):
+        core._entity_refresh_fns = {}
+    if entity_type not in core._entity_refresh_fns:
+        core._entity_refresh_fns[entity_type] = {}
+
+    with ui.row(wrap=False):
         for op in operations:
-            op_label = op.capitalize()
-            ui.tab(op, label=op_label)
-
-    refresh_fns: dict = {}
-    with ui.tab_panels(sub_tabs, value=operations[0]).classes("w-full"):
-        for op in operations:
-            with ui.tab_panel(op):
-                refresh_fn = await render_entity_form(
-                    core, entity_type, op, entity_config.get(op, {})
-                )
-                refresh_fns[op] = refresh_fn
-
-    async def on_tab_change(e):
-        val = e.args if not isinstance(e.args, dict) else e.args.get("value", "")
-        fn = refresh_fns.get(str(val))
-        if fn:
-            await fn()
-
-    sub_tabs.on("update:model-value", on_tab_change)
+            refresh_fn = await render_entity_form(
+                core, entity_type, op, entity_config.get(op, {})
+            )
+            core._entity_refresh_fns[entity_type][op] = refresh_fn
 
 
 async def render_entity_form(
@@ -180,93 +151,182 @@ async def render_entity_form(
     # Assign dynamic options to fields
     helpers.assign_dynamic_options(fields, data_sources=data_sources)
 
+    # Submit button
+    async def on_submit():
+        # Validate required fields
+        required_fields = [f["name"] for f in fields if not f.get("optional", False)]
+        if not helpers.check_input(widgets, required_fields):
+            return
+
+        # Gather values
+        kwargs = {name: widget.value for name, widget in widgets.items()}
+
+        try:
+            # Call database function
+            await QE.function_db(action["function"], **kwargs)
+
+            # Success message
+            msg_1, msg_2 = helpers.print_success(
+                entity_type,
+                kwargs[action["main_param"]],
+                action["secondary_action"],
+                widgets,
+            )
+            LOG.info(msg_1)
+            if msg_2:
+                LOG.info(msg_2)
+
+            # Clear form values
+            for widget in widgets.values():
+                if hasattr(widget, "value"):
+                    widget.value = "" if isinstance(widget.value, str) else None
+
+            if (
+                hasattr(core, "_entity_refresh_fns")
+                and entity_type in core._entity_refresh_fns
+            ):
+                core.logger.debug(f"Refreshing all {entity_type} tabs")
+                for op, refresh_fn in core._entity_refresh_fns[entity_type].items():
+                    if refresh_fn:
+                        try:
+                            await refresh_fn()
+                            core.logger.debug(f"Refreshed {entity_type}.{op}")
+                        except Exception as e:
+                            core.logger.error(
+                                f"Error refreshing {entity_type}.{op}: {e}"
+                            )
+
+            # Trigger UI refresh
+            core.event_bus.emit("ui_refresh_requested")
+
+        except Exception as e:
+            LOG.error(f"Error in {operation} {entity_type}: {e}")
+            ui.notify(f"Error: {e}", type="negative")
+
     # Create form
     with (
         ui.card()
-        .classes("w-fit ml-0 my-0 p-4")
-        .style("max-height: calc(100vh - 200px); overflow-y: auto;")
+        .classes(helpers.UI_STYLES.get_card_classes("xs", "card_padded"))
+        .style(
+            "display:flex; flex-direction:column; height:calc(100vh - 220px); min-width:280px; box-sizing:border-box;"
+        )
+        .props("flat")
     ):
-        ui.label(f"{operation.capitalize()} {entity_type.capitalize()}").classes(
-            helpers.UI_STYLES.get_layout_classes("title")
-        )
-
-        widgets, pending_relations = helpers.make_input_row(
-            fields, defer_parent_wiring=True
-        )
-        if pending_relations:
-            helpers.bind_parent_relations(widgets, pending_relations, {}, data_sources)
-
-        # Submit button
-        async def on_submit():
-            # Validate required fields
-            required_fields = [
-                f["name"] for f in fields if not f.get("optional", False)
-            ]
-            if not helpers.check_input(widgets, required_fields):
-                return
-
-            # Gather values
-            kwargs = {name: widget.value for name, widget in widgets.items()}
-
-            try:
-                # Call database function
-                await QE.function_db(action["function"], **kwargs)
-
-                # Success message
-                msg_1, msg_2 = helpers.print_success(
-                    entity_type,
-                    action["main_param"],
-                    action["secondary_action"],
-                    widgets,
+        with (
+            ui.column()
+            .classes(
+                f"{helpers.UI_STYLES.get_layout_classes('time_tracking_customer_column')} flex-1 min-h-0"
+            )
+            .style(helpers.UI_STYLES.get_inline_style("time_tracking", "customer_card"))
+        ):
+            with (
+                ui.row()
+                .classes(
+                    helpers.UI_STYLES.get_layout_classes(
+                        "time_tracking_customer_header"
+                    )
                 )
-                LOG.info(msg_1)
-                if msg_2:
-                    LOG.info(msg_2)
-
-                # Clear form values
-                for widget in widgets.values():
-                    if hasattr(widget, "value"):
-                        widget.value = "" if isinstance(widget.value, str) else None
-
-                if (
-                    hasattr(core, "_entity_refresh_fns")
-                    and entity_type in core._entity_refresh_fns
+                .style(
+                    helpers.UI_STYLES.get_inline_style(
+                        "time_tracking", "customer_header"
+                    )
+                )
+            ):
+                with ui.element().style(
+                    "display: flex; align-items: center; gap: 0.25rem; overflow: hidden;"
                 ):
-                    core.logger.debug(f"Refreshing all {entity_type} tabs")
-                    for op, refresh_fn in core._entity_refresh_fns[entity_type].items():
-                        if refresh_fn:
-                            try:
-                                await refresh_fn()
-                                core.logger.debug(f"Refreshed {entity_type}.{op}")
-                            except Exception as e:
-                                core.logger.error(
-                                    f"Error refreshing {entity_type}.{op}: {e}"
-                                )
+                    ui.label(f"{operation.capitalize()}").classes(
+                        helpers.UI_STYLES.get_widget_style(
+                            "time_tracking_customer_name"
+                        )["classes"]
+                    ).style(
+                        "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;"
+                    )
 
-                # Trigger UI refresh
-                core.event_bus.emit("ui_refresh_requested")
+                    ui.space()
 
-            except Exception as e:
-                LOG.error(f"Error in {operation} {entity_type}: {e}")
-                ui.notify(f"Error: {e}", type="negative")
+                    ui.button(
+                        icon="save",
+                        on_click=on_submit,
+                    ).props("color=primary")
 
-        with ui.row().classes("gap-2 mt-4"):
-            ui.button(
-                action.get("button_name", "Submit"), icon="save", on_click=on_submit
-            ).props("color=primary")
+            ui.separator().classes(
+                f"w-full border-b border-{core.theme.get('divider')} my-2"
+            )
 
-    async def refresh_top_level_selects():
-        fresh = await prepare_data_sources(core, entity_type, operation)
-        for f in fields:
-            if f.get("type") == "select" and not f.get("parent"):
-                src = f.get("options_source")
-                if src and src in fresh and isinstance(fresh[src], list):
-                    w = widgets.get(f["name"])
-                    if w and hasattr(w, "options"):
-                        w.options = fresh[src]
-                        w.update()
+            # Create data fetcher for dynamic widgets
+            async def data_fetcher(source_key, parent_val=None):
+                """Fetch fresh data from database"""
+                fresh = await prepare_data_sources(core, entity_type, operation)
+                if source_key not in fresh:
+                    return [] if parent_val is not None else ""
 
-    return refresh_top_level_selects
+                data = fresh[source_key]
+
+                # Handle nested data (parent-child relationship)
+                if parent_val and isinstance(data, dict):
+                    return data.get(parent_val, [])
+                elif isinstance(data, list):
+                    return data
+                elif isinstance(data, dict):
+                    return data  # Top-level dict source
+                return [] if parent_val is not None else ""
+
+            # Create all widgets using dynamic widget system
+            widgets = {}
+            dynamic_widgets = []  # Track for refresh
+            parent_map = {}  # Map field names to their widget instances
+
+            for field in fields:
+                field_type = field.get("type", "input")
+                field_name = field["name"]
+                parent_field = field.get("parent")
+                parent_widget = parent_map.get(parent_field) if parent_field else None
+
+                # Get widget class from registry
+                widget_class = WIDGET_CLASSES.get(field_type)
+                if not widget_class:
+                    # Fallback to standard helper for unknown types
+                    LOG.warning(f"Unknown field type '{field_type}', using fallback")
+                    fallback_widgets, _ = helpers.make_input_row(
+                        [field], defer_parent_wiring=True
+                    )
+                    widgets.update(fallback_widgets)
+                    continue
+
+                # Get widget width classes
+                widget_width = helpers.UI_STYLES.get_widget_width(
+                    field.get("size", "standard")
+                )
+
+                # Create dynamic widget instance
+                dw = widget_class(
+                    name=field_name,
+                    data_fetcher=data_fetcher,
+                    options_source=field.get("options_source", ""),
+                    parent=parent_widget,
+                    label=field.get("label", field_name),
+                    initial_value=field.get("default"),
+                    field_config=field,
+                )
+
+                # Apply widget width styling
+                dw.widget.classes(widget_width)
+
+                widgets[field_name] = dw
+                parent_map[field_name] = dw
+                dynamic_widgets.append(dw)
+
+    async def refresh_all_widgets():
+        """Refresh all dynamic widgets"""
+        try:
+            for dw in dynamic_widgets:
+                await dw.refresh()
+            core.logger.debug(f"Refreshed all widgets for {entity_type}.{operation}")
+        except Exception as e:
+            core.logger.error(f"Error refreshing {entity_type}.{operation}: {e}")
+
+    return refresh_all_widgets
 
 
 async def render_devops_tabs(core: AppCore):
@@ -304,20 +364,14 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
     # Assign dynamic options to field configs
     helpers.assign_dynamic_options(fields, data_sources=data_sources)
 
-    render_functions = {"render_and_sanitize": helpers.render_and_sanitize_markdown}
-
     # Use a full-width card so the editor + preview can sit side by side
     with (
         ui.card()
-        .classes(
-            helpers.UI_STYLES.get_card_classes("full", "card").replace(
-                "mx-auto", "ml-0"
-            )
-            + " overflow-y-auto"
-        )
+        .classes("overflow-y-auto w-full")
         .style(
-            "width: 100%; min-width: 0; box-sizing: border-box; max-height: calc(100vh - 180px);"
+            "max-height: calc(100vh - 180px); padding: 1rem; box-sizing: border-box;"
         )
+        .props("flat")
     ):
         ui.label(f"{operation.capitalize()} DevOps Work Item").classes(
             helpers.UI_STYLES.get_layout_classes("title")
@@ -331,9 +385,41 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
 
         rows_layout = form_config.get("rows", [])
         widgets: dict = {}
-        pending_relations: list = []
+        dynamic_widgets: list = []
+        parent_map: dict = {}
+
+        # Data fetcher for DevOps widgets
+        async def devops_data_fetcher(source_key, parent_val=None):
+            """Fetch fresh data from database for DevOps forms"""
+            if source_key not in data_sources:
+                return [] if parent_val is not None else ""
+
+            data = data_sources[source_key]
+
+            # Special handling for parent_names nested structure
+            if source_key == "parent_names" and isinstance(data, dict) and parent_val:
+                # data is {customer: {type: [list]}}
+                customer_dict = data.get(parent_val, {})
+                if isinstance(customer_dict, dict):
+                    # Flatten all parent options across all work item types
+                    all_parents = []
+                    for type_key, parent_list in customer_dict.items():
+                        if isinstance(parent_list, list):
+                            all_parents.extend(parent_list)
+                    return list(set(all_parents))  # Remove duplicates
+                return customer_dict if isinstance(customer_dict, list) else []
+
+            # Handle nested data (parent-child relationship)
+            if parent_val and isinstance(data, dict):
+                return data.get(parent_val, [])
+            elif isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                return data
+            return [] if parent_val is not None else ""
 
         if rows_layout:
+            # Determine if any field has wide layout
             has_wide_layout = any(
                 helpers.UI_STYLES.is_wide_widget(
                     next(
@@ -372,36 +458,95 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
                         continue
 
                     is_single_field = len(row_field_configs) == 1
-                    # Use "full" (w-full flex-1) when wide layout is active OR only one field
                     widget_size = (
-                        "full" if (has_wide_layout or is_single_field) else None
+                        "full" if (has_wide_layout or is_single_field) else "standard"
                     )
 
                     with ui.row().classes(
                         helpers.UI_STYLES.get_layout_classes("form_row")
                     ):
-                        _, rels = helpers.make_input_row(
-                            row_field_configs,
-                            layout_mode=widget_size,
-                            widgets=widgets,
-                            defer_parent_wiring=True,
-                            render_functions=render_functions,
-                        )
-                        pending_relations.extend(rels)
-        else:
-            with ui.column():
-                _, rels = helpers.make_input_row(
-                    fields,
-                    widgets=widgets,
-                    defer_parent_wiring=True,
-                    render_functions=render_functions,
-                )
-                pending_relations.extend(rels)
+                        for field in row_field_configs:
+                            field_type = field.get("type", "input")
+                            field_name = field.get("name") or field.get("field_id")
+                            parent_field = field.get("parent")
+                            parent_widget = (
+                                parent_map.get(parent_field) if parent_field else None
+                            )
 
-        if pending_relations:
-            helpers.bind_parent_relations(
-                widgets, pending_relations, render_functions, data_sources
-            )
+                            # Get widget class from registry
+                            widget_class = WIDGET_CLASSES.get(field_type)
+                            if not widget_class:
+                                LOG.warning(
+                                    f"Unknown field type '{field_type}', skipping {field_name}"
+                                )
+                                continue
+
+                            # Get widget width classes
+                            widget_width = helpers.UI_STYLES.get_widget_width(
+                                field.get("size", widget_size)
+                            )
+
+                            # Create dynamic widget instance
+                            dw = widget_class(
+                                name=field_name,
+                                data_fetcher=devops_data_fetcher,
+                                options_source=field.get("options_source", ""),
+                                parent=parent_widget,
+                                label=field.get("label", field_name),
+                                initial_value=field.get("default"),
+                                field_config=field,
+                            )
+
+                            # Apply widget width styling
+                            dw.widget.classes(widget_width)
+
+                            widgets[field_name] = dw
+                            parent_map[field_name] = dw
+                            dynamic_widgets.append(dw)
+        else:
+            # No row layout - create widgets in single column
+            with ui.column():
+                for field in fields:
+                    field_type = field.get("type", "input")
+                    field_name = field.get("name") or field.get("field_id")
+                    parent_field = field.get("parent")
+                    parent_widget = (
+                        parent_map.get(parent_field) if parent_field else None
+                    )
+
+                    # Get widget class from registry
+                    widget_class = WIDGET_CLASSES.get(field_type)
+                    if not widget_class:
+                        LOG.warning(
+                            f"Unknown field type '{field_type}', skipping {field_name}"
+                        )
+                        continue
+
+                    # Get widget width classes
+                    widget_width = helpers.UI_STYLES.get_widget_width(
+                        field.get("size", "standard")
+                    )
+
+                    # Create dynamic widget instance
+                    dw = widget_class(
+                        name=field_name,
+                        data_fetcher=devops_data_fetcher,
+                        options_source=field.get("options_source", ""),
+                        parent=parent_widget,
+                        label=field.get("label", field_name),
+                        initial_value=field.get("default"),
+                        field_config=field,
+                    )
+
+                    # Apply widget width styling
+                    dw.widget.classes(widget_width)
+
+                    widgets[field_name] = dw
+                    parent_map[field_name] = dw
+                    dynamic_widgets.append(dw)
+
+        # Set up template handling for codemirror widgets
+        helpers.setup_template_handling(widgets)
 
         devops_handlers_setup = DevOpsWorkItemHandlers(DO, LOG)
         if operation == "add":
