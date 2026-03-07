@@ -46,7 +46,7 @@ class DevOpsWorkItemHandlers:
         # Build additional fields
         additional_fields = {
             "System.State": wid["state"],
-            "System.Tags": ", ".join([t for t in wid.get("tags", [])]),
+            "System.Tags": wid.get("tags", ""),
             "Microsoft.VSTS.Common.Priority": int(wid["priority"]),
             "System.AssignedTo": wid.get("assigned_to", ""),
         }
