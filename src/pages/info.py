@@ -6,8 +6,7 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 """
 
 from nicegui import ui
-from ..core.app import AppCore, get_config_loader
-from ..ui.navigation import create_navigation
+from ..core.app import AppCore
 
 
 @ui.page("/info")
@@ -15,17 +14,11 @@ async def info_page():
     """Info page - displays application information"""
 
     # Get or create AppCore for this client
-    config_loader = get_config_loader()
-    core = AppCore.get_or_create(config_loader)
-
-    dark = ui.dark_mode()
-    dark.enable()
-
-    # Navigation
-    create_navigation()
+    core = AppCore.get_or_create()
 
     # Setup debug keyboard handlers
     from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
+
     setup_debug_keyboard_handlers(core)
 
     if not core._initialized:

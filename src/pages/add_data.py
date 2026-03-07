@@ -10,7 +10,6 @@ from datetime import date
 from nicegui import ui
 from ..core.app import AppCore
 from .. import helpers
-from ..ui.navigation import create_navigation
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
 
@@ -19,8 +18,7 @@ from ..ui.dynamic_widgets import WIDGET_CLASSES
 async def add_data_page():
     """Add Data page - for creating new entities"""
 
-    core = await AppCore.get_or_initialize()
-    create_navigation(core.theme)
+    core = AppCore.get_or_create()
 
     # Shortcuts
     config_ui = core.ui_config if hasattr(core, "ui_config") else {}

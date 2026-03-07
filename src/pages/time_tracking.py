@@ -18,7 +18,6 @@ from ..core import AppCore
 from ..helpers import UI_STYLES, extract_devops_id
 from .. import helpers
 
-from ..ui.navigation import create_navigation
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 
 # ============================================================================
@@ -157,8 +156,7 @@ async def time_tracking_page():
     uses PageState for all data, events for updates.
     """
 
-    core = await AppCore.get_or_initialize()
-    create_navigation(core.theme)
+    core = AppCore.get_or_create()
     setup_debug_keyboard_handlers(core)
 
     # ========================================================================

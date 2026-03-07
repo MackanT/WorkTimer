@@ -9,10 +9,8 @@ from datetime import datetime
 from ..globals import LOG_COLORS
 
 from nicegui import ui
-from ..core.app import AppCore, get_config_loader
-
+from ..core.app import AppCore
 from ..helpers import UI_STYLES
-from ..ui.navigation import create_navigation
 
 
 ### TODO move out of here!
@@ -24,14 +22,7 @@ async def log_page():
     """Log page - displays application logs"""
 
     # Get or create AppCore for this client
-    config_loader = get_config_loader()
-    core = AppCore.get_or_create(config_loader=config_loader)
-
-    dark = ui.dark_mode()
-    dark.enable()
-
-    # Navigation
-    create_navigation()
+    core = AppCore.get_or_create()
 
     from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 

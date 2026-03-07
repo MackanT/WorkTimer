@@ -12,7 +12,6 @@ from nicegui.events import KeyEventArguments
 from ..core.app import AppCore
 from ..globals import SaveData
 from .. import helpers
-from ..ui.navigation import create_navigation
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 
 
@@ -20,8 +19,7 @@ from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 async def query_editor_page():
     """Query Editor page - for running SQL queries"""
 
-    core = await AppCore.get_or_initialize()
-    create_navigation(core.theme)
+    core = AppCore.get_or_create()
 
     setup_debug_keyboard_handlers(core)
 

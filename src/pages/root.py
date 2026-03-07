@@ -6,19 +6,17 @@ from . import (
     add_data_page,
     tasks_page,
     info_page,
-    test_page,
+    # test_page,
 )
-from ..ui.navigation import create_navigation
-from ..core import get_config_loader
+from ..core.app import AppCore
 
 
 @ui.page("/")
 async def root_page():
     """Root page that hosts sub-pages for a SPA-like navigation."""
-    theme = get_config_loader().get_raw_dict("theme")
 
-    # Persistent top navigation
-    create_navigation(theme)
+    core = await AppCore.get_or_initialize()
+    core.nav_bar.render()
 
     # Define sub-pages mapping - paths are relative to root
     ui.sub_pages(
@@ -29,6 +27,6 @@ async def root_page():
             "/tasks": tasks_page,
             "/log": log_page,
             "/info": info_page,
-            "/test": test_page,
+            # "/test": test_page,
         }
     ).classes("w-full h-full px-6 py-3 gap-0")

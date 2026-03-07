@@ -12,6 +12,7 @@ from nicegui import app
 from ..config import ConfigLoader
 from ..database import Database
 from ..devops import DevOpsManager
+from ..ui.elements import NavigationBar
 from .events import PageEventBus
 import asyncio
 from nicegui import ui
@@ -56,6 +57,8 @@ class AppCore:
 
         self._background_tasks = {}
         self.theme = config_loader.get_raw_dict("theme")
+
+        self.nav_bar = NavigationBar(theme=self.theme)
 
         # Initialize event bus
         self.event_bus = PageEventBus()
@@ -269,6 +272,7 @@ class AppCore:
             await core.initialize_engines()
 
         core.apply_theme()
+        # core.nav_bar.render()
 
         return core
 

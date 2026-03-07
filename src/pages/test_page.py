@@ -12,9 +12,8 @@ Run main.py and navigate to http://localhost:8080/test
 
 from nicegui import ui, app
 from datetime import datetime
+from ..core.app import AppCore
 import asyncio
-from ..core import AppCore, get_config_loader
-from ..ui.navigation import create_navigation
 from ..services import DatabaseService
 
 
@@ -23,13 +22,7 @@ async def test_page():
     """Test page demonstrating V2 architecture features."""
 
     # Get app core (per-client instance)
-    core = AppCore.get_or_create(get_config_loader())
-
-    dark = ui.dark_mode()
-    dark.enable()
-
-    # Navigation
-    create_navigation()
+    core = AppCore.get_or_create()
 
     # Setup debug keyboard handlers
     from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
