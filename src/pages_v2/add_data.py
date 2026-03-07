@@ -20,11 +20,10 @@ async def add_data_page():
     """Add Data page - for creating new entities"""
 
     core = await AppCore.get_or_initialize()
-
     create_navigation(core.theme)
 
     # Shortcuts
-    config_ui = core.config_loader.get_raw_dict("ui")
+    config_ui = core.ui_config if hasattr(core, "ui_config") else {}
 
     # ========================================================================
     # Toolbar Controls
@@ -108,7 +107,7 @@ async def add_data_page():
             await render_entity_tabs(core, "bonus", ["add"])
 
         # DevOps tab
-        with ui.tab_panel("devops"):
+        with ui.tab_panel("devops").classes("p-0"):
             await render_devops_tabs(core)
 
         # Database tab
@@ -342,11 +341,15 @@ async def render_devops_tabs(core: AppCore):
         ui.tab("add", label="Add")
         ui.tab("update", label="Update")
 
-    with ui.tab_panels(sub_tabs, value="add").classes("w-full"):
-        with ui.tab_panel("add"):
+    with (
+        ui.tab_panels(sub_tabs, value="add")
+        .classes("w-full p-0")
+        .style("background: transparent;")
+    ):
+        with ui.tab_panel("add").classes("p-0"):
             await render_devops_form(core, "add", devops_config.get("add", {}))
 
-        with ui.tab_panel("update"):
+        with ui.tab_panel("update").classes("p-0"):
             await render_devops_form(core, "update", devops_config.get("update", {}))
 
 
@@ -358,16 +361,13 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
     fields = form_config.get("fields", [])
     action = form_config.get("action", {})
 
-    # Prepare DevOps-specific data
     data_sources = await prepare_devops_data_sources(core, operation)
-
-    # Assign dynamic options to field configs
     helpers.assign_dynamic_options(fields, data_sources=data_sources)
 
     # Use a full-width card so the editor + preview can sit side by side
     with (
         ui.card()
-        .classes("overflow-y-auto w-full")
+        .classes("overflow-y-auto w-full rounded-lg")
         .style(
             "max-height: calc(100vh - 180px); padding: 1rem; box-sizing: border-box;"
         )
