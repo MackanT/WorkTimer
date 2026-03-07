@@ -15,7 +15,7 @@ import logging
 
 # Import only what we need for startup
 from src.core import get_config_loader
-from src.pages_v2 import (
+from src.pages import (
     time_tracking_page,
     add_data_page,
     query_editor_page,
