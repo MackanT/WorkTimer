@@ -160,7 +160,6 @@ async def time_tracking_page():
     """
 
     core = await AppCore.get_or_initialize()
-
     create_navigation(core.theme)
     setup_debug_keyboard_handlers(core)
 
