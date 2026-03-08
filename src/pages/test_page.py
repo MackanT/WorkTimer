@@ -22,7 +22,7 @@ async def test_page():
     """Test page demonstrating V2 architecture features."""
 
     # Get app core (per-client instance)
-    core = AppCore.get_or_create()
+    core = await AppCore.get_or_initialize()
 
     # Setup debug keyboard handlers
     from ..ui.keyboard_handlers import setup_debug_keyboard_handlers

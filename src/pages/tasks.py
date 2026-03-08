@@ -14,7 +14,7 @@ async def tasks_page():
     """Tasks page - for managing todos and tasks"""
 
     # Get or create AppCore for this client
-    core = AppCore.get_or_create()
+    core = await AppCore.get_or_initialize()
 
     # Setup debug keyboard handlers
     from ..ui.keyboard_handlers import setup_debug_keyboard_handlers

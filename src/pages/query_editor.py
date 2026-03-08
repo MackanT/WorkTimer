@@ -19,7 +19,7 @@ from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 async def query_editor_page():
     """Query Editor page - for running SQL queries"""
 
-    core = AppCore.get_or_create()
+    core = await AppCore.get_or_initialize()
 
     setup_debug_keyboard_handlers(core)
 

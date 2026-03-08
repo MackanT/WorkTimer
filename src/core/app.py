@@ -57,6 +57,7 @@ class AppCore:
 
         self._background_tasks = {}
         self.theme = config_loader.get_raw_dict("theme")
+        self._init_lock = asyncio.Lock()
 
         self.nav_bar = NavigationBar(theme=self.theme)
 
@@ -82,8 +83,6 @@ class AppCore:
         # Initialize logging
         self.logger = self._setup_logger("AppCore")
         self.logger.info("Initializing new AppCore instance")
-
-        self._attach_root_logger_handler()
 
         # Initialize engines (these are per-client now!)
         self.query_engine = None
@@ -168,6 +167,7 @@ class AppCore:
             self.logger.debug("Engines already initialized, skipping")
             return
 
+        self._attach_root_logger_handler()
         self.logger.info("Initializing engines...")
 
         try:
@@ -268,11 +268,13 @@ class AppCore:
         One-stop shop for page setup.
         """
         core = cls.get_or_create(config_loader=config_loader or get_config_loader())
-        if not core._initialized:
-            await core.initialize_engines()
+        async with core._init_lock:
+            if not core._initialized:
+                await core.initialize_engines()
+                core.apply_theme()
 
-        core.apply_theme()
-        # core.nav_bar.render()
+        if not app.storage.client.get("navigation_created", False):
+            core.nav_bar.render()
 
         return core
 

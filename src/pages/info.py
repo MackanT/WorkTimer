@@ -14,7 +14,7 @@ async def info_page():
     """Info page - displays application information"""
 
     # Get or create AppCore for this client
-    core = AppCore.get_or_create()
+    core = await AppCore.get_or_initialize()
 
     # Setup debug keyboard handlers
     from ..ui.keyboard_handlers import setup_debug_keyboard_handlers

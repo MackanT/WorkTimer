@@ -18,7 +18,7 @@ from ..ui.dynamic_widgets import WIDGET_CLASSES
 async def add_data_page():
     """Add Data page - for creating new entities"""
 
-    core = AppCore.get_or_create()
+    core = await AppCore.get_or_initialize()
 
     # Shortcuts
     config_ui = core.ui_config if hasattr(core, "ui_config") else {}

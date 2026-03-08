@@ -105,7 +105,7 @@ class EventBus:
                 self._main_loop = asyncio.get_running_loop()
             except RuntimeError:
                 self._main_loop = None
-            self.logger.info("UI context captured successfully")
+            self.logger.debug("UI context captured successfully")
         except Exception as e:
             self.logger.error(f"Failed to capture UI context: {e}")
 

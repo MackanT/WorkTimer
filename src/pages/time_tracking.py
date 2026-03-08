@@ -156,7 +156,7 @@ async def time_tracking_page():
     uses PageState for all data, events for updates.
     """
 
-    core = AppCore.get_or_create()
+    core = await AppCore.get_or_initialize()
     setup_debug_keyboard_handlers(core)
 
     # ========================================================================

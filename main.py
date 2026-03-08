@@ -86,8 +86,8 @@ def setup_global_ui():
 # Example of adding more pages:
 #
 # @ui.page('/data')
-# def data_input_page():
-#     core = AppCore.get_or_create(config_loader=get_config_loader())
+# async def data_input_page():
+#     core = await AppCore.get_or_initialize()
 #     # ... create skeleton
 #     # ... register events
 #     # ... trigger data loads
@@ -119,6 +119,7 @@ def main():
         favicon="icons/worktimer.ico",
         reload=False,  # Set to True for development hot-reload
         show=False,
+        reconnect_timeout=10,
         storage_secret="worktimer-v5-secret-change-in-production",  # Required for app.storage.user
     )
 
