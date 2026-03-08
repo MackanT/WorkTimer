@@ -223,6 +223,24 @@ class DynamicInput(DynamicWidget):
         self.widget.update()
 
 
+class DynamicTextArea(DynamicWidget):
+    """Multi-line text input"""
+
+    def _create_widget(self):
+        return ui.textarea(label=self.label, **self.widget_kwargs).props("outlined")
+
+    async def _refresh_impl(self, parent_val):
+        if not parent_val:
+            self.widget.value = ""
+            return
+        new_value = await self.data_fetcher(self.options_source, parent_val)
+        if isinstance(new_value, str):
+            self.widget.value = new_value
+        else:
+            self.widget.value = ""
+        self.widget.update()
+
+
 class DynamicNumber(DynamicWidget):
     """Number input with auto-refresh from parent"""
 
@@ -675,6 +693,7 @@ WIDGET_CLASSES = {
     "select": DynamicDropDown,
     "input": DynamicInput,
     "text": DynamicInput,  # Alias
+    "textarea": DynamicTextArea,
     "number": DynamicNumber,
     "date": DynamicDateInput,
     "switch": DynamicSwitch,

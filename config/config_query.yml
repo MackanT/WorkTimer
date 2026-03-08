@@ -23,9 +23,7 @@ query:
         optional: false
       - name: comment
         label: Comment
-        type: text
-        options: []
-        options_source: comment
+        type: textarea
         optional: true
       - name: git_id
         label: Git ID
