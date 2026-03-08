@@ -13,6 +13,7 @@ from ..core.app import AppCore
 from ..globals import SaveData
 from .. import helpers
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
+from ..ui.elements import toolbar
 
 
 @ui.page("/query_editor")
@@ -399,9 +400,7 @@ async def query_editor_page():
     # ========================================================================
     def render_controls() -> Tuple[ui.row, ui.row]:
         """Render control panel - stable across data refreshes."""
-        with ui.row().classes(
-            f"w-full items-center gap-6 px-6 py-3 bg-{core.theme.get('toolbar_bg')} rounded-lg"  ## TODO convert to ui_styles setup, used on all pages
-        ):
+        with toolbar(core.theme):
             with ui.row().classes("w-full justify-between items-center gap-2"):
                 with ui.row().classes("items-center gap-2 flex-wrap"):
                     ui.label("Preset:").classes("text-sm font-semibold text-gray-400")

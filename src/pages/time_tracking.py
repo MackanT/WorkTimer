@@ -18,6 +18,14 @@ from ..core import AppCore
 from ..helpers import UI_STYLES, extract_devops_id
 from .. import helpers
 
+from ..ui.elements import (
+    toolbar,
+    toolbar_group,
+    entity_card_shell,
+    entity_card_header,
+    entity_card_content,
+)
+
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 
 # ============================================================================
@@ -297,45 +305,22 @@ async def time_tracking_page():
     # Toolbar Controls
     # ========================================================================
 
-    def render_controls():
+    def render_toolbar():
         """Render control panel - stable across data refreshes."""
-        with ui.row().classes(
-            f"w-full items-center gap-6 px-6 py-3 bg-{core.theme.get('toolbar_bg')} rounded-lg"
-        ):
-            # Group 1: Time span
-            with ui.element("div").classes("flex items-center gap-2"):
-                ui.label("Time Span").classes(
-                    f"text-xs text-{core.theme.get('accent')} uppercase tracking-wide whitespace-nowrap"
-                )
+        with toolbar(core.theme):
+            with toolbar_group(core.theme, "Time Span", divider_after=True):
                 selected_time = (
                     ui.radio(TIME_OPTIONS, value="Day")
                     .props("inline dense")
                     .classes("items-center")
                 )
-
-            ui.element("div").classes(f"h-6 w-px bg-{core.theme.get('divider')}")
-
-            # Group 2: Date range
-            with ui.element("div").classes("flex items-center gap-2"):
-                ui.label("Range").classes(
-                    f"text-xs text-{core.theme.get('accent')} uppercase tracking-wide whitespace-nowrap"
-                )
+            with toolbar_group(core.theme, "Range", divider_after=True):
                 date_input, date_picker = create_date_range_picker(set_custom_radio)
-
-            ui.element("div").classes(f"h-6 w-px bg-{core.theme.get('divider')}")
-
-            # Group 3: Show Bonus toggle
-            with ui.element("div").classes("flex items-center gap-2"):
-                ui.label("Bonus").classes(
-                    f"text-xs text-{core.theme.get('accent')} uppercase tracking-wide whitespace-nowrap"
-                )
+            with toolbar_group(core.theme, "Bonus", divider_after=True):
                 show_bonus_toggle = ui.switch(
                     value=False, on_change=on_radio_type_change
                 )
-
             ui.space()
-
-            # Group 4: Edit button
             edit_button = (
                 ui.button("Edit Order", icon="edit", on_click=toggle_edit_mode)
                 .props("outline")
@@ -347,9 +332,8 @@ async def time_tracking_page():
 
         return selected_time, date_input, date_picker, show_bonus_toggle, edit_button
 
-    # Render controls once
     selected_time, date_input, date_picker, show_bonus_toggle, edit_button = (
-        render_controls()
+        render_toolbar()
     )
 
     # ========================================================================

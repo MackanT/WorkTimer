@@ -12,6 +12,12 @@ from ..core.app import AppCore
 from .. import helpers
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
+from ..ui.elements import (
+    toolbar,
+    entity_card_shell,
+    entity_card_header,
+    entity_card_content,
+)
 
 
 @ui.page("/add_data")
@@ -26,11 +32,9 @@ async def add_data_page():
     # ========================================================================
     # Toolbar Controls
     # ========================================================================
-    def render_controls():
+    def render_toolbar():
         """Render control panel - stable across data refreshes."""
-        with ui.row().classes(
-            f"w-full items-center gap-6 px-6 py-3 bg-{core.theme.get('toolbar_bg')} rounded-lg"
-        ):
+        with toolbar(core.theme):
             with (
                 ui.tabs(value="customer")
                 .props(
@@ -62,7 +66,7 @@ async def add_data_page():
 
                 return main_tabs
 
-    main_tabs = render_controls()
+    main_tabs = render_toolbar()
 
     # Wire up tab change to trigger refresh
     async def on_tab_change(e):
