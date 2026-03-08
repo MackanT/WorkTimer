@@ -147,3 +147,45 @@ def toolbar_group(theme, label: str, divider_after: bool = True):
     if divider_after:
         toolbar_divider(theme)
 
+
+@contextmanager
+def entity_card_shell():
+    """Top level card shell"""
+    with (
+        ui.card()
+        .classes(UI_STYLES.get_card_classes("xs", "card_padded"))
+        .style(
+            "display:flex; flex-direction:column; height:calc(100vh - 220px); min-width:280px; box-sizing:border-box;"
+        )
+        .props("flat")
+    ):
+        with (
+            ui.column()
+            .classes(
+                f"{UI_STYLES.get_layout_classes('time_tracking_customer_column')} flex-1 min-h-0"
+            )
+            .style(UI_STYLES.get_inline_style("time_tracking", "customer_card"))
+        ):
+            yield
+
+
+@contextmanager
+def entity_card_header():
+    """Header row with left/right slots"""
+    with (
+        ui.row()
+        .classes(UI_STYLES.get_layout_classes("time_tracking_customer_header"))
+        .style(UI_STYLES.get_inline_style("time_tracking", "customer_header"))
+    ):
+        yield
+
+
+@contextmanager
+def entity_card_content():
+    """Scrollable content area"""
+    with (
+        ui.element()
+        .classes("w-full overflow-auto flex-1 min-h-0")
+        .style("padding-right: 1rem; scrollbar-gutter: stable;")
+    ):
+        yield

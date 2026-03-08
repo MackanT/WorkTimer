@@ -713,117 +713,94 @@ async def time_tracking_page():
             customer_id, customer_name, group, customer_index=None, total_customers=None
         ):
             """Create a customer card with all its projects."""
-            with (
-                ui.card()
-                .classes(UI_STYLES.get_card_classes("xs", "card_padded"))
-                .style(
-                    "display:flex; flex-direction:column; height:calc(100vh - 220px); min-width:280px; box-sizing:border-box;"
-                )
-                .props("flat")
-            ):
-                with (
-                    ui.column()
-                    .classes(
-                        f"{UI_STYLES.get_layout_classes('time_tracking_customer_column')} flex-1 min-h-0"
-                    )
-                    .style(UI_STYLES.get_inline_style("time_tracking", "customer_card"))
-                ):
-                    total_string = get_total_string(customer_id)
-                    with (
-                        ui.row()
+            total_string = get_total_string(customer_id)
+            label_ref = []
+
+            with entity_card_shell():
+                with entity_card_header():
+                    # Left side: arrows + customer name
+                    with ui.element("div").style(
+                        "display:flex; align-items:center; gap:0.25rem; overflow:hidden;"
+                    ):
+                        if state.edit_mode_enabled:
+
+                            def move_customer_up():
+                                if customer_index > 0:
+                                    (
+                                        state.customer_order[customer_index],
+                                        state.customer_order[customer_index - 1],
+                                    ) = (
+                                        state.customer_order[customer_index - 1],
+                                        state.customer_order[customer_index],
+                                    )
+                                    asyncio.create_task(render_time_tracker())
+
+                            def move_customer_down():
+                                if customer_index < total_customers - 1:
+                                    (
+                                        state.customer_order[customer_index],
+                                        state.customer_order[customer_index + 1],
+                                    ) = (
+                                        state.customer_order[customer_index + 1],
+                                        state.customer_order[customer_index],
+                                    )
+                                    asyncio.create_task(render_time_tracker())
+
+                            with ui.row().classes("gap-0"):
+                                ui.button(
+                                    icon="arrow_back",
+                                    on_click=move_customer_up,
+                                ).props("flat dense size=sm").classes(
+                                    f"text-{core.theme.get('accent')}"
+                                ).bind_enabled_from(
+                                    state,
+                                    "edit_mode_enabled",
+                                    lambda x: x and customer_index > 0,
+                                )
+                                ui.button(
+                                    icon="arrow_forward",
+                                    on_click=move_customer_down,
+                                ).props("flat dense size=sm").classes(
+                                    f"text-{core.theme.get('accent')}"
+                                ).bind_enabled_from(
+                                    state,
+                                    "edit_mode_enabled",
+                                    lambda x: (
+                                        x and customer_index < total_customers - 1
+                                    ),
+                                )
+
+                        ui.label(str(customer_name)).classes(
+                            UI_STYLES.get_widget_style("time_tracking_customer_name")[
+                                "classes"
+                            ]
+                        ).style(
+                            "overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left;"
+                        )
+
+                    # Right side: total label
+                    lbl = (
+                        ui.label(total_string)
                         .classes(
-                            UI_STYLES.get_layout_classes(
-                                "time_tracking_customer_header"
-                            )
+                            UI_STYLES.get_widget_style("time_tracking_customer_total")[
+                                "classes"
+                            ]
                         )
                         .style(
-                            UI_STYLES.get_inline_style(
-                                "time_tracking", "customer_header"
-                            )
+                            UI_STYLES.get_widget_style(
+                                "time_tracking_customer_total"
+                            ).get("style", "")
+                            + " white-space:nowrap;"
                         )
-                    ):
-                        # Left side: arrows (if edit mode) + customer name
-                        with ui.element().style(
-                            "display: flex; align-items: center; gap: 0.25rem; overflow: hidden;"
-                        ):
-                            # Show customer reorder arrows in edit mode
-                            if state.edit_mode_enabled:
-
-                                def move_customer_up():
-                                    if customer_index > 0:
-                                        (
-                                            state.customer_order[customer_index],
-                                            state.customer_order[customer_index - 1],
-                                        ) = (
-                                            state.customer_order[customer_index - 1],
-                                            state.customer_order[customer_index],
-                                        )
-                                        asyncio.create_task(render_time_tracker())
-
-                                def move_customer_down():
-                                    if customer_index < total_customers - 1:
-                                        (
-                                            state.customer_order[customer_index],
-                                            state.customer_order[customer_index + 1],
-                                        ) = (
-                                            state.customer_order[customer_index + 1],
-                                            state.customer_order[customer_index],
-                                        )
-                                        asyncio.create_task(render_time_tracker())
-
-                                with ui.row().classes("gap-0"):
-                                    ui.button(
-                                        icon="arrow_back",
-                                        on_click=move_customer_up,
-                                    ).props("flat dense size=sm").classes(
-                                        f"text-{core.theme.get('accent')}"
-                                    ).bind_enabled_from(
-                                        state,
-                                        "edit_mode_enabled",
-                                        lambda x: x and customer_index > 0,
-                                    )
-                                    ui.button(
-                                        icon="arrow_forward",
-                                        on_click=move_customer_down,
-                                    ).props("flat dense size=sm").classes(
-                                        f"text-{core.theme.get('accent')}"
-                                    ).bind_enabled_from(
-                                        state,
-                                        "edit_mode_enabled",
-                                        lambda x: (
-                                            x and customer_index < total_customers - 1
-                                        ),
-                                    )
-
-                            ui.label(str(customer_name)).classes(
-                                UI_STYLES.get_widget_style(
-                                    "time_tracking_customer_name"
-                                )["classes"]
-                            ).style(
-                                "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;"
-                            )
-
-                        customer_total_label = (
-                            ui.label(total_string)
-                            .classes(
-                                UI_STYLES.get_widget_style(
-                                    "time_tracking_customer_total"
-                                )["classes"]
-                            )
-                            .style(
-                                UI_STYLES.get_widget_style(
-                                    "time_tracking_customer_total"
-                                ).get("style", "")
-                                + " white-space: nowrap;"
-                            )
-                        )
-                        customer_total_label_refs[customer_id] = customer_total_label
-
-                    ui.separator().classes(
-                        f"w-full border-b border-{core.theme.get('divider')} my-2"
                     )
+                    label_ref.append(lbl)
 
-                    # Get ordered projects for this customer
+                ui.separator().classes(
+                    f"w-full border-b border-{core.theme.get('divider')} my-2"
+                )
+
+                with entity_card_content():
+                    # Merge/init project order
                     customer_projects = group.sort_values("project_sort_order")
                     db_ordered = [
                         (row["project_id"], row["project_name"])
@@ -833,7 +810,6 @@ async def time_tracking_page():
                     if customer_id not in state.project_orders:
                         state.project_orders[customer_id] = db_ordered
                     else:
-                        # Merge DB changes
                         existing = state.project_orders[customer_id]
                         existing_ids = [p[0] for p in existing]
                         for pid, pname in db_ordered:
@@ -844,23 +820,18 @@ async def time_tracking_page():
                             p for p in existing if p[0] in db_ids
                         ]
 
-                    with (
-                        ui.element()
-                        .classes("w-full overflow-auto flex-1 min-h-0")
-                        .style("padding-right: 1rem; scrollbar-gutter: stable;")
-                    ):
-                        ordered_projects = state.project_orders[customer_id]
-                        total_projects = len(ordered_projects)
-                        for proj_idx, (proj_id, proj_name) in enumerate(
-                            ordered_projects
-                        ):
-                            project_row = group[group["project_id"] == proj_id].iloc[0]
-                            await make_project_row(
-                                project_row,
-                                customer_id,
-                                project_index=proj_idx,
-                                total_projects=total_projects,
-                            )
+                    ordered_projects = state.project_orders[customer_id]
+                    total_projects = len(ordered_projects)
+                    for proj_idx, (proj_id, proj_name) in enumerate(ordered_projects):
+                        project_row = group[group["project_id"] == proj_id].iloc[0]
+                        await make_project_row(
+                            project_row,
+                            customer_id,
+                            project_index=proj_idx,
+                            total_projects=total_projects,
+                        )
+
+            customer_total_label_refs[customer_id] = label_ref[0] if label_ref else None
 
         # Get customers from database
         customers_from_db = df[

@@ -146,27 +146,20 @@ async def render_entity_form(
     fields = form_config.get("fields", [])
     action = form_config.get("action", {})
 
-    # Prepare data sources
     data_sources = await prepare_data_sources(core, entity_type, operation)
-
-    # Assign dynamic options to fields
     helpers.assign_dynamic_options(fields, data_sources=data_sources)
 
-    # Submit button
+    widgets = {}
+    dynamic_widgets = []
+    parent_map = {}
+
     async def on_submit():
-        # Validate required fields
         required_fields = [f["name"] for f in fields if not f.get("optional", False)]
         if not helpers.check_input(widgets, required_fields):
             return
-
-        # Gather values
         kwargs = {name: widget.value for name, widget in widgets.items()}
-
         try:
-            # Call database function
             await QE.function_db(action["function"], **kwargs)
-
-            # Success message
             msg_1, msg_2 = helpers.print_success(
                 entity_type,
                 kwargs[action["main_param"]],
@@ -176,12 +169,9 @@ async def render_entity_form(
             LOG.info(msg_1)
             if msg_2:
                 LOG.info(msg_2)
-
-            # Clear form values
             for widget in widgets.values():
                 if hasattr(widget, "value"):
                     widget.value = "" if isinstance(widget.value, str) else None
-
             if (
                 hasattr(core, "_entity_refresh_fns")
                 and entity_type in core._entity_refresh_fns
@@ -196,130 +186,83 @@ async def render_entity_form(
                             core.logger.error(
                                 f"Error refreshing {entity_type}.{op}: {e}"
                             )
-
-            # Trigger UI refresh
             core.event_bus.emit("ui_refresh_requested")
-
         except Exception as e:
             LOG.error(f"Error in {operation} {entity_type}: {e}")
             ui.notify(f"Error: {e}", type="negative")
 
-    # Create form
-    with (
-        ui.card()
-        .classes(helpers.UI_STYLES.get_card_classes("xs", "card_padded"))
-        .style(
-            "display:flex; flex-direction:column; height:calc(100vh - 220px); min-width:280px; box-sizing:border-box;"
-        )
-        .props("flat")
-    ):
-        with (
-            ui.column()
-            .classes(
-                f"{helpers.UI_STYLES.get_layout_classes('time_tracking_customer_column')} flex-1 min-h-0"
-            )
-            .style(helpers.UI_STYLES.get_inline_style("time_tracking", "customer_card"))
-        ):
-            with (
-                ui.row()
-                .classes(
-                    helpers.UI_STYLES.get_layout_classes(
-                        "time_tracking_customer_header"
-                    )
-                )
-                .style(
-                    helpers.UI_STYLES.get_inline_style(
-                        "time_tracking", "customer_header"
-                    )
-                )
+    with entity_card_shell():
+        with entity_card_header():
+            with ui.element("div").style(
+                "display:flex; align-items:center; gap:0.25rem; overflow:hidden;"
             ):
-                with ui.element().style(
-                    "display: flex; align-items: center; gap: 0.25rem; overflow: hidden;"
-                ):
-                    ui.label(f"{operation.capitalize()}").classes(
-                        helpers.UI_STYLES.get_widget_style(
-                            "time_tracking_customer_name"
-                        )["classes"]
-                    ).style(
-                        "overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;"
-                    )
+                ui.label(operation.capitalize()).classes(
+                    helpers.UI_STYLES.get_widget_style("time_tracking_customer_name")[
+                        "classes"
+                    ]
+                ).style(
+                    "overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left;"
+                )
+                ui.space()
+                ui.button(icon="save", on_click=on_submit).props("color=primary")
 
-                    ui.space()
+        ui.separator().classes(
+            f"w-full border-b border-{core.theme.get('divider')} my-2"
+        )
 
-                    ui.button(
-                        icon="save",
-                        on_click=on_submit,
-                    ).props("color=primary")
+        with entity_card_content():
 
-            ui.separator().classes(
-                f"w-full border-b border-{core.theme.get('divider')} my-2"
-            )
-
-            # Create data fetcher for dynamic widgets
             async def data_fetcher(source_key, parent_val=None):
-                """Fetch fresh data from database"""
                 fresh = await prepare_data_sources(core, entity_type, operation)
                 if source_key not in fresh:
                     return [] if parent_val is not None else ""
-
                 data = fresh[source_key]
-
-                # Handle nested data (parent-child relationship)
                 if parent_val and isinstance(data, dict):
                     return data.get(parent_val, [])
                 elif isinstance(data, list):
                     return data
                 elif isinstance(data, dict):
-                    return data  # Top-level dict source
+                    return data
                 return [] if parent_val is not None else ""
 
-            # Create all widgets using dynamic widget system
-            widgets = {}
-            dynamic_widgets = []  # Track for refresh
-            parent_map = {}  # Map field names to their widget instances
-
-            for field in fields:
-                field_type = field.get("type", "input")
-                field_name = field["name"]
-                parent_field = field.get("parent")
-                parent_widget = parent_map.get(parent_field) if parent_field else None
-
-                # Get widget class from registry
-                widget_class = WIDGET_CLASSES.get(field_type)
-                if not widget_class:
-                    # Fallback to standard helper for unknown types
-                    LOG.warning(f"Unknown field type '{field_type}', using fallback")
-                    fallback_widgets, _ = helpers.make_input_row(
-                        [field], defer_parent_wiring=True
+            with ui.column().classes("w-full gap-2"):
+                for field in fields:
+                    field_type = field.get("type", "input")
+                    field_name = field["name"]
+                    parent_field = field.get("parent")
+                    parent_widget = (
+                        parent_map.get(parent_field) if parent_field else None
                     )
-                    widgets.update(fallback_widgets)
-                    continue
 
-                # Get widget width classes
-                widget_width = helpers.UI_STYLES.get_widget_width(
-                    field.get("size", "standard")
-                )
+                    widget_class = WIDGET_CLASSES.get(field_type)
+                    if not widget_class:
+                        LOG.warning(
+                            f"Unknown field type '{field_type}', using fallback"
+                        )
+                        fallback_widgets, _ = helpers.make_input_row(
+                            [field], defer_parent_wiring=True
+                        )
+                        widgets.update(fallback_widgets)
+                        continue
 
-                # Create dynamic widget instance
-                dw = widget_class(
-                    name=field_name,
-                    data_fetcher=data_fetcher,
-                    options_source=field.get("options_source", ""),
-                    parent=parent_widget,
-                    label=field.get("label", field_name),
-                    initial_value=field.get("default"),
-                    field_config=field,
-                )
-
-                # Apply widget width styling
-                dw.widget.classes(widget_width)
-
-                widgets[field_name] = dw
-                parent_map[field_name] = dw
-                dynamic_widgets.append(dw)
+                    widget_width = helpers.UI_STYLES.get_widget_width(
+                        field.get("size", "standard")
+                    )
+                    dw = widget_class(
+                        name=field_name,
+                        data_fetcher=data_fetcher,
+                        options_source=field.get("options_source", ""),
+                        parent=parent_widget,
+                        label=field.get("label", field_name),
+                        initial_value=field.get("default"),
+                        field_config=field,
+                    )
+                    dw.widget.classes(widget_width)
+                    widgets[field_name] = dw
+                    parent_map[field_name] = dw
+                    dynamic_widgets.append(dw)
 
     async def refresh_all_widgets():
-        """Refresh all dynamic widgets"""
         try:
             for dw in dynamic_widgets:
                 await dw.refresh()
