@@ -533,7 +533,7 @@ async def query_editor_page():
                         ui.switch(value=True)
                         .props("color=primary")
                         .tooltip(
-                            "When ON: Click cells to edit. When OFF: Ctrl+Click rows to select, Ctrl+C to copy"
+                            "When ON: Click cells to edit data. Base tables are editable (time, customers, projects) and only select columns. Additional columns can be edited via the data-input tab. When OFF: Ctrl/Shift+Click rows to select, Ctrl+C to copy"
                         )
                     )
 
