@@ -176,6 +176,7 @@ def entity_card_header():
         ui.row()
         .classes(UI_STYLES.get_layout_classes("time_tracking_customer_header"))
         .style(UI_STYLES.get_inline_style("time_tracking", "customer_header"))
+        .classes("justify-between")
     ):
         yield
 
@@ -187,5 +188,19 @@ def entity_card_content():
         ui.element()
         .classes("w-full overflow-auto flex-1 min-h-0")
         .style("padding-right: 1rem; scrollbar-gutter: stable;")
+    ):
+        yield
+
+
+@contextmanager
+def page_card():
+    """Full width/height main page card"""
+    with (
+        ui.card()
+        .classes("w-full mt-4 rounded-lg flex flex-col")
+        .style(
+            "height:calc(100vh - 220px); padding: 0.75rem 1.5rem; box-sizing:border-box;"
+        )
+        .props("flat")
     ):
         yield

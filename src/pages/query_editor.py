@@ -13,7 +13,8 @@ from ..core.app import AppCore
 from ..globals import SaveData
 from .. import helpers
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
-from ..ui.elements import toolbar
+from ..ui.elements import toolbar, page_card, entity_card_header
+from ..ui.dynamic_widgets import WIDGET_CLASSES
 
 
 @ui.page("/query_editor")
@@ -379,15 +380,110 @@ async def query_editor_page():
 
         helpers.assign_dynamic_options(fields, data_sources=data_sources)
 
-        with ui.dialog() as popup:
-            with ui.card().classes(helpers.UI_STYLES.get_widget_width("medium")):
-                widgets = helpers.make_input_row(fields)
-                save_data = SaveData(**action)
-
-                _add_save_button(
-                    save_data, fields, widgets, table_name, pk_data, popup, QE
+        async def on_submit():
+            required_fields = [
+                f["name"] for f in fields if not f.get("optional", False)
+            ]
+            if not helpers.check_input(widgets, required_fields):
+                return
+            kwargs = {name: widget.value for name, widget in widgets.items()}
+            kwargs["table_name"] = table_name
+            kwargs["pk_data"] = pk_data
+            try:
+                await QE.function_db(save_data.function, **kwargs)
+                msg_1, msg_2 = helpers.print_success(
+                    table_name, save_data.main_param, save_data.main_action, widgets
                 )
-            popup.open()
+                LOG.info(msg_1)
+                if msg_2:
+                    LOG.info(msg_2)
+                popup.close()
+                core.event_bus.emit("ui_refresh_requested")
+            except Exception as e:
+                LOG.error(f"Error saving row: {e}")
+                ui.notify(f"Error saving: {str(e)}", type="negative")
+
+        save_data = SaveData(**action)
+        widgets = {}
+        dynamic_widgets = []
+        parent_map = {}
+
+        with ui.dialog() as popup:
+            with ui.card().classes("rounded-lg").props("flat"):
+                with entity_card_header():
+                    ui.label(f"Edit {table_name.capitalize()}").classes(
+                        helpers.UI_STYLES.get_widget_style(
+                            "time_tracking_customer_name"
+                        )["classes"]
+                    ).style(
+                        "overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left;"
+                    )
+                    with ui.row().classes("gap-1 shrink-0"):
+                        ui.button(icon="save", on_click=on_submit).props(
+                            "color=primary"
+                        )
+                        ui.button(icon="close", on_click=popup.close).props(
+                            "flat color=negative"
+                        )
+
+                ui.separator().classes(
+                    f"w-full border-b border-{core.theme.get('divider')} my-2"
+                )
+
+                with ui.column().classes("w-full gap-2 p-2"):
+
+                    async def data_fetcher(source_key, parent_val=None):
+                        if source_key not in data_sources:
+                            return [] if parent_val is not None else ""
+                        data = data_sources[source_key]
+                        if parent_val and isinstance(data, dict):
+                            return data.get(parent_val, [])
+                        elif isinstance(data, list):
+                            return data
+                        elif isinstance(data, dict):
+                            return data
+                        return [] if parent_val is not None else ""
+
+                    for field in fields:
+                        field_type = field.get("type", "input")
+                        field_name = field["name"]
+                        parent_field = field.get("parent")
+                        parent_widget = (
+                            parent_map.get(parent_field) if parent_field else None
+                        )
+
+                        options_source = field.get("options_source")
+                        if options_source and options_source not in data_sources:
+                            data_sources[options_source] = table_row.get(options_source)
+                        if field["name"] in table_row:
+                            field["default"] = table_row.get(field["name"])
+
+                        widget_class = WIDGET_CLASSES.get(field_type)
+                        if not widget_class:
+                            fallback_widgets, _ = helpers.make_input_row(
+                                [field], defer_parent_wiring=True
+                            )
+                            widgets.update(fallback_widgets)
+                            continue
+
+                        widget_width = helpers.UI_STYLES.get_widget_width(
+                            field.get("size", "standard")
+                        )
+                        dw = widget_class(
+                            name=field_name,
+                            data_fetcher=data_fetcher,
+                            options_source=field.get("options_source", ""),
+                            parent=parent_widget,
+                            label=field.get("label", field_name),
+                            initial_value=field.get("default"),
+                            field_config=field,
+                        )
+                        dw.widget.classes(widget_width)
+                        widgets[field_name] = dw
+                        parent_map[field_name] = dw
+                        dynamic_widgets.append(dw)
+
+        popup.open()
 
     async def on_cell_clicked(event) -> None:
         if not edit_mode_enabled.value:
@@ -398,7 +494,7 @@ async def query_editor_page():
     # ========================================================================
     # UI Rendering
     # ========================================================================
-    def render_controls() -> Tuple[ui.row, ui.row]:
+    def render_toolbar() -> Tuple[ui.row, ui.row]:
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
             with ui.row().classes("w-full justify-between items-center gap-2"):
@@ -424,16 +520,7 @@ async def query_editor_page():
         return preset_queries, custom_queries
 
     def render_query_window() -> None:
-
-        with (
-            ui.card()
-            .classes("w-full mt-4")
-            .style(
-                "display:flex; flex-direction:column; height:calc(100vh - 220px); padding: 0.75rem 1.5rem; box-sizing:border-box; border-radius: 0.5rem;"
-            )
-            .props("flat")
-        ):
-            # with ui.card().classes("w-screen -mx-8 px-8 my-4 p-6"):
+        with page_card():
             with ui.row().classes("w-full justify-between items-center"):
                 ui.button(
                     "Execute Query (F5)",
@@ -446,11 +533,10 @@ async def query_editor_page():
                         ui.switch(value=True)
                         .props("color=primary")
                         .tooltip(
-                            "When ON: Click cells to edit. When OFF: Select ranges to copy-paste"
+                            "When ON: Click cells to edit. When OFF: Ctrl+Click rows to select, Ctrl+C to copy"
                         )
                     )
 
-            # Initial query: always use 'time' preset if not saved
             initial_query = app.storage.user.get("query_editor_query", "")
             if not initial_query:
                 try:
@@ -463,44 +549,45 @@ async def query_editor_page():
             editor = ui.codemirror(
                 initial_query, language="SQLite", theme="dracula"
             ).classes("h-48 w-full")
-
             editor.bind_value(app.storage.user, "query_editor_query")
 
-            # Grid starts empty - will be populated by execute_query
             grid_box = (
                 ui.aggrid(
                     {
                         "columnDefs": [{"field": ""}],
                         "rowData": [],
                         "defaultColDef": {
-                            "editable": True,
+                            "editable": False,
                             "sortable": True,
                             "filter": True,
                             "resizable": True,
                         },
-                        "enableRangeSelection": True,
+                        "rowSelection": "multiple",
+                        "suppressRowClickSelection": False,
                         "enableCellTextSelection": True,
-                        "suppressRowClickSelection": True,
-                        "enableClipboard": True,
-                        "copyHeadersToClipboard": False,
-                        "suppressCopyRowsToClipboard": True,
+                        "copyHeadersToClipboard": True,
                     },
                     theme="alpine-dark",
                 )
-                .classes("h-96 w-full")
+                .classes("flex-1 w-full")
                 .on("cellClicked", on_cell_clicked)
             )
 
-            render_query_buttons()
+            def on_edit_mode_change():
+                is_edit = edit_mode_enabled.value
+                grid_box.options["defaultColDef"]["editable"] = is_edit
+                grid_box.options["suppressRowClickSelection"] = is_edit
+                grid_box.update()
 
+            edit_mode_enabled.on("update:model-value", lambda _: on_edit_mode_change())
+
+            render_query_buttons()
             asyncio.create_task(refresh_query_list())
 
         return edit_mode_enabled, editor, grid_box
 
-    preset_queries, custom_queries = render_controls()
+    preset_queries, custom_queries = render_toolbar()
     edit_mode_enabled, editor, grid_box = render_query_window()
-
-    # Make this card full-bleed so it uses the whole viewport width like the legacy UI
 
     # Prevent F5 from refreshing the page using JavaScript
     ui.run_javascript("""
@@ -509,6 +596,37 @@ async def query_editor_page():
                 e.preventDefault();
             }
         });
+    """)
+
+    ui.run_javascript("""
+        // Prevent text selection on grid when not in edit mode
+        const style = document.createElement('style');
+        style.id = 'ag-no-select';
+        style.textContent = '.ag-root-wrapper * { user-select: none; !important; }';
+        document.head.appendChild(style);
+        
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === 'c') {
+                const selectedRows = Array.from(document.querySelectorAll('.ag-row-selected'));
+                if (!selectedRows.length) return;
+                
+                e.preventDefault();  // stop browser default copy
+                e.stopPropagation();
+                
+                selectedRows.sort((a, b) => {
+                    const aTop = parseInt(a.style.transform?.match(/translateY\\((\\d+)px\\)/)?.[1] || 0);
+                    const bTop = parseInt(b.style.transform?.match(/translateY\\((\\d+)px\\)/)?.[1] || 0);
+                    return aTop - bTop;
+                });
+                
+                const lines = selectedRows.map(row => {
+                    const cells = Array.from(row.querySelectorAll('.ag-cell[col-id]'));
+                    return cells.map(cell => cell.textContent.replace(/\\s+/g, ' ').trim()).join('\\t');
+                });
+                
+                navigator.clipboard.writeText(lines.join('\\n'));
+            }
+        }, true);  // true = capture phase, fires before browser default
     """)
 
     def handle_key(e: KeyEventArguments):
