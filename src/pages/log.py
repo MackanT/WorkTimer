@@ -145,6 +145,18 @@ async def log_page():
                 timestamp: str = "",
                 logger: str = "App",
             ):
+                # Check if client still exists before attempting UI update
+                try:
+                    from nicegui import context
+
+                    if (
+                        not context.client
+                        or context.client.id not in context.client.instances
+                    ):
+                        return  # Client disconnected, skip silently
+                except Exception:
+                    return  # No context available, skip
+
                 # Check filter
                 if selected_filter["value"] != "All":
                     if selected_filter["value"].lower() not in logger.lower():

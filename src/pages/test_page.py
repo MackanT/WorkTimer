@@ -171,10 +171,32 @@ async def test_page():
 
             # Register multiple handlers for same event
             async def log_event(message):
+                try:
+                    from nicegui import context
+
+                    if (
+                        not context.client
+                        or context.client.id not in context.client.instances
+                    ):
+                        return  # Client disconnected
+                except Exception:
+                    return
+
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 event_log.push(f"[{timestamp}] {message}")
 
             async def show_notification(message):
+                try:
+                    from nicegui import context
+
+                    if (
+                        not context.client
+                        or context.client.id not in context.client.instances
+                    ):
+                        return  # Client disconnected
+                except Exception:
+                    return
+
                 core.event_bus.notify(message, type_="info")
 
             core.event_bus.register("test_event", log_event)
@@ -187,6 +209,14 @@ async def test_page():
                 core.event_bus.emit("test_event", message=message)
 
             ui.button("Trigger Event", icon="bolt", on_click=trigger_event)
+
+            # Cleanup handlers on disconnect
+            def cleanup():
+                core.event_bus.unregister("test_data_loaded", populate_data)
+                core.event_bus.unregister("test_event", log_event)
+                core.event_bus.unregister("test_event", show_notification)
+
+            ui.context.client.on_disconnect(cleanup)
 
         # Test 5: Per-Client State
         with ui.card().classes("w-full"):
