@@ -53,8 +53,10 @@ async def info_page():
                 content = f"Error loading content: {e}"
             ui.markdown(content=content)
 
+    start_tab = next(iter(info_page_config))
+
     with (
-        ui.tab_panels(main_tabs, value="info")
+        ui.tab_panels(main_tabs, value=start_tab)
         .props("vertical")
         .classes("w-full")
         .style(
