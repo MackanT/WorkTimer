@@ -268,10 +268,11 @@ class AppCore:
         One-stop shop for page setup.
         """
         core = cls.get_or_create(config_loader=config_loader or get_config_loader())
+
         async with core._init_lock:
             if not core._initialized:
                 await core.initialize_engines()
-                core.apply_theme()
+        core.apply_theme()
 
         if not app.storage.client.get("navigation_created", False):
             core.nav_bar.render()
