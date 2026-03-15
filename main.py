@@ -22,7 +22,6 @@ from src.pages import (
     log_page,
     info_page,
     tasks_page,
-    test_page,
 )
 
 

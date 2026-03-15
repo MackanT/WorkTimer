@@ -6,7 +6,6 @@ from . import (
     add_data_page,
     tasks_page,
     info_page,
-    # test_page,
 )
 from ..core.app import AppCore
 
@@ -27,6 +26,5 @@ async def root_page():
             "/tasks": tasks_page,
             "/log": log_page,
             "/info": info_page,
-            # "/test": test_page,
         }
     ).classes("w-full h-full px-6 py-3 gap-0")
