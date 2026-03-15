@@ -13,7 +13,7 @@ from ..core.app import AppCore
 from ..globals import SaveData
 from .. import helpers
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
-from ..ui.elements import toolbar, page_card, entity_card_header
+from ..ui.elements import toolbar, toolbar_group, page_card, entity_card_header
 from ..ui.dynamic_widgets import WIDGET_CLASSES
 
 
@@ -497,30 +497,25 @@ async def query_editor_page():
     def render_toolbar() -> Tuple[ui.row, ui.row]:
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
-            with ui.row().classes("w-full justify-between items-center gap-2"):
-                with ui.row().classes("items-center gap-2 flex-wrap"):
-                    ui.label("Preset:").classes("text-sm font-semibold text-gray-400")
-                    preset_queries = ui.row().classes("gap-2 flex-wrap")
-                with ui.row().classes("gap-1"):
-                    ui.button(icon="save", on_click=save_custom_query).props(
-                        "flat dense color=primary"
-                    ).tooltip("Save Query")
-                    ui.button(icon="edit", on_click=update_custom_query).props(
-                        "flat dense color=primary"
-                    ).tooltip("Update Query")
-                    ui.button(icon="delete", on_click=delete_custom_query).props(
-                        "flat dense color=negative"
-                    ).tooltip("Delete Query")
-
-            # Custom queries section - separate row below
-            with ui.row().classes("items-center gap-2 flex-wrap"):
-                ui.label("Custom:").classes("text-sm font-semibold text-gray-400")
+            with toolbar_group(core.theme, "Preset", divider_after=True):
+                preset_queries = ui.row().classes("gap-2 flex-wrap")
+            with toolbar_group(core.theme, "Custom", divider_after=False):
                 custom_queries = ui.row().classes("gap-2 flex-wrap")
+            ui.space()
+            ui.button(icon="save", on_click=save_custom_query).props(
+                "flat dense color=primary"
+            ).tooltip("Save Query")
+            ui.button(icon="edit", on_click=update_custom_query).props(
+                "flat dense color=primary"
+            ).tooltip("Update Query")
+            ui.button(icon="delete", on_click=delete_custom_query).props(
+                "flat dense color=negative"
+            ).tooltip("Delete Query")
 
         return preset_queries, custom_queries
 
     def render_query_window() -> None:
-        with page_card():
+        with page_card(scrollable=False):
             with ui.row().classes("w-full justify-between items-center"):
                 ui.button(
                     "Execute Query (F5)",
