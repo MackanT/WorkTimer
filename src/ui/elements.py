@@ -199,7 +199,7 @@ def page_card():
         ui.card()
         .classes("w-full mt-4 rounded-lg flex flex-col")
         .style(
-            "height:calc(100vh - 220px); padding: 0.75rem 1.5rem; box-sizing:border-box;"
+            "height:calc(100vh - 220px); padding: 0.75rem 1.5rem; box-sizing:border-box; overflow-y: auto;"
         )
         .props("flat")
     ):
