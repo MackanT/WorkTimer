@@ -1,469 +1,485 @@
 # Icons: https://fonts.google.com/icons
 
-### Customer Information ###
-customer:
-  add:
-    fields:
-      - name: customer_name
-        label: Name
-        type: input
-        optional: false
-      - name: wage
-        label: Wage
-        type: number
-        step: 1
-        min: 0
-        optional: false
-      - name: start_date
-        label: Start Date
-        type: date
-        options: []
-        options_source: today
-        optional: false
-      - name: org_url
-        label: DevOps Org. URL
-        type: input
-        optional: true
-      - name: pat_token
-        label: DevOps PAT
-        type: input
-        optional: true
-    action:
-      function: "insert_customer"
-      main_action: "Customer"
-      main_param: "customer_name"
-      secondary_action: "added"
-      button_name: "Add"
-  update:
-    fields:
-      - name: customer_name
-        label: Name
-        type: select
-        options: []
-        options_source: customer_data
-        optional: false
-      - name: new_customer_name
-        label: New Name
-        type: input
-        options: []
-        options_source: new_customer_name
-        optional: false
-        parent: customer_name
-      - name: "org_url"
-        label: "DevOps Org. URL"
-        type: input
-        options: []
-        options_source: org_url
-        optional: true
-        parent: customer_name
-      - name: "pat_token"
-        label: "DevOps PAT"
-        type: input
-        options: []
-        options_source: pat_token
-        optional: true
-        parent: customer_name
-    action:
-      function: "update_customer"
-      main_action: "Customer"
-      main_param: "customer_name"
-      secondary_action: "updated"
-      button_name: "Update"
-  disable:
-    fields:
-      - name: customer_name
-        label: Name
-        type: select
-        options: []
-        options_source: customer_data
-        optional: False
-    action:
-      function: "disable_customer"
-      main_action: "Customer"
-      main_param: "customer_name"
-      secondary_action: "disabled"
-      button_name: "Disable"
-  reenable:
-    fields:
-      - name: customer_name
-        label: Name
-        type: select
-        options: []
-        options_source: customer_data
-        optional: False
-    action:
-      function: "enable_customer"
-      main_action: "Customer"
-      main_param: "customer_name"
-      secondary_action: "reenabled"
-      button_name: "Re-enable"
-  meta:
-    icon: person
-    friendly_name: Customers
-    build_function: build_customer_tab_panel
+add_data_page:
+  ### Customer Information ###
+  customer:
+    add:
+      fields:
+        - name: customer_name
+          label: Name
+          type: input
+          optional: false
+        - name: wage
+          label: Wage
+          type: number
+          step: 1
+          min: 0
+          optional: false
+        - name: start_date
+          label: Start Date
+          type: date
+          options: []
+          options_source: today
+          optional: false
+        - name: org_url
+          label: DevOps Org. URL
+          type: input
+          optional: true
+        - name: pat_token
+          label: DevOps PAT
+          type: input
+          optional: true
+      action:
+        function: "insert_customer"
+        main_action: "Customer"
+        main_param: "customer_name"
+        secondary_action: "added"
+        button_name: "Add"
+    update:
+      fields:
+        - name: customer_name
+          label: Name
+          type: select
+          options: []
+          options_source: customer_data
+          optional: false
+        - name: new_customer_name
+          label: New Name
+          type: input
+          options: []
+          options_source: new_customer_name
+          optional: false
+          parent: customer_name
+        - name: "org_url"
+          label: "DevOps Org. URL"
+          type: input
+          options: []
+          options_source: org_url
+          optional: true
+          parent: customer_name
+        - name: "pat_token"
+          label: "DevOps PAT"
+          type: input
+          options: []
+          options_source: pat_token
+          optional: true
+          parent: customer_name
+      action:
+        function: "update_customer"
+        main_action: "Customer"
+        main_param: "customer_name"
+        secondary_action: "updated"
+        button_name: "Update"
+    disable:
+      fields:
+        - name: customer_name
+          label: Name
+          type: select
+          options: []
+          options_source: customer_data
+          optional: False
+      action:
+        function: "disable_customer"
+        main_action: "Customer"
+        main_param: "customer_name"
+        secondary_action: "disabled"
+        button_name: "Disable"
+    reenable:
+      fields:
+        - name: customer_name
+          label: Name
+          type: select
+          options: []
+          options_source: customer_data
+          optional: False
+      action:
+        function: "enable_customer"
+        main_action: "Customer"
+        main_param: "customer_name"
+        secondary_action: "reenabled"
+        button_name: "Re-enable"
+    meta:
+      icon: person
+      friendly_name: Customers
+      build_function: render_entity_tabs
+      options:
+        - add
+        - update
+        - disable
+        - reenable
 
-### Project Information ###
-project:
-  add:
-    fields:
-      - name: customer_name
-        label: Customer
-        type: select
-        options: []
-        options_source: customer_data
-        optional: False
-      - name: project_name
-        label: Project Name
-        type: input
-        optional: False
-      - name: "git_id"
-        label: "Git ID"
-        type: number
-        step: 1
-        min: 0
-        optional: True
-    action:
-      function: "insert_project"
-      main_action: "Project"
-      main_param: "project_name"
-      secondary_action: "added"
-      button_name: "Add"
-  update:
-    fields:
-      - name: customer_name
-        label: Customer
-        type: select
-        options: []
-        options_source: customer_data
-        optional: False
-      - name: project_name
-        label: Project Name
-        type: select
-        options: []
-        options_source: project_names
-        parent: customer_name
-        optional: False
-      - name: new_project_name
-        label: New Project Name
-        type: input
-        options: []
-        options_source: new_project_name
-        parent: project_name
-        optional: False
-      - name: "new_git_id"
-        label: "New Git ID"
-        type: number
-        step: 1
-        min: 0
-        options: []
-        options_source: new_git_id
-        parent: project_name
-        optional: True
-    action:
-      function: "update_project"
-      main_action: "Project"
-      main_param: "project_name"
-      secondary_action: "updated"
-      button_name: "Update"
-  disable:
-    fields:
-      - name: customer_name
-        label: Customer
-        type: select
-        options: []
-        options_source: customer_data
-        optional: False
-      - name: project_name
-        label: Project
-        type: select
-        options: []
-        options_source: project_names
-        parent: customer_name
-        optional: False
-    action:
-      function: "disable_project"
-      main_action: "Project"
-      main_param: "project_name"
-      secondary_action: "disabled"
-      button_name: "Disable"
-  reenable:
-    fields:
-      - name: customer_name
-        label: Customer
-        type: select
-        options: []
-        options_source: customer_data
-        optional: False
-      - name: project_name
-        label: Project
-        type: select
-        options: []
-        options_source: project_names
-        parent: customer_name
-        optional: False
-    action:
-      function: "enable_project"
-      main_action: "Project"
-      main_param: "project_name"
-      secondary_action: "enabled"
-      button_name: "Re-enable"
-  meta:
-    icon: assignment
-    friendly_name: Projects
-    build_function: build_project_tab_panel
+  ### Project Information ###
+  project:
+    add:
+      fields:
+        - name: customer_name
+          label: Customer
+          type: select
+          options: []
+          options_source: customer_data
+          optional: False
+        - name: project_name
+          label: Project Name
+          type: input
+          optional: False
+        - name: "git_id"
+          label: "Git ID"
+          type: number
+          step: 1
+          min: 0
+          optional: True
+      action:
+        function: "insert_project"
+        main_action: "Project"
+        main_param: "project_name"
+        secondary_action: "added"
+        button_name: "Add"
+    update:
+      fields:
+        - name: customer_name
+          label: Customer
+          type: select
+          options: []
+          options_source: customer_data
+          optional: False
+        - name: project_name
+          label: Project Name
+          type: select
+          options: []
+          options_source: project_names
+          parent: customer_name
+          optional: False
+        - name: new_project_name
+          label: New Project Name
+          type: input
+          options: []
+          options_source: new_project_name
+          parent: project_name
+          optional: False
+        - name: "new_git_id"
+          label: "New Git ID"
+          type: number
+          step: 1
+          min: 0
+          options: []
+          options_source: new_git_id
+          parent: project_name
+          optional: True
+      action:
+        function: "update_project"
+        main_action: "Project"
+        main_param: "project_name"
+        secondary_action: "updated"
+        button_name: "Update"
+    disable:
+      fields:
+        - name: customer_name
+          label: Customer
+          type: select
+          options: []
+          options_source: customer_data
+          optional: False
+        - name: project_name
+          label: Project
+          type: select
+          options: []
+          options_source: project_names
+          parent: customer_name
+          optional: False
+      action:
+        function: "disable_project"
+        main_action: "Project"
+        main_param: "project_name"
+        secondary_action: "disabled"
+        button_name: "Disable"
+    reenable:
+      fields:
+        - name: customer_name
+          label: Customer
+          type: select
+          options: []
+          options_source: customer_data
+          optional: False
+        - name: project_name
+          label: Project
+          type: select
+          options: []
+          options_source: project_names
+          parent: customer_name
+          optional: False
+      action:
+        function: "enable_project"
+        main_action: "Project"
+        main_param: "project_name"
+        secondary_action: "enabled"
+        button_name: "Re-enable"
+    meta:
+      icon: assignment
+      friendly_name: Projects
+      build_function: render_entity_tabs
+      options:
+        - add
+        - update
+        - disable
+        - reenable
 
-### Work Items Information ###
-devops_work_item:
-  add:
-    fields:
-      - name: customer_name
-        label: Customer
-        type: select
-        options: []
-        options_source: customer_data
-        optional: False
-      - name: work_item_type
-        label: Work Item Type
-        type: select
-        options:
-          - Epic
-          - Feature
-          - User Story
-        default: User Story
-        optional: False
-      - name: work_item_title
-        label: Title
-        type: input
-        optional: False
-      - name: state
-        label: State
-        type: select
-        options:
-          - New
-          - Active
-          - Resolved
-          - Closed
-          - Removed
-        default: New
-        optional: False
-      - name: source
-        label: Source
-        type: select
-        with_input: true
-        options:
-          - Teams
-          - Email
-          - Call
-          - In person
-          - Other
-        optional: True
-        conditional: true
-        visible_when:
-          work_item_type: [User Story]
-      - name: contact_person
-        label: Contact Person
-        type: select
-        with_input: true
-        options: []
-        options_source: contact_persons
-        optional: True
-        parent: customer_name
-        conditional: true
-        visible_when:
-          work_item_type: [User Story]
-      - name: assigned_to
-        label: Assigned To
-        type: select
-        with_input: true
-        options: []
-        options_source: assignees
-        default_source: default_assignee
-        optional: True
-        parent: customer_name
-      - name: tags
-        label: Tags
-        type: chip_group
-        options: []
-        options_source: devops_tags
-        optional: True
-      - name: parent_name
-        label: Parent
-        type: select
-        options: []
-        options_source: parent_names
-        optional: True
-        parent: customer_name
-        conditional: true
-        visible_when:
-          work_item_type: [Feature, User Story]
-      - name: priority
-        label: Priority
-        type: select
-        options:
-          - 1
-          - 2
-          - 3
-          - 4
-        default: 2
-        optional: False
-      - name: use_markdown
-        label: Use Markdown
-        type: switch
-        optional: False
-        default: True
-      - name: description_editor
-        label: Description
-        type: editor_with_preview
-        language: markdown
-        optional: False
-        parent_fields: [source, contact_person]
-        render_function: render_and_sanitize_markdown
-        templates:
-          Epic: |
-            **Created Date:** {today}
+  ### Bonus Information ###
+  bonus:
+    add:
+      fields:
+        - name: bonus_percent
+          label: Bonus Percentage (%)
+          type: number
+          step: 1
+          min: 0
+          optional: false
+        - name: start_date
+          label: Start Date
+          type: date
+          options_source: today
+          optional: false
+      action:
+        function: "insert_bonus"
+        main_action: "Bonus"
+        main_param: "bonus_percent"
+        secondary_action: "added"
+        button_name: "Add"
+    meta:
+      icon: payments
+      friendly_name: Bonus
+      build_function: render_entity_tabs
+      options:
+        - add
 
-            ## Strategic Goal
+  ### Work Items Information ###
+  devops_work_item:
+    add:
+      fields:
+        - name: customer_name
+          label: Customer
+          type: select
+          options: []
+          options_source: customer_data
+          optional: False
+        - name: work_item_type
+          label: Work Item Type
+          type: select
+          options:
+            - Epic
+            - Feature
+            - User Story
+          default: User Story
+          optional: False
+        - name: work_item_title
+          label: Title
+          type: input
+          optional: False
+        - name: state
+          label: State
+          type: select
+          options:
+            - New
+            - Active
+            - Resolved
+            - Closed
+            - Removed
+          default: New
+          optional: False
+        - name: source
+          label: Source
+          type: select
+          with_input: true
+          options:
+            - Teams
+            - Email
+            - Call
+            - In person
+            - Other
+          optional: True
+          conditional: true
+          visible_when:
+            work_item_type: [User Story]
+        - name: contact_person
+          label: Contact Person
+          type: select
+          with_input: true
+          options: []
+          options_source: contact_persons
+          optional: True
+          parent: customer_name
+          conditional: true
+          visible_when:
+            work_item_type: [User Story]
+        - name: assigned_to
+          label: Assigned To
+          type: select
+          with_input: true
+          options: []
+          options_source: assignees
+          default_source: default_assignee
+          optional: True
+          parent: customer_name
+        - name: tags
+          label: Tags
+          type: chip_group
+          options: []
+          options_source: devops_tags
+          optional: True
+        - name: parent_name
+          label: Parent
+          type: select
+          options: []
+          options_source: parent_names
+          optional: True
+          parent: customer_name
+          conditional: true
+          visible_when:
+            work_item_type: [Feature, User Story]
+        - name: priority
+          label: Priority
+          type: select
+          options:
+            - 1
+            - 2
+            - 3
+            - 4
+          default: 2
+          optional: False
+        - name: use_markdown
+          label: Use Markdown
+          type: switch
+          optional: False
+          default: True
+        - name: description_editor
+          label: Description
+          type: editor_with_preview
+          language: markdown
+          optional: False
+          parent_fields: [source, contact_person]
+          render_function: render_and_sanitize_markdown
+          templates:
+            Epic: |
+              **Created Date:** {today}
 
-
-            ## Business Value
-
-
-            ## Success Criteria
-
-
-            ## Timeline
-
-          Feature: |
-            **Created Date:** {today}
-
-            ## Feature Description
-
-
-            ## Business Value
-
-
-            ## Acceptance Criteria
-
-
-            ## Dependencies
-
-          User Story: |
-            **Received Date:** {today}
-            **Source:** 
-            **Contact:** 
-
-            ## Problem
-
-
-            ## More Information
-
-
-            ## Solution
+              ## Strategic Goal
 
 
-            ## Validation
+              ## Business Value
 
-    rows:
-      - [customer_name, work_item_type, work_item_title]
-      - [parent_name, assigned_to]
-      - [contact_person, source]
-      - [state, priority]
-      - [tags]
-      - [description_editor]
-    action:
-      function: add_work_item
-      main_action: Work Item
-      main_param: work_item_title
-      secondary_action: added
-      button_name: "Add"
-  update:
-    fields:
-      - name: customer_name
-        label: Customer
-        type: select
-        options: []
-        options_source: customer_data
-        optional: False
-      - name: work_item
-        label: Work Item
-        type: select
-        options: []
-        options_source: work_items
-        optional: False
-        parent: customer_name
-      - name: state
-        label: State
-        type: select
-        options:
-          - New
-          - Active
-          - Resolved
-          - Closed
-          - Removed
-        optional: True
-      - name: assigned_to
-        label: Assigned To
-        type: select
-        with_input: true
-        options: []
-        options_source: assignees
-        optional: True
-        parent: customer_name
-      - name: priority
-        label: Priority
-        type: select
-        options:
-          - 1
-          - 2
-          - 3
-          - 4
-        optional: True
-      - name: description_editor
-        label: Description
-        type: editor_with_preview
-        language: markdown
-        optional: False
-        render_function: render_and_sanitize_markdown
-    rows:
-      - [customer_name, work_item]
-      - [state, assigned_to, priority]
-      - [description_editor]
-    action:
-      function: update_work_item
-      main_action: Work Item
-      main_param: work_item
-      secondary_action: updated
-      button_name: Save
-  meta:
-    icon: merge
-    friendly_name: DevOps
-    build_function: build_work_item_tab_panel
 
-### Bonus Information ###
-bonus:
-  add:
-    fields:
-      - name: bonus_percent
-        label: Bonus Percentage (%)
-        type: number
-        step: 1
-        min: 0
-        optional: false
-      - name: start_date
-        label: Start Date
-        type: date
-        options_source: today
-        optional: false
-    action:
-      function: "insert_bonus"
-      main_action: "Bonus"
-      main_param: "bonus_percent"
-      secondary_action: "added"
-      button_name: "Add"
-  meta:
-    icon: payments
-    friendly_name: Bonus
-    build_function: build_bonus_tab_panel
+              ## Success Criteria
+
+
+              ## Timeline
+
+            Feature: |
+              **Created Date:** {today}
+
+              ## Feature Description
+
+
+              ## Business Value
+
+
+              ## Acceptance Criteria
+
+
+              ## Dependencies
+
+            User Story: |
+              **Received Date:** {today}
+              **Source:** 
+              **Contact:** 
+
+              ## Problem
+
+
+              ## More Information
+
+
+              ## Solution
+
+
+              ## Validation
+
+      rows:
+        - [customer_name, work_item_type, work_item_title]
+        - [parent_name, assigned_to]
+        - [contact_person, source]
+        - [state, priority]
+        - [tags]
+        - [description_editor]
+      action:
+        function: add_work_item
+        main_action: Work Item
+        main_param: work_item_title
+        secondary_action: added
+        button_name: "Add"
+    update:
+      fields:
+        - name: customer_name
+          label: Customer
+          type: select
+          options: []
+          options_source: customer_data
+          optional: False
+        - name: work_item
+          label: Work Item
+          type: select
+          options: []
+          options_source: work_items
+          optional: False
+          parent: customer_name
+        - name: state
+          label: State
+          type: select
+          options:
+            - New
+            - Active
+            - Resolved
+            - Closed
+            - Removed
+          optional: True
+        - name: assigned_to
+          label: Assigned To
+          type: select
+          with_input: true
+          options: []
+          options_source: assignees
+          optional: True
+          parent: customer_name
+        - name: priority
+          label: Priority
+          type: select
+          options:
+            - 1
+            - 2
+            - 3
+            - 4
+          optional: True
+        - name: description_editor
+          label: Description
+          type: editor_with_preview
+          language: markdown
+          optional: False
+          render_function: render_and_sanitize_markdown
+      rows:
+        - [customer_name, work_item]
+        - [state, assigned_to, priority]
+        - [description_editor]
+      action:
+        function: update_work_item
+        main_action: Work Item
+        main_param: work_item
+        secondary_action: updated
+        button_name: Save
+    meta:
+      icon: merge
+      friendly_name: DevOps
+      build_function: render_devops_tabs
+      options:
+        - add
+        - update
 
 ## Info Pages ##
 info_page:

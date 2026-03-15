@@ -26,8 +26,13 @@ async def add_data_page():
 
     core = await AppCore.get_or_initialize()
 
-    # Shortcuts
-    config_ui = core.ui_config if hasattr(core, "ui_config") else {}
+    add_data_page_config = core.ui_config.get("add_data_page", {})
+
+    BUILD_FUNCTIONS = {
+        "render_entity_tabs": render_entity_tabs,
+        "render_devops_tabs": render_devops_tabs,
+        "render_database_tabs": render_database_tabs,
+    }
 
     # ========================================================================
     # Toolbar Controls
@@ -42,27 +47,11 @@ async def add_data_page():
                 )
                 .classes("text-xs text-white uppercase tracking-wide whitespace-nowrap")
             ) as main_tabs:
-                # Get icons from config
-                customer_icon = (
-                    config_ui.get("customer", {}).get("meta", {}).get("icon", "person")
-                )
-                project_icon = (
-                    config_ui.get("project", {}).get("meta", {}).get("icon", "work")
-                )
-                bonus_icon = (
-                    config_ui.get("bonus", {})
-                    .get("meta", {})
-                    .get("icon", "card_giftcard")
-                )
-                devops_icon = (
-                    config_ui.get("devops_work_item", {})
-                    .get("meta", {})
-                    .get("icon", "cloud")
-                )
-                ui.tab("customer", label="Customer", icon=customer_icon)
-                ui.tab("project", label="Project", icon=project_icon)
-                ui.tab("bonus", label="Bonus", icon=bonus_icon)
-                ui.tab("devops", label="DevOps", icon=devops_icon)
+                for page_dict in add_data_page_config:
+                    p_data = add_data_page_config.get(page_dict, {}).get("meta", {})
+                    icon = p_data.get("icon", "warning")
+                    label = p_data.get("friendly_name", page_dict)
+                    ui.tab(page_dict, label=label, icon=icon)
 
                 return main_tabs
 
@@ -86,41 +75,43 @@ async def add_data_page():
 
     main_tabs.on_value_change(on_tab_change)
 
+    start_tab = next(iter(add_data_page_config))
+
     with (
-        ui.tab_panels(main_tabs, value="customer")
+        ui.tab_panels(main_tabs, value=start_tab)
         .props("vertical")
         .classes("w-full")
         .style(
             "background: transparent; height: calc(100vh - 150px); max-height: calc(100vh - 150px);"
         )
     ):
-        # Customer tab
-        with ui.tab_panel("customer"):
-            await render_entity_tabs(
-                core, "customer", ["add", "update", "disable", "reenable"]
-            )
-        # Project tab
-        with ui.tab_panel("project"):
-            await render_entity_tabs(
-                core, "project", ["add", "update", "disable", "reenable"]
-            )
-        # Bonus tab
-        with ui.tab_panel("bonus"):
-            await render_entity_tabs(core, "bonus", ["add"])
+        for page_dict in add_data_page_config:
+            p_data = add_data_page_config.get(page_dict, {}).get("meta", {})
+            build_fn_name = p_data.get("build_function")
 
-        # DevOps tab
-        with ui.tab_panel("devops").classes("p-0"):
-            await render_devops_tabs(core)
+            with ui.tab_panel(page_dict):
+                if build_fn_name and build_fn_name in BUILD_FUNCTIONS:
+                    build_fn = BUILD_FUNCTIONS[build_fn_name]
+                    await build_fn(
+                        core,
+                        page_dict,
+                        p_data.get("options", []),
+                        add_data_page_config,
+                    )
+                else:
+                    core.logger.warning(
+                        f"No build function '{build_fn_name}' found for {page_dict}"
+                    )
+                    ui.label("Configuration error: build function not found").classes(
+                        "text-warning"
+                    )
 
-        # Database tab
-        # with ui.tab_panel("database"):
-        #     await render_database_tabs(core)
 
-
-async def render_entity_tabs(core: AppCore, entity_type: str, operations: list):
+async def render_entity_tabs(
+    core: AppCore, entity_type: str, operations: list, page_config: dict
+):
     """Render sub-tabs for entity operations (Add/Update/Disable/Reenable)"""
-    config_ui = core.config_loader.get_raw_dict("ui")
-    entity_config = config_ui.get(entity_type, {})
+    entity_config = page_config.get(entity_type, {})
 
     # Initialize storage for refresh functions if not exists
     if not hasattr(core, "_entity_refresh_fns"):
@@ -131,7 +122,10 @@ async def render_entity_tabs(core: AppCore, entity_type: str, operations: list):
     with ui.row(wrap=False):
         for op in operations:
             refresh_fn = await render_entity_form(
-                core, entity_type, op, entity_config.get(op, {})
+                core=core,
+                entity_type=entity_type,
+                operation=op,
+                form_config=entity_config.get(op, {}),
             )
             core._entity_refresh_fns[entity_type][op] = refresh_fn
 
@@ -273,10 +267,18 @@ async def render_entity_form(
     return refresh_all_widgets
 
 
-async def render_devops_tabs(core: AppCore):
-    """Render DevOps work item tabs"""
-    config_ui = core.config_loader.get_raw_dict("ui")
-    devops_config = config_ui.get("devops_work_item", {})
+async def render_devops_tabs(
+    core: AppCore, entity_type: str, operations: list, page_config: dict
+):
+    """Render DevOps work item tabs
+
+    Args:
+        core: AppCore instance
+        entity_type: Entity type (e.g., 'devops_work_item')
+        operations: List of operations (unused, for signature compatibility)
+        page_config: Page configuration dict
+    """
+    devops_config = page_config.get(entity_type, {})
 
     with (
         ui.tabs()
@@ -773,8 +775,17 @@ async def prepare_devops_data_sources(core: AppCore, operation: str) -> dict:
     return data_sources
 
 
-async def render_database_tabs(core: AppCore):
-    """Render database management tabs (Compare and Update)"""
+async def render_database_tabs(
+    core: AppCore, entity_type: str, operations: list, page_config: dict
+):
+    """Render database management tabs (Compare and Update)
+
+    Args:
+        core: AppCore instance
+        entity_type: Entity type (unused, for signature compatibility)
+        operations: List of operations (unused, for signature compatibility)
+        page_config: Page configuration dict (unused, for signature compatibility)
+    """
     from ..database import Database
     import os
     import tempfile
