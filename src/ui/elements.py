@@ -193,14 +193,23 @@ def entity_card_content():
 
 
 @contextmanager
-def page_card():
-    """Full width/height main page card"""
-    with (
-        ui.card()
-        .classes("w-full mt-4 rounded-lg flex flex-col")
-        .style(
-            "height:calc(100vh - 220px); padding: 0.75rem 1.5rem; box-sizing:border-box; overflow-y: auto;"
-        )
-        .props("flat")
-    ):
+def page_card(scrollable: bool = True):  ## TODO cleanup and simplify!
+    """Full width/height main page card
+
+    Args:
+        scrollable: Whether to enable vertical scrolling (default: True)
+    """
+    overflow_style = "overflow-y: auto;" if scrollable else "overflow-y: hidden;"
+
+    if scrollable:
+        # For scrollable content: use flex-1 to fill available space in flex containers
+        classes = "w-full flex-1 mt-4 rounded-lg flex flex-col"
+        style = f"min-height: 0; padding: 0.75rem 1.5rem; box-sizing: border-box; {overflow_style}"
+    else:
+        # For non-scrollable (internal scrolling): use fixed height calc
+        # 170px accounts for navbar (~100px) + toolbar (~50px) + margins (~20px)
+        classes = "w-full mt-4 rounded-lg flex flex-col"
+        style = f"height: calc(100vh - 170px); padding: 0.75rem 1.5rem; box-sizing: border-box; {overflow_style}"
+
+    with ui.card().classes(classes).style(style).props("flat"):
         yield
