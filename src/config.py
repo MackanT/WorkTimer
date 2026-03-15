@@ -123,7 +123,13 @@ class DynamicEntityConfigBase(BaseModel):
         if not isinstance(data, dict):
             return data
         return {
-            k: EntityConfig(**val) if isinstance(val, dict) else val
+            k: (
+                val
+                if k.endswith("_page")
+                else EntityConfig(**val)
+                if isinstance(val, dict)
+                else val
+            )
             for k, val in data.items()
         }
 
@@ -136,10 +142,22 @@ class DynamicEntityConfigBase(BaseModel):
         }
 
 
-class ConfigUI(DynamicEntityConfigBase):
-    """UI configuration from config_ui.yml - stores all entities dynamically"""
+class ConfigUI(BaseModel):
+    """UI configuration from config_ui.yml
 
-    pass
+    info_page:
+        info: {meta: {...}}
+        read_me: {meta: {...}}
+    add_data_page:
+        customer: {add: {...}, update: {...}}
+    """
+
+    class Config:
+        extra = "allow"
+
+    def model_dump(self, **kwargs) -> dict:
+        """Return raw dict of all pages"""
+        return getattr(self, "__pydantic_extra__", {}) or {}
 
 
 class ConfigTasks(DynamicEntityConfigBase):

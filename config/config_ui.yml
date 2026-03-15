@@ -465,21 +465,20 @@ bonus:
     friendly_name: Bonus
     build_function: build_bonus_tab_panel
 
-### Bonus Information ###
-info:
-  meta:
-    icon: info
-    friendly_name: Info
-    file: info.md
-
-read_me:
-  meta:
-    icon: read_more
-    friendly_name: Read Me
-    file: read_me.md
-
-changelog:
-  meta:
-    icon: change_history
-    friendly_name: Changelog
-    file: changelog.md
+## Info Pages ##
+info_page:
+  info:
+    meta:
+      icon: info
+      friendly_name: Info
+      file: info.md
+  read_me:
+    meta:
+      icon: read_more
+      friendly_name: Read Me
+      file: readme.md
+  changelog:
+    meta:
+      icon: change_history
+      friendly_name: Changelog
+      file: changelog.md
