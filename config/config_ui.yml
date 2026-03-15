@@ -490,11 +490,11 @@ info_page:
       file: info.md
   read_me:
     meta:
-      icon: read_more
+      icon: change_history
       friendly_name: Read Me
       file: readme.md
   changelog:
     meta:
-      icon: change_history
-      friendly_name: Changelog
-      file: changelog.md
+      icon: read_more
+      friendly_name: Todo
+      file: todo.md

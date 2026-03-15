@@ -2,28 +2,27 @@
 
 - Easy way to add time in post.
 - update customer/project should also update times values!
-- Make PAT-tokens etc masked
+- Make PAT-tokens etc masked (not easily possible)
 - Defaults to first project available per organisationurl
 - Git id dropdown currently only exists in project close. missing in query-view and add-data view
 - Option to upload file that is sent to user-story?
 - Marker for ongoing projects?
 - Devops välja kolumn för kortet (todo, on hold, in progress etc!)
 - sätt task till "done" när en stänger on_checkmark
-- Kunna kopiera ut resultat från query-editorn
 
 ### Buggar
 - At midnight, date "today" does not switch automatically
-- text wrapping in time tracking
 - sorting of tasks is "backwards" for earliest/latest. Null due-dates are backwards
 - Om internet inte finns initialt så startar inte devops clienten upp senare
 - no info when running for ex. delete command in query
-- Learn about asyncio..... When and where to run in main/background thread...
 - Devops slås inte på första gången en enablear en kund med devops integration
 - Creating table does not send "success message" (samma för alla med "no result set")
 
 
 ### Bugs V2
-- Sort order button is "floating" and moves around when clicked
+- Page random refresh (slow)
+- Padding around cards is of if not going to time.tracking page and back
+- page_card does not auto-set correct heights
 
 
 ### Completed -- Old from before ReadMe
