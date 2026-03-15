@@ -6,12 +6,14 @@ Uses per-client AppCore and event-driven updates.
 """
 
 from datetime import datetime
+from typing import Tuple
 from ..globals import LOG_COLORS
 
 from nicegui import ui
 from ..core.app import AppCore
 from ..helpers import UI_STYLES
 
+from ..ui.elements import toolbar, page_card
 
 ### TODO move out of here!
 LOG_CARD_HEIGHT = "76vh"
@@ -28,28 +30,13 @@ async def log_page():
 
     setup_debug_keyboard_handlers(core)
 
-    if not core:
-        with ui.card().classes(UI_STYLES.get_layout_classes("full_width_padded")):
-            ui.label("Log engine not available").classes(
-                UI_STYLES.get_layout_classes("text_negative")
-            )
-        return
-
-    # Filter state
-    selected_filter = {"value": "All"}
-
-    with (
-        ui.card()
-        .classes("w-full mx-auto my-4 p-6")
-        .style("min-width: 800px; max-width: 95vw;")
-    ):
-        # Header with icon and title and controls
-        with ui.row().classes("w-full items-center gap-3 mb-4"):
+    def render_toolbar() -> Tuple[ui.select, ui.button, ui.button]:
+        """Render control panel - stable across data refreshes."""
+        with toolbar(core.theme):
             ui.icon("terminal", size="md").classes("text-blue-400")
             ui.label("Application Log").classes("text-h5 text-white font-medium")
             ui.space()
 
-            # Log source filter
             filter_select = (
                 ui.select(
                     options=[
@@ -72,18 +59,30 @@ async def log_page():
                 .classes("w-40")
                 .props("dense")
             )
-            # Note: binding is done later after apply_filter is defined
 
-            # Save to file button
             save_button = (
                 ui.button("Save to File", icon="download").props("flat").classes("h-9")
             )
 
-            # Clear button
             clear_button = (
                 ui.button("Clear Log", icon="clear").props("flat").classes("h-9")
             )
 
+        return filter_select, save_button, clear_button
+
+    if not core:
+        with page_card():
+            ui.label("Log engine not available").classes(
+                UI_STYLES.get_layout_classes("text_negative")
+            )
+        return
+
+    filter_select, save_button, clear_button = render_toolbar()
+
+    # Filter state
+    selected_filter = {"value": "All"}
+
+    with page_card():
         # Log display container with fixed width
         with ui.element().classes("w-full").style("width: 100%;"):
             log_widget = (
