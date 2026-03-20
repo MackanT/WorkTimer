@@ -11,9 +11,12 @@ from ..ui.elements import toolbar, page_card
 from pathlib import Path
 
 
-@ui.page("/info")
 async def info_page():
-    """Info page - displays application information"""
+    """Info page - displays application information
+    
+    Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
+    Direct access to /info is handled by redirect in root.py
+    """
 
     # Get or create AppCore for this client
     core = await AppCore.get_or_initialize()

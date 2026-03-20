@@ -15,14 +15,7 @@ import logging
 
 # Import only what we need for startup
 from src.core import get_config_loader
-from src.pages import (
-    time_tracking_page,
-    add_data_page,
-    query_editor_page,
-    log_page,
-    info_page,
-    tasks_page,
-)
+from src.pages import root_page  # Root handles all sub-pages for SPA
 
 
 def initialize_app():

@@ -17,9 +17,12 @@ from ..ui.elements import toolbar, toolbar_group, page_card, entity_card_header
 from ..ui.dynamic_widgets import WIDGET_CLASSES
 
 
-@ui.page("/query_editor")
 async def query_editor_page():
-    """Query Editor page - for running SQL queries"""
+    """Query Editor page - for running SQL queries
+    
+    Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
+    Direct access to /query_editor is handled by redirect in root.py
+    """
 
     core = await AppCore.get_or_initialize()
 

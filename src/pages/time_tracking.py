@@ -154,7 +154,6 @@ def create_date_range_picker(on_change_callback) -> tuple:
 # ============================================================================
 
 
-@ui.page("/")
 async def time_tracking_page():
     """
     Main time tracking page
@@ -162,6 +161,9 @@ async def time_tracking_page():
     Uses per-client AppCore for isolation while maintaining the original
     customer/project card interface with timers and DevOps integration.
     uses PageState for all data, events for updates.
+
+    Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
+    Direct access to /time is handled by redirect in root.py
     """
 
     core = await AppCore.get_or_initialize()
@@ -907,9 +909,6 @@ async def time_tracking_page():
     date_input.value = helpers.get_range_for(selected_time.value)
     state.date_range = date_input.value
     selected_time.on("update:model-value", on_radio_time_change)
-
-    ui.query("html").style("overflow: hidden;")
-    ui.query("body").style("overflow: hidden;")
 
     ## DEBUG: Uncomment to add red outline to all elements for layout debugging
     # ui.add_css("""

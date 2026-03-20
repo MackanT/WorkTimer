@@ -9,9 +9,12 @@ from nicegui import ui
 from ..core.app import AppCore
 
 
-@ui.page("/tasks")
 async def tasks_page():
-    """Tasks page - for managing todos and tasks"""
+    """Tasks page - for managing todos and tasks
+
+    Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
+    Direct access to /tasks is handled by redirect in root.py
+    """
 
     # Get or create AppCore for this client
     core = await AppCore.get_or_initialize()

@@ -19,9 +19,12 @@ from ..ui.elements import toolbar, page_card
 LOG_CARD_HEIGHT = "76vh"
 
 
-@ui.page("/log")
 async def log_page():
-    """Log page - displays application logs"""
+    """Log page - displays application logs
+    
+    Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
+    Direct access to /log is handled by redirect in root.py
+    """
 
     # Get or create AppCore for this client
     core = await AppCore.get_or_initialize()
