@@ -18,6 +18,11 @@
 - Devops slås inte på första gången en enablear en kund med devops integration
 - Creating table does not send "success message" (samma för alla med "no result set")
 
+## Features
+- Devops visualize as dag?
+- Devops see board?
+- Devops move items between columns?
+
 
 ### Bugs V2
 - Page random refresh (slow)
