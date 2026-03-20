@@ -94,6 +94,9 @@ class AppCore:
 
     def _attach_root_logger_handler(self):
         """Attach EventBus handler to root logger for global log capture."""
+        if hasattr(self, "_root_logger_attached") and self._root_logger_attached:
+            return
+
         try:
             from .events import EventBusLogHandler
 
@@ -122,6 +125,7 @@ class AppCore:
 
             root_logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
 
+            self._root_logger_attached = True
             self.logger.debug("Root logger attached to EventBus and console")
             print(f"[AppCore] Logging initialized - Debug mode: {self.debug}")
         except Exception as e:
@@ -197,8 +201,10 @@ class AppCore:
             self.devops_engine = DevOpsEngine(
                 query_engine=self.query_engine, log_engine=do_logger
             )
-            await self.devops_engine.initialize()
-            self.logger.info("DevOps engine initialized")
+
+            # Run DevOps initialization in background to avoid blocking page load
+            asyncio.create_task(self._initialize_devops_background())
+            self.logger.info("DevOps engine created (loading data in background)")
 
             self._initialized = True
             self.logger.info("All engines initialized successfully")
@@ -207,6 +213,26 @@ class AppCore:
             self.logger.error(f"Failed to initialize engines: {e}")
             self.event_bus.notify(f"Initialization failed: {e}", type_="negative")
             raise
+
+    async def _initialize_devops_background(self):
+        """
+        Initialize DevOps data in background without blocking page load.
+        This prevents connection timeouts on initial page load.
+        """
+        try:
+            self.logger.info("Starting background DevOps initialization")
+            # Add timeout to prevent hanging indefinitely
+            await asyncio.wait_for(
+                self.devops_engine.initialize(),
+                timeout=30.0,  # 30 second timeout
+            )
+            self.logger.info("DevOps engine initialized in background")
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                "DevOps initialization timed out (30s) - will retry later"
+            )
+        except Exception as e:
+            self.logger.error(f"Background DevOps initialization failed: {e}")
 
     @classmethod
     def get_or_create(cls, config_loader: Optional[ConfigLoader] = None) -> "AppCore":
