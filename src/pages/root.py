@@ -1,4 +1,4 @@
-from nicegui import ui
+from nicegui import ui, app
 from . import (
     time_tracking_page,
     log_page,
@@ -10,14 +10,13 @@ from . import (
 from ..core.app import AppCore
 
 
-@ui.page("/")
-async def root_page():
-    """Root page that hosts sub-pages for SPA navigation."""
-
+async def _setup_spa_shell():
+    """Set up the SPA shell with navigation and sub-pages."""
     core = await AppCore.get_or_initialize()
     core.nav_bar.render()
 
     # Define sub-pages mapping - all pages are sub-pages for SPA behavior
+    # The sub_pages container automatically shows the correct page based on current URL
     ui.sub_pages(
         {
             "/time": time_tracking_page,
@@ -29,53 +28,53 @@ async def root_page():
         }
     ).classes("w-full h-full gap-0")
 
-    # Auto-navigate to time tracking page on root load
+
+@ui.page("/")
+async def root_page():
+    """Root page - redirects to /time by default."""
+    await _setup_spa_shell()
+    # Only navigate if actually at root
     ui.navigate.to("/time")
 
 
 # ============================================================================
-# Direct Access Redirects (for refresh support)
+# Direct Access Pages (for refresh support)
 # These allow refreshing on /time, /add_data, etc. without 404 errors
-# They render the root page which contains the sub-pages
+# Each renders the SPA shell which includes the sub-page for that route
 # ============================================================================
 
 
 @ui.page("/time")
-async def time_redirect():
-    """Redirect to root SPA for time tracking (handles refresh on /time)."""
-    await root_page()
+async def time_page():
+    """Time tracking page (supports direct access and SPA navigation)."""
+    await _setup_spa_shell()
 
 
 @ui.page("/add_data")
-async def add_data_redirect():
-    """Redirect to root SPA for add data (handles refresh on /add_data)."""
-    await root_page()
-    ui.navigate.to("/add_data")
+async def add_data_page_route():
+    """Add data page (supports direct access and SPA navigation)."""
+    await _setup_spa_shell()
 
 
 @ui.page("/query_editor")
-async def query_editor_redirect():
-    """Redirect to root SPA for query editor (handles refresh on /query_editor)."""
-    await root_page()
-    ui.navigate.to("/query_editor")
+async def query_editor_page_route():
+    """Query editor page (supports direct access and SPA navigation)."""
+    await _setup_spa_shell()
 
 
 @ui.page("/tasks")
-async def tasks_redirect():
-    """Redirect to root SPA for tasks (handles refresh on /tasks)."""
-    await root_page()
-    ui.navigate.to("/tasks")
+async def tasks_page_route():
+    """Tasks page (supports direct access and SPA navigation)."""
+    await _setup_spa_shell()
 
 
 @ui.page("/log")
-async def log_redirect():
-    """Redirect to root SPA for log (handles refresh on /log)."""
-    await root_page()
-    ui.navigate.to("/log")
+async def log_page_route():
+    """Log page (supports direct access and SPA navigation)."""
+    await _setup_spa_shell()
 
 
 @ui.page("/info")
-async def info_redirect():
-    """Redirect to root SPA for info (handles refresh on /info)."""
-    await root_page()
-    ui.navigate.to("/info")
+async def info_page_route():
+    """Info page (supports direct access and SPA navigation)."""
+    await _setup_spa_shell()
