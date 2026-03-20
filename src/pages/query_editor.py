@@ -19,7 +19,7 @@ from ..ui.dynamic_widgets import WIDGET_CLASSES
 
 async def query_editor_page():
     """Query Editor page - for running SQL queries
-    
+
     Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
     Direct access to /query_editor is handled by redirect in root.py
     """

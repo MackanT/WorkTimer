@@ -26,7 +26,7 @@ async def _setup_spa_shell():
             "/log": log_page,
             "/info": info_page,
         }
-    ).classes("w-full h-full gap-0")
+    ).classes("w-full h-full gap-0").style("overflow: hidden;")
 
 
 @ui.page("/")

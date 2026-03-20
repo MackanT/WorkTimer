@@ -22,7 +22,7 @@ from ..ui.elements import (
 
 async def add_data_page():
     """Add Data page - for creating new entities
-    
+
     Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
     Direct access to /add_data is handled by redirect in root.py
     """

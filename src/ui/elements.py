@@ -23,19 +23,16 @@ class NavigationBar:
         Create the top navigation banner with buttons to all main areas.
         Uses app.storage.client to ensure navigation is only created once per client session.
         """
-        ui.query(".nicegui-content").classes("p-0 gap-0")
-
         try:
             if app.storage.client.get("navigation_created", False):
                 return
             app.storage.client["navigation_created"] = True
 
-            # Define navigation items
             nav_items = [
                 {
                     "label": "Time Tracking",
                     "icon": "schedule",
-                    "path": "/",
+                    "path": "/time",
                     "key": "time_tracking",
                 },
                 {
@@ -58,7 +55,6 @@ class NavigationBar:
                 },
                 {"label": "Log", "icon": "terminal", "path": "/log", "key": "log"},
                 {"label": "Info", "icon": "info", "path": "/info", "key": "info"},
-                {"label": "Test", "icon": "science", "path": "/test", "key": "test"},
             ]
 
             nav_text = self.theme.get("muted")
@@ -95,8 +91,7 @@ class NavigationBar:
                         self.buttons[item["path"]] = button
 
             # Set initial active state based on current path
-            # Get current path from the page or default to "/"
-            current_path = app.storage.client.get("current_path", "/")
+            current_path = app.storage.client.get("current_path", "/time")
             self.set_active(current_path, self.theme)
 
         except Exception as e:
@@ -131,8 +126,15 @@ def toolbar_divider(theme):
 
 @contextmanager
 def toolbar(theme):
-    with ui.row().classes(
-        f"w-full items-center gap-6 px-6 py-3 bg-{theme.get('toolbar_bg')} rounded-lg"
+    """Toolbar component - consistent height and styling across all pages"""
+    with (
+        ui.row()
+        .classes(
+            f"w-full items-center gap-6 px-6 bg-{theme.get('toolbar_bg')} rounded-md"
+        )
+        .style(
+            "height: 56px; min-height: 56px; max-height: 56px; box-sizing: border-box;"
+        )
     ):
         yield
 
@@ -150,10 +152,13 @@ def toolbar_group(theme, label: str, divider_after: bool = True):
 
 @contextmanager
 def entity_card_shell():
-    """Top level card shell"""
+    """Top level card shell for entity cards (customers/projects)"""
+
+    base_classes = "w-full mx-auto mb-2 p-4"
+
     with (
         ui.card()
-        .classes(UI_STYLES.get_card_classes("xs", "card_padded"))
+        .classes(f"{base_classes} rounded-md")
         .style(
             "display:flex; flex-direction:column; height:calc(100vh - 220px); min-width:280px; box-sizing:border-box;"
         )
@@ -193,8 +198,8 @@ def entity_card_content():
 
 
 @contextmanager
-def page_card(scrollable: bool = True):  ## TODO cleanup and simplify!
-    """Full width/height main page card
+def page_card(scrollable: bool = True):
+    """Full width/height main page card with consistent styling.
 
     Args:
         scrollable: Whether to enable vertical scrolling (default: True)
@@ -203,13 +208,15 @@ def page_card(scrollable: bool = True):  ## TODO cleanup and simplify!
 
     if scrollable:
         # For scrollable content: use flex-1 to fill available space in flex containers
-        classes = "w-full flex-1 mt-4 rounded-lg flex flex-col"
-        style = f"min-height: 0; padding: 0.75rem 1.5rem; box-sizing: border-box; {overflow_style}"
+        style = f"min-height: 0; box-sizing: border-box; {overflow_style}"
     else:
         # For non-scrollable (internal scrolling): use fixed height calc
         # 170px accounts for navbar (~100px) + toolbar (~50px) + margins (~20px)
-        classes = "w-full mt-4 rounded-lg flex flex-col"
-        style = f"height: calc(100vh - 170px); padding: 0.75rem 1.5rem; box-sizing: border-box; {overflow_style}"
+        style = f"height: calc(100vh - 170px); box-sizing: border-box; {overflow_style}"
 
-    with ui.card().classes(classes).style(style).props("flat"):
+    with (
+        (ui.card().classes("w-full mx-4 my-4 rounded-md flex flex-col"))
+        .style(style)
+        .props("flat")
+    ):
         yield

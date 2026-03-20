@@ -253,7 +253,7 @@ inline_styles:
   # Time tracking module
   time_tracking:
     # Customer card flex layout - constrain max width and prevent overflow
-    customer_card: "flex:1 1 320px; min-width:280px; max-width:420px; margin:0 12px; box-sizing:border-box; overflow:hidden;"
+    customer_card: "flex:1 1 320px; min-width:280px; max-width:420px; box-sizing:border-box; overflow:hidden;"
     # Main container max width
     container: "flex-wrap:nowrap; width:100%; max-width:1800px; margin:0 auto;"
     # Customer header row - grid layout ensures proper alignment

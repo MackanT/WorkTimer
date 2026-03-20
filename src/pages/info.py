@@ -13,7 +13,7 @@ from pathlib import Path
 
 async def info_page():
     """Info page - displays application information
-    
+
     Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
     Direct access to /info is handled by redirect in root.py
     """
@@ -69,5 +69,5 @@ async def info_page():
         for page_dict in info_page_config:
             p_data = info_page_config.get(page_dict, {}).get("meta", {})
             filename = p_data.get("file", f"{page_dict}.md")
-            with ui.tab_panel(page_dict):
+            with ui.tab_panel(page_dict).classes("p-0"):
                 render_info_text(filename)
