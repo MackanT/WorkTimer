@@ -1049,12 +1049,13 @@ def create_task_card(
 
     with (
         ui.card()
+        .props("flat")
         .classes(card_classes)
         .style(card_style)
         .on("click", handle_card_click) as card
     ):
         # Top row: checkbox, title, edit-button
-        with ui.row().classes("w-full justify-between items-center mb-2"):
+        with ui.row().classes("w-full justify-between items-center mb-2 flex-nowrap"):
             checkbox = ui.checkbox(
                 value=completed, on_change=handle_checkbox_change
             ).classes("flex-none")
@@ -1062,7 +1063,7 @@ def create_task_card(
 
             # Title in the middle, expandable
             ui.label(title).classes(
-                "flex-grow text-sm font-medium text-white truncate mx-2"
+                "flex-grow text-sm font-medium text-white truncate mx-2 min-w-0"
             )
 
             edit_button = (

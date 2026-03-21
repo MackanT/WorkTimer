@@ -151,8 +151,13 @@ def toolbar_group(theme, label: str, divider_after: bool = True):
 
 
 @contextmanager
-def entity_card_shell():
-    """Top level card shell for entity cards (customers/projects)"""
+def entity_card_shell(constrain_width: bool = True):
+    """Top level card shell for entity cards (customers/projects)
+
+    Args:
+        constrain_width: If True, applies max-width constraint (for time_tracking cards).
+                        If False, uses full width (for task forms in splitter panel).
+    """
 
     base_classes = "w-full mx-auto mb-2 p-4"
 
@@ -164,12 +169,18 @@ def entity_card_shell():
         )
         .props("flat")
     ):
+        # Apply width constraints only when needed (time_tracking page)
+        column_style = (
+            UI_STYLES.get_inline_style("time_tracking", "customer_card")
+            if constrain_width
+            else ""
+        )
         with (
             ui.column()
             .classes(
                 f"{UI_STYLES.get_layout_classes('time_tracking_customer_column')} flex-1 min-h-0"
             )
-            .style(UI_STYLES.get_inline_style("time_tracking", "customer_card"))
+            .style(column_style)
         ):
             yield
 

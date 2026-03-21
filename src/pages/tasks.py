@@ -119,7 +119,6 @@ class Task:
 
 # UI Layout Constants
 SPLITTER_RATIO = 65  # Percentage for left panel (task view)
-TASK_LIST_HEIGHT = "600px"  # Height of scrollable task list
 SORT_SELECT_WIDTH = "w-64"  # Width class for sort dropdown
 
 # ============================================================================
@@ -288,7 +287,7 @@ def on_task_click(core: AppCore, task: Task, page_state: dict):
             page_state["form_container"].clear()
 
             with page_state["form_container"]:
-                with entity_card_shell():
+                with entity_card_shell(constrain_width=False):
                     with entity_card_header():
                         ui.label(task.title).classes("text-h6")
 
@@ -383,7 +382,7 @@ def render_card_view(
         with (
             ui.scroll_area()
             .classes(UI_STYLES.get_layout_classes("full_width"))
-            .style(f"height: {TASK_LIST_HEIGHT}; min-width: 0;")
+            .style("height: 100%; min-width: 0;")
         ):
             # Use CSS Grid for proper grid layout with padding
             with (
@@ -580,7 +579,7 @@ async def tasks_page():
                 elif view_name == "update":
                     await render_update_form(core, page_state, refresh_view_and_tasks)
                 elif view_name == "view":
-                    with entity_card_shell():
+                    with entity_card_shell(constrain_width=False):
                         with entity_card_header():
                             ui.label("Task Details").classes("text-h6")
                         with entity_card_content():
@@ -667,14 +666,20 @@ async def tasks_page():
     with (
         ui.splitter(value=SPLITTER_RATIO)
         .classes("w-full")
-        .style("height: calc(100vh - 100px);") as splitter
+        .style("height: calc(100vh - 160px);") as splitter
     ):
         # Left panel: Task list
         with splitter.before:
-            with ui.column().classes("p-4 w-full h-full"):
+            with (
+                ui.column()
+                .classes("w-full h-full")
+                .style("padding: 1rem; padding-bottom: 2rem;")
+            ):
                 # Tasks container
-                page_state["tasks_container"] = ui.column().classes(
-                    UI_STYLES.get_layout_classes("full_width")
+                page_state["tasks_container"] = (
+                    ui.column()
+                    .classes(UI_STYLES.get_layout_classes("full_width"))
+                    .style("height: 100%;")
                 )
 
                 # Defer initial task loading to avoid sync/async issues
@@ -683,7 +688,7 @@ async def tasks_page():
         # Right panel: Forms
         with splitter.after:
             with ui.scroll_area().classes("w-full h-full"):
-                page_state["form_container"] = ui.column().classes("p-4 w-full")
+                page_state["form_container"] = ui.column().classes("p-4 w-full pb-8")
                 # Forms will be rendered here dynamically when buttons are clicked
 
 
@@ -694,9 +699,17 @@ async def tasks_page():
 
 async def render_add_form(core: AppCore, refresh_callback):
     """Render the Add Task form"""
-    with entity_card_shell():
+
+    submit_button = None
+
+    with entity_card_shell(constrain_width=False):
         with entity_card_header():
-            ui.label("Add New Task").classes("text-h6")
+            with ui.element("div").style(
+                "display:flex; align-items:center; gap:0.25rem; overflow:hidden;"
+            ):
+                ui.label("Add New Task").classes("text-h6")
+                ui.space()
+                submit_button = ui.button(icon="add").props("color=primary disabled")
 
         with entity_card_content():
             data = await get_customer_project_data(core)
@@ -869,44 +882,16 @@ async def render_add_form(core: AppCore, refresh_callback):
                                 tags.widget.classes(widget_classes)
                                 form_widgets["tags"] = tags
 
-            # Submit button (outside the column, at entity_card_content level)
             async def handle_submit():
-                if not title.value:
-                    ui.notify("Title is required", type="warning")
-                    return
-
                 try:
-                    # Add task via database function
-                    success, message, task_data = await core.query_engine.function_db(
-                        "insert_task",
-                        title=title.value,
-                        description=description.value,
-                        customer_name=customer_select.value,
-                        project_name=project_select.value,
-                        status=status.value,
-                        priority=priority.value,
-                        assigned_to=assigned_to.value,
-                        due_date=due_date.value if due_date.value else None,
-                        estimated_hours=estimated_hours.value,
-                        tags=tags.value,
+                    values = {name: w.get_value() for name, w in form_widgets.items()}
+                    success = await core.function_db.create(
+                        entity_type="task",
+                        values=values,
+                        functions=core.tasks_functions,
                     )
-
                     if success:
-                        ui.notify(f"Task '{title.value}' created!", type="positive")
-                        # Clear form
-                        title.value = ""
-                        description.value = ""
-                        customer_select.value = None
-                        project_select.value = None
-                        status.value = "To Do"
-                        priority.value = "Medium"
-                        assigned_to.value = ""
-                        due_date.value = (datetime.now() + timedelta(days=1)).strftime(
-                            "%Y-%m-%d"
-                        )
-                        estimated_hours.value = 0
-                        tags.value = ""
-                        # Refresh task list and return to list view
+                        ui.notify("Task created", type="positive")
                         if asyncio.iscoroutinefunction(refresh_callback):
                             await refresh_callback()
                         else:
@@ -917,16 +902,22 @@ async def render_add_form(core: AppCore, refresh_callback):
                     core.logger.error(f"Error creating task: {e}")
                     ui.notify(f"Error: {e}", type="negative")
 
-            ui.button("Create Task", icon="add", on_click=handle_submit).props(
-                "color=primary"
-            ).classes("mt-4")
+            submit_button.on("click", handle_submit)
+            submit_button.props(remove="disabled")
 
 
 async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
     """Render the Update Task form"""
-    with entity_card_shell():
+    update_button = None
+
+    with entity_card_shell(constrain_width=False):
         with entity_card_header():
-            ui.label("Update Task").classes("text-h6")
+            with ui.element("div").style(
+                "display:flex; align-items:center; gap:0.25rem; overflow:hidden;"
+            ):
+                ui.label("Update Task").classes("text-h6")
+                ui.space()
+                update_button = ui.button(icon="save").props("color=primary disabled")
 
         with entity_card_content():
             form_widgets = {}
@@ -1186,6 +1177,6 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
                     core.logger.error(f"Error updating task: {e}")
                     ui.notify(f"Error: {e}", type="negative")
 
-            ui.button("Update Task", icon="save", on_click=handle_update).props(
-                "color=primary"
-            ).classes("mt-4")
+            # Connect button to handler and enable it
+            update_button.on("click", handle_update)
+            update_button.props(remove="disabled")
