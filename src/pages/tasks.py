@@ -384,7 +384,6 @@ def render_card_view(
             .classes(UI_STYLES.get_layout_classes("full_width"))
             .style("height: 100%; min-width: 0;")
         ):
-            # Use CSS Grid for proper grid layout with padding
             with (
                 ui.element()
                 .classes("w-full")
@@ -392,7 +391,7 @@ def render_card_view(
                     "display: grid; "
                     "grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); "
                     "gap: 16px; "
-                    "padding: 8px;"
+                    "padding: 0px;"
                 )
             ):
                 for task in tasks:
@@ -670,11 +669,7 @@ async def tasks_page():
     ):
         # Left panel: Task list
         with splitter.before:
-            with (
-                ui.column()
-                .classes("w-full h-full")
-                .style("padding: 1rem; padding-bottom: 2rem;")
-            ):
+            with ui.column().classes("w-full h-full"):
                 # Tasks container
                 page_state["tasks_container"] = (
                     ui.column()

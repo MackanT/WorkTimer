@@ -1040,7 +1040,7 @@ def create_task_card(
     project = column_map.get("Project", "")
 
     # Add completion styling
-    card_classes = "w-full p-3 cursor-pointer"
+    card_classes = "w-full p-3 cursor-pointer rounded-md"
     card_style = "min-width: 320px; max-width: 400px;"
 
     if completed:
