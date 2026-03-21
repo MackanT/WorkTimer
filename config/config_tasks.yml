@@ -139,7 +139,6 @@ task:
         optional: true
         default: ""
 
-    # Define layout - rows for better organization
     rows:
       - ["title"]
       - ["description"]
@@ -254,7 +253,6 @@ task:
         dynamic_query: "SELECT tags FROM tasks WHERE title || ' (ID: ' || task_id || ')' = '{parent_value}'"
         dynamic_column: 0
 
-    # Layout for update tab
     rows:
       - ["task_selector"]
       - ["title"]
@@ -287,7 +285,56 @@ task:
         optional: false
         default: false
 
-    # Simple layout for delete
     rows:
       - ["task_selector"]
       - ["confirm_delete"]
+
+  view:
+    rows:
+      - ["title"]
+      - ["description"]
+      - ["customer_name", "project_name"]
+      - ["status", "priority"]
+      - ["due_date", "assigned_to"]
+      - ["estimated_hours", "actual_hours"]
+      - ["completed"]
+      - ["created_at"]
+
+    fields:
+      - name: "title"
+        label: "Title"
+
+      - name: "description"
+        label: "Description"
+        multiline: true
+
+      - name: "customer_name"
+        label: "Customer"
+
+      - name: "project_name"
+        label: "Project"
+
+      - name: "status"
+        label: "Status"
+
+      - name: "priority"
+        label: "Priority"
+
+      - name: "due_date"
+        label: "Due Date"
+
+      - name: "assigned_to"
+        label: "Assigned To"
+
+      - name: "estimated_hours"
+        label: "Estimated Hours"
+
+      - name: "actual_hours"
+        label: "Actual Hours"
+
+      - name: "completed"
+        label: "Completed"
+        format: "boolean"
+
+      - name: "created_at"
+        label: "Created"
