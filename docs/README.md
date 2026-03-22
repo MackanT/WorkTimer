@@ -8,6 +8,16 @@ A modern web-based time tracking application with built-in task management and A
 
 ## Changelog
 
+### 5.0.0 (2026-XX-XX)
+- **Major improvements** ## TODO complete this changelog
+  - New events/central core think
+  - Multi-user (single person multiple tabs) support
+  - New config support for color/design
+  - New cleaner visualization
+  - Subpage support, "many" pages with persistent storage
+  - Log support to filter/export log
+  - Yaml-file editor in program (customers/theme/tasks-visual (currently disabled))
+
 ### 4.0.3 (2026-01-17)
 - **Minor improvements**
   - Added so devops table is created if not present on program startup

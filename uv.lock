@@ -1499,7 +1499,7 @@ wheels = [
 
 [[package]]
 name = "worktimer"
-version = "4.0.3"
+version = "5.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "azure-devops" },
