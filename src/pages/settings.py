@@ -298,30 +298,29 @@ async def _render_devops_contacts_tab(core: AppCore):
                                 "dense flat round size=xs color=negative"
                             )
 
-                add_in = (
-                    ui.input(f"Add {field_label.lower()}")
-                    .props("dense outlined")
-                    .classes("w-64")
-                )
-
-                def _add_item(fk=field_key, ai=add_in):
-                    v = (ai.value or "").strip()
-                    if not v:
-                        return
-                    ddd = _load_yaml(path)
-                    lst = (
-                        ddd.setdefault("customers", {})
-                        .setdefault(customer, {})
-                        .setdefault(fk, [])
-                    )
-                    if v not in lst:
-                        lst.append(v)
-                    _save_yaml(path, ddd)
-                    ai.value = ""
-                    _reload_detail()
-
                 with ui.row().classes("items-center gap-2 mb-2"):
-                    add_in
+                    add_in = (
+                        ui.input(f"Add {field_label.lower()}")
+                        .props("dense outlined")
+                        .classes("w-64")
+                    )
+
+                    def _add_item(fk=field_key, ai=add_in):
+                        v = (ai.value or "").strip()
+                        if not v:
+                            return
+                        ddd = _load_yaml(path)
+                        lst = (
+                            ddd.setdefault("customers", {})
+                            .setdefault(customer, {})
+                            .setdefault(fk, [])
+                        )
+                        if v not in lst:
+                            lst.append(v)
+                        _save_yaml(path, ddd)
+                        ai.value = ""
+                        _reload_detail()
+
                     ui.button(icon="add", on_click=_add_item).props(
                         "dense flat color=primary"
                     )
@@ -334,23 +333,27 @@ async def _render_devops_contacts_tab(core: AppCore):
             )
             current_default = cdata.get("default_assignee", "")
             assignees = cdata.get("assignees", [])
-            default_sel = (
-                ui.select(assignees, label="Default Assignee", value=current_default)
-                .props("dense outlined")
-                .classes("w-64")
-            )
 
-            def _save_default():
-                ddd = _load_yaml(path)
-                ddd.setdefault("customers", {}).setdefault(customer, {})[
-                    "default_assignee"
-                ] = default_sel.value
-                _save_yaml(path, ddd)
-                ui.notify("Default assignee saved", type="positive")
+            with ui.row():
+                default_sel = (
+                    ui.select(
+                        assignees, label="Default Assignee", value=current_default
+                    )
+                    .props("dense outlined")
+                    .classes("w-64")
+                )
 
-            ui.button("Set Default", icon="save", on_click=_save_default).props(
-                "color=primary dense"
-            ).classes("mt-1")
+                def _save_default():
+                    ddd = _load_yaml(path)
+                    ddd.setdefault("customers", {}).setdefault(customer, {})[
+                        "default_assignee"
+                    ] = default_sel.value
+                    _save_yaml(path, ddd)
+                    ui.notify("Default assignee saved", type="positive")
+
+                ui.button("Set Default", icon="save", on_click=_save_default).props(
+                    "color=primary dense"
+                ).classes("mt-1")
 
     cust_sel.on("update:model-value", lambda: _reload_detail())
     _reload_detail()
@@ -438,10 +441,12 @@ async def settings_page():
 
     with toolbar(core.theme):
         ui.icon("tune", size="md").classes("text-amber-400")
-        ui.label("Settings").classes("text-h5 text-white font-medium")
+        ui.label(
+            "Settings - Currently WIP - Code works but not happy yet with implementation"
+        ).classes("text-h5 text-white font-medium")
         ui.space()
         with (
-            ui.tabs(value="visuals")
+            ui.tabs(value="contacts")
             .props(
                 f'horizontal dense active-color="{core.theme.get("accent")}" indicator-color="{core.theme.get("accent")}"'
             )
@@ -453,7 +458,7 @@ async def settings_page():
 
     with page_card(scrollable=False):
         with (
-            ui.tab_panels(tabs, value="visuals")
+            ui.tab_panels(tabs, value="contacts")
             .classes("w-full h-full")
             .style("background: transparent;")
         ):

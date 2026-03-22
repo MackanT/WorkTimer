@@ -1,61 +1,33 @@
-### TODO
-
+## Features
+ ### TimeTracker
 - Easy way to add time in post.
 - update customer/project should also update times values!
+- Marker for ongoing projects? Make it easier to see from a glance what is active right now
+- At midnight, date "today" does not switch automatically. Might be fixed but have not verified it (bug)
+ ### Database / QueryEditor
 - Make PAT-tokens etc masked (not easily possible)
-- Defaults to first project available per organisationurl
-- Git id dropdown currently only exists in project close. missing in query-view and add-data view
-- Option to upload file that is sent to user-story?
-- Marker for ongoing projects?
-- Devops välja kolumn för kortet (todo, on hold, in progress etc!)
-- sätt task till "done" när en stänger on_checkmark
-
-### Buggar
-- At midnight, date "today" does not switch automatically
-- sorting of tasks is "backwards" for earliest/latest. Null due-dates are backwards
-- Om internet inte finns initialt så startar inte devops clienten upp senare
-- no info when running for ex. delete command in query
-- Devops slås inte på första gången en enablear en kund med devops integration
-- Creating table does not send "success message" (samma för alla med "no result set")
-
-## Features
+- no info when running for ex. delete command in query (bug)
+- Create/Alter/Update table does not send "success message" (same for all with "no result set" returns)
+ ### Devops
 - Devops visualize as dag?
 - Devops see board?
-- Devops move items between columns?
-
-
-### Bugs V2
-- Page random refresh (slow)
-- Padding around cards is of if not going to time.tracking page and back
-- page_card does not auto-set correct heights
-
-
-### Completed -- Old from before ReadMe
-- clean up of customer sort order (not needed anymore)
-- "error" command completed successfully (after for ex update query) (not needed anymore)
-- color coded in sql input (Done)
-- ~when minimizing and opening window all customer projects are minimized~
-- ~customer tab to tall, moving log to bottom~
-- ~Amount shows incorrect wage. I.e project_name = Förvaltning date_key = 20250502 is 133.31, shows 99.99~
-- ~_get_value_from_db returns wrongful datatypes~
-- ~pre_log should not populate "created table" if it did not run. And only run generate_dates if necessary~
-- ~Fix so git-id is displayed as int~
-- ~.JSON fil auto-populeras inte med nya customer_id~ Not applicable after move to sql-table
-- ~Efter remove customer döljs den inte från "knapparna"~
-
-- ~End of period groupings~
-- ~project_name + customer_name in time is updated automatically based on id~
-- ~Color indicator or other to show customers with active projects~
-- ~Started timer cannot be removed without sql~
-- ~Post to devops is default-filled based on if value exists or not~
-- ~change json sort file to be a column in db per customer and project with sort order~
-- ~make query window scrollable, to big as is~
-- ~move database logic to own class~
-- ~Easy way to edit time row in post. For ex. change customer/project/git~
-- ~Sort order of items in lists~
-- ~Total time by customer~
-- ~Quick selects from different tables~
-- ~auto run SQL on tables in sql-query window~
-- ~convert "iloc":s to use _get_value_from_df instead~
-- ~minute timer also store "current date", if it is different from stored, updated SELECTED DATE to new value 
-- ~Wage, cost, bonus not calculating correct~
+- Devops move items between columns (todo, analyze, in progress, review, test, done etc.)?
+- Be able to post images/files when creating devops epic/feature/user-story (low priority!)
+- Git id dropdown currently only exists in project close. missing in query-view and add-data view (maybe add there as well?)
+- Defaults to first project available per organisation-url
+- If internet does not exist on boot errors on devops client and it will never try to reconnect (bug)
+- If no customers have devops integration when starting program it is not enabled. When then adding a devops customer, it is not auto-enabled (bug)
+ ### Tasks
+- Tasks missing delete task option?
+- Tasks sort order not correct (?)
+ ### Notes
+- Notepad++ functionality + markdown (?)
+- Page with 2 halfes, one with markdown input and the other a visualizer (better if one can edit directly in markdown viewer/visualizer!) Basically want notepad++ function in the app where you can create "notebooks" add text and leave and it is auto-saved, go back and it is always there etc.
+ ### Documentation
+- Go over all documentation in /docs and remove old docs, add new, ensure it is up to date and correct etc. 
+ ### Generic
+- Go over page layouts (ensure consistent ui sizes etc)
+- Cleanup config_ui_styles
+ ### BUGS
+- Updating from settings does not call event to update in add-data page (i.e. newly added customers are not visible in its drop-downs)
+- Default assignee not utilized
