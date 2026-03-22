@@ -161,7 +161,7 @@ class ConfigUI(BaseModel):
 
 
 class ConfigTasks(DynamicEntityConfigBase):
-    """Tasks configuration from config_tasks.yml - stores all entities dynamically"""
+    """Tasks configuration from config_ui.yml ('task' key) - stores all entities dynamically"""
 
     pass
 
@@ -323,12 +323,11 @@ class ConfigLoader:
         ui_yaml = self._load_yaml("config_ui.yml", required=True)
         self.configs["ui"] = ConfigUI(**ui_yaml)
 
-        # Load query config (required)
-        query_yaml = self._load_yaml("config_query.yml", required=True)
-        self.configs["query"] = QueryConfig(**query_yaml)
+        # Extract query config from ui config
+        self.configs["query"] = QueryConfig(**{"query": ui_yaml.get("query", {})})
 
-        # Load tasks config (required)
-        tasks_yaml = self._load_yaml("config_tasks.yml", required=True)
+        # Extract tasks config from ui config
+        tasks_yaml = {"task": ui_yaml.get("task", {})}
         self.configs["tasks"] = ConfigTasks(**tasks_yaml)
         if "task" in tasks_yaml:
             actions = [k for k in tasks_yaml["task"].keys() if k != "meta"]

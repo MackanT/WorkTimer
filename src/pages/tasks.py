@@ -3,7 +3,7 @@ Task Management Page
 
 Task management interface with card/table views and CRUD operations.
 Uses V2 architecture with per-client AppCore and event-driven updates.
-Fully config-driven using config_tasks.yml structure.
+Fully config-driven using the 'task' section in config_ui.yml.
 """
 
 import asyncio
