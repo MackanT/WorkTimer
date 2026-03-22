@@ -378,26 +378,9 @@ def parse_date_range(date_range_str: str) -> tuple[str | None, str | None]:
 # ===== DATA VALIDATION =====
 
 
-def is_dataframe_empty(df: Optional[pd.DataFrame]) -> bool:
-    """
-    Check if a DataFrame is None or empty.
-
-    Common pattern used throughout the codebase to validate query results.
-
-    Args:
-        df: DataFrame to check (can be None)
-
-    Returns:
-        True if df is None or empty, False if it has data
-    """
-    return df is None or df.empty
-
-
 def has_dataframe_data(df: Optional[pd.DataFrame]) -> bool:
     """
     Check if a DataFrame has data (not None and not empty).
-
-    Inverse of is_dataframe_empty() for positive logic conditions.
 
     Args:
         df: DataFrame to check (can be None)

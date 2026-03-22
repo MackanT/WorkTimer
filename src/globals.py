@@ -31,10 +31,6 @@ class GlobalRegistry:
         cls._instances.clear()
 
 
-def generate_sync_sql(main_db, uploaded_path):
-    return Database.generate_sync_sql(main_db, uploaded_path)
-
-
 @dataclass
 class SaveData:
     function: str
@@ -42,68 +38,6 @@ class SaveData:
     main_param: str
     secondary_action: str
     button_name: str = "Save"
-
-
-@dataclass
-class DevOpsTag:
-    name: str = ""
-    icon: str = "bookmark"
-    color: str = "green"
-
-
-# Logging configuration constants
-LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)-9s :: %(message)s"
-LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-LOG_COLORS = {
-    "DEBUG": "grey",
-    "INFO": "white",
-    "WARNING": "orange",
-    "ERROR": "red",
-    "CRITICAL": "red",
-}
-
-
-def setup_logger(name: str, debug: bool = False) -> logging.Logger:
-    """Configure a standard Python logger with terminal output.
-
-    Args:
-        name: Logger name (e.g., "WorkTimer", "Database", "DevOps")
-        debug: Whether to enable DEBUG level logging
-
-    Returns:
-        Configured logger instance
-    """
-    logger = logging.getLogger(name)
-
-    # Only configure if not already configured
-    if not logger.hasHandlers():
-        formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
-    logger.setLevel(logging.DEBUG if debug else logging.INFO)
-    return logger
-
-
-class LogElementHandler(logging.Handler):
-    """A logging handler that emits messages to a NiceGUI log element.
-
-    Based on NiceGUI's official documentation pattern.
-    """
-
-    def __init__(self, element, level: int = logging.NOTSET):
-        super().__init__(level)
-        self.element = element
-
-    def emit(self, record: logging.LogRecord) -> None:
-        """Format and push log record to the UI with color styling."""
-        try:
-            msg = self.format(record)
-            color = LOG_COLORS.get(record.levelname, "white")
-            self.element.push(msg, classes=f"text-{color}")
-        except Exception:
-            self.handleError(record)
 
 
 class QueryEngine:
