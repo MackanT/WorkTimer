@@ -53,6 +53,12 @@ class NavigationBar:
                     "path": "/tasks",
                     "key": "tasks",
                 },
+                {
+                    "label": "Notepad",
+                    "icon": "note",
+                    "path": "/notepad",
+                    "key": "notepad",
+                },
                 {"label": "Log", "icon": "terminal", "path": "/log", "key": "log"},
                 {"label": "Info", "icon": "info", "path": "/info", "key": "info"},
                 {

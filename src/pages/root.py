@@ -5,6 +5,7 @@ from . import (
     query_editor_page,
     add_data_page,
     tasks_page,
+    notepad_page,
     info_page,
     settings_page,
 )
@@ -22,6 +23,7 @@ async def _setup_spa_shell():
             "/add_data": add_data_page,
             "/query_editor": query_editor_page,
             "/tasks": tasks_page,
+            "/notepad": notepad_page,
             "/log": log_page,
             "/info": info_page,
             "/settings": settings_page,
@@ -83,4 +85,10 @@ async def info_page_route():
 @ui.page("/settings")
 async def settings_page_route():
     """Settings page (supports direct access and SPA navigation)."""
+    await _setup_spa_shell()
+
+
+@ui.page("/notepad")
+async def notepad_page_route():
+    """Notepad page (supports direct access and SPA navigation)."""
     await _setup_spa_shell()
