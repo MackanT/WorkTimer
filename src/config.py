@@ -288,7 +288,7 @@ class ConfigLoader:
         try:
             with filepath.open(encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-                print(f"✓ Loaded {filename}")
+                print(f"[OK] Loaded {filename}")
                 return data
         except yaml.YAMLError as e:
             raise ValueError(f"Error parsing YAML in {filepath}: {e}")

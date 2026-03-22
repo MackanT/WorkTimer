@@ -28,7 +28,7 @@ class NavigationBar:
                 return
             app.storage.client["navigation_created"] = True
 
-            nav_items = [
+            nav_items = [  ## TODO move to config_file
                 {
                     "label": "Time Tracking",
                     "icon": "schedule",
@@ -55,6 +55,12 @@ class NavigationBar:
                 },
                 {"label": "Log", "icon": "terminal", "path": "/log", "key": "log"},
                 {"label": "Info", "icon": "info", "path": "/info", "key": "info"},
+                {
+                    "label": "Settings",
+                    "icon": "tune",
+                    "path": "/settings",
+                    "key": "settings",
+                },
             ]
 
             nav_text = self.theme.get("muted")

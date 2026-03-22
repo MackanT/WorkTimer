@@ -6,6 +6,7 @@ from . import (
     add_data_page,
     tasks_page,
     info_page,
+    settings_page,
 )
 from ..core.app import AppCore
 
@@ -15,8 +16,6 @@ async def _setup_spa_shell():
     core = await AppCore.get_or_initialize()
     core.nav_bar.render()
 
-    # Define sub-pages mapping - all pages are sub-pages for SPA behavior
-    # The sub_pages container automatically shows the correct page based on current URL
     ui.sub_pages(
         {
             "/time": time_tracking_page,
@@ -25,6 +24,7 @@ async def _setup_spa_shell():
             "/tasks": tasks_page,
             "/log": log_page,
             "/info": info_page,
+            "/settings": settings_page,
         }
     ).classes("w-full h-full gap-0").style("overflow: hidden;")
 
@@ -77,4 +77,10 @@ async def log_page_route():
 @ui.page("/info")
 async def info_page_route():
     """Info page (supports direct access and SPA navigation)."""
+    await _setup_spa_shell()
+
+
+@ui.page("/settings")
+async def settings_page_route():
+    """Settings page (supports direct access and SPA navigation)."""
     await _setup_spa_shell()
