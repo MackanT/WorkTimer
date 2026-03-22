@@ -220,11 +220,11 @@ def page_card(scrollable: bool = True):
     else:
         # For non-scrollable (internal scrolling): use fixed height calc
         # 170px accounts for navbar (~100px) + toolbar (~50px) + margins (~20px)
-        style = f"height: calc(100vh - 170px); box-sizing: border-box; {overflow_style}"
+        style = f"height: calc(100vh - 190px); box-sizing: border-box; {overflow_style}"
 
     with (
-        (ui.card().classes("w-full mx-4 my-4 rounded-md flex flex-col"))
-        .style(style)
+        (ui.card().classes("mx-4 my-4 rounded-md flex flex-col"))
+        .style(f"width: calc(100% - 2rem); {style}")
         .props("flat")
     ):
         yield

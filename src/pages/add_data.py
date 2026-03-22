@@ -85,7 +85,7 @@ async def add_data_page():
         .props("vertical")
         .classes("w-full")
         .style(
-            "background: transparent; height: calc(100vh - 150px); max-height: calc(100vh - 150px);"
+            "background: transparent; height: calc(100vh - 156px); max-height: calc(100vh - 156px);"
         )
     ):
         for page_dict in add_data_page_config:

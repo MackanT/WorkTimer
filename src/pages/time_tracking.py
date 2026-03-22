@@ -915,7 +915,7 @@ async def time_tracking_page():
     #     * { outline: 1px solid red; }
     # """)
 
-    container = ui.scroll_area().classes("w-full").style("height: calc(100vh - 150px)")
+    container = ui.scroll_area().classes("w-full").style("height: calc(100vh - 156px)")
     core._setup_page_timers(
         "time_tracking", value_refresh_timer, midnight_refresh_timer
     )

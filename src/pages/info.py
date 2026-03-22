@@ -63,7 +63,7 @@ async def info_page():
         .props("vertical")
         .classes("w-full")
         .style(
-            "background: transparent; height: calc(100vh - 150px); max-height: calc(100vh - 150px);"
+            "background: transparent; height: calc(100vh - 156px); max-height: calc(100vh - 156px);"
         )
     ):
         for page_dict in info_page_config:

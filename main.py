@@ -49,6 +49,9 @@ def setup_global_ui():
     """
     # Disable F5 refresh
     ui.add_head_html("""
+    <style>
+    html, body { overflow: hidden !important; }
+    </style>
     <script>
     document.addEventListener('keydown', function(e) {
         if (e.key === 'F5') {
