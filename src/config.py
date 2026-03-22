@@ -35,6 +35,7 @@ class ConfigData(BaseModel):
     """Data configuration from config_data.yml"""
 
     devops_tags: List[DevOpsTagConfig] = Field(default_factory=list)
+    log_colors: Dict[str, str] = Field(default_factory=dict)
     # Add other fields as needed
 
 

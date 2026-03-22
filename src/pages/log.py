@@ -7,7 +7,6 @@ Uses per-client AppCore and event-driven updates.
 
 from datetime import datetime
 from typing import Tuple
-from ..globals import LOG_COLORS
 
 from nicegui import ui
 from ..core.app import AppCore
@@ -21,7 +20,7 @@ LOG_CARD_HEIGHT = "76vh"
 
 async def log_page():
     """Log page - displays application logs
-    
+
     Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
     Direct access to /log is handled by redirect in root.py
     """
@@ -30,6 +29,8 @@ async def log_page():
     core = await AppCore.get_or_initialize()
 
     from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
+
+    log_colors = core.data_config.log_colors or {}
 
     setup_debug_keyboard_handlers(core)
 
@@ -113,7 +114,7 @@ async def log_page():
                         continue
                     seen.add(key)
                     formatted = f"{item.get('timestamp')} | {item.get('level'):<8} | {item.get('logger'):<9} :: {item.get('message')}"
-                    color = LOG_COLORS.get(item.get("level"), "white")
+                    color = log_colors.get(item.get("level"), "white")
                     try:
                         log_widget.push(formatted, classes=f"text-{color}")
                     except Exception:
@@ -132,7 +133,7 @@ async def log_page():
                     if key in seen:
                         continue
                     seen.add(key)
-                    color = LOG_COLORS.get(log_entry["level"], "white")
+                    color = log_colors.get(log_entry["level"], "white")
                     try:
                         log_widget.push(log_entry["formatted"], classes=f"text-{color}")
                     except Exception:
@@ -165,7 +166,7 @@ async def log_page():
                         return  # Skip this log entry
 
                 formatted = f"{timestamp} | {level:<8} | {logger:<9} :: {message}"
-                color = LOG_COLORS.get(level, "white")
+                color = log_colors.get(level, "white")
                 try:
                     log_widget.push(formatted, classes=f"text-{color}")
                 except Exception:
@@ -209,7 +210,7 @@ async def log_page():
                         else:
                             formatted = f"{log_entry.get('timestamp')} | {log_entry.get('level', 'INFO'):<8} | {log_entry.get('logger', 'App'):<9} :: {log_entry.get('message', '')}"
 
-                        color = LOG_COLORS.get(log_entry.get("level", "INFO"), "white")
+                        color = log_colors.get(log_entry.get("level", "INFO"), "white")
                         try:
                             log_widget.push(formatted, classes=f"text-{color}")
                         except Exception:
