@@ -1,7 +1,6 @@
 # Task Management Configuration
 
 task:
-  # Table view configuration
   table:
     columns:
       - name: "selected"

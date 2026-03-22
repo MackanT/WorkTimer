@@ -170,18 +170,15 @@ def entity_card_shell(constrain_width: bool = True):
         .props("flat")
     ):
         # Apply width constraints only when needed (time_tracking page)
-        column_style = (
-            UI_STYLES.get_inline_style("time_tracking", "customer_card")
-            if constrain_width
-            else ""
-        )
-        with (
-            ui.column()
-            .classes(
-                f"{UI_STYLES.get_layout_classes('time_tracking_customer_column')} flex-1 min-h-0"
-            )
-            .style(column_style)
-        ):
+        if constrain_width:
+            column_style = UI_STYLES.get_inline_style("time_tracking", "customer_card")
+            column_classes = f"{UI_STYLES.get_layout_classes('time_tracking_customer_column')} flex-1 min-h-0"
+        else:
+            # Full width mode: stretch children to fill available width
+            column_style = "width: 100%; align-items: stretch;"
+            column_classes = "flex-1 min-h-0 w-full"
+
+        with ui.column().classes(column_classes).style(column_style):
             yield
 
 
