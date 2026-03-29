@@ -515,13 +515,13 @@ async def query_editor_page():
             ui.space()
             ui.button(icon="save", on_click=save_custom_query).props(
                 "flat dense color=primary"
-            ).tooltip("Save Query")
+            ).tooltip("Save current query")
             ui.button(icon="edit", on_click=update_custom_query).props(
                 "flat dense color=primary"
-            ).tooltip("Update Query")
+            ).tooltip("Update custom query")
             ui.button(icon="delete", on_click=delete_custom_query).props(
                 "flat dense color=negative"
-            ).tooltip("Delete Query")
+            ).tooltip("Delete custom query")
 
         return preset_queries, custom_queries
 
