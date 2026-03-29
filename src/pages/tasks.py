@@ -8,7 +8,6 @@ Fully config-driven using the 'task' section in config_ui.yml.
 
 import asyncio
 import inspect
-from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import Optional
 import re
@@ -19,14 +18,7 @@ from ..core.app import AppCore
 from .. import helpers
 from ..helpers import UI_STYLES
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
-from ..ui.dynamic_widgets import (
-    DynamicDropDown,
-    DynamicInput,  ## TODO needed?
-    DynamicTextArea,
-    DynamicNumber,
-    DynamicDateInput,
-    WIDGET_CLASSES,
-)
+from ..ui.dynamic_widgets import WIDGET_CLASSES, DynamicDropDown
 
 from ..ui.elements import (
     toolbar,
@@ -68,6 +60,13 @@ class Task:
     @classmethod
     def from_df_row(cls, row):
         """Create Task from pandas DataFrame row."""
+
+        def safe_float(val, default=0.0):
+            try:
+                return float(val) if val not in (None, "", "None") else default
+            except (ValueError, TypeError):
+                return default
+
         return cls(
             task_id=int(row.get("task_id", 0)),
             title=str(row.get("title", "")),
@@ -78,8 +77,8 @@ class Task:
             priority=str(row.get("priority", "")),
             assigned_to=str(row.get("assigned_to", "")),
             due_date=str(row.get("due_date", "")) if row.get("due_date") else None,
-            estimated_hours=float(row.get("estimated_hours", 0)),
-            actual_hours=float(row.get("actual_hours", 0)),
+            estimated_hours=safe_float(row.get("estimated_hours")),
+            actual_hours=safe_float(row.get("actual_hours")),
             tags=str(row.get("tags", "")),
             completed=bool(row.get("completed", False)),
             created_at=str(row.get("created_at", "")),
@@ -129,6 +128,12 @@ SORT_SELECT_WIDTH = "w-64"  # Width class for sort dropdown
 # ============================================================================
 
 
+def extract_task_id(selector_value: str) -> int | None:
+    """Extract task ID from selector string like 'My Task (ID: 42)'."""
+    match = re.search(r"\(ID: (\d+)\)", str(selector_value))
+    return int(match.group(1)) if match else None
+
+
 async def get_customer_project_data(core: AppCore) -> dict:
     """
     Get active customers and project names from query engine.
@@ -174,12 +179,15 @@ async def get_customer_project_data(core: AppCore) -> dict:
 
 
 def get_sort_query(sort_by: str) -> str:
-    """Get SQL ORDER BY clause based on sort selection."""
     sort_queries = {
         "Due Date (Earliest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END DESC, due_date ASC",
         "Due Date (Latest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 0 ELSE 1 END DESC, due_date DESC",
-        "Priority (High to Low)": "ORDER BY priority ASC",
-        "Priority (Low to High)": "ORDER BY priority DESC",
+        "Priority (High to Low)": """ORDER BY CASE priority 
+            WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 
+            WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END ASC""",
+        "Priority (Low to High)": """ORDER BY CASE priority 
+            WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 
+            WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END DESC""",
         "Status": "ORDER BY completed ASC, due_date ASC",
         "Customer": "ORDER BY customer_name ASC, due_date ASC",
         "Project": "ORDER BY project_name ASC, due_date ASC",
@@ -560,16 +568,14 @@ async def tasks_page():
         "form_container": None,
     }
 
-    async def switch_to_view_and_refresh():
-        """Clear form panel and refresh task list."""
+    async def refresh_and_clear_form():
         page_state["current_view"] = "list"
         page_state["form_container"].clear()
-        # Refresh task list after form submission
         await refresh_tasks()
 
-    # Create a callable that references the async function properly
-    def refresh_view_and_tasks():
-        return asyncio.create_task(switch_to_view_and_refresh())
+    # Wrap for sync contexts
+    def refresh_callback():
+        asyncio.create_task(refresh_and_clear_form())
 
     async def refresh_tasks():
         """Refresh task display."""
@@ -595,7 +601,7 @@ async def tasks_page():
                 tasks,
                 page_state["tasks_container"],
                 page_state,
-                refresh_view_and_tasks,
+                refresh_callback,
             )
         else:
             render_table_view(
@@ -603,7 +609,7 @@ async def tasks_page():
                 tasks,
                 page_state["tasks_container"],
                 page_state,
-                refresh_view_and_tasks,
+                refresh_callback,
             )
 
     async def toggle_view():
@@ -620,9 +626,9 @@ async def tasks_page():
             page_state["form_container"].clear()
             with page_state["form_container"]:
                 if view_name == "add":
-                    await render_add_form(core, refresh_view_and_tasks)
+                    await render_add_form(core, refresh_callback)
                 elif view_name == "update":
-                    await render_update_form(core, page_state, refresh_view_and_tasks)
+                    await render_update_form(core, page_state, refresh_callback)
                 elif view_name == "view":
                     with entity_card_shell(constrain_width=False):
                         with entity_card_header():
@@ -639,11 +645,13 @@ async def tasks_page():
     def handle_refresh_event():
         asyncio.create_task(refresh_tasks())
 
-    core.event_bus.register("tasks_refresh_requested", handle_refresh_event)
+    if page_state.get("_refresh_handler"):
+        core.event_bus.unregister(
+            "tasks_refresh_requested", page_state["_refresh_handler"]
+        )
 
-    # ========================================================================
-    # Main UI Layout
-    # ========================================================================
+    page_state["_refresh_handler"] = handle_refresh_event
+    core.event_bus.register("tasks_refresh_requested", handle_refresh_event)
 
     # ========================================================================
     # Toolbar Controls
@@ -890,7 +898,6 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
         with entity_card_content():
 
             async def task_data_fetcher(field_name, task_selector_value):
-                # Handle options list requests
                 if field_name == "task_list":
                     tasks_df = await core.query_engine.query_db(
                         "SELECT task_id, title FROM tasks ORDER BY title"
@@ -904,12 +911,12 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
 
                 if not task_selector_value:
                     return None
-                match = re.search(r"\(ID: (\d+)\)", str(task_selector_value))
+                match = extract_task_id(task_selector_value)
                 if not match:
                     return None
-                task_id = int(match.group(1))
+
                 task_df = await core.query_engine.query_db(
-                    f"SELECT * FROM tasks WHERE task_id = {task_id}"
+                    "SELECT * FROM tasks WHERE task_id = ?", params=(match,)
                 )
                 if task_df is not None and not task_df.empty:
                     return task_df.iloc[0].get(field_name, "")
@@ -947,14 +954,23 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
             }
 
             async def on_task_change(e=None):
-                selector = form_widgets.get(main_param)
-                if not selector or not selector.value:
+                if page_state.get("_refreshing"):
                     return
-                for field_name, field_cfg in field_map.items():
-                    if field_cfg.get("parent_update") and field_name in form_widgets:
-                        await refresh_field_value(
-                            form_widgets[field_name], field_name, selector.value
-                        )
+                page_state["_refreshing"] = True
+                try:
+                    selector = form_widgets.get(main_param)
+                    if not selector or not selector.value:
+                        return
+                    for field_name, field_cfg in field_map.items():
+                        if (
+                            field_cfg.get("parent_update")
+                            and field_name in form_widgets
+                        ):
+                            await refresh_field_value(
+                                form_widgets[field_name], field_name, selector.value
+                            )
+                finally:
+                    page_state["_refreshing"] = False
 
             task_selector_widget = form_widgets.get(main_param)
             if task_selector_widget:
@@ -965,6 +981,12 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
             def handle_task_selected_event(**kwargs):
                 asyncio.create_task(on_task_change())
 
+            if page_state.get("_task_selected_handler"):
+                core.event_bus.unregister(
+                    "task_selected", page_state["_task_selected_handler"]
+                )
+
+            page_state["_task_selected_handler"] = handle_task_selected_event
             core.event_bus.register("task_selected", handle_task_selected_event)
 
             async def handle_update():
@@ -972,10 +994,9 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
                 if not selector or not selector.value:
                     ui.notify("Please select a task", type="warning")
                     return
-                match = re.search(r"\(ID: (\d+)\)", str(selector.value))
-                if not match:
+                task_id = extract_task_id(selector.value)
+                if not task_id:
                     return
-                task_id = int(match.group(1))
                 try:
                     kwargs = {
                         name: w.value
