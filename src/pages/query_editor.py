@@ -393,6 +393,14 @@ async def query_editor_page():
             kwargs["table_name"] = table_name
             kwargs["pk_data"] = pk_data
             try:
+                if kwargs.get("git_id", None):
+                    kwargs["git_id"] = int(kwargs["git_id"])
+            except ValueError:  # Should never trigger!
+                ui.notify("Git ID must be an integer", type="negative")
+                LOG.warning("Invalid Git ID entered - must be an integer!")
+                return
+
+            try:
                 await QE.function_db(save_data.function, **kwargs)
                 msg_1, msg_2 = helpers.print_success(
                     table_name, save_data.main_param, save_data.main_action, widgets

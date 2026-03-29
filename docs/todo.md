@@ -31,3 +31,4 @@
  ### BUGS
 - Updating from settings does not call event to update in add-data page (i.e. newly added customers are not visible in its drop-downs)
 - Default assignee not utilized
+- Cannot update tasks: 2026-03-25 07:30:10 | ERROR    | AppCore   :: Error updating task: 'NoneType' object has no attribute 'value'
