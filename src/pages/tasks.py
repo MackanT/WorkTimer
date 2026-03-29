@@ -11,6 +11,7 @@ import inspect
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import Optional
+import re
 
 from nicegui import ui
 
@@ -20,10 +21,11 @@ from ..helpers import UI_STYLES
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 from ..ui.dynamic_widgets import (
     DynamicDropDown,
-    DynamicInput,
+    DynamicInput,  ## TODO needed?
     DynamicTextArea,
     DynamicNumber,
     DynamicDateInput,
+    WIDGET_CLASSES,
 )
 
 from ..ui.elements import (
@@ -736,9 +738,88 @@ async def tasks_page():
 # ============================================================================
 
 
+def build_form_widgets(
+    rows_layout: list,
+    field_map: dict,
+    data_fetcher,
+    page_state: dict = None,
+    main_param: str = None,
+) -> dict:
+    """Dynamically build form widgets from YAML layout config."""
+    form_widgets = {}
+
+    with ui.column().classes("w-full gap-2"):
+        for row in rows_layout:
+            is_single = len(row) == 1
+            css_class = "w-full" if is_single else "flex-1 min-w-0"
+            container = (
+                ui.column().classes("w-full")
+                if is_single
+                else ui.row().classes("w-full gap-2")
+            )
+
+            with container:
+                for field_name in row:
+                    field_config = field_map.get(field_name, {})
+                    widget_class = WIDGET_CLASSES.get(field_config.get("type"))
+
+                    if not widget_class:
+                        print(f"Unknown widget type for field '{field_name}'")
+                        continue
+
+                    parent_name = field_config.get("parent")
+                    parent_widget = (
+                        form_widgets.get(parent_name) if parent_name else None
+                    )
+                    initial_options = field_config.get("options", [])
+
+                    widget = widget_class(
+                        name=field_name,
+                        label=field_config.get("label", field_name),
+                        field_config={
+                            "options": initial_options,
+                            "with_input": field_config.get("with_input", False),
+                            "min": field_config.get("min", 0),
+                            "step": field_config.get("step", 1),
+                        },
+                        data_fetcher=data_fetcher if parent_widget else None,
+                        options_source=field_config.get("options_source", field_name),
+                        parent=parent_widget,
+                        initial_value=field_config.get("default"),
+                    )
+                    widget.widget.classes(css_class)
+                    form_widgets[field_name] = widget
+
+                    # Store main param widget in page_state (e.g. task_selector)
+                    if page_state is not None and field_name == main_param:
+                        page_state[main_param] = widget
+
+                    # Async load for dynamic options (no predefined options, no parent)
+                    options_source = field_config.get("options_source")
+                    if options_source == "task_list":
+
+                        async def load_task_list(w=widget):
+                            opts = await data_fetcher("task_list", None)
+                            if opts:
+                                w.options = opts
+                                w.widget.update()
+
+                        ui.timer(0.1, load_task_list, once=True)
+                    elif options_source and not initial_options and not parent_widget:
+
+                        async def load_options(w=widget, src=options_source):
+                            opts = await data_fetcher(src, None)
+                            if opts:
+                                w.options = opts
+                                w.widget.update()
+
+                        ui.timer(0.1, load_options, once=True)
+
+    return form_widgets
+
+
 async def render_add_form(core: AppCore, refresh_callback):
     """Render the Add Task form"""
-
     submit_button = None
 
     with entity_card_shell(constrain_width=False):
@@ -753,186 +834,29 @@ async def render_add_form(core: AppCore, refresh_callback):
         with entity_card_content():
             data = await get_customer_project_data(core)
 
-            # Debug logging with notification ## TODO remove after verification
-            customer_count = len(data.get("customer_data", []))
-            core.logger.info(
-                f"Task form: Customer data loaded: {customer_count} customers"
-            )
-            if data.get("customer_data"):
-                core.logger.info(f"First customer: {data['customer_data'][0]}")
-            else:
-                core.logger.warning("No customer data found for add form")
-
-            # Data fetcher for dynamic widgets
             async def data_fetcher(source_key, parent_val=None):
                 if parent_val and source_key == "project_names":
-                    # Return projects for selected customer
                     return data.get("project_names", {}).get(parent_val, [])
                 elif source_key == "customer_data":
                     return data.get("customer_data", [])
                 return []
 
-            # Get form config for layout
             form_config = core.tasks_config.get("task", {}).get("add", {})
             rows_layout = form_config.get("rows", [])
-            fields_config = form_config.get("fields", [])
+            field_map = {f["name"]: f for f in form_config.get("fields", [])}
 
-            # Create field lookup
-            field_map = {f["name"]: f for f in fields_config}
-
-            # Widget storage for form submission
-            form_widgets = {}
-            parent_map = {}
-
-            with ui.column().classes("w-full gap-2"):
-                # Render fields according to YAML layout - ADD TAB
-                for row in rows_layout:
-                    if len(row) == 1:
-                        # Single field - add directly to column for full width
-                        field_name = row[0]
-                        field_config = field_map.get(field_name, {})
-
-                        # Create widget based on field name
-                        if field_name == "title":
-                            title = DynamicInput(
-                                name="title",
-                                label="Task Title",
-                                field_config={},
-                            )
-                            title.widget.classes("w-full").props("required")
-                            form_widgets["title"] = title
-
-                        elif field_name == "description":
-                            description = DynamicTextArea(
-                                name="description",
-                                label="Description",
-                                field_config={},
-                            )
-                            description.widget.classes("w-full")
-                            form_widgets["description"] = description
-
-                        elif field_name == "tags":
-                            tags = DynamicInput(
-                                name="tags",
-                                label="Tags (comma-separated)",
-                                field_config={},
-                            )
-                            tags.widget.classes("w-full")
-                            form_widgets["tags"] = tags
-                    else:
-                        # Multi-field row - use ui.row() with flex-1 widgets
-                        with ui.row().classes("w-full gap-2"):
-                            for field_name in row:
-                                field_config = field_map.get(field_name, {})
-
-                                # Create widget based on field name
-                                if field_name == "customer_name":
-                                    customer_select = DynamicDropDown(
-                                        name="customer",
-                                        label="Customer",
-                                        data_fetcher=data_fetcher,
-                                        options_source="customer_data",
-                                        field_config={
-                                            "with_input": True,
-                                            "options": data["customer_data"],
-                                        },
-                                    )
-                                    customer_select.widget.classes("flex-1 min-w-0")
-                                    form_widgets["customer_name"] = customer_select
-                                    parent_map["customer_name"] = customer_select
-
-                                    # Trigger initial load via ui.timer
-                                    async def init_customer_options():
-                                        customer_select.widget.options = data[
-                                            "customer_data"
-                                        ]
-                                        customer_select.widget.update()
-                                        core.logger.info(
-                                            f"Customer dropdown initialized with {len(data['customer_data'])} options"
-                                        )
-
-                                    ui.timer(0.1, init_customer_options, once=True)
-
-                                elif field_name == "project_name":
-                                    project_select = DynamicDropDown(
-                                        name="project",
-                                        data_fetcher=data_fetcher,
-                                        options_source="project_names",
-                                        parent=customer_select,
-                                        label="Project",
-                                        field_config={"with_input": True},
-                                    )
-                                    project_select.widget.classes("flex-1 min-w-0")
-                                    form_widgets["project_name"] = project_select
-
-                                elif field_name == "status":
-                                    status = DynamicDropDown(
-                                        name="status",
-                                        label="Status",
-                                        field_config={
-                                            "options": field_config.get("options", []),
-                                            "with_input": False,
-                                        },
-                                        initial_value=field_config.get(
-                                            "default", "To Do"
-                                        ),
-                                    )
-                                    status.widget.classes("flex-1 min-w-0")
-                                    form_widgets["status"] = status
-
-                                elif field_name == "priority":
-                                    priority = DynamicDropDown(
-                                        name="priority",
-                                        label="Priority",
-                                        field_config={
-                                            "options": field_config.get("options", []),
-                                            "with_input": False,
-                                        },
-                                        initial_value=field_config.get(
-                                            "default", "Medium"
-                                        ),
-                                    )
-                                    priority.widget.classes("flex-1 min-w-0")
-                                    form_widgets["priority"] = priority
-
-                                elif field_name == "assigned_to":
-                                    assigned_to = DynamicInput(
-                                        name="assigned_to",
-                                        label="Assigned To",
-                                        field_config={},
-                                    )
-                                    assigned_to.widget.classes("flex-1 min-w-0")
-                                    form_widgets["assigned_to"] = assigned_to
-
-                                elif field_name == "due_date":
-                                    default_due = (
-                                        datetime.now() + timedelta(days=1)
-                                    ).strftime("%Y-%m-%d")
-                                    due_date = DynamicDateInput(
-                                        name="due_date",
-                                        label="Due Date",
-                                        field_config={"default": default_due},
-                                    )
-                                    due_date.widget.classes("flex-1 min-w-0")
-                                    form_widgets["due_date"] = due_date
-
-                                elif field_name == "estimated_hours":
-                                    estimated_hours = DynamicNumber(
-                                        name="estimated_hours",
-                                        label="Estimated Hours",
-                                        field_config={"min": 0, "step": 0.5},
-                                        initial_value=0,
-                                    )
-                                    estimated_hours.widget.classes("flex-1 min-w-0")
-                                    form_widgets["estimated_hours"] = estimated_hours
+            form_widgets = build_form_widgets(
+                rows_layout=rows_layout,
+                field_map=field_map,
+                data_fetcher=data_fetcher,
+            )
 
             async def handle_submit():
                 try:
-                    values = {name: w.get_value() for name, w in form_widgets.items()}
-                    success = await core.function_db.create(
-                        entity_type="task",
-                        values=values,
-                        functions=core.tasks_functions,
+                    values = {name: w.value for name, w in form_widgets.items()}
+                    success = await core.query_engine.function_db(
+                        "insert_task",
+                        **values,
                     )
                     if success:
                         ui.notify("Task created", type="positive")
@@ -964,274 +888,114 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
                 update_button = ui.button(icon="save").props("color=primary disabled")
 
         with entity_card_content():
-            form_widgets = {}
 
             async def task_data_fetcher(field_name, task_selector_value):
-                """Fetch task field value when task is selected."""
-                import re
+                # Handle options list requests
+                if field_name == "task_list":
+                    tasks_df = await core.query_engine.query_db(
+                        "SELECT task_id, title FROM tasks ORDER BY title"
+                    )
+                    if tasks_df is not None and not tasks_df.empty:
+                        return [
+                            f"{r['title']} (ID: {r['task_id']})"
+                            for _, r in tasks_df.iterrows()
+                        ]
+                    return []
 
                 if not task_selector_value:
                     return None
-
                 match = re.search(r"\(ID: (\d+)\)", str(task_selector_value))
                 if not match:
                     return None
-
                 task_id = int(match.group(1))
                 task_df = await core.query_engine.query_db(
                     f"SELECT * FROM tasks WHERE task_id = {task_id}"
                 )
-
                 if task_df is not None and not task_df.empty:
-                    task_data = task_df.iloc[0]
-                    return task_data.get(field_name, "")
+                    return task_df.iloc[0].get(field_name, "")
                 return None
 
-            # Custom refresh handler for dropdowns with fixed options (status, priority)
-            async def refresh_dropdown_value(widget, field_name, task_selector_value):
-                """Set dropdown value without refreshing options."""
-                value = await task_data_fetcher(field_name, task_selector_value)
-                core.logger.info(f"Refreshing {field_name}: {value}")
-                if value is not None and value != "":
-                    widget.value = value
-                    widget.update()
-                else:
+            async def refresh_field_value(widget, field_name, selector_value):
+                value = await task_data_fetcher(field_name, selector_value)
+                core.logger.info(f"Refreshing {field_name}: {value!r}")
+                if value is None or value == "":
                     core.logger.warning(f"No value found for {field_name}")
+                    return
+                if isinstance(widget, DynamicDropDown) and widget.widget.options:
+                    widget.widget.value = value
+                    widget.widget.update()
+                else:
+                    widget.widget.set_value(value)
 
-            # Get form config for layout
             form_config = core.tasks_config.get("task", {}).get("update", {})
             rows_layout = form_config.get("rows", [])
-            fields_config = form_config.get("fields", [])
+            field_map = {f["name"]: f for f in form_config.get("fields", [])}
+            main_param = form_config.get("action", {}).get(
+                "main_param", "task_selector"
+            )
 
-            # Create field lookup
-            field_map = {f["name"]: f for f in fields_config}
+            form_widgets = build_form_widgets(
+                rows_layout=rows_layout,
+                field_map=field_map,
+                data_fetcher=task_data_fetcher,
+                page_state=page_state,
+                main_param=main_param,
+            )
 
-            # Define widget references (will be created in layout)
-            task_selector = None
-            title = None
-            description = None
-            status = None
-            priority = None
-            assigned_to = None
-            due_date = None
-            estimated_hours = None
-            tags = None
-
-            with ui.column().classes("w-full gap-2"):
-                # Render fields according to YAML layout - UPDATE TAB
-                for row in rows_layout:
-                    if len(row) == 1:
-                        # Single field - add directly to column for full width
-                        field_name = row[0]
-                        field_config = field_map.get(field_name, {})
-
-                        if field_name == "task_selector":
-                            task_selector = DynamicDropDown(
-                                name="task_selector",
-                                label="Select Task",
-                                field_config={"options": [], "with_input": True},
-                            )
-                            task_selector.widget.classes("w-full")
-                            page_state["task_selector"] = task_selector
-
-                            # Load tasks
-                            async def load_tasks():
-                                tasks_df = await core.query_engine.query_db(
-                                    "SELECT task_id, title FROM tasks ORDER BY title"
-                                )
-                                if tasks_df is not None and not tasks_df.empty:
-                                    options = [
-                                        f"{row['title']} (ID: {row['task_id']})"
-                                        for _, row in tasks_df.iterrows()
-                                    ]
-                                    task_selector.options = options
-                                    task_selector.update()
-
-                            ui.timer(0.1, load_tasks, once=True)
-
-                        elif field_name == "title":
-                            title = DynamicInput(
-                                name="title",
-                                label="Title",
-                                field_config={},
-                                data_fetcher=task_data_fetcher,
-                                options_source="title",
-                                parent=task_selector,
-                            )
-                            title.widget.classes("w-full")
-
-                        elif field_name == "description":
-                            description = DynamicTextArea(
-                                name="description",
-                                label="Description",
-                                field_config={},
-                                data_fetcher=task_data_fetcher,
-                                options_source="description",
-                                parent=task_selector,
-                            )
-                            description.widget.classes("w-full")
-
-                        elif field_name == "tags":
-                            tags = DynamicInput(
-                                name="tags",
-                                label="Tags (comma-separated)",
-                                field_config={},
-                                data_fetcher=task_data_fetcher,
-                                options_source="tags",
-                                parent=task_selector,
-                            )
-                            tags.widget.classes("w-full")
-
-                        elif field_name == "assigned_to":
-                            assigned_to = DynamicInput(
-                                name="assigned_to",
-                                label="Assigned To",
-                                field_config={},
-                                data_fetcher=task_data_fetcher,
-                                options_source="assigned_to",
-                                parent=task_selector,
-                            )
-                            assigned_to.widget.classes("w-full")
-                    else:
-                        # Multi-field row - use ui.row() with flex-1 widgets
-                        with ui.row().classes("w-full gap-2"):
-                            for field_name in row:
-                                field_config = field_map.get(field_name, {})
-
-                                if field_name == "status":
-                                    status = DynamicDropDown(
-                                        name="status",
-                                        label="Status",
-                                        field_config={
-                                            "options": field_config.get("options", []),
-                                            "with_input": False,
-                                        },
-                                    )
-                                    status.widget.classes("flex-1 min-w-0")
-                                    form_widgets["status"] = status.widget
-
-                                elif field_name == "priority":
-                                    priority = DynamicDropDown(
-                                        name="priority",
-                                        label="Priority",
-                                        field_config={
-                                            "options": field_config.get("options", []),
-                                            "with_input": False,
-                                        },
-                                    )
-                                    priority.widget.classes("flex-1 min-w-0")
-                                    form_widgets["priority"] = priority.widget
-
-                                elif field_name == "assigned_to":
-                                    assigned_to = DynamicInput(
-                                        name="assigned_to",
-                                        label="Assigned To",
-                                        field_config={},
-                                        data_fetcher=task_data_fetcher,
-                                        options_source="assigned_to",
-                                        parent=task_selector,
-                                    )
-                                    assigned_to.widget.classes("flex-1 min-w-0")
-
-                                elif field_name == "due_date":
-                                    due_date = DynamicDateInput(
-                                        name="due_date",
-                                        label="Due Date",
-                                        field_config={},
-                                        data_fetcher=task_data_fetcher,
-                                        options_source="due_date",
-                                        parent=task_selector,
-                                    )
-                                    due_date.widget.classes("flex-1 min-w-0")
-
-                                elif field_name == "estimated_hours":
-                                    estimated_hours = DynamicNumber(
-                                        name="estimated_hours",
-                                        label="Estimated Hours",
-                                        field_config={"min": 0, "step": 0.5},
-                                        data_fetcher=task_data_fetcher,
-                                        options_source="estimated_hours",
-                                        parent=task_selector,
-                                    )
-                                    estimated_hours.widget.classes("flex-1 min-w-0")
-
-            # Store child widget references in page_state for external refresh triggers
             page_state["task_update_child_widgets"] = {
-                "title": title,
-                "description": description,
-                "assigned_to": assigned_to,
-                "due_date": due_date,
-                "estimated_hours": estimated_hours,
-                "tags": tags,
+                name: w for name, w in form_widgets.items() if name != main_param
             }
 
-            # Manual refresh for dropdowns when task is selected
             async def on_task_change(e=None):
-                """Manually refresh dropdown values when task changes."""
-                if task_selector and task_selector.value:
-                    await refresh_dropdown_value(
-                        form_widgets["status"], "status", task_selector.value
-                    )
-                    await refresh_dropdown_value(
-                        form_widgets["priority"], "priority", task_selector.value
-                    )
+                selector = form_widgets.get(main_param)
+                if not selector or not selector.value:
+                    return
+                for field_name, field_cfg in field_map.items():
+                    if field_cfg.get("parent_update") and field_name in form_widgets:
+                        await refresh_field_value(
+                            form_widgets[field_name], field_name, selector.value
+                        )
 
-            # Wire up task selector change event using on_value_change for programmatic changes
-            if task_selector:
-                task_selector.widget.on_value_change(
+            task_selector_widget = form_widgets.get(main_param)
+            if task_selector_widget:
+                task_selector_widget.widget.on_value_change(
                     lambda e: asyncio.create_task(on_task_change(e))
                 )
 
-            # Also listen for task_selected event (from edit button clicks)
             def handle_task_selected_event(**kwargs):
-                """Handle task selection from edit button."""
                 asyncio.create_task(on_task_change())
 
             core.event_bus.register("task_selected", handle_task_selected_event)
 
-            # Update button (outside column, at entity_card_content level)
             async def handle_update():
-                import re
-
-                if not task_selector or not task_selector.value:
+                selector = form_widgets.get(main_param)
+                if not selector or not selector.value:
                     ui.notify("Please select a task", type="warning")
                     return
-
-                match = re.search(r"\(ID: (\d+)\)", str(task_selector.value))
+                match = re.search(r"\(ID: (\d+)\)", str(selector.value))
                 if not match:
                     return
-
                 task_id = int(match.group(1))
-
                 try:
-                    # Update via database function
+                    kwargs = {
+                        name: w.value
+                        for name, w in form_widgets.items()
+                        if name != main_param
+                    }
                     success, _ = await core.query_engine.function_db(
-                        "update_task",
-                        task_id=task_id,
-                        title=title.value,
-                        description=description.value,
-                        status=status.value,
-                        priority=priority.value,
-                        assigned_to=assigned_to.value,
-                        due_date=due_date.value if due_date.value else None,
-                        estimated_hours=estimated_hours.value,
-                        tags=tags.value,
+                        "update_task", task_id=task_id, **kwargs
                     )
-
                     if success:
                         ui.notify("Task updated successfully!", type="positive")
-                        # Refresh task list and return to list view
                         if inspect.iscoroutinefunction(refresh_callback):
                             await refresh_callback()
                         else:
                             refresh_callback()
-                        await load_tasks()  # Refresh task list
                     else:
                         ui.notify("Failed to update task", type="negative")
                 except Exception as e:
                     core.logger.error(f"Error updating task: {e}")
                     ui.notify(f"Error: {e}", type="negative")
 
-            # Connect button to handler and enable it
             update_button.on("click", handle_update)
             update_button.props(remove="disabled")

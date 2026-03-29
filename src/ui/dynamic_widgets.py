@@ -155,7 +155,7 @@ class DynamicDropDown(DynamicWidget):
         initial_options = self.field_config.get("options", [])
 
         # If this dropdown has a parent, start with empty options
-        if self.parent:
+        if self.parent and not initial_options:
             initial_options = []
 
         widget = ui.select(
@@ -175,14 +175,16 @@ class DynamicDropDown(DynamicWidget):
         """Refresh dropdown options"""
         # Get fresh options from data fetcher
         new_options = await self.data_fetcher(self.options_source, parent_val)
-
-        # Preserve selection if still valid
         old_value = self.widget.value
-        self.widget.options = new_options if new_options else []
 
-        # Clear selection if no longer valid
-        if old_value and old_value not in self.widget.options:
-            self.widget.value = None
+        # Guard: only set options if we got a list back
+        if isinstance(new_options, list):
+            self.widget.options = new_options
+            if old_value and old_value not in self.widget.options:
+                self.widget.value = None
+        else:
+            # It's a plain value, not an options list — just set the value
+            self.widget.value = new_options
 
         self.widget.update()
 
