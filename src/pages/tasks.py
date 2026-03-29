@@ -1081,6 +1081,17 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
                                 parent=task_selector,
                             )
                             tags.widget.classes("w-full")
+
+                        elif field_name == "assigned_to":
+                            assigned_to = DynamicInput(
+                                name="assigned_to",
+                                label="Assigned To",
+                                field_config={},
+                                data_fetcher=task_data_fetcher,
+                                options_source="assigned_to",
+                                parent=task_selector,
+                            )
+                            assigned_to.widget.classes("w-full")
                     else:
                         # Multi-field row - use ui.row() with flex-1 widgets
                         with ui.row().classes("w-full gap-2"):
@@ -1194,7 +1205,7 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
 
                 try:
                     # Update via database function
-                    success, message = await core.query_engine.function_db(
+                    success, _ = await core.query_engine.function_db(
                         "update_task",
                         task_id=task_id,
                         title=title.value,
