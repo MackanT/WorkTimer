@@ -1,9 +1,21 @@
 from azure.devops.connection import Connection
 from msrest.authentication import BasicAuthentication
 from azure.devops.v7_1.work_item_tracking.models import CommentCreate
+from azure.devops.v7_1.work.models import TeamContext
 from azure.devops.exceptions import AzureDevOpsServiceError
 import pandas as pd
 import re
+import requests
+import base64
+import json
+
+DEFAULT_DEVOPS_STATES = {
+    "New",
+    "Active",
+    "Resolved",
+    "Closed",
+    "Removed",
+}  ## TODO - config file
 
 
 class DevOpsManager:
@@ -210,6 +222,42 @@ class DevOpsManager:
 
         df = pd.DataFrame(rows)
         return (True, df)
+
+    def get_board_columns(
+        self, customer_name: str, team_name: str, board_name: str = "Stories"
+    ) -> tuple:
+        """Fetch board columns for a given customer/team/board."""
+        client = self._get_client(customer_name)
+        if not client:
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.get_board_columns(team_name, board_name)
+
+    def get_team_for_customer(
+        self, customer_name: str, config_devops: dict
+    ) -> str | None:
+        """Get preferred team name for a customer."""
+        client = self._get_client(customer_name)
+        if not client:
+            return None
+        return client.get_team_for_customer(config_devops, customer_name)
+
+    def set_board_column(
+        self, customer_name: str, work_item_id: int, column_name: str
+    ) -> tuple:
+        """Move a work item to a board column."""
+        client = self._get_client(customer_name)
+        if not client:
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.set_board_column(work_item_id, column_name)
+
+    def get_board_columns_for_item(
+        self, customer_name: str, work_item_id: int
+    ) -> tuple:
+        """Fetch available board columns for a specific work item."""
+        client = self._get_client(customer_name)
+        if not client:
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.get_board_columns_for_item(work_item_id)
 
 
 class DevOpsClient:
@@ -601,6 +649,7 @@ class DevOpsClient:
                 "priority": priority,
                 "title": work_item.fields.get("System.Title"),
                 "description": work_item.fields.get("System.Description", ""),
+                "board_column": work_item.fields.get("System.BoardColumn", ""),
             }
 
             self.log.info(f"Loaded details for work item {work_item_id}")
@@ -609,5 +658,228 @@ class DevOpsClient:
         except Exception as e:
             self.log.error(f"Error fetching work item details {work_item_id}: {e}")
             return (False, f"Error fetching work item details {work_item_id}: {e}")
+
+    def get_board_columns(self, team_name: str, board_name: str = "Stories") -> tuple:
+        """Fetch board columns for a given team and board.
+
+        Returns (True, [column_names]) or (False, error_message).
+        """
+        try:
+            work_client = self.connection.clients.get_work_client()
+            team_context = TeamContext(
+                project=self.project_name,
+                team=team_name,
+            )
+            boards = work_client.get_boards(team_context)
+            board = next((b for b in boards if b.name == board_name), None)
+            if not board:
+                return (False, f"Board '{board_name}' not found for team '{team_name}'")
+
+            board_detail = work_client.get_board(team_context, board.id)
+            column_names = [c.name for c in board_detail.columns]
+            self.log.info(
+                f"Fetched {len(column_names)} columns for {team_name}/{board_name}"
+            )
+            return (True, column_names)
+        except Exception as e:
+            self.log.error(f"Error fetching board columns: {e}")
+            return (False, f"Error fetching board columns: {e}")
+
+    def get_team_for_customer(
+        self, config_devops: dict, customer_name: str
+    ) -> str | None:
+        """Get the preferred team name for a customer from config.
+
+        Falls back to auto-detecting the team with custom board columns.
+        """
+        # Try config first
+        customer_data = config_devops.get("customers", {}).get(customer_name, {})
+        team = customer_data.get("team") or config_devops.get("default", {}).get("team")
+        if team:
+            return team
+
+        # Auto-detect: find team with custom Stories columns
+        try:
+            core_client = self.connection.clients.get_core_client()
+            work_client = self.connection.clients.get_work_client()
+            teams = core_client.get_teams(self.project_name)
+
+            for t in teams:
+                team_context = TeamContext(project=self.project_name, team=t.name)
+                boards = work_client.get_boards(team_context)
+                stories_board = next((b for b in boards if b.name == "Stories"), None)
+                if not stories_board:
+                    continue
+                board_detail = work_client.get_board(team_context, stories_board.id)
+                columns = {c.name for c in board_detail.columns}
+                if columns - DEFAULT_DEVOPS_STATES:
+                    self.log.info(f"Auto-detected team '{t.name}' for {customer_name}")
+                    return t.name
+
+        except Exception as e:
+            self.log.warning(f"Auto-detect team failed: {e}")
+
+        return None
+
+    def set_board_column(self, work_item_id: int, column_name: str) -> tuple:
+        """Move a work item to a board column via the hidden Kanban.Column field.
+
+        System.BoardColumn is readonly, but the underlying WEF_xxx_Kanban.Column
+        field is writable and moves the card on the board. The field name contains
+        a hash unique to each org/project but always ends with 'Kanban.Column'.
+
+        Returns (True, message) or (False, message).
+        """
+        try:
+            token = base64.b64encode(
+                f":{self.personal_access_token}".encode("ascii")
+            ).decode("ascii")
+            headers = {"Authorization": f"Basic {token}"}
+
+            # Step 1 — fetch work item to find the Kanban.Column field name
+            get_url = (
+                f"{self.organization_url}/_apis/wit/workitems/{int(work_item_id)}"
+                f"?api-version=7.1&$expand=fields"
+            )
+            get_resp = requests.get(get_url, headers=headers, timeout=30)
+            if get_resp.status_code != 200:
+                return (False, f"Could not fetch work item: {get_resp.text}")
+
+            fields = get_resp.json().get("fields", {})
+
+            # Find the Kanban.Column field — format: WEF_<hash>_Kanban.Column
+            kanban_column_field = next(
+                (k for k in fields if k.endswith("Kanban.Column")), None
+            )
+            kanban_done_field = next(
+                (k for k in fields if k.endswith("Kanban.Column.Done")), None
+            )
+
+            if not kanban_column_field:
+                return (
+                    False,
+                    "Kanban.Column field not found — item may not be on a board",
+                )
+
+            # Step 2 — patch the Kanban.Column field
+            patch_document = [
+                {
+                    "op": "add",
+                    "path": f"/fields/{kanban_column_field}",
+                    "value": column_name,
+                },
+            ]
+            if kanban_done_field:
+                patch_document.append(
+                    {
+                        "op": "add",
+                        "path": f"/fields/{kanban_done_field}",
+                        "value": False,
+                    }
+                )
+
+            patch_url = (
+                f"{self.organization_url}/_apis/wit/workitems/{int(work_item_id)}"
+                f"?api-version=7.1"
+            )
+            patch_resp = requests.patch(
+                url=patch_url,
+                headers={**headers, "Content-Type": "application/json-patch+json"},
+                data=json.dumps(patch_document),
+                timeout=30,
+            )
+
+            if patch_resp.status_code in (200, 201):
+                actual = patch_resp.json().get("fields", {}).get("System.BoardColumn")
+                self.log.info(
+                    f"Moved work item {work_item_id} to '{column_name}' "
+                    f"(board confirms: '{actual}')"
+                )
+                return (True, f"Moved work item {work_item_id} to '{column_name}'")
+            else:
+                try:
+                    error_msg = patch_resp.json().get("message", patch_resp.text)
+                except Exception:
+                    error_msg = patch_resp.text or f"HTTP {patch_resp.status_code}"
+                self.log.error(f"Board column update failed: {error_msg}")
+                return (False, f"Error: {error_msg}")
+
+        except Exception as e:
+            self.log.error(f"Error moving work item to board column: {e}")
+            return (False, f"Error: {e}")
+
+    def get_board_columns_for_item(self, work_item_id: int) -> tuple:
+        """Fetch available board columns by reading the Kanban field metadata."""
+        try:
+            token = base64.b64encode(
+                f":{self.personal_access_token}".encode("ascii")
+            ).decode("ascii")
+            headers = {"Authorization": f"Basic {token}"}
+
+            # Get work item to find the Kanban field name
+            get_url = (
+                f"{self.organization_url}/_apis/wit/workitems/{int(work_item_id)}"
+                f"?api-version=7.1&$expand=fields"
+            )
+            get_resp = requests.get(get_url, headers=headers, timeout=30)
+            if get_resp.status_code != 200:
+                return (False, f"Could not fetch work item: {get_resp.text}")
+
+            fields = get_resp.json().get("fields", {})
+            kanban_field = next(
+                (k for k in fields if k.endswith("Kanban.Column")), None
+            )
+            if not kanban_field:
+                return (False, "Item is not on a board")
+
+            # Get allowed values for the Kanban column field
+            field_url = (
+                f"{self.organization_url}/_apis/wit/fields/{kanban_field}"
+                f"?api-version=7.1"
+            )
+            field_resp = requests.get(field_url, headers=headers, timeout=30)
+            if field_resp.status_code == 200:
+                allowed = field_resp.json().get("allowedValues", [])
+                if allowed:
+                    self.log.info(
+                        f"Loaded {len(allowed)} board columns from field metadata"
+                    )
+                    return (True, allowed)
+
+            # Fallback — use the SDK board API with team auto-detection
+            self.log.info(
+                "Field metadata has no allowedValues — falling back to board API"
+            )
+            return self.get_board_columns_via_team_autodetect()
+
+        except Exception as e:
+            self.log.error(f"Error fetching board columns for item: {e}")
+            return (False, f"Error: {e}")
+
+    def get_board_columns_via_team_autodetect(self) -> tuple:
+        """Fallback: auto-detect team and fetch columns via board API."""
+        try:
+            core_client = self.connection.clients.get_core_client()
+            work_client = self.connection.clients.get_work_client()
+            teams = core_client.get_teams(self.project_name)
+
+            for t in teams:
+                team_context = TeamContext(project=self.project_name, team=t.name)
+                boards = work_client.get_boards(team_context)
+                stories_board = next((b for b in boards if b.name == "Stories"), None)
+                if not stories_board:
+                    continue
+                board_detail = work_client.get_board(team_context, stories_board.id)
+                columns = [c.name for c in board_detail.columns]
+                if set(columns) - {"New", "Active", "Resolved", "Closed", "Removed"}:
+                    self.log.info(
+                        f"Auto-detected columns via team '{t.name}': {columns}"
+                    )
+                    return (True, columns)
+
+            return (False, "Could not auto-detect board columns")
+        except Exception as e:
+            self.log.error(f"Fallback board column fetch failed: {e}")
+            return (False, f"Error: {e}")
 
     # DevOpsManager should not itself implement update logic; calls go to DevOpsClient

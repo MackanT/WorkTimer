@@ -130,128 +130,132 @@ class DevOpsWorkItemHandlers:
         work_item_display = widgets["work_item"].value
         work_item_id = helpers.extract_devops_id(work_item_display)
 
-        # Collect all fields that have values
         fields_to_update = {}
 
-        # Description (always present)
         description = widgets["description_editor"].value or ""
         if description:
             fields_to_update["System.Description"] = description
 
-        # State
         state = widgets.get("state")
         if state and state.value:
             fields_to_update["System.State"] = state.value
 
-        # Assigned To
         assigned_to = widgets.get("assigned_to")
         if assigned_to and assigned_to.value:
             fields_to_update["System.AssignedTo"] = assigned_to.value
 
-        # Priority
         priority = widgets.get("priority")
         if priority and priority.value:
             fields_to_update["Microsoft.VSTS.Common.Priority"] = int(priority.value)
 
-        # Determine if description is markdown
         is_markdown = (
             getattr(widgets.get("description_editor"), "language", "markdown")
             == "markdown"
         )
 
-        if self.DO and self.DO.manager:
+        if not self.DO or not self.DO.manager:
+            return (False, "DevOps manager not available")
+
+        # Update regular fields first
+        if fields_to_update:
             status, msg = self.DO.manager.update_work_item_fields(
                 c_name, work_item_id, fields_to_update, markdown=is_markdown
             )
-            if status:
-                self.LOG.info(f"Work item {work_item_id} updated successfully")
-                return (
-                    True,
-                    f"Work item {work_item_id} updated successfully",
-                )
-            else:
-                self.LOG.error(f"Failed to update work item: {msg}")
-                return False, f"Failed to update: {msg}"
-        return False, "DevOps manager not available"
+            if not status:
+                self.LOG.error(f"Failed to update work item fields: {msg}")
+                return (False, f"Failed to update: {msg}")
+
+        # Move board column separately via REST if specified
+        board_column = widgets.get("board_column")
+        if board_column and board_column.value:
+            col_success, col_msg = self.DO.manager.set_board_column(
+                customer_name=c_name,
+                work_item_id=work_item_id,
+                column_name=board_column.value,
+            )
+            if not col_success:
+                self.LOG.warning(f"Board column move failed: {col_msg}")
+                return (True, f"Fields updated but column move failed: {col_msg}")
+
+        self.LOG.info(f"Work item {work_item_id} updated successfully")
+        return (True, f"Work item {work_item_id} updated successfully")
 
     def setup_update_tab_handlers(self, widgets):
-        """
-        Set up special event handlers for the Update tab.
-
-        Handles:
-        - Work item details loading when selection changes
-        - Auto-populate state, assigned_to, priority fields
-
-        Args:
-            widgets: Dictionary of form widgets
-        """
         editor_widget = widgets.get("description_editor")
         work_item_widget = widgets.get("work_item")
         customer_widget = widgets.get("customer_name")
         state_widget = widgets.get("state")
         assigned_to_widget = widgets.get("assigned_to")
         priority_widget = widgets.get("priority")
+        board_column_widget = widgets.get("board_column")
+        current_column_widget = widgets.get("current_column")
 
-        # Set up work item details loader
-        if work_item_widget and customer_widget and editor_widget:
+        async def load_work_item_details(e):
+            c_name = customer_widget.value
+            work_item_display = work_item_widget.value
+            if not c_name or not work_item_display:
+                return
+            work_item_id = helpers.extract_devops_id(work_item_display)
+            if not self.DO.manager:
+                return
 
-            async def load_work_item_details(e):
-                """Load all work item details when work item is selected."""
-                c_name = customer_widget.value
-                work_item_display = work_item_widget.value
+            status, details = self.DO.manager.get_work_item_details(
+                customer_name=c_name, work_item_id=work_item_id
+            )
+            if not status:
+                ui.notify(
+                    f"Failed to load work item details: {details}", color="negative"
+                )
+                self.LOG.error(f"Failed to load work item details: {details}")
+                return
 
-                if not c_name or not work_item_display:
-                    return
+            # Description
+            description_raw = details.get("description", "")
+            is_html_content = bool(
+                description_raw and ("<" in description_raw and ">" in description_raw)
+            )
+            description_clean = (
+                helpers.convert_html_to_markdown(description_raw)
+                if is_html_content
+                else html.unescape(description_raw)
+            )
+            editor_widget.value = description_clean
 
-                work_item_id = helpers.extract_devops_id(work_item_display)
+            # Standard fields
+            self._set_widget_value_safe(state_widget, details.get("state"), "string")
+            self._set_widget_value_safe(
+                assigned_to_widget,
+                details.get("assigned_to_raw") or details.get("assigned_to"),
+                "assignee",
+            )
+            self._set_widget_value_safe(priority_widget, details.get("priority"), "int")
 
-                if self.DO.manager:
-                    # Get full work item details
-                    status, details = self.DO.manager.get_work_item_details(
-                        customer_name=c_name, work_item_id=work_item_id
+            # Current column — readonly display
+            current_col = details.get("board_column", "")
+            if current_column_widget:
+                self._set_widget_value_safe(
+                    current_column_widget, current_col, "string"
+                )
+                current_column_widget.widget.props("readonly outlined")
+
+            # Load available board columns directly from the work item
+            col_status, columns = self.DO.manager.get_board_columns_for_item(
+                customer_name=c_name, work_item_id=work_item_id
+            )
+            self.LOG.info(
+                f"Board columns for item {work_item_id}: {col_status} {columns}"
+            )
+            if col_status and board_column_widget:
+                board_column_widget.widget.options = columns
+                if current_col:
+                    self._set_widget_value_safe(
+                        board_column_widget, current_col, "string"
                     )
+                board_column_widget.widget.update()
+            else:
+                self.LOG.warning(f"Could not load board columns: {columns}")
 
-                    if status:
-                        # Update description
-                        description_raw = details.get("description", "")
-
-                        # Check if the content appears to be HTML
-                        is_html_content = bool(
-                            description_raw
-                            and ("<" in description_raw and ">" in description_raw)
-                        )
-
-                        if is_html_content:
-                            # Convert HTML to markdown for better readability
-                            description_clean = helpers.convert_html_to_markdown(
-                                description_raw
-                            )
-                        else:
-                            # Just unescape HTML entities
-                            description_clean = html.unescape(description_raw)
-
-                        editor_widget.value = description_clean
-
-                        # Update other fields
-                        self._set_widget_value_safe(
-                            state_widget, details.get("state"), "string"
-                        )
-                        self._set_widget_value_safe(
-                            assigned_to_widget,
-                            details.get("assigned_to_raw")
-                            or details.get("assigned_to"),
-                            "assignee",
-                        )
-                        self._set_widget_value_safe(
-                            priority_widget, details.get("priority"), "int"
-                        )
-                    else:
-                        ui.notify(
-                            f"Failed to load work item details: {details}",
-                            color="negative",
-                        )
-                        self.LOG.error(f"Failed to load work item details: {details}")
-
+        if work_item_widget:
             work_item_widget.on("update:model-value", load_work_item_details)
 
     def setup_add_tab_handlers(self, widgets):

@@ -457,6 +457,18 @@ add_data_page:
             - 3
             - 4
           optional: True
+        - name: "current_column"
+          type: "input"
+          label: "Current Board Column"
+          optional: true
+          default: ""
+        - name: "board_column"
+          type: "select"
+          label: "Move to Column"
+          options: []
+          with_input: false
+          optional: true
+          parent: "customer_name"
         - name: description_editor
           label: Description
           type: editor_with_preview
@@ -466,6 +478,7 @@ add_data_page:
       rows:
         - [customer_name, work_item]
         - [state, assigned_to, priority]
+        - [current_column, board_column]
         - [description_editor]
       action:
         function: update_work_item
