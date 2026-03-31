@@ -2,6 +2,8 @@
 Generalized UI Components used throughout the application.
 """
 
+import asyncio
+
 from nicegui import ui, app
 from contextlib import contextmanager
 from ..helpers import UI_STYLES
@@ -17,6 +19,7 @@ class NavigationBar:
         self.theme = theme
         self.buttons = {}
         self.active_path = None
+        self.on_navigate = None
 
     def render(self) -> None:
         """
@@ -87,6 +90,15 @@ class NavigationBar:
                         def create_click_handler(path):
                             def handler():
                                 self.set_active(path, self.theme)
+                                if self.on_navigate:
+                                    print(
+                                        f"[NavBar] Navigation to {path} — firing on_navigate callback"
+                                    )
+                                    asyncio.create_task(self.on_navigate())
+                                else:
+                                    print(
+                                        f"[NavBar] Navigation to {path} — no on_navigate callback set"
+                                    )
                                 ui.navigate.to(path)
 
                             return handler

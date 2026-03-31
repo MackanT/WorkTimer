@@ -53,6 +53,7 @@ class AppCore:
         self.add_data_engine = None
         self._initialized = False
         self._devops_initialized = False
+        self._devops_last_attempt = 0
 
         self.logger.info("AppCore initialized")
 
@@ -195,6 +196,25 @@ class AppCore:
         if self._devops_initialized:
             return
 
+        # Cooldown — don't retry more than once every 60 seconds
+        import time
+
+        last_attempt = getattr(self, "_devops_last_attempt", 0)
+        if time.time() - last_attempt < 60:
+            self.logger.debug(
+                f"DevOps retry cooldown — {int(60 - (time.time() - last_attempt))}s remaining"
+            )
+            return
+        self._devops_last_attempt = time.time()
+
+        # Quick internet check before attempting full connection
+        self.logger.info("Checking internet connectivity...")
+        if not await self._check_internet():
+            self.logger.warning("No internet — skipping DevOps init, will retry later")
+            return
+
+        self.logger.info("Internet available — proceeding with DevOps initialization")
+
         if not self.devops_engine:
             try:
                 from ..globals import DevOpsEngine
@@ -220,16 +240,48 @@ class AppCore:
                 self.devops_engine.initialize(),
                 timeout=30.0,
             )
-            self._devops_initialized = True
-            self.logger.info("DevOps engine initialized successfully")
+
+            # Check if any clients actually connected successfully
+            has_connections = (
+                hasattr(self.devops_engine, "manager")
+                and self.devops_engine.manager is not None
+                and len(self.devops_engine.manager.clients) > 0
+            )
+
+            if has_connections:
+                self._devops_initialized = True
+                self.logger.info(
+                    f"DevOps initialized — {len(self.devops_engine.manager.clients)} customer(s) connected"
+                )
+            else:
+                self._devops_initialized = False
+                self.logger.warning(
+                    "DevOps initialize() completed but no clients connected — will retry on next navigation"
+                )
+
         except asyncio.TimeoutError:
             self._devops_initialized = False
             self.logger.warning(
-                "DevOps initialization timed out (30s) — will retry on next page load"
+                "DevOps initialization timed out (30s) — will retry on next navigation"
             )
         except Exception as e:
             self._devops_initialized = False
             self.logger.warning(f"DevOps initialization failed: {e}")
+
+    async def _check_internet(self) -> bool:
+        """Quick DNS check to see if internet is available. Returns True/False in ~1s."""
+        import socket
+
+        try:
+            await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None, lambda: socket.getaddrinfo("dev.azure.com", 443)
+                ),
+                timeout=3.0,
+            )
+            return True
+        except Exception:
+            return False
 
     # ── Client Management ─────────────────────────────────────────────────────
 
@@ -262,13 +314,7 @@ class AppCore:
         return core
 
     @classmethod
-    async def get_or_initialize(
-        cls, config_loader: Optional[ConfigLoader] = None
-    ) -> "AppCore":
-        """
-        Get or create AppCore, initialize engines if needed, and apply theme.
-        One-stop shop for page setup — call at the top of every page.
-        """
+    async def get_or_initialize(cls, config_loader=None) -> "AppCore":
         core = cls.get_or_create(config_loader=config_loader or get_config_loader())
 
         async with core._init_lock:
@@ -281,6 +327,19 @@ class AppCore:
 
         if not app.storage.client.get("navigation_created", False):
             core.nav_bar.render()
+
+            async def on_navigate():
+                print(
+                    f"[NavBar] on_navigate fired — _devops_initialized={core._devops_initialized}"
+                )
+                if not core._devops_initialized:
+                    core.logger.info("Navigation triggered DevOps retry...")
+                    await core.initialize_devops()
+
+            core.nav_bar.on_navigate = on_navigate
+            print(
+                f"[AppCore] on_navigate callback set on nav_bar: {core.nav_bar.on_navigate}"
+            )
 
         return core
 
