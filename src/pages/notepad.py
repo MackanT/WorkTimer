@@ -16,8 +16,9 @@ Features:
 import json
 import re
 from pathlib import Path
-
-from nicegui import ui
+import time
+from fastapi import UploadFile, Request, File
+from nicegui import ui, app
 
 from ..core.app import AppCore
 from ..ui.elements import toolbar, page_card, toolbar_divider
@@ -214,6 +215,35 @@ def delete_note(notes_dir: Path, note: dict):
     if path.exists():
         path.unlink()
 
+
+# ── Image Upload Endpoint ───────────────────────────────────────────────
+
+
+@app.post("/upload_image")
+async def upload_image(request: Request, file: UploadFile = File(...)):
+    notes_dir = get_notes_dir()
+
+    form = await request.form()
+    note_filename = form.get("note")
+
+    if not note_filename:
+        return {"error": "Missing note filename"}
+
+    note_stem = Path(note_filename).stem
+    assets_dir = notes_dir / f"{note_stem}_assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    ext = Path(file.filename).suffix or ".png"
+    filename = f"img_{int(time.time() * 1000)}{ext}"
+    file_path = assets_dir / filename
+
+    content = await file.read()
+    file_path.write_bytes(content)
+
+    return {"path": f"/notes_assets/{note_stem}_assets/{filename}"}
+
+
+app.add_static_files("/notes_assets", str(get_notes_dir()))
 
 # ── Main page ──────────────────────────────────────────────────────────────────
 
@@ -511,6 +541,116 @@ async def notepad_page():
                     .classes("w-full h-full")
                     .style("height: 100%;")
                 )
+
+                editor_id = editor.id
+                state["active_editor"] = editor_id
+
+                def inject_paste_handler():
+                    editor_id = state.get("active_editor")
+                    note_filename = active_note()["filename"] if active_note() else ""
+
+                    if not editor_id or not note_filename:
+                        return
+
+                    ui.run_javascript(f"""
+                        let attempts = 0;
+                        const maxAttempts = 20;
+                        
+                        function tryAttach() {{
+                            attempts++;
+                            const cmEditors = document.querySelectorAll('.cm-editor');
+                            console.log(`Attempt ${{attempts}}: found ${{cmEditors.length}} CM editors`);
+                            
+                            if (!cmEditors.length) {{
+                                if (attempts < maxAttempts) {{
+                                    setTimeout(tryAttach, 200);
+                                }} else {{
+                                    console.warn("Gave up finding CodeMirror editor after " + maxAttempts + " attempts");
+                                }}
+                                return;
+                            }}
+
+                            const cmEl = cmEditors[cmEditors.length - 1];
+
+                            if (cmEl._imagePasteEnabled) {{
+                                console.log("Paste handler already attached");
+                                return;
+                            }}
+                            cmEl._imagePasteEnabled = true;
+                            console.log("Paste handler attached to CM editor");
+
+                            cmEl.addEventListener('paste', async (event) => {{
+                                const items = event.clipboardData?.items;
+                                if (!items) return;
+
+                                for (const item of items) {{
+                                    if (!item.type.startsWith('image/')) continue;
+
+                                    event.preventDefault();
+                                    console.log("Image paste detected, uploading...");
+
+                                    const blob = item.getAsFile();
+                                    const formData = new FormData();
+                                    formData.append('file', blob, 'paste.png');
+                                    formData.append('note', "{note_filename}");
+
+                                    try {{
+                                        const response = await fetch('/upload_image', {{
+                                            method: 'POST',
+                                            body: formData
+                                        }});
+
+                                        if (!response.ok) {{
+                                            console.error("Upload failed:", await response.text());
+                                            return;
+                                        }}
+
+                                        const data = await response.json();
+                                        console.log("Upload response:", data);
+                                        if (!data.path) return;
+
+                                        const md = `![image](${{data.path}})\\n`;
+                                        console.log("Inserting markdown:", md);
+
+                                        // ── DEBUG: inspect CM editor internals ──────────────────
+                                        const cmContent = cmEl.querySelector('.cm-content');
+                                        console.log("cmContent found:", !!cmContent);
+
+                                        if (cmContent) {{
+                                            // Check all own properties for a dispatch method
+                                            for (const key of Object.getOwnPropertyNames(cmContent)) {{
+                                                try {{
+                                                    const val = cmContent[key];
+                                                    if (val && typeof val === 'object' && typeof val.dispatch === 'function') {{
+                                                        console.log("Found dispatch on cmContent." + key);
+                                                    }}
+                                                }} catch(e) {{}}
+                                            }}
+
+                                            // Check direct view patterns
+                                            console.log("cmContent._view:", cmContent._view);
+                                            console.log("cmContent.cmView:", cmContent.cmView);
+                                            console.log("cmEl.view:", cmEl.view);
+                                            console.log("cmEl.editor:", cmEl.editor);
+
+                                            // Try execCommand as last resort
+                                            cmContent.focus();
+                                            const inserted = document.execCommand('insertText', false, md);
+                                            console.log("execCommand result:", inserted);
+                                        }}
+                                        // ── END DEBUG ────────────────────────────────────────────
+
+                                    }} catch (err) {{
+                                        console.error("Upload error:", err);
+                                    }}
+                                }}
+                            }});
+                        }}
+                        
+                        tryAttach();
+                    """)
+
+                ui.timer(0.1, inject_paste_handler, once=True)
 
             # Right: preview
             with ui.column().classes("flex-1 h-full overflow-auto p-4"):
