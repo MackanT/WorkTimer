@@ -9,5 +9,4 @@ docs/REFACTORING_SUMMARY.md
 docs/ADD_DATA_REFACTORING.md
 docs/TASKS_REFACTOR_SUMMARY.md
 .nicegui/
-data/notes/*.md
-data/notes/notes_meta.json
+data/notes/
