@@ -252,7 +252,8 @@ def render_and_sanitize_markdown(text: str) -> str:
         raw_html,
         tags=allowed_tags,
         attributes=allowed_attrs,
-        protocols=["http", "https", "mailto"],
+        protocols=["http", "https", "mailto", "data"],
+        strip=True,
     )
 
     # Return with dark mode styling

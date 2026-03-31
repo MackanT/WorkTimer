@@ -74,6 +74,28 @@ class DevOpsWorkItemHandlers:
             markdown=True,
             parent=parent_id,
         )
+
+        if success:
+            board_column = wid.get("board_column")
+            if board_column:
+                # Extract the new work item ID from the success message e.g. "Created User Story with ID 1234"
+                id_match = re.search(r"ID (\d+)", message)
+                if id_match:
+                    new_id = int(id_match.group(1))
+                    col_success, col_msg = self.DO.manager.set_board_column(
+                        customer_name=wid["customer_name"],
+                        work_item_id=new_id,
+                        column_name=board_column,
+                    )
+                    if col_success:
+                        self.LOG.info(
+                            f"Set initial board column '{board_column}' for new item {new_id}"
+                        )
+                    else:
+                        self.LOG.warning(
+                            f"Could not set initial board column: {col_msg}"
+                        )
+
         if success:
             self.LOG.info(message)
         else:
@@ -247,11 +269,11 @@ class DevOpsWorkItemHandlers:
             )
             if col_status and board_column_widget:
                 board_column_widget.widget.options = columns
-                if current_col:
-                    self._set_widget_value_safe(
-                        board_column_widget, current_col, "string"
-                    )
+                board_column_widget.widget.value = None
                 board_column_widget.widget.update()
+                if current_col and current_col in columns:
+                    board_column_widget.widget.value = current_col
+                    board_column_widget.widget.update()
             else:
                 self.LOG.warning(f"Could not load board columns: {columns}")
 
@@ -273,6 +295,33 @@ class DevOpsWorkItemHandlers:
         preview_widget = widgets.get("description_preview")
         source_widget = widgets.get("source")
         contact_widget = widgets.get("contact_person")
+        customer_widget = widgets.get("customer_name")
+        board_column_widget = widgets.get("board_column")
+
+        # Load board columns when customer is selected
+        if customer_widget and board_column_widget:
+
+            async def load_columns_for_customer(e=None):
+                c_name = customer_widget.value if customer_widget else None
+                if not c_name or not self.DO.manager:
+                    return
+                client = self.DO.manager._get_client(c_name)
+                if not client:
+                    return
+                col_status, columns = client.get_board_columns_via_team_autodetect()
+                self.LOG.info(
+                    f"Add form board columns for {c_name}: {col_status} {columns}"
+                )
+                if col_status and columns:
+                    board_column_widget.widget.options = columns
+                    board_column_widget.widget.value = None
+                    board_column_widget.widget.update()
+                else:
+                    self.LOG.warning(
+                        f"Could not load board columns for add form: {columns}"
+                    )
+
+            customer_widget.on("update:model-value", load_columns_for_customer)
 
         # Initialize preview
         if editor_widget and preview_widget:

@@ -345,6 +345,14 @@ add_data_page:
             - 4
           default: 2
           optional: False
+        - name: "board_column"
+          type: "select"
+          label: "Initial Board Column"
+          options: []
+          with_input: false
+          optional: true
+          default: ""
+          parent: "customer_name"
         - name: use_markdown
           label: Use Markdown
           type: switch
@@ -406,7 +414,7 @@ add_data_page:
         - [customer_name, work_item_type, work_item_title]
         - [parent_name, assigned_to]
         - [contact_person, source]
-        - [state, priority]
+        - [state, priority, board_column]
         - [tags]
         - [description_editor]
       action:
