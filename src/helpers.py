@@ -204,9 +204,10 @@ def render_and_sanitize_markdown(text: str) -> str:
     raw_html = _markdown.markdown(
         text,
         extensions=[
-            "extra",  # Includes fenced_code, tables, and more
-            "nl2br",  # Convert newlines to <br>
-            "sane_lists",  # Better list handling
+            "extra",
+            "nl2br",
+            "sane_lists",
+            "pymdownx.tilde",
         ],
     )
 
@@ -237,6 +238,7 @@ def render_and_sanitize_markdown(text: str) -> str:
         "strong",
         "em",
         "del",
+        "s",
         "ins",
     ]
     allowed_attrs = {

@@ -14,7 +14,7 @@
 #### Devops
 - Devops visualize as dag?
 - Devops see board?
-- Devops move items between columns (todo, analyze, in progress, review, test, done etc.)?
+- ~~Devops move items between columns (todo, analyze, in progress, review, test, done etc.)?~~
 - Be able to post images/files when creating devops epic/feature/user-story (low priority!)
 - Git id dropdown currently only exists in project close. missing in query-view and add-data view (maybe add there as well?)
 - Defaults to first project available per organisation-url
@@ -28,6 +28,7 @@
 #### Notes
 - Notepad++ functionality + markdown (?)
 - remove exces vertical white-space
+- ~~Paste images~~
 
 #### Documentation
 - Go over all documentation in /docs and remove old docs, add new, ensure it is up to date and correct etc. 
