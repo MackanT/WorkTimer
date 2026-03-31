@@ -8,14 +8,13 @@ This enables true multi-client support with no shared state pollution.
 from collections import deque
 import logging
 from typing import Optional, Dict
-from nicegui import app
+from nicegui import app, ui
 from ..config import ConfigLoader
 from ..database import Database
 from ..devops import DevOpsManager
 from ..ui.elements import NavigationBar
 from .events import PageEventBus
 import asyncio
-from nicegui import ui
 
 # Module-level storage for AppCore instances (per-client, by client ID)
 _app_cores: Dict[str, "AppCore"] = {}
@@ -89,6 +88,7 @@ class AppCore:
         self.devops_engine = None
         self.add_data_engine = None
         self._initialized = False
+        self._devops_initialized = False
 
         self.logger.info("AppCore initialized")
 
@@ -160,9 +160,9 @@ class AppCore:
 
         return logger
 
-    async def initialize_engines(self):
+    async def initialize_local_engines(self):
         """
-        Initialize all engines asynchronously.
+        Initialize all local engines asynchronously (query_engine and add_data_engine).
 
         Call this ONCE per client, typically on first page load.
         Subsequent page navigations reuse the same engines.
@@ -194,45 +194,55 @@ class AppCore:
             await self.add_data_engine.refresh()
             self.logger.info("Data engine initialized")
 
-            # Initialize DevOps engine
-            from ..globals import DevOpsEngine
-
-            do_logger = self._setup_logger("DevOps")
-            self.devops_engine = DevOpsEngine(
-                query_engine=self.query_engine, log_engine=do_logger
-            )
-
-            # Run DevOps initialization in background to avoid blocking page load
-            asyncio.create_task(self._initialize_devops_background())
-            self.logger.info("DevOps engine created (loading data in background)")
-
             self._initialized = True
-            self.logger.info("All engines initialized successfully")
+            self.logger.info("Local engines initialized successfully")
 
         except Exception as e:
-            self.logger.error(f"Failed to initialize engines: {e}")
+            self.logger.error(f"Failed to initialize local engines: {e}")
             self.event_bus.notify(f"Initialization failed: {e}", type_="negative")
             raise
+
+    async def initialize_devops(self):
+        """Initialize or re-initialize DevOps. Safe to call multiple times."""
+        if not self._initialized:
+            self.logger.debug("Local engines not ready yet — skipping DevOps init")
+            return
+        if self._devops_initialized:
+            return
+        if not self.devops_engine:
+            try:
+                from ..globals import DevOpsEngine
+
+                do_logger = self._setup_logger("DevOps")
+                self.devops_engine = DevOpsEngine(
+                    query_engine=self.query_engine, log_engine=do_logger
+                )
+            except Exception as e:
+                self.logger.warning(f"Could not create DevOps engine: {e}")
+                return
+        await self._initialize_devops_background()
 
     async def _initialize_devops_background(self):
         """
         Initialize DevOps data in background without blocking page load.
-        This prevents connection timeouts on initial page load.
+        Sets _devops_initialized on success so it won't be retried unnecessarily.
         """
         try:
             self.logger.info("Starting background DevOps initialization")
-            # Add timeout to prevent hanging indefinitely
             await asyncio.wait_for(
                 self.devops_engine.initialize(),
-                timeout=30.0,  # 30 second timeout
+                timeout=30.0,
             )
+            self._devops_initialized = True
             self.logger.info("DevOps engine initialized in background")
         except asyncio.TimeoutError:
+            self._devops_initialized = False
             self.logger.warning(
-                "DevOps initialization timed out (30s) - will retry later"
+                "DevOps initialization timed out (30s) — will retry on next page load"
             )
         except Exception as e:
-            self.logger.error(f"Background DevOps initialization failed: {e}")
+            self._devops_initialized = False
+            self.logger.warning(f"Background DevOps initialization failed: {e}")
 
     @classmethod
     def get_or_create(cls, config_loader: Optional[ConfigLoader] = None) -> "AppCore":
@@ -297,12 +307,13 @@ class AppCore:
 
         async with core._init_lock:
             if not core._initialized:
-                await core.initialize_engines()
+                await core.initialize_local_engines()
+            # Retry DevOps on every page load until it succeeds
+            if not core._devops_initialized:
+                asyncio.create_task(core.initialize_devops())
         core.apply_theme()
-
         if not app.storage.client.get("navigation_created", False):
             core.nav_bar.render()
-
         return core
 
     def _setup_page_timers(self, page_name: str, *task_fns):
