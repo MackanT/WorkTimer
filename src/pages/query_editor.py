@@ -267,6 +267,8 @@ async def query_editor_page():
 
     async def execute_query() -> None:
         query = editor.value
+        if not query.strip():
+            return
         try:
             df = await QE.query_db(query)
             if df is not None:
@@ -313,7 +315,26 @@ async def query_editor_page():
                 except Exception:
                     pass  # Silently fail if method not available
             else:
-                LOG.info("Query executed successfully (no result set).")
+                # Detect what kind of statement was run for a meaningful message
+                first_word = query.strip().split()[0].upper()
+                action_messages = {
+                    "INSERT": "Row inserted successfully",
+                    "UPDATE": "Row(s) updated successfully",
+                    "DELETE": "Row(s) deleted successfully",
+                    "CREATE": "Object created successfully",
+                    "ALTER": "Object altered successfully",
+                    "DROP": "Object dropped successfully",
+                }
+                msg = action_messages.get(first_word, "Query executed successfully")
+                LOG.info(msg)
+                ui.notify(msg, type="positive")
+
+                # Clear the grid to avoid showing stale results
+                grid_box.options["columnDefs"] = [
+                    {"field": "info", "headerName": "Result"}
+                ]
+                grid_box.options["rowData"] = [{"info": msg}]
+                grid_box.update()
         except Exception as e:
             error_msg = f"Query execution failed: {e}"
             LOG.error(error_msg)
@@ -531,7 +552,7 @@ async def query_editor_page():
                 ui.button(
                     "Execute Query (F5)",
                     icon="play_arrow",
-                    on_click=lambda: asyncio.create_task(execute_query()),
+                    on_click=execute_query,  # lambda: asyncio.create_task(execute_query()),
                 ).props("color=primary size=sm")
                 with ui.row().classes("items-center gap-4"):
                     ui.label("Edit Mode:").classes("text-sm text-gray-400")
@@ -588,7 +609,9 @@ async def query_editor_page():
             edit_mode_enabled.on("update:model-value", lambda _: on_edit_mode_change())
 
             render_query_buttons()
-            asyncio.create_task(refresh_query_list())
+            ui.timer(
+                0.1, refresh_query_list, once=True
+            )  # asyncio.create_task(refresh_query_list())
 
         return edit_mode_enabled, editor, grid_box
 
@@ -637,11 +660,11 @@ async def query_editor_page():
 
     def handle_key(e: KeyEventArguments):
         if e.key.f5 and e.action.keydown:
-            asyncio.create_task(execute_query())
+            ui.timer(0.0, execute_query, once=True)
         elif e.modifiers.ctrl and e.key.enter and e.action.keydown:
-            asyncio.create_task(execute_query())
+            ui.timer(0.0, execute_query, once=True)
 
     ui.keyboard(on_key=handle_key)
 
     # Execute initial query to populate grid
-    asyncio.create_task(execute_query())
+    ui.timer(0.1, execute_query, once=True)  #    asyncio.create_task(execute_query())
