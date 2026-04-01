@@ -809,18 +809,12 @@ class DevOpsClient:
             for t in teams:
                 team_context = TeamContext(project=self.project_name, team=t.name)
                 boards = work_client.get_boards(team_context)
-                stories_board = next((b for b in boards if b.name == "Stories"), None)
+                stories_board = next((b for b in boards if b.name == board_type), None)
                 if not stories_board:
                     continue
                 board_detail = work_client.get_board(team_context, stories_board.id)
                 columns = [c.name for c in board_detail.columns]
-                if set(columns) - {"New", "Active", "Resolved", "Closed", "Removed"}:
-                    self.log.info(
-                        f"Auto-detected columns via team '{t.name}': {columns}"
-                    )
-                    return (True, columns)
-
-            return (False, "Could not auto-detect board columns")
+                return (True, columns)
         except Exception as e:
             self.log.error(f"Fallback board column fetch failed: {e}")
             return (False, f"Error: {e}")
