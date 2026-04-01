@@ -250,15 +250,6 @@ class DevOpsManager:
             return (False, f"No DevOps connection for {customer_name}")
         return client.set_board_column(work_item_id, column_name)
 
-    def get_board_columns_for_item(
-        self, customer_name: str, work_item_id: int
-    ) -> tuple:
-        """Fetch available board columns for a specific work item."""
-        client = self._get_client(customer_name)
-        if not client:
-            return (False, f"No DevOps connection for {customer_name}")
-        return client.get_board_columns_for_item(work_item_id)
-
 
 class DevOpsClient:
     def __init__(self, personal_access_token, organization_url, log):
@@ -808,55 +799,7 @@ class DevOpsClient:
             self.log.error(f"Error moving work item to board column: {e}")
             return (False, f"Error: {e}")
 
-    def get_board_columns_for_item(self, work_item_id: int) -> tuple:
-        """Fetch available board columns by reading the Kanban field metadata."""
-        try:
-            token = base64.b64encode(
-                f":{self.personal_access_token}".encode("ascii")
-            ).decode("ascii")
-            headers = {"Authorization": f"Basic {token}"}
-
-            # Get work item to find the Kanban field name
-            get_url = (
-                f"{self.organization_url}/_apis/wit/workitems/{int(work_item_id)}"
-                f"?api-version=7.1&$expand=fields"
-            )
-            get_resp = requests.get(get_url, headers=headers, timeout=30)
-            if get_resp.status_code != 200:
-                return (False, f"Could not fetch work item: {get_resp.text}")
-
-            fields = get_resp.json().get("fields", {})
-            kanban_field = next(
-                (k for k in fields if k.endswith("Kanban.Column")), None
-            )
-            if not kanban_field:
-                return (False, "Item is not on a board")
-
-            # Get allowed values for the Kanban column field
-            field_url = (
-                f"{self.organization_url}/_apis/wit/fields/{kanban_field}"
-                f"?api-version=7.1"
-            )
-            field_resp = requests.get(field_url, headers=headers, timeout=30)
-            if field_resp.status_code == 200:
-                allowed = field_resp.json().get("allowedValues", [])
-                if allowed:
-                    self.log.info(
-                        f"Loaded {len(allowed)} board columns from field metadata"
-                    )
-                    return (True, allowed)
-
-            # Fallback — use the SDK board API with team auto-detection
-            self.log.info(
-                "Field metadata has no allowedValues — falling back to board API"
-            )
-            return self.get_board_columns_via_team_autodetect()
-
-        except Exception as e:
-            self.log.error(f"Error fetching board columns for item: {e}")
-            return (False, f"Error: {e}")
-
-    def get_board_columns_via_team_autodetect(self) -> tuple:
+    def get_board_columns_via_team_autodetect(self, board_type: str = None) -> tuple:
         """Fallback: auto-detect team and fetch columns via board API."""
         try:
             core_client = self.connection.clients.get_core_client()
