@@ -91,14 +91,7 @@ class NavigationBar:
                             def handler():
                                 self.set_active(path, self.theme)
                                 if self.on_navigate:
-                                    print(
-                                        f"[NavBar] Navigation to {path} — firing on_navigate callback"
-                                    )
                                     asyncio.create_task(self.on_navigate())
-                                else:
-                                    print(
-                                        f"[NavBar] Navigation to {path} — no on_navigate callback set"
-                                    )
                                 ui.navigate.to(path)
 
                             return handler
