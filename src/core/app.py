@@ -54,6 +54,7 @@ class AppCore:
         self._initialized = False
         self._devops_initialized = False
         self._devops_last_attempt = 0
+        self._devops_no_customers = False
 
         self.logger.info("AppCore initialized")
 
@@ -196,7 +197,12 @@ class AppCore:
         if self._devops_initialized:
             return
 
-        # Cooldown — don't retry more than once every 60 seconds
+        # If no customers are configured, skip unless explicitly forced
+        if getattr(self, "_devops_no_customers", False):
+            self.logger.debug("No DevOps customers configured — skipping retry")
+            return
+
+        # Cooldown
         import time
 
         last_attempt = getattr(self, "_devops_last_attempt", 0)
@@ -207,7 +213,7 @@ class AppCore:
             return
         self._devops_last_attempt = time.time()
 
-        # Quick internet check before attempting full connection
+        # Quick internet check
         self.logger.info("Checking internet connectivity...")
         if not await self._check_internet():
             self.logger.warning("No internet — skipping DevOps init, will retry later")
@@ -241,7 +247,6 @@ class AppCore:
                 timeout=30.0,
             )
 
-            # Check if any clients actually connected successfully
             has_connections = (
                 hasattr(self.devops_engine, "manager")
                 and self.devops_engine.manager is not None
@@ -250,23 +255,37 @@ class AppCore:
 
             if has_connections:
                 self._devops_initialized = True
+                self._devops_no_customers = False
                 self.logger.info(
                     f"DevOps initialized — {len(self.devops_engine.manager.clients)} customer(s) connected"
                 )
             else:
                 self._devops_initialized = False
+                self._devops_no_customers = True
                 self.logger.warning(
-                    "DevOps initialize() completed but no clients connected — will retry on next navigation"
+                    "DevOps initialize() completed but no customers configured — "
+                    "will only retry when a customer is added"
                 )
 
         except asyncio.TimeoutError:
             self._devops_initialized = False
+            self._devops_no_customers = False
             self.logger.warning(
-                "DevOps initialization timed out (30s) — will retry on next navigation"
+                "DevOps initialization timed out — will retry on next navigation"
             )
         except Exception as e:
             self._devops_initialized = False
+            self._devops_no_customers = False
             self.logger.warning(f"DevOps initialization failed: {e}")
+
+    def force_devops_reinit(self):
+        """Force DevOps to retry — call this after adding a new DevOps customer."""
+        self.logger.info("DevOps re-init forced — resetting state")
+        self._devops_initialized = False
+        self._devops_no_customers = False
+        self._devops_last_attempt = 0
+        self.devops_engine = None
+        asyncio.create_task(self.initialize_devops())
 
     async def _check_internet(self) -> bool:
         """Quick DNS check to see if internet is available. Returns True/False in ~1s."""
@@ -329,17 +348,11 @@ class AppCore:
             core.nav_bar.render()
 
             async def on_navigate():
-                print(
-                    f"[NavBar] on_navigate fired — _devops_initialized={core._devops_initialized}"
-                )
                 if not core._devops_initialized:
                     core.logger.info("Navigation triggered DevOps retry...")
                     await core.initialize_devops()
 
             core.nav_bar.on_navigate = on_navigate
-            print(
-                f"[AppCore] on_navigate callback set on nav_bar: {core.nav_bar.on_navigate}"
-            )
 
         return core
 
