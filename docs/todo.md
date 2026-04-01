@@ -5,11 +5,13 @@
 - update customer/project should also update times values!
 - Marker for ongoing projects? Make it easier to see from a glance what is active right now
 - At midnight, date "today" does not switch automatically. Might be fixed but have not verified it (bug)
+- Have active tasks/trackers on top of page, easily visible (?)
+- Indicator in navigator on number of active trackers?
 
 #### Database / QueryEditor
 - Make PAT-tokens etc masked (not easily possible)
-- no info when running for ex. delete command in query (bug)
-- Create/Alter/Update table does not send "success message" (same for all with "no result set" returns)
+- ~~no info when running for ex. delete command in query (bug)~~
+- ~~Create/Alter/Update table does not send "success message" (same for all with "no result set" returns)~~
 
 #### Devops
 - Devops visualize as dag?
@@ -18,8 +20,8 @@
 - Be able to post images/files when creating devops epic/feature/user-story (low priority!)
 - Git id dropdown currently only exists in project close. missing in query-view and add-data view (maybe add there as well?)
 - Defaults to first project available per organisation-url
-- If internet does not exist on boot errors on devops client and it will never try to reconnect (bug)
-- If no customers have devops integration when starting program it is not enabled. When then adding a devops customer, it is not auto-enabled (bug)
+- ~~If internet does not exist on boot errors on devops client and it will never try to reconnect (bug)~~
+- ~~If no customers have devops integration when starting program it is not enabled. When then adding a devops customer, it is not auto-enabled (bug)~~
 
 #### Tasks
 - Tasks missing delete task option?

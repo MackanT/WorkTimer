@@ -150,7 +150,7 @@ async def render_entity_form(
     dynamic_widgets = []
     parent_map = {}
 
-    async def on_submit():
+    async def on_submit():  ## TODO somewhere here detect if DevOps was updated and trigger re-init if so (could also be done via event bus) core.force_devops_reinit()
         required_fields = [f["name"] for f in fields if not f.get("optional", False)]
         if not helpers.check_input(widgets, required_fields):
             return
