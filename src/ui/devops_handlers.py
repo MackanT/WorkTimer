@@ -7,6 +7,8 @@ These handle special logic for creating/updating work items and managing the des
 
 import html
 import re
+import asyncio
+from collections import defaultdict
 
 from nicegui import ui
 
@@ -15,6 +17,9 @@ from .. import helpers
 
 class DevOpsWorkItemHandlers:
     """Handlers for DevOps work item operations."""
+
+    devops_columns_cache = defaultdict(dict)
+    _preload_started = False
 
     def __init__(self, DO, LOG):
         """
@@ -26,6 +31,41 @@ class DevOpsWorkItemHandlers:
         """
         self.DO = DO
         self.LOG = LOG
+
+        if not DevOpsWorkItemHandlers._preload_started:
+            DevOpsWorkItemHandlers._preload_started = True
+            asyncio.ensure_future(self._background_work())
+
+    async def _background_work(self):
+        await self.preload_cached_board_columns()
+
+    async def preload_cached_board_columns(self):
+        loop = asyncio.get_event_loop()
+        for customer in self.DO.manager.clients.keys():
+            for board_type in ["Epic", "Feature", "User Story"]:
+                if self.devops_columns_cache[customer].get(board_type) is None:
+                    await loop.run_in_executor(
+                        None, self.load_board_columns, customer, board_type
+                    )
+
+    def load_board_columns(self, customer_name: str, board_type: str):
+        """Loads and caches board columns for a given customer and board type."""
+        board_types = {
+            "Epic": "Epics",
+            "Feature": "Features",
+            "User Story": "Stories",
+        }
+
+        if not customer_name or not self.DO.manager:
+            return
+        client = self.DO.manager._get_client(customer_name)
+        if not client:
+            return
+        col_status, columns = client.get_board_columns_via_team_autodetect(
+            board_type=board_types.get(board_type, "Stories")
+        )
+        self.devops_columns_cache[customer_name][board_type] = columns
+        return columns, col_status
 
     def add_work_item(self, widgets):
         """
@@ -260,13 +300,17 @@ class DevOpsWorkItemHandlers:
                 )
                 current_column_widget.widget.props("readonly outlined")
 
-            # Load available board columns directly from the work item
-            col_status, columns = self.DO.manager.get_board_columns_for_item(
-                customer_name=c_name, work_item_id=work_item_id
+            # Get cached columns if exist, else load from API
+            b_type = work_item_display.split(":")[0].strip()
+            cached_list = self.devops_columns_cache.setdefault(c_name, {}).setdefault(
+                b_type, None
             )
-            self.LOG.info(
-                f"Board columns for item {work_item_id}: {col_status} {columns}"
-            )
+            if cached_list is None:
+                columns, col_status = self.load_board_columns(c_name, b_type)
+            else:
+                columns = cached_list
+                col_status = True
+
             if col_status and board_column_widget:
                 board_column_widget.widget.options = columns
                 board_column_widget.widget.value = None
@@ -296,6 +340,7 @@ class DevOpsWorkItemHandlers:
         source_widget = widgets.get("source")
         contact_widget = widgets.get("contact_person")
         customer_widget = widgets.get("customer_name")
+        work_item_widget = widgets.get("work_item_type")
         board_column_widget = widgets.get("board_column")
 
         # Load board columns when customer is selected
@@ -303,15 +348,17 @@ class DevOpsWorkItemHandlers:
 
             async def load_columns_for_customer(e=None):
                 c_name = customer_widget.value if customer_widget else None
-                if not c_name or not self.DO.manager:
-                    return
-                client = self.DO.manager._get_client(c_name)
-                if not client:
-                    return
-                col_status, columns = client.get_board_columns_via_team_autodetect()
-                self.LOG.info(
-                    f"Add form board columns for {c_name}: {col_status} {columns}"
-                )
+                b_type = work_item_widget.value if work_item_widget else None
+                cached_list = self.devops_columns_cache.setdefault(
+                    c_name, {}
+                ).setdefault(b_type, None)
+
+                if cached_list is None:
+                    columns, col_status = self.load_board_columns(c_name, b_type)
+                else:
+                    columns = cached_list
+                    col_status = True
+
                 if col_status and columns:
                     board_column_widget.widget.options = columns
                     board_column_widget.widget.value = None
@@ -322,6 +369,7 @@ class DevOpsWorkItemHandlers:
                     )
 
             customer_widget.on("update:model-value", load_columns_for_customer)
+            work_item_widget.on("update:model-value", load_columns_for_customer)
 
         # Initialize preview
         if editor_widget and preview_widget:
