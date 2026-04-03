@@ -2,6 +2,7 @@
 from .devops import DevOpsManager
 from .database import Database
 from dataclasses import dataclass
+from typing import Optional
 import asyncio
 import logging
 import datetime
@@ -76,9 +77,15 @@ class DevOpsEngine:
         self.query_engine = query_engine
         self.log = log_engine
         self._scheduled_tasks = []
+        self._scheduled_started = False
+        self.last_incremental_sync: Optional[datetime.datetime] = None
+        self.last_full_sync: Optional[datetime.datetime] = None
 
     async def start_scheduled_updates(self):
-        """Start background tasks for scheduled DevOps updates."""
+        """Start background tasks for scheduled DevOps updates (called once per engine instance)."""
+        if self._scheduled_started:
+            return
+        self._scheduled_started = True
         self.log.info("Starting scheduled DevOps update tasks")
 
         # Hourly incremental update
@@ -227,6 +234,12 @@ class DevOpsEngine:
                 )
 
             await self.load_df()
+
+            # Record sync timestamps
+            if incremental:
+                self.last_incremental_sync = datetime.datetime.now()
+            else:
+                self.last_full_sync = datetime.datetime.now()
 
             self.log.info(f"DevOps update result: {user_msg}")
         else:

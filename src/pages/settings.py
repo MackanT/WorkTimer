@@ -10,6 +10,7 @@ No raw YAML exposed — users fill in fields and press Save.
 """
 
 from pathlib import Path
+import asyncio
 import yaml
 from nicegui import ui
 from ..core.app import AppCore
@@ -514,6 +515,61 @@ async def _render_devops_tags_tab(core: AppCore):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DevOps Sync tab
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _render_devops_sync_tab(core: AppCore):
+    from ..services.services import DevOpsService
+
+    svc = DevOpsService(core)
+    eng = core.devops_engine
+
+    def _fmt_time(dt) -> str:
+        if dt is None:
+            return "Never"
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Scheduled Sync").classes("text-base font-semibold text-amber-400 mb-1")
+        ui.label(
+            "Incremental sync runs every hour; full refresh runs nightly at 02:00."
+        ).classes("text-xs text-slate-400 mb-4")
+
+        lbl_incr = ui.label(f"Last incremental sync: {_fmt_time(eng.last_incremental_sync)}").classes(
+            "text-sm text-slate-300"
+        )
+        lbl_full = ui.label(f"Last full sync: {_fmt_time(eng.last_full_sync)}").classes(
+            "text-sm text-slate-300 mb-4"
+        )
+
+        def _refresh_labels():
+            lbl_incr.set_text(f"Last incremental sync: {_fmt_time(eng.last_incremental_sync)}")
+            lbl_full.set_text(f"Last full sync: {_fmt_time(eng.last_full_sync)}")
+
+        with ui.row().classes("gap-3 mt-2"):
+            async def _run_incremental():
+                svc.refresh_incremental_async()
+                await asyncio.sleep(0.5)
+                _refresh_labels()
+
+            async def _run_full():
+                svc.refresh_full_async()
+                await asyncio.sleep(0.5)
+                _refresh_labels()
+
+            ui.button("Incremental Sync", icon="sync", on_click=_run_incremental).props(
+                "color=primary dense"
+            )
+            ui.button("Full Sync", icon="cloud_download", on_click=_run_full).props(
+                "color=warning dense"
+            )
+            ui.button("Refresh timestamps", icon="refresh", on_click=_refresh_labels).props(
+                "flat dense"
+            ).classes("text-slate-400")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Theme tab
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -610,6 +666,7 @@ async def settings_page():
             # ui.tab("visuals", label="Task Visuals", icon="palette")
             ui.tab("contacts", label="DevOps Contacts", icon="contacts")
             ui.tab("tags", label="DevOps Tags", icon="label")
+            ui.tab("sync", label="DevOps Sync", icon="sync")
             ui.tab("theme", label="Theme", icon="color_lens")
 
     with page_card(scrollable=False):
@@ -632,6 +689,11 @@ async def settings_page():
                 with ui.scroll_area().classes("w-full h-full"):
                     with ui.column().classes("w-full gap-4 p-2"):
                         await _render_devops_tags_tab(core)
+
+            with ui.tab_panel("sync").classes("p-0 h-full"):
+                with ui.scroll_area().classes("w-full h-full"):
+                    with ui.column().classes("w-full gap-4 p-2"):
+                        await _render_devops_sync_tab(core)
 
             with ui.tab_panel("theme").classes("p-0 h-full"):
                 with ui.scroll_area().classes("w-full h-full"):

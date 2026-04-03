@@ -151,7 +151,6 @@ class AppCore:
         root.setLevel(level)
 
         self._root_logger_attached = True
-        print(f"[AppCore] Logging initialized - Debug mode: {self.debug}")
 
     # ── Engine Initialization ─────────────────────────────────────────────────
 
@@ -265,6 +264,8 @@ class AppCore:
                 self.logger.info(
                     f"DevOps initialized — {len(self.devops_engine.manager.clients)} customer(s) connected"
                 )
+                import asyncio as _asyncio
+                _asyncio.create_task(self.devops_engine.start_scheduled_updates())
             else:
                 self._devops_initialized = False
                 self._devops_no_customers = True
