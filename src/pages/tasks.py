@@ -732,7 +732,7 @@ async def tasks_page():
                 )
 
                 # Defer initial task loading to avoid sync/async issues
-                ui.timer(0.1, refresh_tasks, once=True)
+                asyncio.create_task(refresh_tasks())
 
         # Right panel: Forms
         with splitter.after:
@@ -812,7 +812,7 @@ def build_form_widgets(
                                 w.options = opts
                                 w.widget.update()
 
-                        ui.timer(0.1, load_task_list, once=True)
+                        asyncio.create_task(load_task_list())
                     elif options_source and not initial_options and not parent_widget:
 
                         async def load_options(w=widget, src=options_source):
@@ -821,7 +821,7 @@ def build_form_widgets(
                                 w.options = opts
                                 w.widget.update()
 
-                        ui.timer(0.1, load_options, once=True)
+                        asyncio.create_task(load_options())
 
     return form_widgets
 

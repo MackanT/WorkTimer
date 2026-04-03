@@ -609,9 +609,7 @@ async def query_editor_page():
             edit_mode_enabled.on("update:model-value", lambda _: on_edit_mode_change())
 
             render_query_buttons()
-            ui.timer(
-                0.1, refresh_query_list, once=True
-            )  # asyncio.create_task(refresh_query_list())
+            asyncio.create_task(refresh_query_list())
 
         return edit_mode_enabled, editor, grid_box
 
