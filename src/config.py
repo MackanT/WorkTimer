@@ -31,10 +31,15 @@ class DevOpsTagConfig(BaseModel):
     icon: Optional[str] = None
 
 
+class ConfigDevOpsTags(BaseModel):
+    """DevOps tags configuration from devops_tags.yml"""
+
+    devops_tags: List[DevOpsTagConfig] = Field(default_factory=list)
+
+
 class ConfigData(BaseModel):
     """Data configuration from config_data.yml"""
 
-    devops_tags: List[DevOpsTagConfig] = Field(default_factory=list)
     log_colors: Dict[str, str] = Field(default_factory=dict)
     # Add other fields as needed
 
@@ -295,6 +300,18 @@ class ConfigLoader:
         except Exception as e:
             raise RuntimeError(f"Error loading {filepath}: {e}")
 
+    def _ensure_from_template(self, filename: str) -> None:
+        """Copy <filename>.template to <filename> if the live file does not exist."""
+        live = self.config_folder / filename
+        template = self.config_folder / f"{filename}.template"
+        if not live.exists():
+            if template.exists():
+                import shutil
+                shutil.copy2(template, live)
+                print(f"  Created {filename} from template")
+            else:
+                print(f"WARNING: Neither {filename} nor its template found.")
+
     def load_all(self) -> Dict[str, Any]:
         """Load and validate all configuration files"""
         # Return cached configs if already loaded
@@ -351,19 +368,28 @@ class ConfigLoader:
                 }
             )
 
-        # Load DevOps contacts (optional with defaults)
+        # Load DevOps contacts (optional, created from template on first boot)
+        self._ensure_from_template("devops_contacts.yml")
         contacts_yaml = self._load_yaml("devops_contacts.yml", required=False)
         if contacts_yaml:
             self.configs["devops_contacts"] = ConfigDevOpsContacts(**contacts_yaml)
             customer_count = len(self.configs["devops_contacts"].customers)
             print(f"  DevOps contacts: {customer_count} customers")
         else:
-            print("  Using empty DevOps contacts (copy devops_contacts.yml.template)")
             self.configs["devops_contacts"] = ConfigDevOpsContacts(
                 customers={}, default=DevOpsContactConfig(contacts=[], assignees=[])
             )
 
-        # Load theme config (required)
+        # Load DevOps tags (created from template on first boot)
+        self._ensure_from_template("devops_tags.yml")
+        tags_yaml = self._load_yaml("devops_tags.yml", required=False)
+        if tags_yaml:
+            self.configs["devops_tags"] = ConfigDevOpsTags(**tags_yaml)
+        else:
+            self.configs["devops_tags"] = ConfigDevOpsTags()
+
+        # Load theme config (created from template on first boot)
+        self._ensure_from_template("config_theme.yml")
         theme_yaml = self._load_yaml("config_theme.yml", required=True)
         self.configs["theme"] = ThemeConfig(**theme_yaml.get("colors", {}))
 
@@ -412,6 +438,9 @@ class ConfigLoader:
                         },
                     }
                 )
+        elif filename == "devops_tags.yml":
+            tags_yaml = self._load_yaml(filename, required=False)
+            self.configs["devops_tags"] = ConfigDevOpsTags(**(tags_yaml or {}))
         elif filename == "config_theme.yml":
             theme_yaml = self._load_yaml(filename, required=True)
             self.configs["theme"] = ThemeConfig(**theme_yaml.get("colors", {}))
