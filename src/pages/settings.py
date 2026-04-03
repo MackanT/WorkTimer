@@ -366,6 +366,154 @@ async def _render_devops_contacts_tab(core: AppCore):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DevOps Tags tab
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _render_devops_tags_tab(core: AppCore):
+    path = _config_path(core, "devops_tags.yml")
+
+    table_container = ui.element("div").classes("w-full")
+    # Mutable refs so _reload_table can populate the form inputs
+    form_refs: dict = {}
+
+    def _fill_form(tag: dict):
+        """Populate the add/update form with an existing tag's values."""
+        form_refs["name_in"].value = tag.get("name", "")
+        form_refs["icon_in"].value = tag.get("icon", "")
+        form_refs["color_in"].value = tag.get("color", "#b71c1c")
+        icon_preview = form_refs.get("icon_preview")
+        if icon_preview:
+            icon_preview.set_name(tag.get("icon") or "help_outline")
+            icon_preview.update()
+
+    def _reload_table():
+        table_container.clear()
+        data = _load_yaml(path)
+        tags = data.get("devops_tags", [])
+
+        with table_container:
+            if not tags:
+                ui.label("No tags yet.").classes("text-slate-400 text-sm")
+                return
+
+            cols = [
+                {"name": "name", "label": "Name", "field": "name", "align": "left", "sortable": True},
+                {"name": "icon", "label": "Icon", "field": "icon", "align": "left"},
+                {"name": "color", "label": "Color", "field": "color", "align": "left"},
+                {"name": "actions", "label": "", "field": "actions", "align": "center"},
+            ]
+            rows = [
+                {"name": t.get("name", ""), "icon": t.get("icon", ""), "color": t.get("color", "")}
+                for t in tags
+            ]
+
+            with ui.table(columns=cols, rows=rows, row_key="name").classes("w-full") as tbl:
+                tbl.add_slot("body-cell-icon", """
+                    <q-td :props="props">
+                        <q-icon :name="props.value" size="sm" class="mr-1"/>
+                        <span class="text-xs text-slate-400">{{ props.value }}</span>
+                    </q-td>
+                """)
+                tbl.add_slot("body-cell-color", """
+                    <q-td :props="props">
+                        <q-badge :style="'background:' + props.value" :label="props.value"/>
+                    </q-td>
+                """)
+                tbl.add_slot("body-cell-actions", """
+                    <q-td :props="props" auto-width>
+                        <q-btn flat dense round icon="edit" color="primary"
+                               @click="$parent.$emit('edit', props.row)" class="mr-1"/>
+                        <q-btn flat dense round icon="delete" color="negative"
+                               @click="$parent.$emit('delete', props.row)"/>
+                    </q-td>
+                """)
+
+                def on_edit(e):
+                    _fill_form(e.args)
+
+                def on_delete(e):
+                    name = e.args.get("name", "")
+                    d = _load_yaml(path)
+                    d["devops_tags"] = [t for t in d.get("devops_tags", []) if t.get("name") != name]
+                    _save_yaml(path, d)
+                    core.config_loader.reload_config("devops_tags.yml")
+                    ui.notify(f"Deleted '{name}'", type="warning")
+                    _reload_table()
+
+                tbl.on("edit", on_edit)
+                tbl.on("delete", on_delete)
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("DevOps Tags").classes("text-base font-semibold text-amber-400 mb-2")
+
+        _reload_table()
+
+        ui.separator().classes("my-3")
+        ui.label("Add / Update tag — click ✏ on a row to edit it").classes("text-sm text-slate-400 mb-2")
+
+        with ui.row().classes("items-end gap-3 flex-wrap"):
+            name_in = ui.input("Name").props("dense outlined").classes("w-44")
+            icon_in = (
+                ui.input("Icon (Material Design)", placeholder="e.g. bug_report")
+                .props("dense outlined")
+                .classes("w-48")
+            )
+            icon_preview = ui.icon("help_outline", size="sm").classes("text-amber-400 self-center")
+            color_in = (
+                ui.color_input(label="Hex Color", value="#b71c1c")
+                .props("dense outlined")
+                .classes("w-36")
+            )
+
+            # Store refs so _fill_form can reach them
+            form_refs["name_in"] = name_in
+            form_refs["icon_in"] = icon_in
+            form_refs["color_in"] = color_in
+            form_refs["icon_preview"] = icon_preview
+
+            def _update_icon_preview(e):
+                icon_preview.set_name(e.value or "help_outline")
+                icon_preview.update()
+
+            icon_in.on_value_change(_update_icon_preview)
+
+            def _save_tag():
+                name = (name_in.value or "").strip()
+                icon = (icon_in.value or "").strip()
+                color = (color_in.value or "").strip()
+                if not name:
+                    ui.notify("Name is required.", type="warning")
+                    return
+                d = _load_yaml(path)
+                tags = d.setdefault("devops_tags", [])
+                for t in tags:
+                    if t.get("name") == name:
+                        if icon:
+                            t["icon"] = icon
+                        if color:
+                            t["color"] = color
+                        break
+                else:
+                    entry = {"name": name}
+                    if icon:
+                        entry["icon"] = icon
+                    if color:
+                        entry["color"] = color
+                    tags.append(entry)
+                _save_yaml(path, d)
+                core.config_loader.reload_config("devops_tags.yml")
+                ui.notify(f"Saved '{name}'", type="positive")
+                name_in.value = ""
+                icon_in.value = ""
+                color_in.value = "#b71c1c"
+                icon_preview.set_name("help_outline")
+                _reload_table()
+
+            ui.button("Save", icon="save", on_click=_save_tag).props("color=primary dense")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Theme tab
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -461,6 +609,7 @@ async def settings_page():
         ) as tabs:
             # ui.tab("visuals", label="Task Visuals", icon="palette")
             ui.tab("contacts", label="DevOps Contacts", icon="contacts")
+            ui.tab("tags", label="DevOps Tags", icon="label")
             ui.tab("theme", label="Theme", icon="color_lens")
 
     with page_card(scrollable=False):
@@ -478,6 +627,11 @@ async def settings_page():
                 with ui.scroll_area().classes("w-full h-full"):
                     with ui.column().classes("w-full gap-4 p-2"):
                         await _render_devops_contacts_tab(core)
+
+            with ui.tab_panel("tags").classes("p-0 h-full"):
+                with ui.scroll_area().classes("w-full h-full"):
+                    with ui.column().classes("w-full gap-4 p-2"):
+                        await _render_devops_tags_tab(core)
 
             with ui.tab_panel("theme").classes("p-0 h-full"):
                 with ui.scroll_area().classes("w-full h-full"):
