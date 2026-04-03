@@ -612,33 +612,19 @@ async def notepad_page():
                                         const md = `![image](${{data.path}})\\n`;
                                         console.log("Inserting markdown:", md);
 
-                                        // ── DEBUG: inspect CM editor internals ──────────────────
+                                        // Access the CodeMirror 6 EditorView via the
+                                        // internal cmView property on the contentDOM.
                                         const cmContent = cmEl.querySelector('.cm-content');
-                                        console.log("cmContent found:", !!cmContent);
+                                        const view = cmContent?.cmView?.view;
 
-                                        if (cmContent) {{
-                                            // Check all own properties for a dispatch method
-                                            for (const key of Object.getOwnPropertyNames(cmContent)) {{
-                                                try {{
-                                                    const val = cmContent[key];
-                                                    if (val && typeof val === 'object' && typeof val.dispatch === 'function') {{
-                                                        console.log("Found dispatch on cmContent." + key);
-                                                    }}
-                                                }} catch(e) {{}}
-                                            }}
-
-                                            // Check direct view patterns
-                                            console.log("cmContent._view:", cmContent._view);
-                                            console.log("cmContent.cmView:", cmContent.cmView);
-                                            console.log("cmEl.view:", cmEl.view);
-                                            console.log("cmEl.editor:", cmEl.editor);
-
-                                            // Try execCommand as last resort
-                                            cmContent.focus();
-                                            const inserted = document.execCommand('insertText', false, md);
-                                            console.log("execCommand result:", inserted);
+                                        if (view && typeof view.dispatch === 'function') {{
+                                            view.dispatch(view.state.replaceSelection(md));
+                                            view.focus();
+                                        }} else {{
+                                            // Fallback: works in Firefox
+                                            cmContent?.focus();
+                                            document.execCommand('insertText', false, md);
                                         }}
-                                        // ── END DEBUG ────────────────────────────────────────────
 
                                     }} catch (err) {{
                                         console.error("Upload error:", err);
