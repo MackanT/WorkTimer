@@ -1,0 +1,16 @@
+devops_tags:
+  - name: Bug
+    icon: bug_report
+    color: "#b71c1c"
+  - name: Feature
+    icon: star
+    color: "#ffb300"
+  - name: Estimate
+    icon: assignment
+    color: "#e57399"
+  - name: Change Request
+    icon: edit
+    color: "#1976d2"
+  - name: New
+    icon: new_releases
+    color: "#388e3c"

@@ -1,0 +1,17 @@
+colors:
+  primary: "#fbbf24" # amber-400
+  secondary: "#94a3b8" # slate-400
+  dark: "#1e293b" # slate-800
+  dark_page: "#0f172a" # slate-950
+  positive: "#34d399" # emerald-400
+  negative: "#f87171" # red-400
+  info: "#38bdf8" # sky-400
+  warning: "#fbbf24" # amber-400
+
+  # Tailwind classes (for use in .classes())
+  accent: "amber-400"
+  muted: "slate-400"
+  divider: "slate-600"
+  toolbar_bg: "slate-800"
+  nav_bg: "slate-900"
+  border: "amber-500/30"
