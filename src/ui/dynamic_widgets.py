@@ -154,8 +154,9 @@ class DynamicDropDown(DynamicWidget):
         allow_custom = self.field_config.get("allow_custom", True)
         initial_options = self.field_config.get("options", [])
 
-        # If this dropdown has a parent, start with empty options
-        if self.parent and not initial_options:
+        # If options is a dict (parent-keyed map) or this widget has a parent,
+        # start with empty options until the parent makes a selection.
+        if isinstance(initial_options, dict) or self.parent:
             initial_options = []
 
         widget = ui.select(
