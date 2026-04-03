@@ -382,3 +382,36 @@ class ConfigLoader:
         if isinstance(config, BaseModel):
             return config.model_dump()
         return config
+
+    def reload_config(self, filename: str) -> None:
+        """Re-read a config file from disk and update the in-memory cache.
+
+        Args:
+            filename: The config filename (e.g. 'devops_contacts.yml').
+        """
+        if filename == "devops_contacts.yml":
+            contacts_yaml = self._load_yaml(filename, required=False)
+            if contacts_yaml:
+                self.configs["devops_contacts"] = ConfigDevOpsContacts(**contacts_yaml)
+            else:
+                self.configs["devops_contacts"] = ConfigDevOpsContacts(
+                    customers={}, default=DevOpsContactConfig(contacts=[], assignees=[])
+                )
+        elif filename == "task_visuals.yml":
+            visuals_yaml = self._load_yaml(filename, required=False)
+            if visuals_yaml:
+                self.configs["task_visuals"] = ConfigTaskVisuals(**visuals_yaml)
+            else:
+                self.configs["task_visuals"] = ConfigTaskVisuals(
+                    visual={
+                        "customers": {
+                            "default": VisualConfig(icon="group", color="blue-grey")
+                        },
+                        "projects": {
+                            "default": VisualConfig(icon="folder", color="indigo")
+                        },
+                    }
+                )
+        elif filename == "config_theme.yml":
+            theme_yaml = self._load_yaml(filename, required=True)
+            self.configs["theme"] = ThemeConfig(**theme_yaml.get("colors", {}))

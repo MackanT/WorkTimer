@@ -132,6 +132,7 @@ def _render_visuals_section(
                         name, None
                     )
                     _save_yaml(visuals_path, data2)
+                    core.config_loader.reload_config("task_visuals.yml")
                     ui.notify(f"Deleted '{name}'", type="warning")
                     _reload_table()
 
@@ -189,6 +190,7 @@ async def _render_task_visuals_tab(core: AppCore):
                         "color": color,
                     }
                     _save_yaml(visuals_path, data)
+                    core.config_loader.reload_config("task_visuals.yml")
                     ui.notify(f"Saved '{name}'", type="positive")
                     name_in.value = ""
                     icon_in.value = ""
@@ -241,6 +243,7 @@ async def _render_devops_contacts_tab(core: AppCore):
                         "default_assignee": "",
                     }
                     _save_yaml(path, dd)
+                core.config_loader.reload_config("devops_contacts.yml")
                 new_cust_in.value = ""
                 opts = list(_load_yaml(path).get("customers", {}).keys())
                 cust_sel.options = opts
@@ -292,6 +295,7 @@ async def _render_devops_contacts_tab(core: AppCore):
                                 if it in lst:
                                     lst.remove(it)
                                 _save_yaml(path, ddd)
+                                core.config_loader.reload_config("devops_contacts.yml")
                                 _reload_detail()
 
                             ui.button(icon="close", on_click=_remove).props(
@@ -318,6 +322,7 @@ async def _render_devops_contacts_tab(core: AppCore):
                         if v not in lst:
                             lst.append(v)
                         _save_yaml(path, ddd)
+                        core.config_loader.reload_config("devops_contacts.yml")
                         ai.value = ""
                         _reload_detail()
 
@@ -349,6 +354,7 @@ async def _render_devops_contacts_tab(core: AppCore):
                         "default_assignee"
                     ] = default_sel.value
                     _save_yaml(path, ddd)
+                    core.config_loader.reload_config("devops_contacts.yml")
                     ui.notify("Default assignee saved", type="positive")
 
                 ui.button("Set Default", icon="save", on_click=_save_default).props(
@@ -423,7 +429,8 @@ async def _render_theme_tab(core: AppCore):
             for k, w in {**hex_inputs, **class_inputs}.items():
                 d["colors"][k] = w.value
             _save_yaml(theme_path, d)
-            ui.notify("Theme saved — restart to apply changes", type="positive")
+            core.config_loader.reload_config("config_theme.yml")
+            ui.notify("Theme saved — refresh page to apply changes (f5)", type="positive")
 
         ui.button("Save Theme", icon="save", on_click=_save_theme).props(
             "color=primary"
