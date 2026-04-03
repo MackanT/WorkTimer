@@ -186,6 +186,15 @@ class DynamicDropDown(DynamicWidget):
             # It's a plain value, not an options list — just set the value
             self.widget.value = new_options
 
+        # Apply default_source when widget has no value (e.g. after parent change)
+        default_source = self.field_config.get("default_source")
+        if default_source and not self.widget.value:
+            default_val = await self.data_fetcher(default_source, parent_val)
+            if default_val and (
+                not isinstance(new_options, list) or default_val in new_options
+            ):
+                self.widget.value = default_val
+
         self.widget.update()
 
     @property
