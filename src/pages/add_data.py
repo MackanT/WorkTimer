@@ -713,7 +713,7 @@ async def prepare_devops_data_sources(core: AppCore, operation: str) -> dict:
     data_sources = {}
 
     try:
-        data_sources["devops_tags"] = core.data_config.devops_tags or []
+        data_sources["devops_tags"] = core.devops_tags_config.devops_tags or []
 
         if not DO or not hasattr(DO, "df") or DO.df is None or DO.df.empty:
             return data_sources
