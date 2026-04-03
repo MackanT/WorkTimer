@@ -259,15 +259,14 @@ async def render_entity_form(
                     parent_map[field_name] = dw
                     dynamic_widgets.append(dw)
 
-    async def refresh_chip_tags():
+    async def refresh_all_widgets():
         try:
             for dw in dynamic_widgets:
-                if getattr(dw, "options_source", "") == "devops_tags":
-                    await dw.refresh()
+                await dw.refresh()
         except Exception as e:
-            core.logger.error(f"Error refreshing devops tags widgets: {e}")
+            core.logger.error(f"Error refreshing {entity_type}.{operation} widgets: {e}")
 
-    return refresh_chip_tags
+    return refresh_all_widgets
 
 
 async def render_devops_tabs(
