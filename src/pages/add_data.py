@@ -259,29 +259,27 @@ async def render_entity_form(
                     parent_map[field_name] = dw
                     dynamic_widgets.append(dw)
 
-    async def refresh_all_widgets():
+    async def refresh_chip_tags():
         try:
             for dw in dynamic_widgets:
-                await dw.refresh()
-            core.logger.debug(f"Refreshed all widgets for {entity_type}.{operation}")
+                if getattr(dw, "options_source", "") == "devops_tags":
+                    await dw.refresh()
         except Exception as e:
-            core.logger.error(f"Error refreshing {entity_type}.{operation}: {e}")
+            core.logger.error(f"Error refreshing devops tags widgets: {e}")
 
-    return refresh_all_widgets
+    return refresh_chip_tags
 
 
 async def render_devops_tabs(
     core: AppCore, entity_type: str, operations: list, page_config: dict
 ):
-    """Render DevOps work item tabs
-
-    Args:
-        core: AppCore instance
-        entity_type: Entity type (e.g., 'devops_work_item')
-        operations: List of operations (unused, for signature compatibility)
-        page_config: Page configuration dict
-    """
     devops_config = page_config.get(entity_type, {})
+
+    if not hasattr(core, "_entity_refresh_fns"):
+        core._entity_refresh_fns = {}
+    core._entity_refresh_fns.setdefault(entity_type, {})
+
+    refresh_fns = []  # collect per-form refresh callables
 
     with (
         ui.tabs()
@@ -297,10 +295,20 @@ async def render_devops_tabs(
         .style("background: transparent;")
     ):
         with ui.tab_panel("add").classes("p-0"):
-            await render_devops_form(core, "add", devops_config.get("add", {}))
+            fn = await render_devops_form(core, "add", devops_config.get("add", {}))
+            if fn:
+                refresh_fns.append(fn)
 
         with ui.tab_panel("update").classes("p-0"):
-            await render_devops_form(core, "update", devops_config.get("update", {}))
+            fn = await render_devops_form(core, "update", devops_config.get("update", {}))
+            if fn:
+                refresh_fns.append(fn)
+
+    async def _refresh_devops():
+        for fn in refresh_fns:
+            await fn()
+
+    core._entity_refresh_fns[entity_type]["devops"] = _refresh_devops
 
 
 async def render_devops_form(core: AppCore, operation: str, form_config: dict):
@@ -341,6 +349,10 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
         # Data fetcher for DevOps widgets
         async def devops_data_fetcher(source_key, parent_val=None):
             """Fetch fresh data from database for DevOps forms"""
+            # Always read devops_tags live so settings-page changes are reflected immediately
+            if source_key == "devops_tags":
+                return core.devops_tags_config.devops_tags or []
+
             if source_key not in data_sources:
                 return [] if parent_val is not None else ""
 

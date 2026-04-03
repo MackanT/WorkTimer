@@ -65,7 +65,6 @@ class AppCore:
         configs = self.config_loader.load_all()
         self.settings = configs["settings"]
         self.data_config = configs["data"]
-        self.devops_tags_config = configs["devops_tags"]
         self.ui_config = self.config_loader.get_raw_dict("ui")
         self.tasks_config = self.config_loader.get_raw_dict("tasks")
         self.query_config = self.config_loader.get_raw_dict("query")
@@ -73,6 +72,12 @@ class AppCore:
         self.task_visuals = self.config_loader.get_raw_dict("task_visuals")
         self.debug = self.settings.debug_mode
         self.theme = self.config_loader.get_raw_dict("theme")
+
+    # ── Logging ───────────────────────────────────────────────────────────────
+
+    @property
+    def devops_tags_config(self):
+        return self.config_loader.configs["devops_tags"]
 
     # ── Logging ───────────────────────────────────────────────────────────────
 
