@@ -117,6 +117,18 @@ class NavigationBar:
 
             traceback.print_exc()
 
+    def set_timer_active(self, active: bool):
+        """Update the Time Tracking nav button to indicate an active timer."""
+        btn = self.buttons.get("/time")
+        if not btn:
+            return
+        if active:
+            btn.props("icon=timer")
+            btn.style("box-shadow: 0 0 0 2px #38bdf8; border-radius: 4px;")
+        else:
+            btn.props("icon=schedule")
+            btn.style("box-shadow: none;")
+
     def set_active(self, path: str, theme: dict):
         """Update the active navigation button"""
         self.active_path = path

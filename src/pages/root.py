@@ -17,6 +17,25 @@ async def _setup_spa_shell():
     core = await AppCore.get_or_initialize()
     core.nav_bar.render()
 
+    # Register timer indicator — once per client
+    if not app.storage.client.get("timer_indicator_registered", False):
+        app.storage.client["timer_indicator_registered"] = True
+
+        async def _on_timer_count_changed(count: int = 0, **_):
+            core.nav_bar.set_timer_active(count > 0)
+
+        core.event_bus.register("active_timer_count_changed", _on_timer_count_changed)
+
+        # Set initial nav-bar state from DB
+        try:
+            result = await core.query_engine.query_db(
+                "SELECT COUNT(*) as count FROM time WHERE end_time IS NULL"
+            )
+            active_count = int(result.iloc[0]["count"]) if not result.empty else 0
+            core.nav_bar.set_timer_active(active_count > 0)
+        except Exception:
+            pass
+
     ui.sub_pages(
         {
             "/time": time_tracking_page,
