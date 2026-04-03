@@ -22,6 +22,7 @@
 - Defaults to first project available per organisation-url
 - ~~If internet does not exist on boot errors on devops client and it will never try to reconnect (bug)~~
 - ~~If no customers have devops integration when starting program it is not enabled. When then adding a devops customer, it is not auto-enabled (bug)~~
+- Tag (new added in config file) did not appear in devops 
 
 #### Tasks
 - Tasks missing delete task option?
@@ -42,8 +43,12 @@
 
 #### Settings
 - Make it actually nice and usable.....
+- Make config updateable via settings
+- ~~On first load, devops-contacts is not auto-created after adding devops connection~~
+- ~~Set default assignee is broken right now~~
+- Set default what features to enable (data input/query editor/tasks/notepad etc)
 
 #### BUGS
 - Updating from settings does not call event to update in add-data page (i.e. newly added customers are not visible in its drop-downs)
-- Default assignee not utilized
+- ~~Default assignee not utilized~~
 - Drop-downs currently show all options if parent is blank. Should show blank until parent is selected
