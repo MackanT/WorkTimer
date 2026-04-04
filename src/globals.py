@@ -11,6 +11,12 @@ from nicegui import ui
 
 
 # Global registry for shared instances
+
+# Module-level flag: only one DevOpsEngine may ever run scheduled refresh tasks.
+# Prevents duplicate tasks when multiple browser tabs reconnect simultaneously.
+_devops_scheduled_started: bool = False
+
+
 class GlobalRegistry:
     """Registry for shared application instances."""
 
@@ -82,9 +88,12 @@ class DevOpsEngine:
         self.last_full_sync: Optional[datetime.datetime] = None
 
     async def start_scheduled_updates(self):
-        """Start background tasks for scheduled DevOps updates (called once per engine instance)."""
-        if self._scheduled_started:
+        """Start background tasks for scheduled DevOps updates (called once globally)."""
+        global _devops_scheduled_started
+        if _devops_scheduled_started or self._scheduled_started:
+            self.log.info("Scheduled DevOps tasks already running — skipping")
             return
+        _devops_scheduled_started = True
         self._scheduled_started = True
         self.log.info("Starting scheduled DevOps update tasks")
 
