@@ -73,6 +73,8 @@ class AppCore:
         self.task_visuals = self.config_loader.get_raw_dict("task_visuals")
         self.debug = self.settings.debug_mode
         self.theme = self.config_loader.get_raw_dict("theme")
+        from ..helpers import UI_STYLES
+        UI_STYLES.configure_theme(self.theme)
 
     # ── Logging ───────────────────────────────────────────────────────────────
 

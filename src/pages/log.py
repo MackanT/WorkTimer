@@ -37,8 +37,8 @@ async def log_page():
     def render_toolbar() -> Tuple[ui.select, ui.button, ui.button]:
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
-            ui.icon("terminal", size="md").classes("text-amber-400")
-            ui.label("Application Log").classes("text-h5 text-white font-medium")
+            ui.icon("terminal", size="md").classes(f"text-{core.theme.get('accent')}")
+            ui.label("Application Log").classes(UI_STYLES.get_layout_classes("page_title"))
             ui.space()
 
             filter_select = (
@@ -91,7 +91,7 @@ async def log_page():
         with ui.element().classes("w-full").style("width: 100%;"):
             log_widget = (
                 ui.log(max_lines=None)
-                .classes("w-full bg-[#282a36] text-white p-4 rounded-lg")
+                .classes(UI_STYLES.get_widget_style("log_textarea")["base"])
                 .style(
                     f"height: {LOG_CARD_HEIGHT}; overflow-y: auto; overflow-x: auto; width: 100%; min-width: 100%;"
                 )

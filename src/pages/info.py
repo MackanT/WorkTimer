@@ -8,6 +8,7 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 from nicegui import ui
 from ..core.app import AppCore
 from ..ui.elements import toolbar, page_card
+from ..helpers import UI_STYLES
 from pathlib import Path
 
 
@@ -35,7 +36,7 @@ async def info_page():
                 .props(
                     f'horizontal dense active-color="{core.theme.get("accent")}" indicator-color="{core.theme.get("accent")}"'
                 )
-                .classes("text-xs text-white uppercase tracking-wide whitespace-nowrap")
+                .classes(UI_STYLES.get_layout_classes("tab_label"))
             ) as main_tabs:
                 for page_dict in info_page_config:
                     p_data = info_page_config.get(page_dict, {}).get("meta", {})

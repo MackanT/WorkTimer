@@ -135,7 +135,7 @@ async def query_editor_page():
             custom_df = QE.df[QE.df["is_default"] != 1]
             if custom_df.empty:
                 ui.label("No custom queries yet").classes(
-                    "text-xs text-gray-500 italic"
+                    helpers.UI_STYLES.get_layout_classes("muted_text_xs_italic")
                 )
             else:
                 for _, row in custom_df.iterrows():
@@ -148,7 +148,9 @@ async def query_editor_page():
     ) -> None:
         ui.button(query_name, on_click=lambda: editor.set_value(query_sql)).props(
             "outline dense no-caps"
-        ).classes("cursor-pointer").style("color: #9ca3af; border-color: #4b5563")
+        ).classes(helpers.UI_STYLES.get_widget_style("query_chip")["classes"]).style(
+            helpers.UI_STYLES.get_widget_style("query_chip")["style"]
+        )
 
     # ========================================================================
     # Query Functions
@@ -459,7 +461,7 @@ async def query_editor_page():
                         )
 
                 ui.separator().classes(
-                    f"w-full border-b border-{core.theme.get('divider')} my-2"
+                    helpers.UI_STYLES.get_layout_classes("divider_row")
                 )
 
                 with ui.column().classes("w-full gap-2 p-2"):
@@ -555,7 +557,7 @@ async def query_editor_page():
                     on_click=execute_query,  # lambda: asyncio.create_task(execute_query()),
                 ).props("color=primary size=sm")
                 with ui.row().classes("items-center gap-4"):
-                    ui.label("Edit Mode:").classes("text-sm text-gray-400")
+                    ui.label("Edit Mode:").classes("text-sm " + helpers.UI_STYLES.get_layout_classes("muted_text"))
                     edit_mode_enabled = (
                         ui.switch(value=True)
                         .props("color=primary")

@@ -1,9 +1,9 @@
 ## Features
 
 #### TimeTracker
-- Easy way to add time in post.
+- ~~Easy way to add time in post.~~
 - update customer/project should also update times values!
-- Marker for ongoing projects? Make it easier to see from a glance what is active right now
+- ~~Marker for ongoing projects? Make it easier to see from a glance what is active right now~~
 - At midnight, date "today" does not switch automatically. Might be fixed but have not verified it (bug)
 - Have active tasks/trackers on top of page, easily visible (?)
 - Indicator in navigator on number of active trackers?
@@ -22,11 +22,10 @@
 - Defaults to first project available per organisation-url
 - ~~If internet does not exist on boot errors on devops client and it will never try to reconnect (bug)~~
 - ~~If no customers have devops integration when starting program it is not enabled. When then adding a devops customer, it is not auto-enabled (bug)~~
-- Tag (new added in config file) did not appear in devops 
+- ~~Tag (new added in config file) did not appear in devops~~
 
 #### Tasks
 - Tasks missing delete task option?
-- Tasks sort order not correct (?)
 
 #### Notes
 - Notepad++ functionality + markdown (?)
@@ -49,6 +48,7 @@
 - Set default what features to enable (data input/query editor/tasks/notepad etc)
 
 #### BUGS
-- Updating from settings does not call event to update in add-data page (i.e. newly added customers are not visible in its drop-downs)
+- ~~Updating from settings does not call event to update in add-data page (i.e. newly added customers are not visible in its drop-downs)~~
 - ~~Default assignee not utilized~~
-- Drop-downs currently show all options if parent is blank. Should show blank until parent is selected
+- ~~Drop-downs currently show all options if parent is blank. Should show blank until parent is selected~~
+- ~~Pasting images into notepad in chromium based browsers does not work~~

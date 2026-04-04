@@ -124,7 +124,7 @@ class NavigationBar:
             return
         if active:
             btn.props("icon=timer")
-            btn.style("box-shadow: 0 0 0 2px #38bdf8; border-radius: 4px;")
+            btn.style(f"box-shadow: 0 0 0 2px {self.theme.get('info')}; border-radius: 4px;")
         else:
             btn.props("icon=schedule")
             btn.style("box-shadow: none;")

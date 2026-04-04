@@ -601,7 +601,7 @@ async def time_tracking_page():
         with _manual_card:
             ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
             ui.label("Add manual time entry").classes(
-                "text-caption text-slate-400 -mt-2 mb-2"
+                f"text-caption text-{core.theme.get('muted')} -mt-2 mb-2"
             )
 
             with ui.row().classes("w-full gap-3"):
@@ -922,7 +922,7 @@ async def time_tracking_page():
                     label_ref.append(lbl)
 
                 ui.separator().classes(
-                    f"w-full border-b border-{core.theme.get('divider')} my-2"
+                    UI_STYLES.get_layout_classes("divider_row")
                 )
 
                 with entity_card_content():

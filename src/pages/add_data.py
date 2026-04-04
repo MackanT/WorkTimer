@@ -48,7 +48,7 @@ async def add_data_page():
                 .props(
                     f'horizontal dense active-color="{core.theme.get("accent")}" indicator-color="{core.theme.get("accent")}"'
                 )
-                .classes("text-xs text-white uppercase tracking-wide whitespace-nowrap")
+                .classes(helpers.UI_STYLES.get_layout_classes("tab_label"))
             ) as main_tabs:
                 for page_dict in add_data_page_config:
                     p_data = add_data_page_config.get(page_dict, {}).get("meta", {})
@@ -204,7 +204,7 @@ async def render_entity_form(
                 ui.button(icon="save", on_click=on_submit).props("color=primary")
 
         ui.separator().classes(
-            f"w-full border-b border-{core.theme.get('divider')} my-2"
+            helpers.UI_STYLES.get_layout_classes("divider_row")
         )
 
         with entity_card_content():

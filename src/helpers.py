@@ -20,6 +20,8 @@ class UIStyles:
 
     _instance = None
     _styles = None
+    _resolved = None  # styles with ${key} placeholders resolved against theme
+    _theme_configured = False
 
     @classmethod
     def get_instance(cls):
@@ -36,6 +38,47 @@ class UIStyles:
             )
             with open(config_path, "r") as f:
                 UIStyles._styles = yaml.safe_load(f)
+            UIStyles._resolved = UIStyles._styles  # default: unresolved fallback
+
+    @classmethod
+    def configure_theme(cls, theme: dict) -> None:
+        """Resolve all ${key} placeholders in styles using the loaded theme.
+
+        Should be called once at app startup after the theme config is loaded.
+        Replaces ``${key}`` in any YAML string value with ``theme[key]``.
+
+        Example: ``"text-${muted}"`` with ``theme = {"muted": "slate-400"}``
+        becomes ``"text-slate-400"``.
+        """
+        if cls._theme_configured:
+            return
+        cls._theme_configured = True
+
+        # theme dict may be the full config_theme.yml (with "colors" key) or just the
+        # colors sub-dict — handle both.
+        flat_theme = theme.get("colors", theme) if isinstance(theme, dict) else {}
+
+        import re
+
+        def _resolve(value):
+            if isinstance(value, str):
+                return re.sub(
+                    r"\$\{(\w+)\}",
+                    lambda m: flat_theme.get(m.group(1), m.group(0)),
+                    value,
+                )
+            if isinstance(value, dict):
+                return {k: _resolve(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_resolve(item) for item in value]
+            return value
+
+        cls._resolved = _resolve(cls._styles)
+
+    @property
+    def _active(self) -> dict:
+        """Return resolved styles if theme was configured, else raw styles."""
+        return UIStyles._resolved if UIStyles._resolved is not None else UIStyles._styles
 
     def get_widget_width(self, size_name: str) -> str:
         """Get widget width classes by size name.
@@ -46,8 +89,8 @@ class UIStyles:
         Returns:
             CSS classes string (e.g., 'w-64', 'w-full flex-1')
         """
-        return self._styles["widget_widths"].get(
-            size_name, self._styles["widget_widths"]["standard"]
+        return self._active["widget_widths"].get(
+            size_name, self._active["widget_widths"]["standard"]
         )
 
     def get_container_width(self, size_name: str) -> str:
@@ -59,8 +102,8 @@ class UIStyles:
         Returns:
             Width value for max-w-{value}xl (e.g., '4', '7')
         """
-        return self._styles["container_widths"].get(
-            size_name, self._styles["container_widths"]["md"]
+        return self._active["container_widths"].get(
+            size_name, self._active["container_widths"]["md"]
         )
 
     def get_layout_classes(self, layout_name: str) -> str:
@@ -72,7 +115,7 @@ class UIStyles:
         Returns:
             CSS classes string
         """
-        return self._styles["layouts"].get(layout_name, "")
+        return self._active["layouts"].get(layout_name, "")
 
     def get_widget_style(self, widget_type: str, mode: str = "standard") -> dict:
         """Get widget-specific styling.
@@ -84,7 +127,7 @@ class UIStyles:
         Returns:
             Dict with 'classes' and 'style' keys
         """
-        widget_config = self._styles["widget_styles"].get(widget_type, {})
+        widget_config = self._active["widget_styles"].get(widget_type, {})
 
         # If config has 'classes' key directly, return it as-is (simple style config)
         if "classes" in widget_config:
@@ -110,7 +153,7 @@ class UIStyles:
         Returns:
             Size name from widget_widths (e.g., 'standard', 'full')
         """
-        return self._styles["default_sizes"].get(widget_type, "standard")
+        return self._active["default_sizes"].get(widget_type, "standard")
 
     def is_wide_widget(self, widget_type: str) -> bool:
         """Check if widget type triggers wide layout mode.
@@ -121,7 +164,7 @@ class UIStyles:
         Returns:
             True if widget should trigger wide layout
         """
-        return widget_type in self._styles["wide_widget_types"]
+        return widget_type in self._active["wide_widget_types"]
 
     def get_card_classes(
         self, container_size: str = "md", layout_type: str = "card"
@@ -149,7 +192,7 @@ class UIStyles:
         Returns:
             Inline CSS style string
         """
-        return self._styles.get("inline_styles", {}).get(module, {}).get(style_name, "")
+        return self._active.get("inline_styles", {}).get(module, {}).get(style_name, "")
 
 
 # Global instance
@@ -1031,7 +1074,7 @@ def create_task_card(
 
     if completed:
         card_classes += " opacity-75"
-        card_style += " border-left: 4px solid #4caf50;"
+        card_style += " border-left: 4px solid var(--q-positive);"
 
     with (
         ui.card()
@@ -1106,10 +1149,10 @@ def create_task_card(
 
         # Third row: Big description box (fixed height for uniform cards)
         with ui.element().classes("w-full mb-2"):
-            ui.label("Description:").classes("text-xs text-gray-400 mb-1")
+            ui.label("Description:").classes(UI_STYLES.get_layout_classes("muted_text_xs") + " mb-1")
             with (
                 ui.element()
-                .classes("w-full p-2 bg-gray-800 rounded")
+                .classes("w-full p-2 bg-slate-800 rounded")
                 .style("height: 100px; overflow-y: auto;")
             ):
                 if description:
@@ -1118,11 +1161,11 @@ def create_task_card(
                         "white-space: pre-wrap; line-height: 1.4;"
                     )
                 else:
-                    ui.label("No description").classes("text-sm text-gray-500 italic")
+                    ui.label("No description").classes("text-sm " + UI_STYLES.get_layout_classes("muted_text") + " italic")
 
         # Fourth row: status, priority, dates in a compact grid
         with ui.row().classes(
-            "w-full items-center justify-between text-xs text-gray-300"
+            "w-full items-center justify-between text-xs " + UI_STYLES.get_layout_classes("muted_text")
         ):
             # Left side: Status and Priority
             with ui.row().classes("items-center gap-2"):
@@ -1152,12 +1195,12 @@ def create_task_card(
             # Right side: Dates
             with ui.column().classes("items-end"):
                 if due_date:
-                    ui.label(f"Due: {due_date}").classes("text-xs text-gray-400")
+                    ui.label(f"Due: {due_date}").classes(UI_STYLES.get_layout_classes("muted_text_xs"))
                 if created:
                     # Format created date to be more compact
                     created_short = created.split(" ")[0] if " " in created else created
                     ui.label(f"Created: {created_short}").classes(
-                        "text-xs text-gray-500"
+                        UI_STYLES.get_layout_classes("muted_text_xs")
                     )
 
     return card

@@ -429,7 +429,7 @@ def render_table_view(
 
     if not tasks:
         with container:
-            ui.label("No tasks found").classes("text-gray-500 text-center w-full p-8")
+            ui.label("No tasks found").classes(UI_STYLES.get_layout_classes("text_center_muted_padded"))
         return
 
     task_lookup = {str(task.task_id): task for task in tasks}
@@ -637,7 +637,7 @@ async def tasks_page():
                             page_state["view_container"] = ui.column().classes("w-full")
                             with page_state["view_container"]:
                                 ui.label("Click a task card to view details").classes(
-                                    "text-gray-500"
+                                    UI_STYLES.get_layout_classes("text_muted")
                                 )
 
         asyncio.create_task(_render_view())

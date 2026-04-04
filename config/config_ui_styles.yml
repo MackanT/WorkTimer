@@ -67,35 +67,26 @@ layouts:
   # Card container: standard card styling
   card: "w-full mx-auto my-0 p-4"
 
-  # Card with extra padding: for important content sections (note: removed conflicting mx-6)
-  card_padded: "w-full mx-auto my-4 p-6"
-
-  # Card with vertical margin: for spaced sections
-  card_spaced: "w-full mx-auto my-8 p-4"
-
   # Button with fixed width: for consistent button sizing
   button_fixed: "w-24"
 
   # Title/Header: large text with standard margin
   title: "text-h5 mb-2"
 
-  # Subtitle: medium text
-  subtitle: "text-subtitle1 mb-2"
-
   # Text - base size
   text_base: "text-base"
 
-  # Text - base with margin bottom
+  # Text - base with margin bottom  
   text_base_mb: "text-base mb-2"
 
   # Text - gray/muted
-  text_muted: "text-gray-500"
+  text_muted: "text-${muted}"
 
   # Text - error/negative
   text_negative: "text-negative"
 
   # Text - centered muted with padding
-  text_center_muted_padded: "text-gray-500 text-center w-full p-8"
+  text_center_muted_padded: "text-${muted} text-center w-full p-8"
 
   # Time tracking - customer card column
   time_tracking_customer_column: "items-start"
@@ -114,67 +105,56 @@ layouts:
   full_width: "w-full"
 
   # Tabs - sticky at top so the tab bar remains visible while scrolling
-  tabs_sticky_top: "w-full sticky top-0 z-50 bg-[#121212] text-white border-b"
+  tabs_sticky_top: "w-full sticky top-0 z-50 bg-${nav_bg} text-white border-b"
 
   # Full width + height
   full_size: "w-full h-full"
 
-  # Row with gap-1
-  row_gap_1: "gap-1"
+  # Row with justify end
+  row_end: "justify-end"
 
   # Row with gap-2
   row_gap_2: "gap-2"
 
-  # Row with gap-3
-  row_gap_3: "gap-3"
-
-  # Row with items centered
-  row_centered: "items-center"
-
-  # Row with justify between
-  row_between: "justify-between"
-
-  # Row with justify end
-  row_end: "justify-end"
-
-  # Full width row with gap-2
-  full_row_gap_2: "w-full gap-2"
-
-  # Full width row with gap-3
-  full_row_gap_3: "w-full gap-3"
-
-  # Full width row with gap-4
-  full_row_gap_4: "w-full gap-4"
-
   # Full width row with justify between and items centered
   full_row_between_centered: "w-full justify-between items-center"
 
-  # Full width row with gap-0
-  full_row_nogap: "w-full gap-0 items-center"
+  # ===== SEMANTIC TYPOGRAPHY =====
+  # Page title header (used in toolbar across all pages)
+  page_title: "text-h5 text-white font-medium"
 
-  # Padding standard
-  padding_standard: "p-4"
+  # Tab/toolbar label: small uppercase labels on horizontal tab bars
+  tab_label: "text-xs text-white uppercase tracking-wide whitespace-nowrap"
 
-  # Margin bottom
-  margin_bottom_2: "mb-2"
+  # Section label: small uppercase heading within a card/panel
+  section_label: "text-xs text-white uppercase tracking-wide"
 
-  # Margin bottom 4
-  margin_bottom_4: "mb-4"
+  # Section heading: bold colored title inside a card (e.g. 'Scheduled Sync', 'DevOps Tags')
+  section_heading: "text-base font-semibold text-${accent}"
 
-  # Margin top 2
-  margin_top_2: "mt-2"
+  # Muted text (matches theme 'muted' token)
+  muted_text: "text-${muted}"
 
-  # Margin top 4
-  margin_top_4: "mt-4"
+  # Muted text small (xs size)
+  muted_text_xs: "text-xs text-${muted}"
 
-  # Margin y 2
-  margin_y_2: "my-2"
+  # Muted text small/medium (sm size)
+  muted_text_sm: "text-sm text-${muted}"
 
-  # Flex 1
-  flex_one: "flex-1"
+  # Muted text small italic (placeholder text, hints)
+  muted_text_xs_italic: "text-xs text-${muted} italic"
 
-  # Padding with full width
-  full_width_padded: "w-full p-4"
+  # Muted text centered with large top margin (empty-state messages)
+  muted_text_center_tall: "text-${muted} text-center w-full mt-16"
+
+  # Group header label (sidebar group names, uppercase)
+  group_header_text: "text-xs text-${muted} uppercase tracking-wider"
+
+  # Context menu section label (e.g. Color / Icon separators)
+  context_menu_label: "text-xs text-${muted} px-2 pt-1"
+
+  # Horizontal divider row with theme-colored border
+  divider_row: "w-full border-b border-${divider} my-2"
 
 # ===== WIDGET-SPECIFIC STYLES =====
 # Styles applied per widget type
@@ -187,15 +167,6 @@ widget_styles:
     full: "min-w-0 max-w-full overflow-hidden"
     # Inline styles - force width with !important to override component defaults
     style: "min-height: 400px; width: 100% !important; max-width: 100% !important; overflow-x: auto; word-wrap: break-word;"
-
-  # Code display widget (ui.code for readonly)
-  code_display:
-    # Large height
-    large: "w-full min-w-0 h-96"
-    # Small height
-    small: "w-full min-w-0 h-40 mt-2"
-    # Medium height
-    medium: "w-full min-w-0 h-64 mt-4"
 
   # HTML preview widget
   html_preview:
@@ -230,6 +201,16 @@ widget_styles:
   # Time tracking - project name label
   time_tracking_project_name:
     classes: "ml-2 truncate"
+
+  # Log / terminal textarea (Dracula dark theme background)
+  log_textarea:
+    base: "w-full bg-[#282a36] text-white p-4 rounded-lg"
+
+  # Query chip button (muted outline button in query toolbar)
+  # Uses slate-400 text and slate-600 border to match theme muted/divider colors
+  query_chip:
+    classes: "cursor-pointer"
+    style: "color: ${secondary}; border-color: ${divider_hex}"
 
 # ===== SIZE MAPPING =====
 # Map widget types to default sizes

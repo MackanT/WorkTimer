@@ -22,7 +22,7 @@ from nicegui import ui, app
 
 from ..core.app import AppCore
 from ..ui.elements import toolbar, page_card, toolbar_divider
-from ..helpers import render_and_sanitize_markdown
+from ..helpers import render_and_sanitize_markdown, UI_STYLES
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -327,13 +327,13 @@ async def notepad_page():
         state["toolbar_container"].clear()
         with state["toolbar_container"]:
             with toolbar(core.theme):
-                ui.icon("note", size="md").classes("text-amber-400")
-                ui.label("Notepad").classes("text-h5 text-white font-medium")
+                ui.icon("note", size="md").classes(f"text-{core.theme.get('accent')}")
+                ui.label("Notepad").classes(UI_STYLES.get_layout_classes("page_title"))
                 ui.space()
 
                 if state["edit_mode"]:
                     ui.label("Esc to exit edit mode").classes(
-                        "text-xs text-gray-400 italic"
+                        UI_STYLES.get_layout_classes("muted_text_xs_italic")
                     )
                     ui.space()
 
@@ -375,7 +375,7 @@ async def notepad_page():
             visible = filtered_notes()
             if not visible:
                 ui.label("No notes found").classes(
-                    "text-xs text-gray-400 text-center w-full mt-4"
+                    UI_STYLES.get_layout_classes("muted_text_xs") + " text-center w-full mt-4"
                 )
                 return
 
@@ -397,9 +397,9 @@ async def notepad_page():
                         ui.icon(
                             "chevron_right" if is_collapsed else "expand_more",
                             size="xs",
-                        ).classes("text-gray-400")
+                        ).classes(UI_STYLES.get_layout_classes("muted_text"))
                         ui.label(group_name).classes(
-                            "text-xs text-gray-400 uppercase tracking-wider"
+                            UI_STYLES.get_layout_classes("group_header_text")
                         )
                         ui.separator().classes("flex-1")
 
@@ -418,7 +418,7 @@ async def notepad_page():
                         + color_info["bg"]
                         + " "
                         + (
-                            "bg-amber-400 text-black font-medium"
+                            f"bg-{core.theme.get('accent')} text-black font-medium"
                             if is_active
                             else "hover:bg-gray-100 dark:hover:bg-gray-700"
                         )
@@ -431,7 +431,7 @@ async def notepad_page():
                     ):
                         if note.get("pinned"):
                             ui.icon("push_pin", size="xs").classes(
-                                "text-amber-500 rotate-45"
+                                f"text-{core.theme.get('accent')} rotate-45"
                             )
                         ui.icon(icon_name, size="xs")
                         ui.label(note["title"] or "Untitled").classes(
@@ -443,9 +443,9 @@ async def notepad_page():
                             )
 
                         with ui.context_menu().classes(
-                            "border border-amber-400 rounded"
+                            f"border border-{core.theme.get('accent')} rounded"
                         ):
-                            ui.label("Color").classes("text-xs text-gray-400 px-2 pt-1")
+                            ui.label("Color").classes(UI_STYLES.get_layout_classes("context_menu_label"))
                             with ui.row().classes("px-2 pb-1 gap-1"):
                                 for color_key, color_val in NOTE_COLORS.items():
                                     ui.element("div").classes(
@@ -458,7 +458,7 @@ async def notepad_page():
                                         ),
                                     )
                             ui.separator()
-                            ui.label("Icon").classes("text-xs text-gray-400 px-2 pt-1")
+                            ui.label("Icon").classes(UI_STYLES.get_layout_classes("context_menu_label"))
                             for icon_key, icon_val in NOTE_ICONS.items():
                                 if icon_key == "link":
                                     continue
@@ -475,7 +475,7 @@ async def notepad_page():
                                 on_click=lambda _, fn=note["filename"]: toggle_pin(fn),
                             ).props("icon=push_pin")
                             ui.separator()
-                            ui.label("Group").classes("text-xs text-gray-400 px-2 pt-1")
+                            ui.label("Group").classes(UI_STYLES.get_layout_classes("context_menu_label"))
                             group_input = (
                                 ui.input(
                                     placeholder="Group name...",
@@ -506,11 +506,10 @@ async def notepad_page():
         note = active_note()
         if not note:
             with container:
-                ui.label("No notes yet — create one!").classes(
-                    "text-gray-400 text-center w-full mt-16"
+                ui.label("No notes yet \u2014 create one!").classes(
+                    UI_STYLES.get_layout_classes("muted_text_center_tall")
                 )
             return
-
         with container:
             if state["edit_mode"]:
                 _render_edit_mode(note)

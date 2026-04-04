@@ -15,6 +15,7 @@ import yaml
 from nicegui import ui
 from ..core.app import AppCore
 from ..ui.elements import toolbar, page_card
+from ..helpers import UI_STYLES
 
 # ── Quasar colour palette offered in dropdowns ──────────────────────────────
 QUASAR_COLORS = [
@@ -77,7 +78,7 @@ def _render_visuals_section(
         entries = data.get("visual", {}).get(section, {})
         with container:
             if not entries:
-                ui.label("No entries yet.").classes("text-slate-400 text-sm")
+                ui.label("No entries yet.").classes(UI_STYLES.get_layout_classes("muted_text_sm"))
                 return
             cols = [
                 {
@@ -148,14 +149,14 @@ async def _render_task_visuals_tab(core: AppCore):
     for section in ("customers", "projects"):
         with ui.card().props("flat").classes("w-full rounded-lg mb-4"):
             ui.label(section.capitalize()).classes(
-                "text-base font-semibold text-amber-400 mb-2"
+                UI_STYLES.get_layout_classes("section_heading") + " mb-2"
             )
 
             table_container = ui.element("div").classes("w-full")
             _render_visuals_section(core, section, visuals_path, table_container)
 
             ui.separator().classes("my-3")
-            ui.label("Add / Update entry").classes("text-sm text-slate-400")
+            ui.label("Add / Update entry").classes(UI_STYLES.get_layout_classes("muted_text_sm"))
 
             with ui.row().classes("items-end gap-3 flex-wrap"):
                 name_in = ui.input("Name").classes("w-48").props("dense outlined")
@@ -165,7 +166,7 @@ async def _render_task_visuals_tab(core: AppCore):
                     .props("dense outlined")
                 )
                 icon_preview = ui.icon("help_outline", size="sm").classes(
-                    "text-amber-400 self-center"
+                    f"text-{core.theme.get('accent')} self-center"
                 )
                 color_in = (
                     ui.select(QUASAR_COLORS, label="Color", value="indigo")
@@ -213,7 +214,7 @@ async def _render_devops_contacts_tab(core: AppCore):
 
     # ── customer selector card ─────────────────────────────────────────────
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4 mb-4"):
-        ui.label("Customers").classes("text-base font-semibold text-amber-400 mb-3")
+        ui.label("Customers").classes(UI_STYLES.get_layout_classes("section_heading") + " mb-3")
 
         d = _load_yaml(path)
         customer_names = list(d.get("customers", {}).keys())
@@ -268,21 +269,21 @@ async def _render_devops_contacts_tab(core: AppCore):
         cdata = dd.get("customers", {}).get(customer, {})
 
         with detail:
-            ui.label(customer).classes("text-base font-semibold text-amber-400 mb-3")
+            ui.label(customer).classes(UI_STYLES.get_layout_classes("section_heading") + " mb-3")
 
             for field_key, field_label in [
                 ("contacts", "Contacts"),
                 ("assignees", "Assignees (email)"),
             ]:
                 ui.label(field_label).classes(
-                    "text-sm font-semibold text-slate-300 mt-2 mb-1"
+                    f"text-sm font-semibold text-{core.theme.get('muted')} mt-2 mb-1"
                 )
                 items = cdata.get(field_key, [])
 
                 with ui.row().classes("flex-wrap gap-2 mb-2"):
                     for item in items:
                         with ui.element("div").classes(
-                            "flex items-center bg-slate-700 rounded-full px-3 py-1 gap-1"
+                            f"flex items-center bg-{core.theme.get('chip_bg')} rounded-full px-3 py-1 gap-1"
                         ):
                             ui.label(item).classes("text-sm text-white")
 
@@ -335,7 +336,7 @@ async def _render_devops_contacts_tab(core: AppCore):
 
             # default assignee
             ui.label("Default Assignee").classes(
-                "text-sm font-semibold text-slate-300 mb-1"
+                f"text-sm font-semibold text-{core.theme.get('muted')} mb-1"
             )
             current_default = cdata.get("default_assignee", "")
             assignees = cdata.get("assignees", [])
@@ -395,7 +396,7 @@ async def _render_devops_tags_tab(core: AppCore):
 
         with table_container:
             if not tags:
-                ui.label("No tags yet.").classes("text-slate-400 text-sm")
+                ui.label("No tags yet.").classes(UI_STYLES.get_layout_classes("muted_text_sm"))
                 return
 
             cols = [
@@ -446,12 +447,12 @@ async def _render_devops_tags_tab(core: AppCore):
                 tbl.on("delete", on_delete)
 
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
-        ui.label("DevOps Tags").classes("text-base font-semibold text-amber-400 mb-2")
+        ui.label("DevOps Tags").classes(UI_STYLES.get_layout_classes("section_heading") + " mb-2")
 
         _reload_table()
 
         ui.separator().classes("my-3")
-        ui.label("Add / Update tag — click ✏ on a row to edit it").classes("text-sm text-slate-400 mb-2")
+        ui.label("Add / Update tag — click ✏ on a row to edit it").classes(UI_STYLES.get_layout_classes("muted_text_sm") + " mb-2")
 
         with ui.row().classes("items-end gap-3 flex-wrap"):
             name_in = ui.input("Name").props("dense outlined").classes("w-44")
@@ -460,7 +461,7 @@ async def _render_devops_tags_tab(core: AppCore):
                 .props("dense outlined")
                 .classes("w-48")
             )
-            icon_preview = ui.icon("help_outline", size="sm").classes("text-amber-400 self-center")
+            icon_preview = ui.icon("help_outline", size="sm").classes(f"text-{core.theme.get('accent')} self-center")
             color_in = (
                 ui.color_input(label="Hex Color", value="#b71c1c")
                 .props("dense outlined")
@@ -531,16 +532,16 @@ async def _render_devops_sync_tab(core: AppCore):
         return dt.strftime("%Y-%m-%d %H:%M:%S")
 
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
-        ui.label("Scheduled Sync").classes("text-base font-semibold text-amber-400 mb-1")
+        ui.label("Scheduled Sync").classes(UI_STYLES.get_layout_classes("section_heading") + " mb-1")
         ui.label(
             "Incremental sync runs every hour; full refresh runs nightly at 02:00."
-        ).classes("text-xs text-slate-400 mb-4")
+        ).classes(UI_STYLES.get_layout_classes("muted_text_xs") + " mb-4")
 
         lbl_incr = ui.label(f"Last incremental sync: {_fmt_time(eng.last_incremental_sync)}").classes(
-            "text-sm text-slate-300"
+            UI_STYLES.get_layout_classes("muted_text_sm")
         )
         lbl_full = ui.label(f"Last full sync: {_fmt_time(eng.last_full_sync)}").classes(
-            "text-sm text-slate-300 mb-4"
+            UI_STYLES.get_layout_classes("muted_text_sm") + " mb-4"
         )
 
         def _refresh_labels():
@@ -566,7 +567,7 @@ async def _render_devops_sync_tab(core: AppCore):
             )
             ui.button("Refresh timestamps", icon="refresh", on_click=_refresh_labels).props(
                 "flat dense"
-            ).classes("text-slate-400")
+            ).classes(UI_STYLES.get_layout_classes("muted_text"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -592,10 +593,10 @@ async def _render_theme_tab(core: AppCore):
     CLASS_FIELDS = ["accent", "muted", "divider", "toolbar_bg", "nav_bg", "border"]
 
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
-        ui.label("Hex Colors").classes("text-base font-semibold text-amber-400 mb-1")
+        ui.label("Hex Colors").classes(UI_STYLES.get_layout_classes("section_heading") + " mb-1")
         ui.label(
             "Used directly in Quasar's color system (buttons, notifications, etc.)"
-        ).classes("text-xs text-slate-400 mb-3")
+        ).classes(UI_STYLES.get_layout_classes("muted_text_xs") + " mb-3")
 
         hex_inputs: dict = {}
         with ui.grid(columns=2).classes("w-full gap-3 mb-4"):
@@ -610,11 +611,11 @@ async def _render_theme_tab(core: AppCore):
 
         ui.separator().classes("my-3")
         ui.label("Tailwind / Quasar Classes").classes(
-            "text-base font-semibold text-amber-400 mb-2"
+            UI_STYLES.get_layout_classes("section_heading") + " mb-2"
         )
         ui.label(
             "These Tailwind/Quasar color class names are used in .classes() throughout the UI."
-        ).classes("text-xs text-slate-400 mb-3")
+        ).classes(UI_STYLES.get_layout_classes("muted_text_xs") + " mb-3")
 
         class_inputs: dict = {}
         with ui.grid(columns=2).classes("w-full gap-3"):
@@ -651,17 +652,17 @@ async def settings_page():
     core = await AppCore.get_or_initialize()
 
     with toolbar(core.theme):
-        ui.icon("tune", size="md").classes("text-amber-400")
+        ui.icon("tune", size="md").classes(f"text-{core.theme.get('accent')}")
         ui.label(
             "Settings - Currently WIP - Code works but not happy yet with implementation"
-        ).classes("text-h5 text-white font-medium")
+        ).classes(UI_STYLES.get_layout_classes("page_title"))
         ui.space()
         with (
             ui.tabs(value="contacts")
             .props(
                 f'horizontal dense active-color="{core.theme.get("accent")}" indicator-color="{core.theme.get("accent")}"'
             )
-            .classes("text-xs text-white uppercase tracking-wide")
+            .classes(UI_STYLES.get_layout_classes("section_label"))
         ) as tabs:
             # ui.tab("visuals", label="Task Visuals", icon="palette")
             ui.tab("contacts", label="DevOps Contacts", icon="contacts")
