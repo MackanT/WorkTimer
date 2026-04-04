@@ -39,6 +39,7 @@ class AppCore:
         self._background_tasks = {}
         self._init_lock = asyncio.Lock()
         self._root_logger_attached = False
+        self._client_alive = True  # Set False on disconnect so background tasks can skip UI updates
 
         self.nav_bar = NavigationBar(theme=self.theme)
         self.event_bus = PageEventBus()
@@ -328,6 +329,7 @@ class AppCore:
         _app_cores[client_id] = core
 
         def cleanup():
+            core._client_alive = False
             for tasks in core._background_tasks.values():
                 for task in tasks:
                     if not task.done():

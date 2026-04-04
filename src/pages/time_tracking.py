@@ -205,6 +205,8 @@ async def time_tracking_page():
         try:
             while True:
                 await asyncio.sleep(60)
+                if not core._client_alive:
+                    return
                 await update_time_tracker()
                 core.logger.debug("Background: Values refreshed (1-minute timer)")
         except asyncio.CancelledError:
@@ -223,6 +225,9 @@ async def time_tracking_page():
                 )
                 seconds_until_midnight = (tomorrow - now).total_seconds()
                 await asyncio.sleep(seconds_until_midnight)
+
+                if not core._client_alive:
+                    return
 
                 # If still on "Day" view at midnight, refresh to show new day
                 if state.selected_time == "Day":
