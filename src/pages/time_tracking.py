@@ -569,6 +569,120 @@ async def time_tracking_page():
     def make_callback(customer_id, project_id):
         return lambda e: on_checkbox_change(e, e.value, customer_id, project_id)
 
+    async def show_manual_time_entry_dialog(customer_id: int, project_id: int):
+        """Populate the pre-created dialog shell and open it."""
+        QE = core.query_engine
+        DO = core.devops_engine
+
+        df = await QE.query_db(
+            f"""
+            select c.customer_name, p.project_name, p.git_id
+            from customers c
+            join projects p on p.customer_id = c.customer_id
+            where c.customer_id = {customer_id} and p.project_id = {project_id}
+            """
+        )
+        c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
+        p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
+        git_id = df.iloc[0]["git_id"] if not df.empty else 0
+        has_git_id = git_id is not None and git_id > 0
+        has_devops = DO.has_customer_connection(c_name) if DO else False
+
+        now = datetime.now()
+        one_hour_ago = now - timedelta(hours=1)
+        dt_fmt = "%Y-%m-%dT%H:%M"
+
+        _manual_card.clear()
+        with _manual_card:
+            ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
+            ui.label("Add manual time entry").classes(
+                "text-caption text-slate-400 -mt-2 mb-2"
+            )
+
+            with ui.row().classes("w-full gap-3"):
+                start_input = (
+                    ui.input(label="Start time", value=one_hour_ago.strftime(dt_fmt))
+                    .props('type="datetime-local"')
+                    .classes("flex-1")
+                )
+                end_input = (
+                    ui.input(label="End time", value=now.strftime(dt_fmt))
+                    .props('type="datetime-local"')
+                    .classes("flex-1")
+                )
+
+            id_input = None
+            id_checkbox = None
+            git_id_number_input = None
+            if has_devops:
+                id_options = DO.df[
+                    (DO.df["customer_name"] == c_name)
+                    & (DO.df["state"].isin(["Active", "New"]))
+                ][["display_name", "id"]].dropna()
+                id_input = ui.select(
+                    id_options["display_name"].tolist(),
+                    with_input=True,
+                    label="DevOps-ID",
+                ).classes("w-full -mb-2")
+                if has_git_id:
+                    match = id_options[id_options["id"] == git_id]
+                    id_input.value = (
+                        match["display_name"].iloc[0] if not match.empty else None
+                    )
+                with ui.row().classes("w-full items-center justify-between -mt-2"):
+
+                    def toggle_switch():
+                        id_checkbox.value = not id_checkbox.value
+                        id_checkbox.update()
+
+                    ui.label("Store to DevOps").on("click", toggle_switch).classes(
+                        "cursor-pointer"
+                    )
+                    id_checkbox = ui.switch(value=has_git_id).props("dense")
+            else:
+                git_id_number_input = (
+                    ui.number(label="Git ID", value=git_id if has_git_id else None, min=0)
+                    .props("dense outlined clearable")
+                    .classes("w-full")
+                )
+
+            comment_input = ui.textarea(
+                label="Comment", placeholder="What work was done?"
+            ).classes("w-full -mt-2")
+
+            async def handle_save():
+                git_id_val = None
+                if has_devops and id_input is not None:
+                    git_id_val = extract_devops_id(id_input.value)
+                elif git_id_number_input is not None and git_id_number_input.value:
+                    git_id_val = int(git_id_number_input.value)
+                try:
+                    await QE.function_db(
+                        "insert_manual_time_row",
+                        customer_id,
+                        project_id,
+                        start_input.value,
+                        end_input.value,
+                        git_id=git_id_val,
+                        comment=comment_input.value or None,
+                    )
+                    core.event_bus.notify("Time entry added!", type_="positive")
+                    await update_time_tracker()
+                except Exception as e:
+                    core.logger.error(f"Manual time entry failed: {e}")
+                    core.event_bus.notify(f"Error saving entry: {e}", type_="negative")
+                _manual_dialog.close()
+
+            def handle_close():
+                _manual_dialog.close()
+
+            with ui.row().classes("justify-end gap-2"):
+                btn_w = UI_STYLES.get_widget_width("button")
+                ui.button("Save", on_click=handle_save).classes(btn_w)
+                ui.button("Close", on_click=handle_close).props("flat").classes(btn_w)
+
+        _manual_dialog.open()
+
     # ========================================================================
     # Data Functions
     # ========================================================================
@@ -710,6 +824,11 @@ async def time_tracking_page():
                     )
                 )
                 value_label_refs[(customer_id, project["project_id"])] = value_label
+
+                with ui.context_menu():
+                    async def _open_manual(cid=int(project["customer_id"]), pid=int(project["project_id"])):
+                        await show_manual_time_entry_dialog(cid, pid)
+                    ui.menu_item("Add time entry", on_click=_open_manual).props("icon=add_circle")
 
         async def make_customer_card(
             customer_id, customer_name, group, customer_index=None, total_customers=None
@@ -916,6 +1035,12 @@ async def time_tracking_page():
     # """)
 
     container = ui.scroll_area().classes("w-full").style("height: calc(100vh - 156px)")
+
+    # Pre-create dialog shell so it exists in the proper slot context at page load.
+    # show_manual_time_entry_dialog() clears + rebuilds the card body and then opens it.
+    with ui.dialog().props("persistent") as _manual_dialog:
+        _manual_card = ui.card().classes(UI_STYLES.get_widget_width("extra_wide"))
+
     core._setup_page_timers(
         "time_tracking", value_refresh_timer, midnight_refresh_timer
     )
