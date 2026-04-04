@@ -37,7 +37,7 @@ async def log_page():
     def render_toolbar() -> Tuple[ui.select, ui.button, ui.button]:
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
-            ui.icon("terminal", size="md").classes("text-blue-400")
+            ui.icon("terminal", size="md").classes("text-amber-400")
             ui.label("Application Log").classes("text-h5 text-white font-medium")
             ui.space()
 
