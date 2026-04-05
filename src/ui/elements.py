@@ -15,8 +15,9 @@ class NavigationBar:
     Manages navigation bar state and rendering
     """
 
-    def __init__(self, theme: dict):
+    def __init__(self, theme: dict, navigation_config: dict):
         self.theme = theme
+        self.navigation_config = navigation_config
         self.buttons = {}
         self.active_path = None
         self.on_navigate = None
@@ -30,47 +31,13 @@ class NavigationBar:
             if app.storage.client.get("navigation_created", False):
                 return
             app.storage.client["navigation_created"] = True
-
-            nav_items = [  ## TODO move to config_file
-                {
-                    "label": "Time Tracking",
-                    "icon": "schedule",
-                    "path": "/time",
-                    "key": "time_tracking",
-                },
-                {
-                    "label": "Data Input",
-                    "icon": "input",
-                    "path": "/add_data",
-                    "key": "add_data",
-                },
-                {
-                    "label": "Query Editor",
-                    "icon": "code",
-                    "path": "/query_editor",
-                    "key": "query_editor",
-                },
-                {
-                    "label": "Tasks",
-                    "icon": "check_box",
-                    "path": "/tasks",
-                    "key": "tasks",
-                },
-                {
-                    "label": "Notepad",
-                    "icon": "note",
-                    "path": "/notepad",
-                    "key": "notepad",
-                },
-                {"label": "Log", "icon": "terminal", "path": "/log", "key": "log"},
-                {"label": "Info", "icon": "info", "path": "/info", "key": "info"},
-                {
-                    "label": "Settings",
-                    "icon": "tune",
-                    "path": "/settings",
-                    "key": "settings",
-                },
-            ]
+            
+            nav_config = self.navigation_config
+            
+            nav_items = []
+            for row in nav_config.values():
+                if row.get("enabled", True):
+                    nav_items.append(row)
 
             nav_text = self.theme.get("muted")
             nav_hover = self.theme.get("toolbar_bg")

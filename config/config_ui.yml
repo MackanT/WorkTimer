@@ -1,5 +1,56 @@
 # Icons: https://fonts.google.com/icons
 
+navigation:
+  home:
+    label: Time Tracker
+    icon: schedule
+    path: /time
+    key: time_tracking
+    enabled: true
+  data_input:
+    label: Data Input
+    icon: input
+    path: /add_data
+    key: add_data
+    enabled: true
+  query_editor:
+    label: Query Editor
+    icon: code
+    path: /query_editor
+    key: query_editor
+    enabled: true
+  tasks:
+    label: Tasks
+    icon: check_box
+    path: /tasks
+    key: tasks
+    enabled: false
+  notepad:
+    label: Notepad
+    icon: note
+    path: /notepad
+    key: notepad
+    enabled: true
+  log:
+    label: Log
+    icon: terminal
+    path: /log
+    key: log
+    enabled: true
+  info:
+    label: Info
+    icon: info
+    path: /info
+    key: info
+    enabled: true
+  settings:
+    label: Settings
+    icon: tune
+    path: /settings
+    key: settings
+    enabled: true
+
+
 add_data_page:
   ### Customer Information ###
   customer:

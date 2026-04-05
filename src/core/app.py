@@ -47,7 +47,7 @@ class AppCore:
         self._root_logger_attached = False
         self._client_alive = True  # Set False on disconnect so background tasks can skip UI updates
 
-        self.nav_bar = NavigationBar(theme=self.theme)
+        self.nav_bar = NavigationBar(theme=self.theme, navigation_config=self.ui_config.get("navigation", {}))
         self.event_bus = PageEventBus()
         self.logger = self._setup_logger("AppCore")
         self.logger.info("Initializing new AppCore instance")
