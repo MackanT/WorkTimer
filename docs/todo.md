@@ -38,7 +38,7 @@
 #### Generic
 - Go over page layouts (ensure consistent ui sizes etc)
 - Consistent "page height", currently hardcoded on every page....
-- Cleanup config_ui_styles
+- ~~Cleanup config_ui_styles~~
 
 #### Settings
 - Make it actually nice and usable.....

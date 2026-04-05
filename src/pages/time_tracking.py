@@ -1039,7 +1039,7 @@ async def time_tracking_page():
     #     * { outline: 1px solid red; }
     # """)
 
-    container = ui.scroll_area().classes("w-full").style("height: calc(100vh - 156px)")
+    container = ui.scroll_area().classes("wt-page-content w-full")
 
     # Pre-create dialog shell so it exists in the proper slot context at page load.
     # show_manual_time_entry_dialog() clears + rebuilds the card body and then opens it.

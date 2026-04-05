@@ -21,7 +21,7 @@ from fastapi import UploadFile, Request, File
 from nicegui import ui, app
 
 from ..core.app import AppCore
-from ..ui.elements import toolbar, page_card, toolbar_divider
+from ..ui.elements import toolbar, page_card, toolbar_divider, PAGE_HEIGHT
 from ..helpers import render_and_sanitize_markdown, UI_STYLES
 
 
@@ -527,7 +527,7 @@ async def notepad_page():
         ui.keyboard(on_key=lambda e: exit_edit_mode() if e.key == "Escape" else None)
 
     def _render_edit_mode(note: dict):
-        with ui.row().classes("w-full gap-0").style("height: calc(100vh - 200px);"):
+        with ui.row().classes("w-full gap-0").style("height: 100%;"):
             # Left: editor
             with ui.column().classes("flex-1 h-full border-r dark:border-gray-700"):
                 editor = (
@@ -745,11 +745,11 @@ async def notepad_page():
     state["collapsed_groups"] = set()
     render_toolbar_bar()
 
-    with page_card():
+    with page_card(scrollable=False):
         with (
             ui.row()
             .classes("w-full gap-0 overflow-hidden")
-            .style("height: calc(100vh - 220px);")
+            .style("flex: 1; min-height: 0;")
         ):
             with (
                 ui.column()

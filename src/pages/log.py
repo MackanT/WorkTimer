@@ -84,45 +84,113 @@ async def log_page():
     # Filter state
     selected_filter = {"value": "All"}
 
-    with page_card():
-        # Log display container with fixed width
-        with ui.element().classes("w-full").style("width: 100%;"):
-            log_widget = (
-                ui.log(max_lines=None)
-                .classes(UI_STYLES.get_widget_style("log_textarea")["base"])
-                .style(
-                    "height: 76vh; overflow-y: auto; overflow-x: auto; width: 100%; min-width: 100%;"
-                )
+    with page_card(scrollable=False):
+        log_widget = (
+            ui.log(max_lines=None)
+            .classes(UI_STYLES.get_widget_style("log_textarea")["base"] + " flex-1")
+            .style(
+                "min-height: 0; overflow-y: auto; overflow-x: auto; width: 100%; min-width: 100%;"
             )
+        )
 
-            # Load historical logs (no filter applied initially)
-            from ..core.events import get_global_recent_logs
+        # Load historical logs (no filter applied initially)
+        from ..core.events import get_global_recent_logs
 
-            seen = set()
+        seen = set()
 
-            # Global logs (oldest first)
+        # Global logs (oldest first)
+        try:
+            for item in get_global_recent_logs():
+                key = (
+                    item.get("timestamp"),
+                    item.get("logger"),
+                    item.get("message"),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                formatted = f"{item.get('timestamp')} | {item.get('level'):<8} | {item.get('logger'):<9} :: {item.get('message')}"
+                color = log_colors.get(item.get("level"), "white")
+                try:
+                    log_widget.push(formatted, classes=f"text-{color}")
+                except Exception:
+                    log_widget.push(formatted)
+        except Exception:
+            pass
+
+        # Per-core buffer (in case some logs were local)
+        try:
+            for log_entry in core.log_buffer:
+                key = (
+                    log_entry.get("timestamp"),
+                    log_entry.get("logger"),
+                    log_entry.get("message"),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                color = log_colors.get(log_entry["level"], "white")
+                try:
+                    log_widget.push(log_entry["formatted"], classes=f"text-{color}")
+                except Exception:
+                    log_widget.push(log_entry["formatted"])
+        except Exception:
+            pass
+
+        # Register handler for NEW logs (only during this page visit)
+        def on_new_log(
+            message: str,
+            level: str = "INFO",
+            timestamp: str = "",
+            logger: str = "App",
+        ):
+            # Check if client still exists before attempting UI update
             try:
-                for item in get_global_recent_logs():
-                    key = (
-                        item.get("timestamp"),
-                        item.get("logger"),
-                        item.get("message"),
-                    )
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    formatted = f"{item.get('timestamp')} | {item.get('level'):<8} | {item.get('logger'):<9} :: {item.get('message')}"
-                    color = log_colors.get(item.get("level"), "white")
-                    try:
-                        log_widget.push(formatted, classes=f"text-{color}")
-                    except Exception:
-                        log_widget.push(formatted)
+                from nicegui import context
+
+                if (
+                    not context.client
+                    or context.client.id not in context.client.instances
+                ):
+                    return  # Client disconnected, skip silently
             except Exception:
+                return  # No context available, skip
+
+            # Check filter
+            if selected_filter["value"] != "All":
+                if selected_filter["value"].lower() not in logger.lower():
+                    return  # Skip this log entry
+
+            formatted = f"{timestamp} | {level:<8} | {logger:<9} :: {message}"
+            color = log_colors.get(level, "white")
+            try:
+                log_widget.push(formatted, classes=f"text-{color}")
+            except Exception:
+                # Widget is dead/destroyed, ignore silently
                 pass
 
-            # Per-core buffer (in case some logs were local)
+        core.event_bus.register("log_message", on_new_log)
+
+        # Re-apply filter handler when filter changes
+        def apply_filter():
             try:
-                for log_entry in core.log_buffer:
+                # Update the selected filter value
+                selected_filter["value"] = filter_select.value
+
+                log_widget.clear()
+                from ..core.events import _GLOBAL_RECENT_LOGS
+
+                seen = set()
+                for log_entry in _GLOBAL_RECENT_LOGS:
+                    # Apply filter
+                    if selected_filter["value"] != "All":
+                        logger_name = log_entry.get("logger", "")
+                        if (
+                            selected_filter["value"].lower()
+                            not in logger_name.lower()
+                        ):
+                            continue
+
                     key = (
                         log_entry.get("timestamp"),
                         log_entry.get("logger"),
@@ -131,140 +199,70 @@ async def log_page():
                     if key in seen:
                         continue
                     seen.add(key)
-                    color = log_colors.get(log_entry["level"], "white")
+
+                    # Format the log entry (might not have 'formatted' key)
+                    if "formatted" in log_entry:
+                        formatted = log_entry["formatted"]
+                    else:
+                        formatted = f"{log_entry.get('timestamp')} | {log_entry.get('level', 'INFO'):<8} | {log_entry.get('logger', 'App'):<9} :: {log_entry.get('message', '')}"
+
+                    color = log_colors.get(log_entry.get("level", "INFO"), "white")
                     try:
-                        log_widget.push(log_entry["formatted"], classes=f"text-{color}")
+                        log_widget.push(formatted, classes=f"text-{color}")
                     except Exception:
-                        log_widget.push(log_entry["formatted"])
+                        log_widget.push(formatted)
+                ui.notify(
+                    f"Filter applied: {selected_filter['value']}", type="info"
+                )
+            except Exception as e:
+                print(f"[Log] Error applying filter: {e}")
+
+        # Bind filter change to apply_filter (single binding)
+        filter_select.on("update:model-value", lambda: apply_filter())
+
+        # Clear handler - clears widget only, not the buffer
+        def clear_log():
+            try:
+                log_widget.clear()
+                log_widget.push("--- Log cleared ---", classes="text-gray-400")
             except Exception:
                 pass
+            ui.notify("Log display cleared", type="info")
 
-            # Register handler for NEW logs (only during this page visit)
-            def on_new_log(
-                message: str,
-                level: str = "INFO",
-                timestamp: str = "",
-                logger: str = "App",
-            ):
-                # Check if client still exists before attempting UI update
-                try:
-                    from nicegui import context
+        clear_button.on_click(clear_log)
 
-                    if (
-                        not context.client
-                        or context.client.id not in context.client.instances
-                    ):
-                        return  # Client disconnected, skip silently
-                except Exception:
-                    return  # No context available, skip
+        # Save to file handler
+        def save_log_to_file():
+            try:
+                # Get all logs from global buffer
+                from ..core.events import get_global_recent_logs
 
-                # Check filter
-                if selected_filter["value"] != "All":
-                    if selected_filter["value"].lower() not in logger.lower():
-                        return  # Skip this log entry
+                logs = get_global_recent_logs()
 
-                formatted = f"{timestamp} | {level:<8} | {logger:<9} :: {message}"
-                color = log_colors.get(level, "white")
-                try:
-                    log_widget.push(formatted, classes=f"text-{color}")
-                except Exception:
-                    # Widget is dead/destroyed, ignore silently
-                    pass
+                # Format logs as text
+                log_text = "\n".join(
+                    [
+                        f"{item.get('timestamp')} | {item.get('level'):<8} | {item.get('logger'):<9} :: {item.get('message')}"
+                        for item in logs
+                    ]
+                )
 
-            core.event_bus.register("log_message", on_new_log)
+                # Generate filename with timestamp
+                filename = (
+                    f"worktimer_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                )
 
-            # Re-apply filter handler when filter changes
-            def apply_filter():
-                try:
-                    # Update the selected filter value
-                    selected_filter["value"] = filter_select.value
+                # Trigger download
+                ui.download(log_text.encode("utf-8"), filename)
+                ui.notify(f"Log saved to {filename}", type="positive")
+            except Exception as e:
+                ui.notify(f"Error saving log: {e}", type="negative")
 
-                    log_widget.clear()
-                    from ..core.events import _GLOBAL_RECENT_LOGS
+        save_button.on_click(save_log_to_file)
 
-                    seen = set()
-                    for log_entry in _GLOBAL_RECENT_LOGS:
-                        # Apply filter
-                        if selected_filter["value"] != "All":
-                            logger_name = log_entry.get("logger", "")
-                            if (
-                                selected_filter["value"].lower()
-                                not in logger_name.lower()
-                            ):
-                                continue
+        # Cleanup handler when user navigates away or disconnects
+        def cleanup():
+            core.event_bus.unregister("log_message", on_new_log)
+            core.logger.debug("Log page handler unregistered")
 
-                        key = (
-                            log_entry.get("timestamp"),
-                            log_entry.get("logger"),
-                            log_entry.get("message"),
-                        )
-                        if key in seen:
-                            continue
-                        seen.add(key)
-
-                        # Format the log entry (might not have 'formatted' key)
-                        if "formatted" in log_entry:
-                            formatted = log_entry["formatted"]
-                        else:
-                            formatted = f"{log_entry.get('timestamp')} | {log_entry.get('level', 'INFO'):<8} | {log_entry.get('logger', 'App'):<9} :: {log_entry.get('message', '')}"
-
-                        color = log_colors.get(log_entry.get("level", "INFO"), "white")
-                        try:
-                            log_widget.push(formatted, classes=f"text-{color}")
-                        except Exception:
-                            log_widget.push(formatted)
-                    ui.notify(
-                        f"Filter applied: {selected_filter['value']}", type="info"
-                    )
-                except Exception as e:
-                    print(f"[Log] Error applying filter: {e}")
-
-            # Bind filter change to apply_filter (single binding)
-            filter_select.on("update:model-value", lambda: apply_filter())
-
-            # Clear handler - clears widget only, not the buffer
-            def clear_log():
-                try:
-                    log_widget.clear()
-                    log_widget.push("--- Log cleared ---", classes="text-gray-400")
-                except Exception:
-                    pass
-                ui.notify("Log display cleared", type="info")
-
-            clear_button.on_click(clear_log)
-
-            # Save to file handler
-            def save_log_to_file():
-                try:
-                    # Get all logs from global buffer
-                    from ..core.events import get_global_recent_logs
-
-                    logs = get_global_recent_logs()
-
-                    # Format logs as text
-                    log_text = "\n".join(
-                        [
-                            f"{item.get('timestamp')} | {item.get('level'):<8} | {item.get('logger'):<9} :: {item.get('message')}"
-                            for item in logs
-                        ]
-                    )
-
-                    # Generate filename with timestamp
-                    filename = (
-                        f"worktimer_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                    )
-
-                    # Trigger download
-                    ui.download(log_text.encode("utf-8"), filename)
-                    ui.notify(f"Log saved to {filename}", type="positive")
-                except Exception as e:
-                    ui.notify(f"Error saving log: {e}", type="negative")
-
-            save_button.on_click(save_log_to_file)
-
-            # Cleanup handler when user navigates away or disconnects
-            def cleanup():
-                core.event_bus.unregister("log_message", on_new_log)
-                core.logger.debug("Log page handler unregistered")
-
-            ui.context.client.on_disconnect(cleanup)
+        ui.context.client.on_disconnect(cleanup)

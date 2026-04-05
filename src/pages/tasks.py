@@ -718,8 +718,8 @@ async def tasks_page():
 
     with (
         ui.splitter(value=SPLITTER_RATIO)
-        .classes("w-full")
-        .style("height: calc(100vh - 160px);") as splitter
+        .classes("wt-page-content w-full")
+        .style("height: 0;") as splitter
     ):
         # Left panel: Task list
         with splitter.before:

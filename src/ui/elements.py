@@ -120,16 +120,25 @@ def toolbar_divider(theme):
     ui.element("div").classes(f"h-6 w-px bg-{theme.get('divider')}")
 
 
+# Height constants kept for backward compat (not used for layout calculations).
+TOOLBAR_HEIGHT_PX = 56
+
+# Kept so existing imports don't break — not used for layout anymore.
+NAV_HEIGHT_PX = 50
+PAGE_HEIGHT = "var(--wt-page-h)"   # legacy; prefer the flex model
+INNER_HEIGHT = "var(--wt-inner-h)" # legacy; prefer the flex model
+
+
 @contextmanager
 def toolbar(theme):
-    """Toolbar component - consistent height and styling across all pages"""
+    """Toolbar component - fixed height, shrinks to its natural size in flex column."""
     with (
         ui.row()
         .classes(
-            f"w-full items-center gap-6 px-6 bg-{theme.get('toolbar_bg')} rounded-md"
+            f"wt-toolbar w-full shrink-0 items-center gap-6 px-6 bg-{theme.get('toolbar_bg')} rounded-md"
         )
         .style(
-            "height: 56px; min-height: 56px; max-height: 56px; box-sizing: border-box;"
+            f"height: {TOOLBAR_HEIGHT_PX}px; min-height: {TOOLBAR_HEIGHT_PX}px; max-height: {TOOLBAR_HEIGHT_PX}px; box-sizing: border-box;"
         )
     ):
         yield
@@ -148,7 +157,9 @@ def toolbar_group(theme, label: str, divider_after: bool = True):
 
 @contextmanager
 def entity_card_shell(constrain_width: bool = True):
-    """Top level card shell for entity cards (customers/projects)
+    """Top level card shell for entity cards (customers/projects).
+
+    Fills the available height of its flex-row parent.
 
     Args:
         constrain_width: If True, applies max-width constraint (for time_tracking cards).
@@ -161,7 +172,7 @@ def entity_card_shell(constrain_width: bool = True):
         ui.card()
         .classes(f"{base_classes} rounded-md")
         .style(
-            "display:flex; flex-direction:column; height:calc(100vh - 220px); min-width:280px; box-sizing:border-box;"
+            "display:flex; flex-direction:column; height:100%; min-width:280px; box-sizing:border-box;"
         )
         .props("flat")
     ):
@@ -203,24 +214,23 @@ def entity_card_content():
 
 @contextmanager
 def page_card(scrollable: bool = True):
-    """Full width/height main page card with consistent styling.
+    """Full-height main page card.
+
+    Fills the remaining vertical space in the page's flex column via the
+    .wt-page-content class (defined in main.py global CSS).
 
     Args:
-        scrollable: Whether to enable vertical scrolling (default: True)
+        scrollable: Whether to enable vertical scrolling (default: True).
+                    Non-scrollable cards use an inner flex column so children
+                    can in turn use flex-fill to take remaining space.
     """
     overflow_style = "overflow-y: auto;" if scrollable else "overflow-y: hidden;"
-
-    if scrollable:
-        # For scrollable content: use flex-1 to fill available space in flex containers
-        style = f"min-height: 0; box-sizing: border-box; {overflow_style}"
-    else:
-        # For non-scrollable (internal scrolling): use fixed height calc
-        # 170px accounts for navbar (~100px) + toolbar (~50px) + margins (~20px)
-        style = f"height: calc(100vh - 190px); box-sizing: border-box; {overflow_style}"
+    inner_flex = "" if scrollable else "display: flex; flex-direction: column;"
 
     with (
-        (ui.card().classes("mx-4 my-4 rounded-md flex flex-col"))
-        .style(f"width: calc(100% - 2rem); {style}")
+        ui.card()
+        .classes("wt-page-content mx-4 my-2 rounded-md flex flex-col")
+        .style(f"width: calc(100% - 2rem); box-sizing: border-box; {overflow_style} {inner_flex}")
         .props("flat")
     ):
         yield

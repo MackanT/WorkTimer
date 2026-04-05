@@ -47,19 +47,21 @@ def setup_global_ui():
 
     This runs once for the entire application, not per-client.
     """
-    # Disable F5 refresh
-    ui.add_head_html("""
-    <style>
-    html, body { overflow: hidden !important; }
-    </style>
-    <script>
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'F5') {
-            e.preventDefault();
-        }
-    });
-    </script>
-    """)
+    # Layout strategy: position:fixed on .nicegui-sub-pages.
+    #
+    # Quasar only ever sets min-height (never height) on q-layout and q-page
+    # via inline styles.  height:100% chains always break because percentage
+    # heights require *definite* heights on every ancestor — min-height is not
+    # definite.  Every previous approach using the height chain failed for this
+    # reason.
+    #
+    # Solution: take nicegui-sub-pages out of normal flow with position:fixed,
+    # pinned to top=nav-height, left/right/bottom=0.  No parent height chain
+    # is required.  The fallback --wt-nav-h:68px matches our observed nav bar
+    # height; rAF reads Quasar's authoritative padding-top and updates it.
+    # NOTE: ui.add_head_html() must run inside a @ui.page context to be
+    # injected into served pages.  Layout CSS is now injected in root.py's
+    # _setup_spa_shell() instead.
 
     # Set up keyboard event handler for testing
     def handle_key(e: KeyEventArguments):

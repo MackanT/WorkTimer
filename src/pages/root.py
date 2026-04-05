@@ -12,8 +12,104 @@ from . import (
 from ..core.app import AppCore
 
 
+# Layout CSS injected per-client (ui.add_head_html must run inside a page context).
+_LAYOUT_CSS = """
+<style>
+:root { --wt-nav-h: 68px; --wt-toolbar-h: 56px; }
+html, body { overflow: hidden !important; }
+
+/* height:auto lets top+bottom fully determine the element size.
+   Without it, h-full (height:100%) overconstrained the fixed element,
+   causing CSS to recompute bottom and ignore bottom:12px. */
+.nicegui-sub-pages {
+    position: fixed !important;
+    top: var(--wt-nav-h) !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 12px !important;
+    height: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    z-index: 0 !important;
+    /* NiceGUI's nicegui.css adds gap:1rem and padding:1rem to this element.
+       Override both so spacing comes entirely from child margins. */
+    gap: 0 !important;
+    padding: 0 !important;
+}
+.wt-page-content {
+    flex: 1 !important;
+    min-height: 0 !important;
+}
+
+/* Toolbar: outer spacing so rounded-md corners are visible from edges.
+   Override w-full to account for 8px side margins. */
+.wt-toolbar {
+    margin: 8px 8px 0 !important;
+    width: calc(100% - 16px) !important;
+}
+
+/* Tab-panels container (add_data, info): match page_card spacing (mx-4 my-2 = 8px 16px). */
+.wt-page-content.q-tab-panels {
+    margin: 8px 16px 8px !important;
+    width: calc(100% - 32px) !important;
+}
+
+/* Scroll-area container (time_tracking): match page_card's mx-4 my-2 (8px top/bottom, 16px sides). */
+.nicegui-scroll-area.wt-page-content {
+    margin: 8px 16px 8px !important;
+    width: calc(100% - 32px) !important;
+}
+
+/* Scroll-area: NiceGUI's nicegui.css adds padding:1rem to q-scrollarea__content.
+   Zero it so card tops align at the scroll area edge, then rely on margin-top
+   on the scroll area itself for the gap below the toolbar. */
+.nicegui-scroll-area.wt-page-content .q-scrollarea__content {
+    height: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+}
+.nicegui-scroll-area.wt-page-content .q-scrollarea__content > .nicegui-row {
+    height: 100% !important;
+    min-height: 0 !important;
+}
+
+/* Tab-panels: propagate definite height all the way down the chain.
+   nicegui-tab-panel is the class NiceGUI puts on the q-tab-panel element.
+   Use descendant selector (not >) in case Quasar wraps with a transition div. */
+.wt-page-content.q-tab-panels .nicegui-tab-panel {
+    height: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
+/* First child inside the tab panel (nicegui-row or nicegui-column) */
+.wt-page-content.q-tab-panels .nicegui-tab-panel > .nicegui-row,
+.wt-page-content.q-tab-panels .nicegui-tab-panel > .nicegui-column {
+    height: 100% !important;
+    min-height: 0 !important;
+}
+</style>
+<script>
+requestAnimationFrame(function () {
+    var pc = document.querySelector('.q-page-container');
+    if (pc) {
+        var h = parseFloat(getComputedStyle(pc).paddingTop);
+        if (h > 0) {
+            document.documentElement.style.setProperty('--wt-nav-h', h + 'px');
+        }
+    }
+});
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'F5') e.preventDefault();
+});
+</script>
+"""
+
+
 async def _setup_spa_shell():
     """Set up the SPA shell with navigation and sub-pages."""
+    ui.add_head_html(_LAYOUT_CSS)
     core = await AppCore.get_or_initialize()
     core.nav_bar.render()
 

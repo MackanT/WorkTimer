@@ -83,9 +83,9 @@ async def add_data_page():
     with (
         ui.tab_panels(main_tabs, value=start_tab)
         .props("vertical")
-        .classes("w-full")
+        .classes("wt-page-content w-full")
         .style(
-            "background: transparent; height: calc(100vh - 156px); max-height: calc(100vh - 156px);"
+            "background: transparent;"
         )
     ):
         for page_dict in add_data_page_config:
@@ -369,7 +369,7 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
     with (
         ui.card()
         .classes("overflow-y-auto w-full rounded-lg")
-        .style("max-height: calc(100vh - 180px); padding: 1rem; box-sizing: border-box;")
+        .style("max-height: 82vh; padding: 1rem; box-sizing: border-box;")
         .props("flat")
     ):
         title = action.get("title", f"{operation.capitalize()} DevOps Work Item")
@@ -734,7 +734,7 @@ async def render_database_tabs(
                         "mx-auto", "ml-0"
                     )
                 )
-                .style("max-height: calc(100vh - 200px); overflow-y: auto;")
+                .style("max-height: 82vh; overflow-y: auto;")
             ):
                 ui.label(
                     "Upload a .db file to compare with the main database."
@@ -773,7 +773,7 @@ async def render_database_tabs(
                         "mx-auto", "ml-0"
                     )
                 )
-                .style("max-height: calc(100vh - 200px); overflow-y: auto;")
+                .style("max-height: 82vh; overflow-y: auto;")
             ):
                 ui.label("Run SQL queries on uploaded database").classes(
                     helpers.UI_STYLES.get_layout_classes("title")
