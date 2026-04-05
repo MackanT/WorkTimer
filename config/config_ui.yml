@@ -473,7 +473,7 @@ add_data_page:
         main_action: Work Item
         main_param: work_item_title
         secondary_action: added
-        button_name: "Add"
+        button_name: Add
     update:
       fields:
         - name: customer_name
@@ -544,7 +544,7 @@ add_data_page:
         main_action: Work Item
         main_param: work_item
         secondary_action: updated
-        button_name: Save
+        button_name: Update
     meta:
       icon: merge
       friendly_name: DevOps

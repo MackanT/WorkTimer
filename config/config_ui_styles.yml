@@ -250,3 +250,4 @@ wide_widget_types:
   - text
   - textarea
   - chip_group
+  - editor_with_preview

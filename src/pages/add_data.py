@@ -311,7 +311,7 @@ async def render_devops_tabs(
 
 
 async def render_devops_form(core: AppCore, operation: str, form_config: dict):
-    """Render DevOps work item form"""
+    """Render DevOps work item form (shared by add and update)."""
     LOG = core.logger
     DO = core.devops_engine
 
@@ -321,56 +321,88 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
     data_sources = await prepare_devops_data_sources(core, operation)
     helpers.assign_dynamic_options(fields, data_sources=data_sources)
 
-    # Use a full-width card so the editor + preview can sit side by side
+    # Defined at function scope so both on_submit and refresh_all_widgets close over them
+    widgets: dict = {}
+    dynamic_widgets: list = []
+    parent_map: dict = {}
+
+    async def on_submit():
+        required_fields = [
+            f.get("name") or f.get("field_id")
+            for f in fields
+            if not f.get("optional", False)
+        ]
+        if not helpers.check_input(widgets, required_fields):
+            return
+
+        if not DO or not hasattr(DO, "manager") or not DO.manager:
+            ui.notify("DevOps not configured – check PAT token / org URL", type="negative")
+            return
+
+        try:
+            devops_handlers = DevOpsWorkItemHandlers(DO, LOG)
+            if operation == "add":
+                success, message = devops_handlers.add_work_item(widgets)
+                if success:
+                    wid_title = widgets.get("work_item_title")
+                    ui.notify(f"Work item created: {wid_title.value if wid_title else ''}", type="positive")
+                    LOG.info(message)
+                    await DO.update_devops(incremental=True)
+                    core.event_bus.emit("ui_refresh_requested")
+                else:
+                    ui.notify(f"Failed: {message}", type="negative")
+                    LOG.error(message)
+            else:
+                success, message = await devops_handlers.update_work_item(widgets)
+                if success:
+                    ui.notify("Work item updated", type="positive")
+                    LOG.info(message)
+                    await DO.update_devops(incremental=True)
+                    core.event_bus.emit("ui_refresh_requested")
+                else:
+                    ui.notify(f"Failed: {message}", type="negative")
+                    LOG.error(message)
+        except Exception as e:
+            LOG.error(f"Error in DevOps {operation}: {e}")
+            ui.notify(f"Error: {e}", type="negative")
+
     with (
         ui.card()
         .classes("overflow-y-auto w-full rounded-lg")
-        .style(
-            "max-height: calc(100vh - 180px); padding: 1rem; box-sizing: border-box;"
-        )
+        .style("max-height: calc(100vh - 180px); padding: 1rem; box-sizing: border-box;")
         .props("flat")
     ):
-        ui.label(f"{operation.capitalize()} DevOps Work Item").classes(
-            helpers.UI_STYLES.get_layout_classes("title")
-        )
+        title = action.get("title", f"{operation.capitalize()} DevOps Work Item")
+        with ui.row().classes("w-full items-center gap-2 mt-4"):
+            ui.label(title).classes(helpers.UI_STYLES.get_layout_classes("title"))
+            ui.space()
+            ui.button(action.get("button_name", "Submit"), icon="save", on_click=on_submit).props("color=primary")
 
         if not data_sources.get("customer_data"):
-            ui.label(
-                "No DevOps data available. Please configure DevOps connections first."
-            ).classes("text-warning")
-            return
+            ui.label("No DevOps data available. Please configure DevOps connections first.").classes("text-warning")
+            return None
 
-        rows_layout = form_config.get("rows", [])
-        widgets: dict = {}
-        dynamic_widgets: list = []
-        parent_map: dict = {}
+        # Normalize: no explicit rows_layout → each field is its own single-element row.
+        # This collapses the if/else into one code path with no behavioral difference.
+        rows_layout = form_config.get("rows", []) or [
+            [f.get("name") or f.get("field_id")] for f in fields
+        ]
 
-        # Data fetcher for DevOps widgets
         async def devops_data_fetcher(source_key, parent_val=None):
-            """Fetch fresh data from database for DevOps forms"""
-            # Always read devops_tags live so settings-page changes are reflected immediately
             if source_key == "devops_tags":
                 return core.devops_tags_config.devops_tags or []
-
             if source_key not in data_sources:
                 return [] if parent_val is not None else ""
-
             data = data_sources[source_key]
-
-            # Special handling for parent_names nested structure
             if source_key == "parent_names" and isinstance(data, dict) and parent_val:
-                # data is {customer: {type: [list]}}
                 customer_dict = data.get(parent_val, {})
                 if isinstance(customer_dict, dict):
-                    # Flatten all parent options across all work item types
                     all_parents = []
-                    for type_key, parent_list in customer_dict.items():
+                    for parent_list in customer_dict.values():
                         if isinstance(parent_list, list):
                             all_parents.extend(parent_list)
-                    return list(set(all_parents))  # Remove duplicates
+                    return list(set(all_parents))
                 return customer_dict if isinstance(customer_dict, list) else []
-
-            # Handle nested data (parent-child relationship)
             if parent_val and isinstance(data, dict):
                 return data.get(parent_val, [])
             elif isinstance(data, list):
@@ -379,193 +411,67 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
                 return data
             return [] if parent_val is not None else ""
 
-        if rows_layout:
-            # Determine if any field has wide layout
-            has_wide_layout = any(
-                helpers.UI_STYLES.is_wide_widget(
-                    next(
-                        (
-                            f.get("type")
-                            for f in fields
-                            if f.get("name") == fn or f.get("field_id") == fn
-                        ),
-                        None,
-                    )
-                )
-                for row in rows_layout
-                for fn in row
+        has_wide_layout = any(
+            helpers.UI_STYLES.is_wide_widget(
+                next((f.get("type") for f in fields if f.get("name") == fn or f.get("field_id") == fn), None)
             )
+            for row in rows_layout
+            for fn in row
+        )
 
-            with ui.column().classes(
-                helpers.UI_STYLES.get_layout_classes("form_column")
-            ):
-                for row in rows_layout:
-                    row_field_configs = [
-                        fc
-                        for fn in row
-                        if (
-                            fc := next(
-                                (
-                                    f
-                                    for f in fields
-                                    if f.get("name") == fn or f.get("field_id") == fn
-                                ),
-                                None,
-                            )
+        with ui.column().classes(helpers.UI_STYLES.get_layout_classes("form_column")):
+            for row in rows_layout:
+                row_field_configs = [
+                    fc
+                    for fn in row
+                    if (fc := next((f for f in fields if f.get("name") == fn or f.get("field_id") == fn), None))
+                ]
+                if not row_field_configs:
+                    continue
+
+                is_single_field = len(row_field_configs) == 1
+                default_size = "full" if (has_wide_layout or is_single_field) else "standard"
+
+                with ui.row().classes(helpers.UI_STYLES.get_layout_classes("form_row")):
+                    for field in row_field_configs:
+                        field_name = field.get("name") or field.get("field_id")
+                        field_type = field.get("type", "input")
+                        parent_field = field.get("parent")
+
+                        widget_class = WIDGET_CLASSES.get(field_type)
+                        if not widget_class:
+                            LOG.warning(f"Unknown field type '{field_type}', skipping {field_name}")
+                            continue
+
+                        dw = widget_class(
+                            name=field_name,
+                            data_fetcher=devops_data_fetcher,
+                            options_source=field.get("options_source", ""),
+                            parent=parent_map.get(parent_field) if parent_field else None,
+                            label=field.get("label", field_name),
+                            initial_value=field.get("default"),
+                            field_config=field,
                         )
-                    ]
+                        dw.widget.classes(helpers.UI_STYLES.get_widget_width(field.get("size", default_size)))
+                        widgets[field_name] = dw
+                        parent_map[field_name] = dw
+                        dynamic_widgets.append(dw)
 
-                    if not row_field_configs:
-                        continue
-
-                    is_single_field = len(row_field_configs) == 1
-                    widget_size = (
-                        "full" if (has_wide_layout or is_single_field) else "standard"
-                    )
-
-                    with ui.row().classes(
-                        helpers.UI_STYLES.get_layout_classes("form_row")
-                    ):
-                        for field in row_field_configs:
-                            field_type = field.get("type", "input")
-                            field_name = field.get("name") or field.get("field_id")
-                            parent_field = field.get("parent")
-                            parent_widget = (
-                                parent_map.get(parent_field) if parent_field else None
-                            )
-
-                            # Get widget class from registry
-                            widget_class = WIDGET_CLASSES.get(field_type)
-                            if not widget_class:
-                                LOG.warning(
-                                    f"Unknown field type '{field_type}', skipping {field_name}"
-                                )
-                                continue
-
-                            # Get widget width classes
-                            widget_width = helpers.UI_STYLES.get_widget_width(
-                                field.get("size", widget_size)
-                            )
-
-                            # Create dynamic widget instance
-                            dw = widget_class(
-                                name=field_name,
-                                data_fetcher=devops_data_fetcher,
-                                options_source=field.get("options_source", ""),
-                                parent=parent_widget,
-                                label=field.get("label", field_name),
-                                initial_value=field.get("default"),
-                                field_config=field,
-                            )
-
-                            # Apply widget width styling
-                            dw.widget.classes(widget_width)
-
-                            widgets[field_name] = dw
-                            parent_map[field_name] = dw
-                            dynamic_widgets.append(dw)
-        else:
-            # No row layout - create widgets in single column
-            with ui.column():
-                for field in fields:
-                    field_type = field.get("type", "input")
-                    field_name = field.get("name") or field.get("field_id")
-                    parent_field = field.get("parent")
-                    parent_widget = (
-                        parent_map.get(parent_field) if parent_field else None
-                    )
-
-                    # Get widget class from registry
-                    widget_class = WIDGET_CLASSES.get(field_type)
-                    if not widget_class:
-                        LOG.warning(
-                            f"Unknown field type '{field_type}', skipping {field_name}"
-                        )
-                        continue
-
-                    # Get widget width classes
-                    widget_width = helpers.UI_STYLES.get_widget_width(
-                        field.get("size", "standard")
-                    )
-
-                    # Create dynamic widget instance
-                    dw = widget_class(
-                        name=field_name,
-                        data_fetcher=devops_data_fetcher,
-                        options_source=field.get("options_source", ""),
-                        parent=parent_widget,
-                        label=field.get("label", field_name),
-                        initial_value=field.get("default"),
-                        field_config=field,
-                    )
-
-                    # Apply widget width styling
-                    dw.widget.classes(widget_width)
-
-                    widgets[field_name] = dw
-                    parent_map[field_name] = dw
-                    dynamic_widgets.append(dw)
-
-        # Set up template handling for codemirror widgets
         helpers.setup_template_handling(widgets)
-
         devops_handlers_setup = DevOpsWorkItemHandlers(DO, LOG)
         if operation == "add":
             devops_handlers_setup.setup_add_tab_handlers(widgets)
         else:
             devops_handlers_setup.setup_update_tab_handlers(widgets)
 
-        # ── Submit button ──────────────────────────────────────────────────────
-        async def on_submit():
-            required_fields = [
-                f.get("name") or f.get("field_id")
-                for f in fields
-                if not f.get("optional", False)
-            ]
-            if not helpers.check_input(widgets, required_fields):
-                return
+    async def refresh_all_widgets():
+        try:
+            for dw in dynamic_widgets:
+                await dw.refresh()
+        except Exception as e:
+            core.logger.error(f"Error refreshing DevOps.{operation} widgets: {e}")
 
-            if not DO or not hasattr(DO, "manager") or not DO.manager:
-                ui.notify(
-                    "DevOps not configured – check PAT token / org URL", type="negative"
-                )
-                return
-
-            try:
-                devops_handlers = DevOpsWorkItemHandlers(DO, LOG)
-
-                if operation == "add":
-                    success, message = devops_handlers.add_work_item(widgets)
-                    if success:
-                        wid_title = widgets.get("work_item_title")
-                        title_val = wid_title.value if wid_title else ""
-                        ui.notify(f"Work item created: {title_val}", type="positive")
-                        LOG.info(message)
-                        await DO.update_devops(incremental=True)
-                        core.event_bus.emit("ui_refresh_requested")
-                    else:
-                        ui.notify(f"Failed: {message}", type="negative")
-                        LOG.error(message)
-
-                else:  # update
-                    success, message = await devops_handlers.update_work_item(widgets)
-                    if success:
-                        ui.notify("Work item updated", type="positive")
-                        LOG.info(message)
-                        await DO.update_devops(incremental=True)
-                        core.event_bus.emit("ui_refresh_requested")
-                    else:
-                        ui.notify(f"Failed: {message}", type="negative")
-                        LOG.error(message)
-
-            except Exception as e:
-                LOG.error(f"Error in DevOps {operation}: {e}")
-                ui.notify(f"Error: {e}", type="negative")
-
-        with ui.row().classes("gap-2 mt-4"):
-            ui.button(
-                action.get("button_name", "Submit"), icon="save", on_click=on_submit
-            ).props("color=primary")
+    return refresh_all_widgets
 
 
 async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) -> dict:
