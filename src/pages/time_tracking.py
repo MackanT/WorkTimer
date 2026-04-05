@@ -647,7 +647,7 @@ async def time_tracking_page():
             else:
                 git_id_number_input = (
                     ui.number(label="Git ID", value=git_id if has_git_id else None, min=0)
-                    .props("dense outlined clearable")
+                    .props("dense outlined")
                     .classes("w-full")
                 )
 
