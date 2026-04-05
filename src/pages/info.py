@@ -48,15 +48,16 @@ async def info_page():
     main_tabs = render_toolbar()
 
     def render_info_text(markdown_file: str):
-        with ui.scroll_area().classes("w-full h-full"):
-            with ui.column().classes("w-full p-4"):
-                try:
-                    content = (
-                        Path(__file__).parent.parent.parent / "docs" / markdown_file
-                    ).read_text(encoding="utf-8")
-                except Exception as e:
-                    content = f"Error loading content: {e}"
-                ui.markdown(content=content)
+        with ui.card().props("flat").classes("w-full h-full rounded-md overflow-hidden"):
+            with ui.scroll_area().classes("w-full h-full"):
+                with ui.column().classes("w-full p-4"):
+                    try:
+                        content = (
+                            Path(__file__).parent.parent.parent / "docs" / markdown_file
+                        ).read_text(encoding="utf-8")
+                    except Exception as e:
+                        content = f"Error loading content: {e}"
+                    ui.markdown(content=content)
 
     start_tab = next(iter(info_page_config))
 
