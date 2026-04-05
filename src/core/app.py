@@ -19,6 +19,12 @@ from .events import PageEventBus
 # Module-level storage for AppCore instances (per-client, by client ID)
 _app_cores: Dict[str, "AppCore"] = {}
 
+# Process-wide DevOps singleton — shared across all client connections.
+# Prevents re-initializing (and re-syncing) DevOps on every browser reconnect.
+_global_devops_engine = None
+_global_devops_initialized: bool = False
+_global_devops_init_lock: Optional[asyncio.Lock] = None
+
 
 class AppCore:
     """
@@ -197,57 +203,81 @@ class AppCore:
         """
         Initialize or re-initialize DevOps engine.
         Safe to call multiple times — skips if already initialized.
-        Retried on each page load until successful.
+        Uses a process-wide singleton so only the first connecting client
+        performs the actual initialization and sync; subsequent clients
+        reuse the already-running engine immediately.
         """
+        global _global_devops_engine, _global_devops_initialized, _global_devops_init_lock
+
         if not self._initialized:
             self.logger.debug("Local engines not ready — skipping DevOps init")
             return
         if self._devops_initialized:
             return
 
-        # If no customers are configured, skip unless explicitly forced
-        if getattr(self, "_devops_no_customers", False):
-            self.logger.debug("No DevOps customers configured — skipping retry")
+        # Fast path: global engine is ready — just adopt it
+        if _global_devops_initialized and _global_devops_engine is not None:
+            self.devops_engine = _global_devops_engine
+            self._devops_initialized = True
+            self.logger.debug("Reusing existing DevOps engine (already initialized globally)")
             return
 
-        # Cooldown
-        import time
+        # Lazy-create the process-wide init lock (must be done inside the event loop)
+        if _global_devops_init_lock is None:
+            _global_devops_init_lock = asyncio.Lock()
 
-        last_attempt = getattr(self, "_devops_last_attempt", 0)
-        if time.time() - last_attempt < 60:
-            self.logger.debug(
-                f"DevOps retry cooldown — {int(60 - (time.time() - last_attempt))}s remaining"
-            )
-            return
-        self._devops_last_attempt = time.time()
-
-        # Quick internet check
-        self.logger.info("Checking internet connectivity...")
-        if not await self._check_internet():
-            self.logger.warning("No internet — skipping DevOps init, will retry later")
-            return
-
-        self.logger.info("Internet available — proceeding with DevOps initialization")
-
-        if not self.devops_engine:
-            try:
-                from ..globals import DevOpsEngine
-
-                do_logger = self._setup_logger("DevOps")
-                self.devops_engine = DevOpsEngine(
-                    query_engine=self.query_engine, log_engine=do_logger
-                )
-            except Exception as e:
-                self.logger.warning(f"Could not create DevOps engine: {e}")
+        async with _global_devops_init_lock:
+            # Re-check inside the lock — another client may have just finished init
+            if _global_devops_initialized and _global_devops_engine is not None:
+                self.devops_engine = _global_devops_engine
+                self._devops_initialized = True
+                self.logger.debug("Reusing existing DevOps engine (initialized while waiting for lock)")
                 return
 
-        await self._initialize_devops_background()
+            # If no customers are configured, skip unless explicitly forced
+            if getattr(self, "_devops_no_customers", False):
+                self.logger.debug("No DevOps customers configured — skipping retry")
+                return
+
+            # Cooldown
+            import time
+
+            last_attempt = getattr(self, "_devops_last_attempt", 0)
+            if time.time() - last_attempt < 60:
+                self.logger.debug(
+                    f"DevOps retry cooldown — {int(60 - (time.time() - last_attempt))}s remaining"
+                )
+                return
+            self._devops_last_attempt = time.time()
+
+            # Quick internet check
+            self.logger.info("Checking internet connectivity...")
+            if not await self._check_internet():
+                self.logger.warning("No internet — skipping DevOps init, will retry later")
+                return
+
+            self.logger.info("Internet available — proceeding with DevOps initialization")
+
+            if not self.devops_engine:
+                try:
+                    from ..globals import DevOpsEngine
+
+                    do_logger = self._setup_logger("DevOps")
+                    self.devops_engine = DevOpsEngine(
+                        query_engine=self.query_engine, log_engine=do_logger
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Could not create DevOps engine: {e}")
+                    return
+
+            await self._initialize_devops_background()
 
     async def _initialize_devops_background(self):
         """
         Run DevOps initialization with timeout.
         Sets _devops_initialized on success, False on failure — triggering retry next page load.
         """
+        global _global_devops_engine, _global_devops_initialized
         try:
             self.logger.info("Starting background DevOps initialization")
             await asyncio.wait_for(
@@ -264,6 +294,8 @@ class AppCore:
             if has_connections:
                 self._devops_initialized = True
                 self._devops_no_customers = False
+                _global_devops_engine = self.devops_engine
+                _global_devops_initialized = True
                 self.logger.info(
                     f"DevOps initialized — {len(self.devops_engine.manager.clients)} customer(s) connected"
                 )
@@ -290,11 +322,14 @@ class AppCore:
 
     def force_devops_reinit(self):
         """Force DevOps to retry — call this after adding a new DevOps customer."""
+        global _global_devops_engine, _global_devops_initialized
         self.logger.info("DevOps re-init forced — resetting state")
         self._devops_initialized = False
         self._devops_no_customers = False
         self._devops_last_attempt = 0
         self.devops_engine = None
+        _global_devops_engine = None
+        _global_devops_initialized = False
         asyncio.create_task(self.initialize_devops())
 
     async def _check_internet(self) -> bool:

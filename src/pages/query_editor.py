@@ -658,13 +658,13 @@ async def query_editor_page():
         }, true);  // true = capture phase, fires before browser default
     """)
 
-    def handle_key(e: KeyEventArguments):
+    async def handle_key(e: KeyEventArguments):
         if e.key.f5 and e.action.keydown:
-            ui.timer(0.0, execute_query, once=True)
+            await execute_query()
         elif e.modifiers.ctrl and e.key.enter and e.action.keydown:
-            ui.timer(0.0, execute_query, once=True)
+            await execute_query()
 
     ui.keyboard(on_key=handle_key)
 
     # Execute initial query to populate grid
-    ui.timer(0.1, execute_query, once=True)  #    asyncio.create_task(execute_query())
+    asyncio.create_task(execute_query())
