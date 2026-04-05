@@ -1,6 +1,0 @@
-log_colors:
-  DEBUG: grey
-  INFO: white
-  WARNING: orange
-  ERROR: red
-  CRITICAL: red

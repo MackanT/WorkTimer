@@ -333,10 +333,6 @@ class ConfigLoader:
             f"  DB: {self.configs['settings'].db_path}, Debug: {self.configs['settings'].debug_mode}"
         )
 
-        # Load data config (required)
-        data_yaml = self._load_yaml("config_data.yml", required=True)
-        self.configs["data"] = ConfigData(**data_yaml)
-
         # Load UI config (required)
         ui_yaml = self._load_yaml("config_ui.yml", required=True)
         self.configs["ui"] = ConfigUI(**ui_yaml)

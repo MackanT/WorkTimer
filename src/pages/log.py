@@ -14,9 +14,6 @@ from ..helpers import UI_STYLES
 
 from ..ui.elements import toolbar, page_card
 
-### TODO move out of here!
-LOG_CARD_HEIGHT = "76vh"
-
 
 async def log_page():
     """Log page - displays application logs
@@ -29,8 +26,9 @@ async def log_page():
     core = await AppCore.get_or_initialize()
 
     from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
-
-    log_colors = core.data_config.log_colors or {}
+    
+    log_page_config = core.ui_config.get("log_page", {})
+    log_colors = log_page_config.get('log', {}).get('log_colors', {})
 
     setup_debug_keyboard_handlers(core)
 
@@ -93,7 +91,7 @@ async def log_page():
                 ui.log(max_lines=None)
                 .classes(UI_STYLES.get_widget_style("log_textarea")["base"])
                 .style(
-                    f"height: {LOG_CARD_HEIGHT}; overflow-y: auto; overflow-x: auto; width: 100%; min-width: 100%;"
+                    "height: 76vh; overflow-y: auto; overflow-x: auto; width: 100%; min-width: 100%;"
                 )
             )
 
@@ -270,5 +268,3 @@ async def log_page():
                 core.logger.debug("Log page handler unregistered")
 
             ui.context.client.on_disconnect(cleanup)
-
-        core.logger.info("Log page loaded")

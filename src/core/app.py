@@ -71,7 +71,6 @@ class AppCore:
         """Load all configuration files."""
         configs = self.config_loader.load_all()
         self.settings = configs["settings"]
-        self.data_config = configs["data"]
         self.ui_config = self.config_loader.get_raw_dict("ui")
         self.tasks_config = self.config_loader.get_raw_dict("tasks")
         self.query_config = self.config_loader.get_raw_dict("query")

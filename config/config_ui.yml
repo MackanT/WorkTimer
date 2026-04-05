@@ -597,6 +597,21 @@ info_page:
       friendly_name: Todo
       file: todo.md
 
+## Log Page ##
+log_page:
+  log:
+    meta:
+      icon: terminal
+      friendly_name: Log
+      build_function: render_log_page
+    log_colors:
+      DEBUG: grey
+      INFO: white
+      WARNING: orange
+      ERROR: red
+      CRITICAL: red
+
+
 ## Task Management Configuration ##
 task:
   table:
