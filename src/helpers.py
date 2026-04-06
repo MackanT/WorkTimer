@@ -11,7 +11,7 @@ import markdown as _markdown
 import bleach as _bleach
 from markdownify import markdownify as _markdownify
 
-from .globals import GlobalRegistry, SaveData
+from .globals import SaveData
 
 
 # ===== UI STYLE MANAGER =====
@@ -784,6 +784,7 @@ def make_input_row(
     widgets: dict | None = None,
     defer_parent_wiring: bool = False,
     render_functions: dict | None = None,
+    query_engine=None,
 ) -> dict | tuple[dict, list]:
     """Create UI widgets for a list of field configurations.
 
@@ -1016,7 +1017,7 @@ def make_input_row(
         return out_widgets, pending_relations
 
     # Otherwise bind relations immediately (backwards compatible behavior)
-    bind_parent_relations(out_widgets, pending_relations, render_functions)
+    bind_parent_relations(out_widgets, pending_relations, render_functions, query_engine=query_engine)
     return out_widgets
 
 
@@ -1435,7 +1436,7 @@ def _update_html_preview(
 
 
 async def _execute_dynamic_query(
-    query: str, parent_val: str, child: str, column: int = 0
+    query: str, parent_val: str, child: str, column: int = 0, query_engine=None
 ):
     """Execute a dynamic query with parent value substitution.
 
@@ -1444,11 +1445,12 @@ async def _execute_dynamic_query(
         parent_val: Value to substitute in query
         child: Child widget name (for error logging)
         column: Column index to extract from result
+        query_engine: QueryEngine instance to run the query
 
     Returns:
         Query result value or None if query fails
     """
-    QE = GlobalRegistry.get("QE")
+    QE = query_engine
     if not QE:
         return None
 
@@ -1465,15 +1467,12 @@ async def _execute_dynamic_query(
                 else result_df.iloc[0, 0]
             )
         return None
-    except Exception as e:
-        LOG = GlobalRegistry.get("LOG")
-        if LOG:
-            LOG.error(f"Dynamic query failed for {child}: {e}")
+    except Exception:
         return None
 
 
 async def _execute_dynamic_query_for_options(
-    query: str, parent_val: str, child: str
+    query: str, parent_val: str, child: str, query_engine=None
 ) -> list:
     """Execute a dynamic query to fetch options for a select field.
 
@@ -1481,11 +1480,12 @@ async def _execute_dynamic_query_for_options(
         query: SQL query with {parent_value} placeholder
         parent_val: Value to substitute in query
         child: Child widget name (for error logging)
+        query_engine: QueryEngine instance to run the query
 
     Returns:
         List of options or empty list if query fails
     """
-    QE = GlobalRegistry.get("QE")
+    QE = query_engine
     if not QE:
         return []
 
@@ -1498,10 +1498,7 @@ async def _execute_dynamic_query_for_options(
             # Assume first column contains the options
             return result_df.iloc[:, 0].tolist()
         return []
-    except Exception as e:
-        LOG = GlobalRegistry.get("LOG")
-        if LOG:
-            LOG.error(f"Dynamic query failed for {child}: {e}")
+    except Exception:
         return []
 
 
@@ -1510,6 +1507,7 @@ def bind_parent_relations(
     pending_relations: list,
     render_functions: dict = None,
     data_sources: dict = None,
+    query_engine=None,
 ):
     """Bind parent->child update handlers for pending relations.
 
@@ -1559,7 +1557,7 @@ def bind_parent_relations(
         parent = rel["parent"]
         field_config = rel.get("field_config", {})
 
-        def make_update_child(child=child, parent=parent, field_config=field_config):
+        def make_update_child(child=child, parent=parent, field_config=field_config, query_engine=query_engine):
             async def update_child(e):
                 ftype = field_config.get("type")
 
@@ -1579,10 +1577,9 @@ def bind_parent_relations(
                     if dynamic_query and parent_val:
                         # Execute dynamic query to fetch options or current value
                         options = await _execute_dynamic_query_for_options(
-                            dynamic_query, parent_val, child
+                            dynamic_query, parent_val, child, query_engine=query_engine
                         )
 
-                        # If static options are defined in config, and the dynamic
                         # query returned a single value that is one of the static
                         # options, treat the dynamic result as the selected value
                         # instead of replacing the whole options list. This keeps
@@ -1630,7 +1627,7 @@ def bind_parent_relations(
                     if dynamic_query and parent_val:
                         # Execute dynamic query to fetch value
                         value = await _execute_dynamic_query(
-                            dynamic_query, parent_val, child, dynamic_column
+                            dynamic_query, parent_val, child, dynamic_column, query_engine=query_engine
                         )
                         if value is not None:
                             widget.value = value
@@ -1658,13 +1655,6 @@ def bind_parent_relations(
 
         # Store update handler in a registry for manual triggering
         update_handler = make_update_child()
-
-        # Store in GlobalRegistry under a key like "task_selector_children_updaters"
-        # This allows manual triggering when programmatically setting parent value
-        parent_updaters_key = f"{parent}_children_updaters"
-        parent_updaters = GlobalRegistry.get(parent_updaters_key) or []
-        parent_updaters.append({"child": child, "handler": update_handler})
-        GlobalRegistry.set(parent_updaters_key, parent_updaters)
 
         # Attach listener if parent exists.
         # Try several possible event names (NiceGUI components differ across versions)
@@ -1894,338 +1884,3 @@ def render_markdown_card(filename: str) -> None:
     with ui.card().classes("w-full h-full my-4 p-0 flex flex-col"):
         ui.markdown(content).classes("flex-1 w-full h-full p-6 overflow-auto")
 
-
-# ===== GENERIC TAB PANEL BUILDERS =====
-
-
-def add_generic_save_button(
-    save_data,
-    fields,
-    widgets,
-    custom_handlers=None,
-    on_success_callback=None,
-    additional_kwargs=None,
-    button_classes="mt-2",
-):
-    """
-    Generic save button that handles both standard DB operations and custom handlers.
-
-    Args:
-        save_data: SaveData object with function name and display info
-        fields: List of field configs
-        widgets: Dict of widget instances
-        custom_handlers: Optional dict mapping function names to handler functions
-        on_success_callback: Optional async callback to run after successful save
-        additional_kwargs: Optional dict of extra kwargs to pass to the DB function (e.g., table_name, pk_data)
-        button_classes: CSS classes to apply to the button (default: "mt-2")
-    """
-
-    async def on_save():
-        # Import globals from the global registry
-
-        LOG = GlobalRegistry.get("LOG")
-        QE = GlobalRegistry.get("QE")
-        DO = GlobalRegistry.get("DO")
-
-        if not QE:
-            ui.notify("Query engine not initialized", color="negative")
-            return
-
-        required_fields = [f["name"] for f in fields if not f.get("optional", False)]
-        if not check_input(widgets, required_fields):
-            return
-
-        func_name = save_data.function
-
-        # Check if this is a custom handler (e.g., DevOps operations)
-        if custom_handlers and func_name in custom_handlers:
-            handler = custom_handlers[func_name]
-            # Check if handler is async
-            import asyncio
-
-            if asyncio.iscoroutinefunction(handler):
-                state, msg = await handler(widgets=widgets)
-            else:
-                state, msg = handler(widgets=widgets)
-            col = "positive" if state else "negative"
-            ui.notify(msg, color=col)
-            if state and on_success_callback:
-                await on_success_callback()
-            return
-
-        # Standard database operation
-        kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
-
-        # Convert any single-item list in kwargs to a string
-        for k, v in kwargs.items():
-            if isinstance(v, list):
-                if len(v) == 1:
-                    kwargs[k] = v[0]
-                elif len(v) > 1:
-                    ui.notify(
-                        f"Field '{k}' has multiple values: {v}",
-                        color="negative",
-                    )
-                    if LOG:
-                        LOG.warning(f"Field '{k}' has multiple values: {v}")
-                    return
-
-        # Add any additional kwargs (e.g., table_name, pk_data for query editor)
-        if additional_kwargs:
-            kwargs.update(additional_kwargs)
-
-        # Special-case: Forms often provide a 'task_selector' value like "Title (ID: 5)".
-        if func_name == "delete_task":
-            sel = kwargs.get("task_selector") or kwargs.get("task")
-            if sel:
-                try:
-                    task_id_val = extract_id_from_text(
-                        str(sel), pattern=r"\(ID:\s*(\d+)\)"
-                    )
-                except Exception:
-                    task_id_val = None
-
-                if task_id_val is not None:
-                    # Replace kwargs with expected parameter name
-                    kwargs.pop("task_selector", None)
-                    kwargs.pop("task", None)
-                    kwargs["task_id"] = task_id_val
-
-        # Log function call for easier debugging
-        if LOG:
-            try:
-                LOG.info(
-                    f"Calling DB function '{func_name}' with kwargs: {dict(kwargs)}",
-                )
-            except Exception:
-                pass
-
-        # Safety: require explicit confirmation for destructive actions
-        if func_name == "delete_task":
-            confirm = kwargs.get("confirm_delete")
-            confirmed = False
-            if isinstance(confirm, str):
-                confirmed = confirm.strip().lower() in ("1", "true", "yes", "on")
-            else:
-                confirmed = bool(confirm)
-
-            if not confirmed:
-                ui.notify(
-                    "Please confirm deletion (toggle 'Confirm Deletion') before deleting.",
-                    color="warning",
-                )
-                if LOG:
-                    LOG.warning(
-                        "Attempted delete_task without confirmation; aborting.",
-                    )
-                return
-
-            # Ensure numeric task_id present (we may have extracted it earlier)
-            if "task_id" not in kwargs:
-                ui.notify("Could not determine task id to delete", color="negative")
-                if LOG:
-                    LOG.error("delete_task called without task_id")
-                return
-
-        await QE.function_db(func_name, **kwargs)
-
-        # If customer add/update, regenerate DevOps table
-        # Only perform DevOps update when there are DevOps customers/connections configured
-        if func_name in ["insert_customer", "update_customer"]:
-            if DO:
-                has_connections = False
-                try:
-                    mgr = getattr(DO, "manager", None)
-                    if mgr is not None and getattr(mgr, "clients", None):
-                        clients = mgr.clients
-                        if isinstance(clients, dict):
-                            has_connections = len(clients) > 0
-                        else:
-                            has_connections = bool(clients)
-                except Exception:
-                    has_connections = False
-
-                if has_connections:
-                    if LOG:
-                        LOG.info("Regenerating DevOps data...")
-                    ui.notify(
-                        "Regenerating DevOps data... This may take a few moments.",
-                        color="info",
-                    )
-                    await DO.update_devops(incremental=True)
-                else:
-                    if LOG:
-                        LOG.info(
-                            "No DevOps customers configured; skipping DevOps regeneration.",
-                        )
-
-        msg_1, msg_2 = print_success(
-            save_data.main_action,
-            widgets[save_data.main_param].value,
-            save_data.secondary_action,
-            widgets=widgets,
-        )
-        if LOG:
-            LOG.info(msg_1)
-            LOG.info(msg_2)
-
-        if on_success_callback:
-            await on_success_callback()
-
-    ui.button(save_data.button_name, on_click=on_save).classes(button_classes)
-
-
-def build_generic_tab_panel(
-    entity_name: str,
-    tab_type: str,
-    container_dict: dict,
-    config_source: dict,
-    data_prep_func: Optional[Callable] = None,
-    custom_handlers: dict | None = None,
-    layout_builder: Optional[Callable] = None,
-    on_success_callback: Optional[Callable] = None,
-    render_functions: dict | None = None,
-    container_size: str = "md",
-) -> dict:
-    """Generic tab panel builder that handles all common logic.
-
-    Args:
-        entity_name: Name of entity in config (e.g., "customer", "project")
-        tab_type: Type of tab (e.g., "Add", "Update", "Disable")
-        container_dict: Dictionary storing tab containers (mutated in place)
-        config_source: The config dict to use (config_ui or config_devops_ui)
-        data_prep_func: Optional function to prepare data sources
-        custom_handlers: Optional dict of custom save handlers
-        layout_builder: Optional custom layout building function
-        on_success_callback: Optional async callback after successful save
-        render_functions: Optional dict of render functions for html type fields
-        container_size: Container size name from UI_STYLES (e.g., "xs", "sm", "md", "lg", "xl", "xxl", "full")
-
-    Returns:
-        Dictionary of created widget instances
-    """
-
-    # Container management
-    container = container_dict.get(tab_type)
-    if container is None:
-        container = ui.element()
-        container_dict[tab_type] = container
-    container.clear()
-
-    # Load config
-    entity_config = config_source[entity_name][tab_type.lower()]
-    fields = entity_config["fields"]
-    action = entity_config["action"]
-
-    # Get container width from styling config
-    max_width = UI_STYLES.get_container_width(container_size)
-    card_classes = f"{UI_STYLES.get_layout_classes('card')} max-w-{max_width}xl"
-
-    with container:
-        with ui.card().classes(card_classes):
-            # Prepare data sources
-            data_sources = {}
-            if data_prep_func:
-                data_sources = data_prep_func(tab_type, fields)
-
-            # Assign dynamic options
-            if data_sources:
-                assign_dynamic_options(fields, data_sources=data_sources)
-
-            # Build layout based on YAML structure
-            widgets = {}
-            rows_config = entity_config.get("rows")
-            columns_config = entity_config.get("columns")
-            pending_relations = []
-
-            if rows_config:
-                # Layout with multiple rows
-                # First pass: check if ANY row has wide widgets using UI_STYLES
-                has_wide_layout = False
-                for row_fields in rows_config:
-                    for field_name in row_fields:
-                        field_config = next(
-                            (f for f in fields if f["name"] == field_name), None
-                        )
-                        if field_config and UI_STYLES.is_wide_widget(
-                            field_config.get("type")
-                        ):
-                            has_wide_layout = True
-                            break
-                    if has_wide_layout:
-                        break
-
-                with ui.column().classes(UI_STYLES.get_layout_classes("form_column")):
-                    for row_fields in rows_config:
-                        # Get field configs for this row, preserving the order from row_fields
-                        row_field_configs = []
-                        for field_name in row_fields:
-                            field_config = next(
-                                (f for f in fields if f["name"] == field_name), None
-                            )
-                            if field_config:
-                                row_field_configs.append(field_config)
-
-                        is_single_field = len(row_field_configs) == 1
-
-                        with ui.row().classes(UI_STYLES.get_layout_classes("form_row")):
-                            # Determine widget size based on layout mode
-                            if has_wide_layout or is_single_field:
-                                # Wide layout mode: all widgets use full width with flex
-                                widget_size = "full"
-                            else:
-                                # Standard layout mode: widgets use their default sizes
-                                widget_size = None  # Will be determined per widget type
-
-                            _, rels = make_input_row(
-                                row_field_configs,
-                                layout_mode=widget_size,
-                                widgets=widgets,
-                                defer_parent_wiring=True,
-                                render_functions=render_functions,
-                            )
-                            pending_relations.extend(rels)
-            elif columns_config:
-                # Layout with multiple columns
-                with ui.row():
-                    for col_fields in columns_config:
-                        with ui.column():
-                            # Get field configs for this column, preserving the order from col_fields
-                            col_field_configs = []
-                            for field_name in col_fields:
-                                field_config = next(
-                                    (f for f in fields if f["name"] == field_name), None
-                                )
-                                if field_config:
-                                    col_field_configs.append(field_config)
-
-                            _, rels = make_input_row(
-                                col_field_configs,
-                                widgets=widgets,
-                                defer_parent_wiring=True,
-                                render_functions=render_functions,
-                            )
-                            pending_relations.extend(rels)
-            elif layout_builder:
-                # Custom layout builder (fallback for complex cases)
-                widgets = layout_builder(fields, entity_config)
-            else:
-                # Default simple column layout
-                with ui.column():
-                    make_input_row(
-                        fields, widgets=widgets, render_functions=render_functions
-                    )
-
-            # Bind parent relations if we deferred them
-            if pending_relations:
-                bind_parent_relations(
-                    widgets, pending_relations, render_functions, data_sources
-                )
-
-            # Add save button
-            save_data = SaveData(**action)
-            add_generic_save_button(
-                save_data, fields, widgets, custom_handlers, on_success_callback
-            )
-
-    return widgets

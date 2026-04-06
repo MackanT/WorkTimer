@@ -7,35 +7,10 @@ import asyncio
 import logging
 import datetime
 
-from nicegui import ui
-
-
-# Global registry for shared instances
 
 # Module-level flag: only one DevOpsEngine may ever run scheduled refresh tasks.
 # Prevents duplicate tasks when multiple browser tabs reconnect simultaneously.
 _devops_scheduled_started: bool = False
-
-
-class GlobalRegistry:
-    """Registry for shared application instances."""
-
-    _instances = {}
-
-    @classmethod
-    def set(cls, name: str, instance):
-        """Set a global instance."""
-        cls._instances[name] = instance
-
-    @classmethod
-    def get(cls, name: str, default=None):
-        """Get a global instance."""
-        return cls._instances.get(name, default)
-
-    @classmethod
-    def clear(cls):
-        """Clear all instances."""
-        cls._instances.clear()
 
 
 @dataclass
@@ -265,18 +240,6 @@ class DevOpsEngine:
             )
             self.log.info(f"DevOps dataframe loaded with {len(self.df)} rows")
 
-            # If a UI rebuild callback is registered, trigger it so UI widgets (dropdowns)
-            # that depend on DevOps data can refresh their options.
-            try:
-                rebuild = GlobalRegistry.get("devops_rebuild_forms")
-                if rebuild:
-                    rebuild()
-                    self.log.info(
-                        "Triggered devops UI rebuild callback after loading devops df"
-                    )
-            except Exception as e:
-                self.log.error(f"Error triggering devops UI rebuild callback: {e}")
-
     def devops_helper(self, func_name: str, customer_name: str, *args, **kwargs):
         if not self.manager:
             self.log.warning("No DevOps connections available")
@@ -331,145 +294,3 @@ class DevOpsEngine:
         if not status:
             self.log.error(msg)
         return status, msg
-
-
-class UIRefreshEngine:
-    """Engine for handling UI refresh tasks and active timer detection."""
-
-    def __init__(self, query_engine: QueryEngine, log_engine: logging.Logger):
-        self.query_engine = query_engine
-        self.log = log_engine
-        self._refresh_tasks = []
-        self._ui_refresh_callback = None
-        self._tab_indicator_callback = None
-        self._active_timers_count = 0
-
-    def set_ui_refresh_callback(self, callback):
-        """Set the callback function to refresh the Time Tracking UI."""
-        self._ui_refresh_callback = callback
-
-    def set_tab_indicator_callback(self, callback):
-        """Set the callback function to update the tab indicator."""
-        self._tab_indicator_callback = callback
-
-    async def start_ui_refresh(self):
-        """Start the UI refresh task."""
-        self.log.info("Starting UI refresh task")
-
-        async def ui_refresh_loop():
-            while True:
-                try:
-                    await asyncio.sleep(30)  # Refresh every 30 seconds
-
-                    # Check for active timers
-                    active_count = await self._check_active_timers()
-
-                    # Update tab indicator if count changed
-                    if active_count != self._active_timers_count:
-                        self._active_timers_count = active_count
-                        if self._tab_indicator_callback:
-                            self._tab_indicator_callback(active_count > 0)
-
-                    # Refresh UI if callback is set
-                    if self._ui_refresh_callback:
-                        await self._ui_refresh_callback()
-
-                except Exception as e:
-                    self.log.error(f"Error in UI refresh loop: {e}")
-                except asyncio.CancelledError:
-                    break
-
-        task = asyncio.create_task(ui_refresh_loop())
-        self._refresh_tasks.append(task)
-
-    async def _check_active_timers(self):
-        """Check how many active timers are running."""
-        try:
-            df = await self.query_engine.query_db(
-                "SELECT COUNT(*) as count FROM time WHERE end_time IS NULL"
-            )
-            count = df.iloc[0]["count"] if not df.empty else 0
-            return count
-        except Exception as e:
-            self.log.error(f"Error checking active timers: {e}")
-            return 0
-
-    def stop_ui_refresh(self):
-        """Stop all UI refresh tasks."""
-        for task in self._refresh_tasks:
-            task.cancel()
-        self._refresh_tasks.clear()
-
-    def trigger_ui_refresh(self) -> None:
-        """Schedule an immediate UI refresh (safe from sync code).
-
-        This will call the registered UI refresh callback once. If called from a
-        background thread (eg. DB worker), the coroutine will be scheduled on
-        the main NiceGUI event loop stored in GlobalRegistry["MAIN_LOOP"].
-        """
-        if not self._ui_refresh_callback:
-            self.log.warning(
-                "No UI refresh callback registered; skipping immediate refresh"
-            )
-            return
-
-        # Prefer scheduling onto the main loop if available (thread-safe)
-        main_loop = GlobalRegistry.get("MAIN_LOOP")
-        try:
-            if main_loop:
-                asyncio.run_coroutine_threadsafe(self._ui_refresh_callback(), main_loop)
-                self.log.info("Scheduled immediate UI refresh on main loop")
-            else:
-                # Fallback: try to create a task on current loop (may raise if none)
-                asyncio.create_task(self._ui_refresh_callback())
-                self.log.info("Scheduled immediate UI refresh on current loop")
-        except Exception as e:
-            self.log.error(f"Error scheduling immediate UI refresh: {e}")
-
-    async def update_tab_indicator_now(self):
-        """Immediate check and update of the tab indicator."""
-        try:
-            active_count = await self._check_active_timers()
-            if self._tab_indicator_callback:
-                self._tab_indicator_callback(active_count > 0)
-        except Exception as e:
-            self.log.error(f"Error updating tab indicator now: {e}")
-
-    def trigger_tab_indicator_update(self) -> None:
-        """Schedule an immediate tab indicator update (safe from sync code)."""
-        main_loop = GlobalRegistry.get("MAIN_LOOP")
-        try:
-            if main_loop:
-                asyncio.run_coroutine_threadsafe(
-                    self.update_tab_indicator_now(), main_loop
-                )
-                self.log.info("Scheduled immediate tab indicator update on main loop")
-            else:
-                asyncio.create_task(self.update_tab_indicator_now())
-                self.log.info(
-                    "Scheduled immediate tab indicator update on current loop"
-                )
-        except Exception as e:
-            self.log.error(f"Error scheduling immediate tab indicator update: {e}")
-
-    def trigger_render(self) -> None:
-        """Schedule a full render of the Time Tracking UI (safe from sync code).
-
-        This is used when structural changes happen (new projects/customers) and
-        a full re-render is required rather than a light update.
-        """
-        render_func = GlobalRegistry.get("time_tracking_render_ui")
-        if not render_func:
-            self.log.warning("No render callback registered; skipping render")
-            return
-
-        main_loop = GlobalRegistry.get("MAIN_LOOP")
-        try:
-            if main_loop:
-                asyncio.run_coroutine_threadsafe(render_func(), main_loop)
-                self.log.info("Scheduled full UI render on main loop")
-            else:
-                asyncio.create_task(render_func())
-                self.log.info("Scheduled full UI render on current loop")
-        except Exception as e:
-            self.log.error(f"Error scheduling full UI render: {e}")

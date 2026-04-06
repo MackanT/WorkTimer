@@ -435,15 +435,7 @@ class Database:
             self.log_engine.info("Database loaded without errors!")
 
     def _update_ui(self, exception: str) -> None:
-        try:
-            from .globals import GlobalRegistry
-
-            UI = GlobalRegistry.get("UI")
-            if UI:
-                UI.trigger_render()
-                UI.trigger_tab_indicator_update()
-        except Exception as e:
-            self.log_engine.error(f"{exception}: {e}")
+        pass
 
     ### Time Table Operations ###
 
