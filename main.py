@@ -112,7 +112,7 @@ def main():
     ui.run(
         host="0.0.0.0",
         port=8080,
-        title="WorkTimer V5",
+        title="WorkTimer",
         favicon="icons/worktimer.ico",
         reload=False,  # Set to True for development hot-reload
         show=False,
