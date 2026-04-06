@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "worktimer"
-version = "4.0.2"
+version = "5.0.0"
 authors = [
   { name = "Marcus Toftås", email = "mackan.toftas@live.com" }
 ]
@@ -22,6 +22,8 @@ dependencies = [
     "markdown>=3.4.4",
     "bleach>=6.0.0",
     "markdownify>=1.2.0",
+    "setuptools>=80.10.2",
+    "pymdown-extensions>=10.21.2",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

@@ -11,7 +11,7 @@ import markdown as _markdown
 import bleach as _bleach
 from markdownify import markdownify as _markdownify
 
-from .globals import GlobalRegistry, SaveData
+from .globals import SaveData
 
 
 # ===== UI STYLE MANAGER =====
@@ -20,6 +20,8 @@ class UIStyles:
 
     _instance = None
     _styles = None
+    _resolved = None  # styles with ${key} placeholders resolved against theme
+    _theme_configured = False
 
     @classmethod
     def get_instance(cls):
@@ -36,6 +38,47 @@ class UIStyles:
             )
             with open(config_path, "r") as f:
                 UIStyles._styles = yaml.safe_load(f)
+            UIStyles._resolved = UIStyles._styles  # default: unresolved fallback
+
+    @classmethod
+    def configure_theme(cls, theme: dict) -> None:
+        """Resolve all ${key} placeholders in styles using the loaded theme.
+
+        Should be called once at app startup after the theme config is loaded.
+        Replaces ``${key}`` in any YAML string value with ``theme[key]``.
+
+        Example: ``"text-${muted}"`` with ``theme = {"muted": "slate-400"}``
+        becomes ``"text-slate-400"``.
+        """
+        if cls._theme_configured:
+            return
+        cls._theme_configured = True
+
+        # theme dict may be the full config_theme.yml (with "colors" key) or just the
+        # colors sub-dict — handle both.
+        flat_theme = theme.get("colors", theme) if isinstance(theme, dict) else {}
+
+        import re
+
+        def _resolve(value):
+            if isinstance(value, str):
+                return re.sub(
+                    r"\$\{(\w+)\}",
+                    lambda m: flat_theme.get(m.group(1), m.group(0)),
+                    value,
+                )
+            if isinstance(value, dict):
+                return {k: _resolve(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_resolve(item) for item in value]
+            return value
+
+        cls._resolved = _resolve(cls._styles)
+
+    @property
+    def _active(self) -> dict:
+        """Return resolved styles if theme was configured, else raw styles."""
+        return UIStyles._resolved if UIStyles._resolved is not None else UIStyles._styles
 
     def get_widget_width(self, size_name: str) -> str:
         """Get widget width classes by size name.
@@ -46,8 +89,8 @@ class UIStyles:
         Returns:
             CSS classes string (e.g., 'w-64', 'w-full flex-1')
         """
-        return self._styles["widget_widths"].get(
-            size_name, self._styles["widget_widths"]["standard"]
+        return self._active["widget_widths"].get(
+            size_name, self._active["widget_widths"]["standard"]
         )
 
     def get_container_width(self, size_name: str) -> str:
@@ -59,8 +102,8 @@ class UIStyles:
         Returns:
             Width value for max-w-{value}xl (e.g., '4', '7')
         """
-        return self._styles["container_widths"].get(
-            size_name, self._styles["container_widths"]["md"]
+        return self._active["container_widths"].get(
+            size_name, self._active["container_widths"]["md"]
         )
 
     def get_layout_classes(self, layout_name: str) -> str:
@@ -72,7 +115,7 @@ class UIStyles:
         Returns:
             CSS classes string
         """
-        return self._styles["layouts"].get(layout_name, "")
+        return self._active["layouts"].get(layout_name, "")
 
     def get_widget_style(self, widget_type: str, mode: str = "standard") -> dict:
         """Get widget-specific styling.
@@ -84,7 +127,7 @@ class UIStyles:
         Returns:
             Dict with 'classes' and 'style' keys
         """
-        widget_config = self._styles["widget_styles"].get(widget_type, {})
+        widget_config = self._active["widget_styles"].get(widget_type, {})
 
         # If config has 'classes' key directly, return it as-is (simple style config)
         if "classes" in widget_config:
@@ -110,7 +153,7 @@ class UIStyles:
         Returns:
             Size name from widget_widths (e.g., 'standard', 'full')
         """
-        return self._styles["default_sizes"].get(widget_type, "standard")
+        return self._active["default_sizes"].get(widget_type, "standard")
 
     def is_wide_widget(self, widget_type: str) -> bool:
         """Check if widget type triggers wide layout mode.
@@ -121,7 +164,7 @@ class UIStyles:
         Returns:
             True if widget should trigger wide layout
         """
-        return widget_type in self._styles["wide_widget_types"]
+        return widget_type in self._active["wide_widget_types"]
 
     def get_card_classes(
         self, container_size: str = "md", layout_type: str = "card"
@@ -149,7 +192,7 @@ class UIStyles:
         Returns:
             Inline CSS style string
         """
-        return self._styles.get("inline_styles", {}).get(module, {}).get(style_name, "")
+        return self._active.get("inline_styles", {}).get(module, {}).get(style_name, "")
 
 
 # Global instance
@@ -204,9 +247,10 @@ def render_and_sanitize_markdown(text: str) -> str:
     raw_html = _markdown.markdown(
         text,
         extensions=[
-            "extra",  # Includes fenced_code, tables, and more
-            "nl2br",  # Convert newlines to <br>
-            "sane_lists",  # Better list handling
+            "extra",
+            "nl2br",
+            "sane_lists",
+            "pymdownx.tilde",
         ],
     )
 
@@ -237,6 +281,7 @@ def render_and_sanitize_markdown(text: str) -> str:
         "strong",
         "em",
         "del",
+        "s",
         "ins",
     ]
     allowed_attrs = {
@@ -252,7 +297,8 @@ def render_and_sanitize_markdown(text: str) -> str:
         raw_html,
         tags=allowed_tags,
         attributes=allowed_attrs,
-        protocols=["http", "https", "mailto"],
+        protocols=["http", "https", "mailto", "data"],
+        strip=True,
     )
 
     # Return with dark mode styling
@@ -378,26 +424,9 @@ def parse_date_range(date_range_str: str) -> tuple[str | None, str | None]:
 # ===== DATA VALIDATION =====
 
 
-def is_dataframe_empty(df: Optional[pd.DataFrame]) -> bool:
-    """
-    Check if a DataFrame is None or empty.
-
-    Common pattern used throughout the codebase to validate query results.
-
-    Args:
-        df: DataFrame to check (can be None)
-
-    Returns:
-        True if df is None or empty, False if it has data
-    """
-    return df is None or df.empty
-
-
 def has_dataframe_data(df: Optional[pd.DataFrame]) -> bool:
     """
     Check if a DataFrame has data (not None and not empty).
-
-    Inverse of is_dataframe_empty() for positive logic conditions.
 
     Args:
         df: DataFrame to check (can be None)
@@ -430,8 +459,16 @@ def check_input(widgets: dict, required_fields: list[str]) -> bool:
         # Get widget value safely
         widget_value = _get_widget_value(widget)
 
-        # Check if the widget has a value
-        if not widget_value:
+        # Check if the widget has a value. Treat 0 and False as valid values.
+        missing = False
+        if widget_value is None:
+            missing = True
+        elif isinstance(widget_value, str) and widget_value.strip() == "":
+            missing = True
+        elif isinstance(widget_value, (list, tuple)) and len(widget_value) == 0:
+            missing = True
+
+        if missing:
             ui.notify(
                 f"{field.replace('_', ' ').title()} is required!",
                 color="negative",
@@ -574,7 +611,7 @@ def date_input(label: str, input_width: str = "w-64") -> ui.input:
     Returns:
         NiceGUI input widget with date picker
     """
-    with ui.input(label).props("readonly").classes(input_width) as date:
+    with ui.input(label).props("readonly outlined").classes(input_width) as date:
         with ui.menu().props("no-parent-event") as menu:
             with ui.date().bind_value(date):
                 with ui.row().classes("justify-end"):
@@ -747,6 +784,7 @@ def make_input_row(
     widgets: dict | None = None,
     defer_parent_wiring: bool = False,
     render_functions: dict | None = None,
+    query_engine=None,
 ) -> dict | tuple[dict, list]:
     """Create UI widgets for a list of field configurations.
 
@@ -796,11 +834,13 @@ def make_input_row(
                 default_val = options_val
 
         if ftype == "input":
-            created[fname] = ui.input(label).classes(widget_classes)
+            created[fname] = ui.input(label).props("outlined").classes(widget_classes)
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "text":
-            created[fname] = ui.textarea(label).classes(widget_classes)
+            created[fname] = (
+                ui.textarea(label).props("outlined").classes(widget_classes)
+            )
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "number":
@@ -808,9 +848,11 @@ def make_input_row(
             step = field.get("step", 0.1)
             # Format based on step: integers if step >= 1, else 1 decimal place
             number_format = "%.0f" if step >= 1 else "%.1f"
-            created[fname] = ui.number(
-                label, min=0, step=step, format=number_format
-            ).classes(widget_classes)
+            created[fname] = (
+                ui.number(label, min=0, step=step, format=number_format)
+                .props("outlined")
+                .classes(widget_classes)
+            )
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "date":
@@ -818,8 +860,10 @@ def make_input_row(
             if default_val is not None:
                 created[fname].value = default_val
         elif ftype == "datetime":
-            created[fname] = ui.input(label, placeholder="YYYY-MM-DD HH:MM:SS").classes(
-                widget_classes
+            created[fname] = (
+                ui.input(label, placeholder="YYYY-MM-DD HH:MM:SS")
+                .props("outlined")
+                .classes(widget_classes)
             )
             if default_val is not None:
                 created[fname].value = default_val
@@ -847,7 +891,9 @@ def make_input_row(
                 options = []
             # Check if with_input is specified in field config, default to True
             with_input = field.get("with_input", True)
-            select_widget = ui.select(options, label=label, with_input=with_input)
+            select_widget = ui.select(
+                options, label=label, with_input=with_input
+            ).props("outlined")
             # If with_input is enabled, check if custom values are allowed
             if with_input:
                 # allow_custom defaults to True for backwards compatibility
@@ -971,7 +1017,7 @@ def make_input_row(
         return out_widgets, pending_relations
 
     # Otherwise bind relations immediately (backwards compatible behavior)
-    bind_parent_relations(out_widgets, pending_relations, render_functions)
+    bind_parent_relations(out_widgets, pending_relations, render_functions, query_engine=query_engine)
     return out_widgets
 
 
@@ -1024,21 +1070,22 @@ def create_task_card(
     project = column_map.get("Project", "")
 
     # Add completion styling
-    card_classes = "w-full p-3 cursor-pointer"
+    card_classes = "w-full p-3 cursor-pointer rounded-md"
     card_style = "min-width: 320px; max-width: 400px;"
 
     if completed:
         card_classes += " opacity-75"
-        card_style += " border-left: 4px solid #4caf50;"
+        card_style += " border-left: 4px solid var(--q-positive);"
 
     with (
         ui.card()
+        .props("flat")
         .classes(card_classes)
         .style(card_style)
         .on("click", handle_card_click) as card
     ):
         # Top row: checkbox, title, edit-button
-        with ui.row().classes("w-full justify-between items-center mb-2"):
+        with ui.row().classes("w-full justify-between items-center mb-2 flex-nowrap"):
             checkbox = ui.checkbox(
                 value=completed, on_change=handle_checkbox_change
             ).classes("flex-none")
@@ -1046,7 +1093,7 @@ def create_task_card(
 
             # Title in the middle, expandable
             ui.label(title).classes(
-                "flex-grow text-sm font-medium text-white truncate mx-2"
+                "flex-grow text-sm font-medium text-white truncate mx-2 min-w-0"
             )
 
             edit_button = (
@@ -1103,10 +1150,10 @@ def create_task_card(
 
         # Third row: Big description box (fixed height for uniform cards)
         with ui.element().classes("w-full mb-2"):
-            ui.label("Description:").classes("text-xs text-gray-400 mb-1")
+            ui.label("Description:").classes(UI_STYLES.get_layout_classes("muted_text_xs") + " mb-1")
             with (
                 ui.element()
-                .classes("w-full p-2 bg-gray-800 rounded")
+                .classes("w-full p-2 bg-slate-800 rounded")
                 .style("height: 100px; overflow-y: auto;")
             ):
                 if description:
@@ -1115,11 +1162,11 @@ def create_task_card(
                         "white-space: pre-wrap; line-height: 1.4;"
                     )
                 else:
-                    ui.label("No description").classes("text-sm text-gray-500 italic")
+                    ui.label("No description").classes("text-sm " + UI_STYLES.get_layout_classes("muted_text") + " italic")
 
         # Fourth row: status, priority, dates in a compact grid
         with ui.row().classes(
-            "w-full items-center justify-between text-xs text-gray-300"
+            "w-full items-center justify-between text-xs " + UI_STYLES.get_layout_classes("muted_text")
         ):
             # Left side: Status and Priority
             with ui.row().classes("items-center gap-2"):
@@ -1149,12 +1196,12 @@ def create_task_card(
             # Right side: Dates
             with ui.column().classes("items-end"):
                 if due_date:
-                    ui.label(f"Due: {due_date}").classes("text-xs text-gray-400")
+                    ui.label(f"Due: {due_date}").classes(UI_STYLES.get_layout_classes("muted_text_xs"))
                 if created:
                     # Format created date to be more compact
                     created_short = created.split(" ")[0] if " " in created else created
                     ui.label(f"Created: {created_short}").classes(
-                        "text-xs text-gray-500"
+                        UI_STYLES.get_layout_classes("muted_text_xs")
                     )
 
     return card
@@ -1389,7 +1436,7 @@ def _update_html_preview(
 
 
 async def _execute_dynamic_query(
-    query: str, parent_val: str, child: str, column: int = 0
+    query: str, parent_val: str, child: str, column: int = 0, query_engine=None
 ):
     """Execute a dynamic query with parent value substitution.
 
@@ -1398,11 +1445,12 @@ async def _execute_dynamic_query(
         parent_val: Value to substitute in query
         child: Child widget name (for error logging)
         column: Column index to extract from result
+        query_engine: QueryEngine instance to run the query
 
     Returns:
         Query result value or None if query fails
     """
-    QE = GlobalRegistry.get("QE")
+    QE = query_engine
     if not QE:
         return None
 
@@ -1419,15 +1467,12 @@ async def _execute_dynamic_query(
                 else result_df.iloc[0, 0]
             )
         return None
-    except Exception as e:
-        LOG = GlobalRegistry.get("LOG")
-        if LOG:
-            LOG.error(f"Dynamic query failed for {child}: {e}")
+    except Exception:
         return None
 
 
 async def _execute_dynamic_query_for_options(
-    query: str, parent_val: str, child: str
+    query: str, parent_val: str, child: str, query_engine=None
 ) -> list:
     """Execute a dynamic query to fetch options for a select field.
 
@@ -1435,11 +1480,12 @@ async def _execute_dynamic_query_for_options(
         query: SQL query with {parent_value} placeholder
         parent_val: Value to substitute in query
         child: Child widget name (for error logging)
+        query_engine: QueryEngine instance to run the query
 
     Returns:
         List of options or empty list if query fails
     """
-    QE = GlobalRegistry.get("QE")
+    QE = query_engine
     if not QE:
         return []
 
@@ -1452,10 +1498,7 @@ async def _execute_dynamic_query_for_options(
             # Assume first column contains the options
             return result_df.iloc[:, 0].tolist()
         return []
-    except Exception as e:
-        LOG = GlobalRegistry.get("LOG")
-        if LOG:
-            LOG.error(f"Dynamic query failed for {child}: {e}")
+    except Exception:
         return []
 
 
@@ -1464,6 +1507,7 @@ def bind_parent_relations(
     pending_relations: list,
     render_functions: dict = None,
     data_sources: dict = None,
+    query_engine=None,
 ):
     """Bind parent->child update handlers for pending relations.
 
@@ -1513,7 +1557,7 @@ def bind_parent_relations(
         parent = rel["parent"]
         field_config = rel.get("field_config", {})
 
-        def make_update_child(child=child, parent=parent, field_config=field_config):
+        def make_update_child(child=child, parent=parent, field_config=field_config, query_engine=query_engine):
             async def update_child(e):
                 ftype = field_config.get("type")
 
@@ -1533,10 +1577,9 @@ def bind_parent_relations(
                     if dynamic_query and parent_val:
                         # Execute dynamic query to fetch options or current value
                         options = await _execute_dynamic_query_for_options(
-                            dynamic_query, parent_val, child
+                            dynamic_query, parent_val, child, query_engine=query_engine
                         )
 
-                        # If static options are defined in config, and the dynamic
                         # query returned a single value that is one of the static
                         # options, treat the dynamic result as the selected value
                         # instead of replacing the whole options list. This keeps
@@ -1584,7 +1627,7 @@ def bind_parent_relations(
                     if dynamic_query and parent_val:
                         # Execute dynamic query to fetch value
                         value = await _execute_dynamic_query(
-                            dynamic_query, parent_val, child, dynamic_column
+                            dynamic_query, parent_val, child, dynamic_column, query_engine=query_engine
                         )
                         if value is not None:
                             widget.value = value
@@ -1612,13 +1655,6 @@ def bind_parent_relations(
 
         # Store update handler in a registry for manual triggering
         update_handler = make_update_child()
-
-        # Store in GlobalRegistry under a key like "task_selector_children_updaters"
-        # This allows manual triggering when programmatically setting parent value
-        parent_updaters_key = f"{parent}_children_updaters"
-        parent_updaters = GlobalRegistry.get(parent_updaters_key) or []
-        parent_updaters.append({"child": child, "handler": update_handler})
-        GlobalRegistry.set(parent_updaters_key, parent_updaters)
 
         # Attach listener if parent exists.
         # Try several possible event names (NiceGUI components differ across versions)
@@ -1848,338 +1884,3 @@ def render_markdown_card(filename: str) -> None:
     with ui.card().classes("w-full h-full my-4 p-0 flex flex-col"):
         ui.markdown(content).classes("flex-1 w-full h-full p-6 overflow-auto")
 
-
-# ===== GENERIC TAB PANEL BUILDERS =====
-
-
-def add_generic_save_button(
-    save_data,
-    fields,
-    widgets,
-    custom_handlers=None,
-    on_success_callback=None,
-    additional_kwargs=None,
-    button_classes="mt-2",
-):
-    """
-    Generic save button that handles both standard DB operations and custom handlers.
-
-    Args:
-        save_data: SaveData object with function name and display info
-        fields: List of field configs
-        widgets: Dict of widget instances
-        custom_handlers: Optional dict mapping function names to handler functions
-        on_success_callback: Optional async callback to run after successful save
-        additional_kwargs: Optional dict of extra kwargs to pass to the DB function (e.g., table_name, pk_data)
-        button_classes: CSS classes to apply to the button (default: "mt-2")
-    """
-
-    async def on_save():
-        # Import globals from the global registry
-
-        LOG = GlobalRegistry.get("LOG")
-        QE = GlobalRegistry.get("QE")
-        DO = GlobalRegistry.get("DO")
-
-        if not QE:
-            ui.notify("Query engine not initialized", color="negative")
-            return
-
-        required_fields = [f["name"] for f in fields if not f.get("optional", False)]
-        if not check_input(widgets, required_fields):
-            return
-
-        func_name = save_data.function
-
-        # Check if this is a custom handler (e.g., DevOps operations)
-        if custom_handlers and func_name in custom_handlers:
-            handler = custom_handlers[func_name]
-            # Check if handler is async
-            import asyncio
-
-            if asyncio.iscoroutinefunction(handler):
-                state, msg = await handler(widgets=widgets)
-            else:
-                state, msg = handler(widgets=widgets)
-            col = "positive" if state else "negative"
-            ui.notify(msg, color=col)
-            if state and on_success_callback:
-                await on_success_callback()
-            return
-
-        # Standard database operation
-        kwargs = {f["name"]: widgets[f["name"]].value for f in fields}
-
-        # Convert any single-item list in kwargs to a string
-        for k, v in kwargs.items():
-            if isinstance(v, list):
-                if len(v) == 1:
-                    kwargs[k] = v[0]
-                elif len(v) > 1:
-                    ui.notify(
-                        f"Field '{k}' has multiple values: {v}",
-                        color="negative",
-                    )
-                    if LOG:
-                        LOG.warning(f"Field '{k}' has multiple values: {v}")
-                    return
-
-        # Add any additional kwargs (e.g., table_name, pk_data for query editor)
-        if additional_kwargs:
-            kwargs.update(additional_kwargs)
-
-        # Special-case: Forms often provide a 'task_selector' value like "Title (ID: 5)".
-        if func_name == "delete_task":
-            sel = kwargs.get("task_selector") or kwargs.get("task")
-            if sel:
-                try:
-                    task_id_val = extract_id_from_text(
-                        str(sel), pattern=r"\(ID:\s*(\d+)\)"
-                    )
-                except Exception:
-                    task_id_val = None
-
-                if task_id_val is not None:
-                    # Replace kwargs with expected parameter name
-                    kwargs.pop("task_selector", None)
-                    kwargs.pop("task", None)
-                    kwargs["task_id"] = task_id_val
-
-        # Log function call for easier debugging
-        if LOG:
-            try:
-                LOG.info(
-                    f"Calling DB function '{func_name}' with kwargs: {dict(kwargs)}",
-                )
-            except Exception:
-                pass
-
-        # Safety: require explicit confirmation for destructive actions
-        if func_name == "delete_task":
-            confirm = kwargs.get("confirm_delete")
-            confirmed = False
-            if isinstance(confirm, str):
-                confirmed = confirm.strip().lower() in ("1", "true", "yes", "on")
-            else:
-                confirmed = bool(confirm)
-
-            if not confirmed:
-                ui.notify(
-                    "Please confirm deletion (toggle 'Confirm Deletion') before deleting.",
-                    color="warning",
-                )
-                if LOG:
-                    LOG.warning(
-                        "Attempted delete_task without confirmation; aborting.",
-                    )
-                return
-
-            # Ensure numeric task_id present (we may have extracted it earlier)
-            if "task_id" not in kwargs:
-                ui.notify("Could not determine task id to delete", color="negative")
-                if LOG:
-                    LOG.error("delete_task called without task_id")
-                return
-
-        await QE.function_db(func_name, **kwargs)
-
-        # If customer add/update, regenerate DevOps table
-        # Only perform DevOps update when there are DevOps customers/connections configured
-        if func_name in ["insert_customer", "update_customer"]:
-            if DO:
-                has_connections = False
-                try:
-                    mgr = getattr(DO, "manager", None)
-                    if mgr is not None and getattr(mgr, "clients", None):
-                        clients = mgr.clients
-                        if isinstance(clients, dict):
-                            has_connections = len(clients) > 0
-                        else:
-                            has_connections = bool(clients)
-                except Exception:
-                    has_connections = False
-
-                if has_connections:
-                    if LOG:
-                        LOG.info("Regenerating DevOps data...")
-                    ui.notify(
-                        "Regenerating DevOps data... This may take a few moments.",
-                        color="info",
-                    )
-                    await DO.update_devops(incremental=True)
-                else:
-                    if LOG:
-                        LOG.info(
-                            "No DevOps customers configured; skipping DevOps regeneration.",
-                        )
-
-        msg_1, msg_2 = print_success(
-            save_data.main_action,
-            widgets[save_data.main_param].value,
-            save_data.secondary_action,
-            widgets=widgets,
-        )
-        if LOG:
-            LOG.info(msg_1)
-            LOG.info(msg_2)
-
-        if on_success_callback:
-            await on_success_callback()
-
-    ui.button(save_data.button_name, on_click=on_save).classes(button_classes)
-
-
-def build_generic_tab_panel(
-    entity_name: str,
-    tab_type: str,
-    container_dict: dict,
-    config_source: dict,
-    data_prep_func: Optional[Callable] = None,
-    custom_handlers: dict | None = None,
-    layout_builder: Optional[Callable] = None,
-    on_success_callback: Optional[Callable] = None,
-    render_functions: dict | None = None,
-    container_size: str = "md",
-) -> dict:
-    """Generic tab panel builder that handles all common logic.
-
-    Args:
-        entity_name: Name of entity in config (e.g., "customer", "project")
-        tab_type: Type of tab (e.g., "Add", "Update", "Disable")
-        container_dict: Dictionary storing tab containers (mutated in place)
-        config_source: The config dict to use (config_ui or config_devops_ui)
-        data_prep_func: Optional function to prepare data sources
-        custom_handlers: Optional dict of custom save handlers
-        layout_builder: Optional custom layout building function
-        on_success_callback: Optional async callback after successful save
-        render_functions: Optional dict of render functions for html type fields
-        container_size: Container size name from UI_STYLES (e.g., "xs", "sm", "md", "lg", "xl", "xxl", "full")
-
-    Returns:
-        Dictionary of created widget instances
-    """
-
-    # Container management
-    container = container_dict.get(tab_type)
-    if container is None:
-        container = ui.element()
-        container_dict[tab_type] = container
-    container.clear()
-
-    # Load config
-    entity_config = config_source[entity_name][tab_type.lower()]
-    fields = entity_config["fields"]
-    action = entity_config["action"]
-
-    # Get container width from styling config
-    max_width = UI_STYLES.get_container_width(container_size)
-    card_classes = f"{UI_STYLES.get_layout_classes('card')} max-w-{max_width}xl"
-
-    with container:
-        with ui.card().classes(card_classes):
-            # Prepare data sources
-            data_sources = {}
-            if data_prep_func:
-                data_sources = data_prep_func(tab_type, fields)
-
-            # Assign dynamic options
-            if data_sources:
-                assign_dynamic_options(fields, data_sources=data_sources)
-
-            # Build layout based on YAML structure
-            widgets = {}
-            rows_config = entity_config.get("rows")
-            columns_config = entity_config.get("columns")
-            pending_relations = []
-
-            if rows_config:
-                # Layout with multiple rows
-                # First pass: check if ANY row has wide widgets using UI_STYLES
-                has_wide_layout = False
-                for row_fields in rows_config:
-                    for field_name in row_fields:
-                        field_config = next(
-                            (f for f in fields if f["name"] == field_name), None
-                        )
-                        if field_config and UI_STYLES.is_wide_widget(
-                            field_config.get("type")
-                        ):
-                            has_wide_layout = True
-                            break
-                    if has_wide_layout:
-                        break
-
-                with ui.column().classes(UI_STYLES.get_layout_classes("form_column")):
-                    for row_fields in rows_config:
-                        # Get field configs for this row, preserving the order from row_fields
-                        row_field_configs = []
-                        for field_name in row_fields:
-                            field_config = next(
-                                (f for f in fields if f["name"] == field_name), None
-                            )
-                            if field_config:
-                                row_field_configs.append(field_config)
-
-                        is_single_field = len(row_field_configs) == 1
-
-                        with ui.row().classes(UI_STYLES.get_layout_classes("form_row")):
-                            # Determine widget size based on layout mode
-                            if has_wide_layout or is_single_field:
-                                # Wide layout mode: all widgets use full width with flex
-                                widget_size = "full"
-                            else:
-                                # Standard layout mode: widgets use their default sizes
-                                widget_size = None  # Will be determined per widget type
-
-                            _, rels = make_input_row(
-                                row_field_configs,
-                                layout_mode=widget_size,
-                                widgets=widgets,
-                                defer_parent_wiring=True,
-                                render_functions=render_functions,
-                            )
-                            pending_relations.extend(rels)
-            elif columns_config:
-                # Layout with multiple columns
-                with ui.row():
-                    for col_fields in columns_config:
-                        with ui.column():
-                            # Get field configs for this column, preserving the order from col_fields
-                            col_field_configs = []
-                            for field_name in col_fields:
-                                field_config = next(
-                                    (f for f in fields if f["name"] == field_name), None
-                                )
-                                if field_config:
-                                    col_field_configs.append(field_config)
-
-                            _, rels = make_input_row(
-                                col_field_configs,
-                                widgets=widgets,
-                                defer_parent_wiring=True,
-                                render_functions=render_functions,
-                            )
-                            pending_relations.extend(rels)
-            elif layout_builder:
-                # Custom layout builder (fallback for complex cases)
-                widgets = layout_builder(fields, entity_config)
-            else:
-                # Default simple column layout
-                with ui.column():
-                    make_input_row(
-                        fields, widgets=widgets, render_functions=render_functions
-                    )
-
-            # Bind parent relations if we deferred them
-            if pending_relations:
-                bind_parent_relations(
-                    widgets, pending_relations, render_functions, data_sources
-                )
-
-            # Add save button
-            save_data = SaveData(**action)
-            add_generic_save_button(
-                save_data, fields, widgets, custom_handlers, on_success_callback
-            )
-
-    return widgets

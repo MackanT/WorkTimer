@@ -1,0 +1,22 @@
+colors:
+  primary: "#fbbf24" # amber-400
+  secondary: "#94a3b8" # slate-400
+  dark: "#1e293b" # slate-800
+  dark_page: "#0f172a" # slate-950
+  positive: "#34d399" # emerald-400
+  negative: "#f87171" # red-400
+  info: "#38bdf8" # sky-400
+  warning: "#fbbf24" # amber-400
+
+  # ── Tailwind class tokens (for use in .classes() strings) ──────────────────
+  # These are safe for f"text-{theme.get('accent')}" etc.
+  accent: "amber-400"       # = primary, Tailwind token
+  muted: "slate-400"        # = secondary, Tailwind token
+  divider: "slate-600"
+  toolbar_bg: "slate-800"   # = dark, Tailwind token
+  nav_bg: "slate-900"
+  border: "amber-500/30"
+  chip_bg: "slate-600"      # for tag/pill backgrounds (one shade lighter than toolbar)
+
+# ── Hex values for inline CSS / .style() strings ───────────────────────────
+  divider_hex: "#475569"    # = divider (slate-600)

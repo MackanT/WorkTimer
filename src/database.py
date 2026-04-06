@@ -61,57 +61,61 @@ class Database:
                 (
                     "weekly",
                     """
+                with current_period as (
+                    select
+                        t.customer_name
+                        ,t.project_name
+                        ,sum(t.total_time) as total_time
+                    from time t
+                    join dates d on d.date_key = t.date_key
+                    where d.year = cast(strftime('%Y', 'now') as integer)
+                        and d.week = cast(strftime('%W', 'now') as integer)
+                    group by t.customer_name, t.project_name
+                    having sum(t.total_time) > 0
+                )
                 select
-                     t.customer_name
-                    ,t.project_name
-                    ,round(sum(t.total_time), 2) as total_time
-                from time t
-                left join dates d on d.date_key = t.date_key
-                where d.year = cast(strftime('%Y', 'now') as integer)
-                    and d.week = (select week from dates where date = date('now') limit 1)
-                group by t.customer_name, t.project_name
-                having sum(t.total_time) > 0
-                union all
-                select '', '', ''
+                    customer_name
+                    ,project_name
+                    ,round(total_time, 2) as total_time
+                from current_period
+                union all select '', '', null
                 union all
                 select
-                     t.customer_name
-                    ,'total' as project_name
-                    ,round(sum(t.total_time), 2) as total_time
-                from time t
-                left join dates d on d.date_key = t.date_key
-                where d.year = cast(strftime('%Y', 'now') as integer)
-                    and d.week = (select week from dates where date = date('now') limit 1)
-                group by t.customer_name
-                having sum(t.total_time) > 0
+                    customer_name
+                    ,'total'
+                    ,round(sum(total_time), 2)
+                from current_period
+                group by customer_name
                 """,
                 ),
                 (
                     "monthly",
                     """
+                with current_period as (
+                    select
+                        t.customer_name
+                        ,t.project_name
+                        ,sum(t.total_time) as total_time
+                    from time t
+                    join dates d on d.date_key = t.date_key
+                    where d.year = cast(strftime('%Y', 'now') as integer)
+                        and d.month = cast(strftime('%m', 'now') as integer)
+                    group by t.customer_name, t.project_name
+                    having sum(t.total_time) > 0
+                )
                 select
-                     t.customer_name
-                    ,t.project_name
-                    ,round(sum(t.total_time), 2) as total_time
-                from time t
-                left join dates d on d.date_key = t.date_key
-                where d.year = cast(strftime('%Y', 'now') as integer)
-                    and d.month = cast(strftime('%m', 'now') as integer)
-                group by t.customer_name, t.project_name
-                having sum(t.total_time) > 0
-                union all
-                select '', '', ''
+                    customer_name
+                    ,project_name
+                    ,round(total_time, 2) as total_time
+                from current_period
+                union all select '', '', null
                 union all
                 select
-                     t.customer_name
-                    ,'total' as project_name
-                    ,round(sum(t.total_time), 2) as total_time
-                from time t
-                left join dates d on d.date_key = t.date_key
-                where d.year = cast(strftime('%Y', 'now') as integer)
-                   and d.month = cast(strftime('%m', 'now') as integer)
-                group by t.customer_name
-                having sum(t.total_time) > 0
+                    customer_name
+                    ,'total'
+                    ,round(sum(total_time), 2)
+                from current_period
+                group by customer_name
                 """,
                 ),
             ]
@@ -337,10 +341,10 @@ class Database:
                     )
 
             ## Query Snippets table
-            df_time = self.fetch_query(
+            df_query = self.fetch_query(
                 "select * from sqlite_master where type = 'table' and name = 'queries'"
             )
-            if df_time.empty:
+            if df_query.empty:
                 self.execute_query("""
                 create table if not exists queries (
                     query_name text unique,
@@ -362,6 +366,23 @@ class Database:
                     self.log_engine.info(
                         "Found blank Queries table, successfully populated it."
                     )
+
+            ## DevOps Table
+            df_devops = self.fetch_query(
+                "select * from sqlite_master where type = 'table' and name = 'devops'"
+            )
+            if df_devops.empty:
+                self.execute_query("""
+                create table if not exists devops (
+                    customer_name text,
+                    type text,
+                    id integer,
+                    title text,
+                    state text,
+                    parent_id integer
+                )
+                """)
+                self.log_engine.info("Table 'devops' created successfully.")
 
             ## Tasks table
             df_tasks = self.fetch_query(
@@ -412,6 +433,9 @@ class Database:
         finally:
             self.conn.commit()
             self.log_engine.info("Database loaded without errors!")
+
+    def _update_ui(self, exception: str) -> None:
+        pass
 
     ### Time Table Operations ###
 
@@ -471,6 +495,55 @@ class Database:
             self.log_engine.info(
                 f"Ending timer for customer: {customer_name} - project: {project_name}",
             )
+
+    def insert_manual_time_row(
+        self,
+        customer_id: int,
+        project_id: int,
+        start_time: str,
+        end_time: str,
+        git_id: int = None,
+        comment: str = None,
+    ):
+        """Insert a complete manual time entry with explicit start and end times.
+
+        Uses two steps to fire both DB triggers:
+          1. INSERT fires trigger_time_insert_row → fills customer_name, project_name, wage, bonus
+          2. UPDATE fires trigger_time_after_update → fills total_time, cost, user_bonus
+        """
+        def _parse(s):
+            for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    return datetime.strptime(s, fmt)
+                except ValueError:
+                    continue
+            raise ValueError(f"Unrecognized datetime format: {s!r}")
+
+        start_dt = _parse(start_time)
+        end_dt = _parse(end_time)
+        date_key = int(start_dt.strftime("%Y%m%d"))
+        start_iso = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+        end_iso = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor = self.conn.cursor()
+        # Step 1: INSERT — trigger fills customer_name, project_name, wage, bonus
+        cursor.execute(
+            "insert into time (customer_id, project_id, date_key, start_time, git_id, comment) values (?, ?, ?, ?, ?, ?)",
+            (customer_id, project_id, date_key, start_iso, git_id or 0, comment),
+        )
+        time_id = cursor.lastrowid
+        # Step 2: UPDATE end_time — trigger fills total_time, cost, user_bonus
+        cursor.execute(
+            "update time set end_time = ? where time_id = ?",
+            (end_iso, time_id),
+        )
+        self.conn.commit()
+
+        customer_name = self.get_customer_name(customer_id)
+        project_name = self.get_project_name(project_id)
+        self.log_engine.info(
+            f"Manual time entry: {customer_name} - {project_name}: {start_iso} → {end_iso}"
+        )
 
     def delete_time_row(self, customer_id: int, project_id: int) -> None:
         """
@@ -551,6 +624,7 @@ class Database:
             ),
         )
         self.log_engine.info(f"Inserted new customer '{customer_name}'")
+        self._update_ui("Error triggering UI refresh after inserting customer")
 
         # Get the new customer_id
         new_customer_id = self._get_value_from_db(
@@ -611,6 +685,7 @@ class Database:
         self.log_engine.info(
             f"Updated customer name from '{customer_name}' to '{new_customer_name}'",
         )
+        self._update_ui("Error triggering UI refresh after updating customer")
 
     def disable_customer(self, customer_name: str):
         self.execute_query(
@@ -622,6 +697,8 @@ class Database:
             (customer_name,),
         )
         self.log_engine.info(f"Disabled customer '{customer_name}'")
+
+        self._update_ui("Error triggering UI refresh after disabling customer")
 
     def enable_customer(self, customer_name: str):
         self.execute_query(
@@ -641,6 +718,8 @@ class Database:
             (customer_name, customer_name),
         )
         self.log_engine.info(f"Enabled customer '{customer_name}'")
+
+        self._update_ui("Error triggering UI refresh after enabling customer")
 
     ### Project Table Operations ###
 
@@ -672,6 +751,7 @@ class Database:
             self.log_engine.info(
                 f"Enabled project '{project_name}' for customer '{customer_name}'",
             )
+            self._update_ui("Error triggering UI refresh after enabling project")
         else:
             self.execute_query(
                 """
@@ -683,6 +763,7 @@ class Database:
             self.log_engine.info(
                 f"Inserted new project '{project_name}' for customer '{customer_name}'",
             )
+            self._update_ui("Error triggering UI refresh after inserting project")
 
     def update_project(
         self,
@@ -717,6 +798,8 @@ class Database:
             f"Updated project '{project_name}' for customer '{customer_name}'"
         )
 
+        self._update_ui("Error triggering UI refresh after updating project")
+
     def disable_project(self, customer_name: str, project_name: str):
         self.execute_query(
             """
@@ -732,6 +815,8 @@ class Database:
             f"Disabled project '{project_name}' for customer '{customer_name}'"
         )
 
+        self._update_ui("Error triggering UI refresh after disabling project")
+
     def enable_project(self, customer_name: str, project_name: str):
         self.execute_query(
             """
@@ -746,6 +831,8 @@ class Database:
         self.log_engine.info(
             f"Enabled project '{project_name}' for customer '{customer_name}'"
         )
+
+        self._update_ui("Error triggering UI refresh after enabling project")
 
     ### Bonus Table Operations ###
 
@@ -764,6 +851,8 @@ class Database:
         self.log_engine.info(
             f"Inserted new bonus percent {bonus_percent}% starting from {start_date}",
         )
+
+        self._update_ui("Error triggering UI refresh after inserting bonus")
 
     ### Task Table Operations ###
 
@@ -1269,6 +1358,14 @@ class Database:
                     ("query_name", "TEXT", None, None),
                     ("query_sql", "TEXT", None, None),
                     ("is_default", "BOOLEAN", None, None),
+                ],
+                "devops": [
+                    ("customer_name", "TEXT", None, None),
+                    ("type", "TEXT", None, None),
+                    ("id", "INTEGER", None, None),
+                    ("title", "TEXT", None, None),
+                    ("state", "TEXT", None, None),
+                    ("parent_id", "INTEGER", None, None),
                 ],
                 "tasks": [
                     ("task_id", "INTEGER", None, None),

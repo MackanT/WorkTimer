@@ -2,35 +2,15 @@
 from .devops import DevOpsManager
 from .database import Database
 from dataclasses import dataclass
+from typing import Optional
 import asyncio
 import logging
 import datetime
 
 
-# Global registry for shared instances
-class GlobalRegistry:
-    """Registry for shared application instances."""
-
-    _instances = {}
-
-    @classmethod
-    def set(cls, name: str, instance):
-        """Set a global instance."""
-        cls._instances[name] = instance
-
-    @classmethod
-    def get(cls, name: str, default=None):
-        """Get a global instance."""
-        return cls._instances.get(name, default)
-
-    @classmethod
-    def clear(cls):
-        """Clear all instances."""
-        cls._instances.clear()
-
-
-def generate_sync_sql(main_db, uploaded_path):
-    return Database.generate_sync_sql(main_db, uploaded_path)
+# Module-level flag: only one DevOpsEngine may ever run scheduled refresh tasks.
+# Prevents duplicate tasks when multiple browser tabs reconnect simultaneously.
+_devops_scheduled_started: bool = False
 
 
 @dataclass
@@ -40,68 +20,6 @@ class SaveData:
     main_param: str
     secondary_action: str
     button_name: str = "Save"
-
-
-@dataclass
-class DevOpsTag:
-    name: str = ""
-    icon: str = "bookmark"
-    color: str = "green"
-
-
-# Logging configuration constants
-LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)-9s :: %(message)s"
-LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-LOG_COLORS = {
-    "DEBUG": "grey",
-    "INFO": "white",
-    "WARNING": "orange",
-    "ERROR": "red",
-    "CRITICAL": "red",
-}
-
-
-def setup_logger(name: str, debug: bool = False) -> logging.Logger:
-    """Configure a standard Python logger with terminal output.
-
-    Args:
-        name: Logger name (e.g., "WorkTimer", "Database", "DevOps")
-        debug: Whether to enable DEBUG level logging
-
-    Returns:
-        Configured logger instance
-    """
-    logger = logging.getLogger(name)
-
-    # Only configure if not already configured
-    if not logger.hasHandlers():
-        formatter = logging.Formatter(fmt=LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
-    logger.setLevel(logging.DEBUG if debug else logging.INFO)
-    return logger
-
-
-class LogElementHandler(logging.Handler):
-    """A logging handler that emits messages to a NiceGUI log element.
-
-    Based on NiceGUI's official documentation pattern.
-    """
-
-    def __init__(self, element, level: int = logging.NOTSET):
-        super().__init__(level)
-        self.element = element
-
-    def emit(self, record: logging.LogRecord) -> None:
-        """Format and push log record to the UI with color styling."""
-        try:
-            msg = self.format(record)
-            color = LOG_COLORS.get(record.levelname, "white")
-            self.element.push(msg, classes=f"text-{color}")
-        except Exception:
-            self.handleError(record)
 
 
 class QueryEngine:
@@ -140,9 +58,18 @@ class DevOpsEngine:
         self.query_engine = query_engine
         self.log = log_engine
         self._scheduled_tasks = []
+        self._scheduled_started = False
+        self.last_incremental_sync: Optional[datetime.datetime] = None
+        self.last_full_sync: Optional[datetime.datetime] = None
 
     async def start_scheduled_updates(self):
-        """Start background tasks for scheduled DevOps updates."""
+        """Start background tasks for scheduled DevOps updates (called once globally)."""
+        global _devops_scheduled_started
+        if _devops_scheduled_started or self._scheduled_started:
+            self.log.info("Scheduled DevOps tasks already running — skipping")
+            return
+        _devops_scheduled_started = True
+        self._scheduled_started = True
         self.log.info("Starting scheduled DevOps update tasks")
 
         # Hourly incremental update
@@ -276,14 +203,29 @@ class DevOpsEngine:
                 await self.query_engine.function_db(
                     "update_devops_data", df=devops_df, mode="append"
                 )
+                user_msg = (
+                    f"DevOps refresh complete — appended {len(devops_df)} new records"
+                )
             elif incremental and devops_df.empty:
                 self.log.info("No new devops records to append")
+                user_msg = "DevOps refresh complete — no new records"
             else:
                 await self.query_engine.function_db(
                     "update_devops_data", df=devops_df, mode="replace"
                 )
+                user_msg = (
+                    f"DevOps full refresh complete — loaded {len(devops_df)} records"
+                )
 
             await self.load_df()
+
+            # Record sync timestamps
+            if incremental:
+                self.last_incremental_sync = datetime.datetime.now()
+            else:
+                self.last_full_sync = datetime.datetime.now()
+
+            self.log.info(f"DevOps update result: {user_msg}")
         else:
             self.log.error(f"Error when updating the devops data: {devops_df}")
 
@@ -352,71 +294,3 @@ class DevOpsEngine:
         if not status:
             self.log.error(msg)
         return status, msg
-
-
-class UIRefreshEngine:
-    """Engine for handling UI refresh tasks and active timer detection."""
-
-    def __init__(self, query_engine: QueryEngine, log_engine: logging.Logger):
-        self.query_engine = query_engine
-        self.log = log_engine
-        self._refresh_tasks = []
-        self._ui_refresh_callback = None
-        self._tab_indicator_callback = None
-        self._active_timers_count = 0
-
-    def set_ui_refresh_callback(self, callback):
-        """Set the callback function to refresh the Time Tracking UI."""
-        self._ui_refresh_callback = callback
-
-    def set_tab_indicator_callback(self, callback):
-        """Set the callback function to update the tab indicator."""
-        self._tab_indicator_callback = callback
-
-    async def start_ui_refresh(self):
-        """Start the UI refresh task."""
-        self.log.info("Starting UI refresh task")
-
-        async def ui_refresh_loop():
-            while True:
-                try:
-                    await asyncio.sleep(30)  # Refresh every 30 seconds
-
-                    # Check for active timers
-                    active_count = await self._check_active_timers()
-
-                    # Update tab indicator if count changed
-                    if active_count != self._active_timers_count:
-                        self._active_timers_count = active_count
-                        if self._tab_indicator_callback:
-                            self._tab_indicator_callback(active_count > 0)
-
-                    # Refresh UI if callback is set
-                    if self._ui_refresh_callback:
-                        await self._ui_refresh_callback()
-
-                except Exception as e:
-                    self.log.error(f"Error in UI refresh loop: {e}")
-                except asyncio.CancelledError:
-                    break
-
-        task = asyncio.create_task(ui_refresh_loop())
-        self._refresh_tasks.append(task)
-
-    async def _check_active_timers(self):
-        """Check how many active timers are running."""
-        try:
-            df = await self.query_engine.query_db(
-                "SELECT COUNT(*) as count FROM time WHERE end_time IS NULL"
-            )
-            count = df.iloc[0]["count"] if not df.empty else 0
-            return count
-        except Exception as e:
-            self.log.error(f"Error checking active timers: {e}")
-            return 0
-
-    def stop_ui_refresh(self):
-        """Stop all UI refresh tasks."""
-        for task in self._refresh_tasks:
-            task.cancel()
-        self._refresh_tasks.clear()
