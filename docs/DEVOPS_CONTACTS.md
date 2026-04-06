@@ -1,17 +1,15 @@
 
 # DevOps contacts
 
-This file documents the data shape used by WorkTimer for DevOps contacts and how to (safely) update it.
+`config/devops_contacts.yml` stores per-customer contacts and assignees used when creating DevOps work items. All management is done through the **Settings** page inside WorkTimer.
 
-#### Summary
+#### Data shape
 
-`config/devops_contacts.yml` is a YAML mapping of customers. Each customer entry contains:
+Each customer entry contains:
 
-- `contacts`: a list of contact person names (strings) — the delivery contacts for the customer
-- `assignees`: a list of assignee email addresses (strings) — emails that can be assigned DevOps tasks
-- `default_assignee` (optional): the default assignee email (string) — must be one of the values in `assignees`
-
-Example `config/devops_contacts.yml` snippet
+- `contacts`: delivery contact names (strings)
+- `assignees`: assignee email addresses that have access to the devops solution (strings)
+- `default_assignee` (optional): pre-selected assignee — must be one of the values in `assignees`
 
 ```yaml
 customers:
@@ -29,95 +27,56 @@ customers:
       - "Anne Example"
     assignees:
       - "ops@customerb.com"
-    # default_assignee omitted when not needed
+    default_assignee: "ops@customerb.com"
 ```
 
-#### How to generate the file
+#### Managing contacts
 
-The generator (`scripts/generate_devops_contacts.py`) creates placeholder entries for each customer found in the database. It can create the `config/` folder if it does not exist.
+Navigate to **Settings → DevOps Contacts** in the left sidebar.
 
-Run the generator from the project root:
+##### Adding a customer
 
-```powershell
-python .\scripts\generate_devops_contacts.py
-```
+Click the **+** button next to *DevOps Contacts* in the sidebar. Enter the customer name and press Add. The customer appears immediately in the sidebar sub-list.
 
-After running, edit `config/devops_contacts.yml` and replace placeholder comments with real names and emails.
+##### Editing a customer
 
-###### Command-line flags
+Click the customer name in the sidebar. The right panel shows three sections:
 
-The generator supports the following options:
+- **Contacts** — type a name and press the add button; click ✕ on a chip to remove
+- **Assignees** — type an email and press the add button; click ✕ to remove
+- **Default Assignee** — pick from the assignees dropdown and press save
 
-- `--preview` — run the generation and print the result instead of saving
-- `--db_name <file>` — database file to read (default: `worktimer.db`)
-- `--location <file>` — output filename relative to `--folder` (default: `config/devops_contacts.yml`)
+Changes take effect immediately (no restart needed).
 
-Use these flags for testing; the defaults are suitable for normal usage.
+##### Removing a customer
 
-##### Adding a new customer
+Select the customer, then press the delete (🗑) button at the top of the detail panel.
 
-Option 1 — Automatic:
+##### Resetting to defaults
 
-```powershell
-python .\scripts\generate_devops_contacts.py
-```
+Click the **↺** button next to *DevOps Contacts* in the sidebar to restore `config/devops_contacts.yml` from the bundled template.
 
-Option 2 — Manual: edit `config/devops_contacts.yml` and add:
+#### DevOps sync
 
-```yaml
-customers:
-  "New Customer Name":
-    contacts:
-      - "Contact Name 1"
-      - "Contact Name 2"
-    assignees:
-      - "email@company.com"
-    default_assignee: "email@company.com"
-```
+The sync strip at the bottom of the Contacts panel controls data synchronisation with Azure DevOps:
 
-##### Updating an existing customer
+- **Incremental** — fetches changes since the last sync
+- **Full Sync** — re-downloads all epics, features, and stories
 
-1. Edit `config/devops_contacts.yml` and add/remove values.
-2. Run the validator to ensure the file is valid.
-3. Restart the application to pick up the changes.
-
-#### Validation
-
-A validator is available at `scripts/validate_devops_contacts.py`. It checks:
-
-- that `customers` exists
-- that each customer has `contacts` (list) and `assignees` (list)
-- that `default_assignee` (if present) is a string and appears in `assignees`
-
-Run the validator:
-
-```powershell
-python .\scripts\validate_devops_contacts.py
-# or validate a specific file:
-python .\scripts\validate_devops_contacts.py --location .\config\devops_contacts.yml
-```
-
-#### After updating
-
-- Restart the WorkTimer service or the NiceGUI app for changes to take effect (the UI is configuration-driven and reads the file on startup).
-- Verify in the UI that the customer contact appears correctly in the DevOps form/dropdown.
-
+Last sync times are shown next to each button.
 
 #### Troubleshooting
 
-**Q: Dropdowns are empty**
+**Q: A customer is missing from the contacts panel**
 
-- Check that `config/devops_contacts.yml` exists.
-- Run the generator: `python .\scripts\generate_devops_contacts.py`.
-- Check the application logs/console for warnings on startup.
+- The customer must be added manually via Settings → DevOps Contacts (+ button).
+- Customer names do not need to match the database — they are free-form.
 
-**Q: Changes don't appear**
+**Q: Assignee dropdown is empty when creating a work item**
 
-- Restart the application after editing the YAML.
-- Run the validator and fix any reported errors.
+- Open Settings → DevOps Contacts, select the customer, and add at least one email under Assignees.
 
-**Q: A new customer doesn't show options**
+**Q: Changes don't appear after editing**
 
-- Run the generator script to add the customer, or add the customer manually to `devops_contacts.yml`.
-- Ensure the customer name exactly matches the customer entry in the database.
+- Changes made in Settings are saved instantly. If you edited the YAML file directly, restart the application.
 

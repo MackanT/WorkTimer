@@ -1,271 +1,226 @@
-# 🚀 WorkTimer User Guide (WIP)
+# WorkTimer — User Guide
 
-Welcome to **WorkTimer** – your modern time tracking and DevOps management solution! This guide covers everything you need to know to track time, manage tasks, and integrate with Azure DevOps.
+Welcome to **WorkTimer** — a locally hosted web application for time tracking and Azure DevOps management.
 
 ---
 
-## 🏁 Getting Started
+## Getting Started
 
-### Launching the Application
+### Starting the application
 
-**Option 1: Direct Python Execution**
-```bash
+**Option A — Direct Python (recommended for development)**
+```powershell
 uv run -m src.main
 ```
 
-**Option 2: Docker (Recommended for 24/7 Operation)**
-```bash
+**Option B — Docker (recommended for 24/7 operation)**
+```powershell
 docker compose up -d
 ```
 
-Once started, open your browser to **`http://localhost:8080`**
+Docker reads `DB_NAME` and `DEBUG_MODE` from a `.env` file in the project root. A default `.env` ships with the project — edit it if you want a different database name or debug output.
 
-### ⚠️ Important — Docker and `uv`
-- If you are using Docker, **start Docker first** before running the application.
-- **Note:** install the `uv` package manager if you do not have it installed:
+Then open **`http://localhost:8080`** in your browser.
 
-```bash
+#### First-time setup with `uv`
+
+If `uv` is not installed:
+```powershell
 pip install uv
 ```
 
-- **Restart your terminal** (cmd / PowerShell / VS Code terminal / etc) after installation so the `uv` command becomes available.
-- Verify `uv` is installed and working with:
-
-```bash
-uv --version
-```
-
-- Use the following command to fetch and sync the Python packages required by the project:
-
-```bash
+Restart your terminal after installation, then sync dependencies:
+```powershell
 uv sync
 ```
 
+---
 
-### Initial Setup
+### First-time setup
 
-1. **Add Your First Customer**
-   - Navigate to **Data Input** → **Customer** tab
-   - Fill in customer name and (optionally) Azure DevOps details
-   - Click **Add**
-
-2. **Create Projects**
-   - Navigate to **Data Input** → **Project** tab
-   - Select your customer from the dropdown
-   - Enter project details and click **Add**
-
-3. **Configure Bonuses** (Optional)
-   - Navigate to **Data Input** → **Bonus** tab
-   - Add bonus entries as a percentage (e.g., 25 for 25%) and the start date
-   - If no bonus is configured, all calculations default to 0% bonus
-
-You're now ready to start tracking time!
+1. **Add a customer** — open *Data Input → Customer*, fill in the name and wage, click **Add**
+2. **Add a project** — open *Data Input → Project*, select your customer, enter a project name, click **Add**
+3. **Optionally configure bonus** — open *Data Input → Bonus*, fill in the bonus percent, click **Add**
+4. **Optionally configure DevOps** — add an org URL and PAT token on the customer record (see [DevOps integration](#devops-integration) below)
 
 ---
 
-## ⏰ Time Tracking
+## Navigation
 
-Track your billable hours with an intuitive customer/project interface.
+WorkTimer has a fixed top navigation bar with the following pages:
 
-### Features
-- **Time Span Selection** - View data by Day, Week, Month, Year, All-Time, or Custom range
-- **Display Toggle** - Switch between tracked time and bonus amounts
-- **Live Timers** - Start/stop timers with a single checkbox click
-- **Visual Indicators** - Active timers shown with animated icons in tab header
-
-### Workflow
-1. Select your desired time span (default: Day)
-2. Find the customer and project you're working on
-3. Click the checkbox to start tracking time
-4. Click again to stop and log the entry
-
-**Pro Tip:** When you stop a timer, you'll have the option to attach a comment or link to a DevOps work item.
+| Page | Purpose |
+|------|---------|
+| **Time Tracker** | Start/stop timers and view logged hours |
+| **Data Input** | Add and manage customers, projects, bonuses, and DevOps work items |
+| **Query Editor** | Write and run SQL against the local database |
+| **Tasks** | Built-in task manager — disabled by default, enable in `config/config_ui.yml` |
+| **Notepad** | Markdown notes organised in a sidebar |
+| **Log** | Real-time application log |
+| **Info** | This guide |
+| **Settings** | DevOps contacts, tags, and app theme |
 
 ---
 
-## ✅ To-Do System
+## Time Tracker
 
-Manage tasks independently from DevOps with the built-in task system.
+Track billable hours across customers and projects.
 
-### Features
-- **Card & Table Views** - Toggle between visual cards and detailed table layouts
-- **Rich Task Data** - Track titles, descriptions, due dates, priority, status, customer, and project
-- **Smart Filtering** - Sort by due date, priority, status, or customer/project
-- **Quick Actions** - Click cards to view details, edit tasks, or mark as complete
-
-### Creating Tasks
-1. Go to **To-Do** tab
-2. Click the **+** button or switch to **Add** tab
-3. Fill in task details (title is required)
-4. Click **Add Task**
-
-### Managing Tasks
-- **Edit**: Click any task card, then switch to **Update** tab
-- **Complete**: Click the checkbox on any task
-- **View Details**: Click a card to see full description and metadata
+- **Time span** — filter by Day, Week, Month, Year, All-Time, or a custom date range
+- **Start/stop** — click the checkbox next to any project to start or stop a timer
+- **Active indicator** — an animated icon in the header shows when a timer is running
+- **Stop dialog** — when stopping a timer you can add a comment and optionally link a DevOps work item
 
 ---
 
-## 📝 Data Input
+## Data Input
 
-Central hub for managing all your entities (customers, projects, bonuses, DevOps work items).
+Manage the core entities that drive time tracking and DevOps.
 
 ### Customers
-- **Add**: Create new customers with optional DevOps PAT tokens
-- **Update**: Modify customer details (changes propagate to projects)
-- **Disable/Reenable**: Soft-delete customers without losing historical data
+- **Add** — name, wage, optional DevOps org URL and PAT token
+- **Update** — rename or update DevOps credentials
+- **Disable / Re-enable** — soft-archive a customer without losing historical entries
 
 ### Projects
-- **Add**: Link projects to customers with descriptive names
-- **Update**: Change project details or update devpos default ids
-- **Disable/Reenable**: Archive projects while preserving time entries
+- **Add** — link a project to a customer
+- **Update** — rename or change DevOps defaults
+- **Disable / Re-enable** — archive without losing time entries
 
 ### Bonuses
-- **Add**: Record flexible bonus percent
+- **Add** — record a bonus percentage with a start date
+- If no bonus is configured all calculations default to 0 %
 
 ### DevOps Work Items
-- **User Stories**: Create stories with markdown descriptions and live preview
-- **Features**: Create features with parent epic linking
-- **Epics**: Create top-level epics for organizing work
-- **Parent Linking**: Automatically link child items to parent features/epics
-
-**Note:** DevOps integration requires valid PAT token and organization URL configured per customer.
+Create User Stories, Features, and Epics directly from the app:
+- Supports markdown descriptions with live preview
+- Child items can be linked to a parent feature or epic at creation time
+- Requires a valid PAT token on the customer record
 
 ---
 
-## 🔍 Query Editors
+## Query Editor
 
-Powerful SQL interface for custom data analysis and table editing.
+A full SQL editor for custom data analysis.
 
-### Features
-- **Preset Queries** - Click built-in queries for common reports
-- **Custom Queries** - Write, save, and manage your own SQL queries
-- **Syntax Validation** - Real-time SQL syntax checking before execution
-- **Result Editing** - Click any row in results to edit values directly
-- **Keyboard Shortcuts** - Press **F5** to execute queries
-
-### Workflow
-1. Select a preset query or write custom SQL in the editor
-2. Press **F5** or click **Execute**
-3. View results in the table below
-4. Click any row to edit values (opens edit dialog)
-
-### Managing Custom Queries
-- **Save**: Click **Save As** to store your SQL for reuse
-- **Update**: Modify and save changes to existing custom queries
-- **Delete**: Remove custom queries you no longer need
-
-**Pro Tip:** Use the color-coded editor to spot syntax errors before execution.
+- **Preset queries** — click a built-in query to load it instantly
+- **Custom queries** — write SQL, save with a name, run later
+- **Execute** — press **F5**, **ctrl+enter** or the Run button
+- **Edit results** — click any row in the result table to open an edit dialog
+- **Copy results** — disable edit mode to copy rows into memory (csv-format)
+- **Syntax feedback** — the editor highlights errors before you run
 
 ---
 
-## 🗃️ Database Tools
+## Notepad
 
-Advanced features for database management and migration.
+A markdown-based notebook with a VS Code-style sidebar.
 
-### Schema Comparison
-- Compare your current database schema with older versions
-- Identify structural changes and plan migrations
-- Generate sync SQL for schema updates
-
-### Database Script Runner
-- Execute SQL scripts on any database file
-- Save query results for analysis or migration
-- Useful for migrating data between database versions
-
-**Note:** These tools are for users who participated in the alpha builds of the program and or in the future want to migrate to a newer incompatible version
+- Notes are stored as `.md` files under `data/notes/`
+- Assign colors, icons, and groups from the sidebar
+- Click rendered content to switch to split editor + preview mode; press **Escape** to return
+- Pin notes to keep them at the top
+- An external **Todo** note (`docs/todo.md`) is always pinned and is read-write
 
 ---
 
-## 📊 Log & Info
+## Settings
 
-### Application Log
-- **Real-time Monitoring** - See all actions as they happen
-- **Color-Coded Messages** - Info (white), warnings (yellow), errors (red)
-- **Source Tracking** - Identify which engine generated each log entry
-- **Modern Interface** - Dark theme with monospace font for readability
+Access via the **Settings** page (⚙ icon in the nav bar). Uses a sidebar layout — click a section name to open it. The **Incremental** and **Full Sync** buttons are always visible in the Settings toolbar on the right.
 
-**Important:** Logs are stored in memory only and reset on application restart.
+### DevOps Contacts
 
-### Info Tab
-Access this guide and additional documentation directly within the application.
+Manage per-customer contacts and assignees used when creating DevOps work items.
 
----
+- **Add customer** — click **+** next to *DevOps Contacts* in the sidebar
+- **Select a customer** — click its name in the sidebar sub-list
+- **Contacts tab** — add/remove delivery contact names (chips)
+- **Assignees tab** — add/remove assignee emails (chips)
+- **Default Assignee** — pick from the assignees list; saved with the save button
+- **Delete customer** — trash icon at the top of the detail panel
+- **Reset** — ↺ button restores the bundled template
 
-## 🧑‍💻 Troubleshooting
+### DevOps Tags
 
-### Common Issues
+Define tags used to categorise DevOps work items.
 
-**Application won't start**
-- Check that port 8080 is not in use by another application
-- Verify Python 3.11+ is installed (`python --version`)
+- **Add Tag** — click **+** in the sidebar; choose an icon from the preset list or enter a custom Material icon name; pick a colour
+- **Edit / Delete** — action buttons on each row in the table
+- **Reset** — ↺ restores the bundled template
 
-**DevOps integration not working**
-- Verify PAT token has correct permissions (Work Items: Read, Write, Manage)
-- Check that organization URL is correct (should be just the org name, not full URL)
-- Review Application Log for specific error messages
+### Theme
 
-**Database errors**
-- Ensure `worktimer.db` file exists and is not locked by another process
-- Check that you have write permissions in the application directory
-- Review Application Log for SQL error details
+Customise the app colour scheme.
 
-**UI not responsive**
-- Hard refresh your browser (Ctrl+F5 or Cmd+Shift+R)
-- Clear browser cache
-- Check Application Log for JavaScript errors
-
-### Getting Help
-For additional support, contact **Marcus Toftås** or check the GitHub repository issues.
+- **Paired colours** — one picker sets both the Quasar hex value and the nearest Tailwind token (e.g. *Primary / Accent*, *Dark / Toolbar background*)
+- **Component colours** — Quasar semantic colours (positive, negative, info, warning)
+- **Additional tokens** — Tailwind tokens used for dividers, borders, and chip backgrounds
+- A colour swatch updates live as you drag the picker
+- Press **Save Theme**, then **F5** to apply
 
 ---
 
-## 🐳 Docker Deployment
+## Log
 
-Run WorkTimer in a container for 24/7 availability without local Python installation.
+Real-time view of all application events.
 
-### Prerequisites
-- Docker Desktop installed ([download here](https://www.docker.com/products/docker-desktop))
-- `docker-compose.yml` and `Dockerfile` in project root
-- `uv` must be installed on the host as well (used for syncing packages):
+- Colour-coded by level: Info (white), Warning (yellow), Error (red)
+- Each entry shows timestamp, level, source engine, and message
+- **Logs are in-memory only** — they reset on restart and are not saved to disk
 
-```bash
-pip install uv
+---
+
+## DevOps integration
+
+DevOps features require a PAT (Personal Access Token) configured per customer.
+
+1. Go to *Data Input → Customer → Update*
+2. Set **DevOps Org. URL** to your organisation name (e.g. `my-org`, not `https://dev.azure.com/my-org`)
+3. Set **DevOps PAT** to a token with *Work Items: Read, Write, Manage* scope
+4. After saving, DevOps sync will run automatically
+
+Sync schedule (background):
+- **Incremental** — every hour
+- **Full** — daily at 2 AM (or trigger manually from Settings → DevOps Contacts)
+
+---
+
+## Docker deployment
+
+```powershell
+# Start (detached)
+docker compose up -d
+
+# View live logs
+docker compose logs -f
+
+# Stop
+docker compose down
 ```
 
-### Deployment Steps
-
-1. **Build and Start**
-   ```bash
-   docker compose up
-   ```
-   Add `-d` flag for detached mode (runs in background)
-
-2. **Access the Application**
-   Open browser to `http://localhost:8080`
-
-3. **View Logs**
-   ```bash
-   docker compose logs -f
-   ```
-
-4. **Stop the Application**
-   ```bash
-   docker compose down
-   ```
-
-### Data Persistence
-The database file is mounted as a volume, so your data persists across container restarts. Ensure the volume mapping in `docker-compose.yml` points to your desired data location.
+The database file is volume-mounted so data persists across restarts. See `docker-compose.yml` for the mount path.
 
 ---
 
-## 💡 Tips & Best Practices
+## Troubleshooting
 
-- **Daily Routine**: Start each day by reviewing your To-Do list and setting task priorities
-- **Time Tracking**: Start timers at the beginning of work sessions, not retroactively
-- **Comments**: Add meaningful comments when stopping timers to improve DevOps integration
-- **Custom Queries**: Save frequently-used SQL queries for quick access
-- **DevOps Sync**: Let automatic sync run—full refresh happens daily at 2 AM, incremental hourly
-- **Backup**: Regularly backup your `worktimer.db` file before major operations
+**App won't start**
+- Check port 8080 is not used by another process
+- Verify Python 3.11+ is installed
 
----
+**DevOps work items not appearing**
+- Confirm the PAT has *Work Items: Read/Write/Manage* scope
+- Org URL must be the org name only, not the full `https://dev.azure.com/…` URL
+- Check the Log page for specific error messages
+
+**Sync data is stale**
+- Run a Full Sync from Settings → DevOps Contacts sync strip
+
+**UI not updating**
+- Hard-refresh the browser: **Ctrl + F5**
+- Check the Log page for errors
+
+**Database errors**
+- Ensure the `data/` directory is writable
+- Check the Log page for SQL error details
+
