@@ -45,7 +45,8 @@ class NavigationBar:
             # Create header-like navigation bar using regular elements
             with (
                 ui.header()
-                .classes(f"items-center justify-between bg-{self.theme.get('nav_bg')}")
+                .classes("items-center justify-between")
+                .style(f"background-color: {self.theme.get('dark_page', '#0f172a')} !important")
                 .props("flat")
             ):
                 with ui.row().classes("items-center gap-1"):

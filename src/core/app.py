@@ -79,6 +79,7 @@ class AppCore:
         self.debug = self.settings.debug_mode
         self.theme = self.config_loader.get_raw_dict("theme")
         from ..helpers import UI_STYLES
+        UI_STYLES.__class__._theme_configured = False
         UI_STYLES.configure_theme(self.theme)
 
     # ── Logging ───────────────────────────────────────────────────────────────
