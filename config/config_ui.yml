@@ -636,12 +636,12 @@ info_page:
     meta:
       icon: info
       friendly_name: Info
-      file: info.md
+      file: readme.md
   read_me:
     meta:
       icon: change_history
       friendly_name: Changelog
-      file: readme.md
+      file: changelog.md
   changelog:
     meta:
       icon: read_more
