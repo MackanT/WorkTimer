@@ -61,57 +61,61 @@ class Database:
                 (
                     "weekly",
                     """
+                with current_period as (
+                    select
+                        t.customer_name
+                        ,t.project_name
+                        ,sum(t.total_time) as total_time
+                    from time t
+                    join dates d on d.date_key = t.date_key
+                    where d.year = cast(strftime('%Y', 'now') as integer)
+                        and d.week = cast(strftime('%W', 'now') as integer)
+                    group by t.customer_name, t.project_name
+                    having sum(t.total_time) > 0
+                )
                 select
-                     t.customer_name
-                    ,t.project_name
-                    ,round(sum(t.total_time), 2) as total_time
-                from time t
-                left join dates d on d.date_key = t.date_key
-                where d.year = cast(strftime('%Y', 'now') as integer)
-                    and d.week = (select week from dates where date = date('now') limit 1)
-                group by t.customer_name, t.project_name
-                having sum(t.total_time) > 0
-                union all
-                select '', '', ''
+                    customer_name
+                    ,project_name
+                    ,round(total_time, 2) as total_time
+                from current_period
+                union all select '', '', null
                 union all
                 select
-                     t.customer_name
-                    ,'total' as project_name
-                    ,round(sum(t.total_time), 2) as total_time
-                from time t
-                left join dates d on d.date_key = t.date_key
-                where d.year = cast(strftime('%Y', 'now') as integer)
-                    and d.week = (select week from dates where date = date('now') limit 1)
-                group by t.customer_name
-                having sum(t.total_time) > 0
+                    customer_name
+                    ,'total'
+                    ,round(sum(total_time), 2)
+                from current_period
+                group by customer_name
                 """,
                 ),
                 (
                     "monthly",
                     """
+                with current_period as (
+                    select
+                        t.customer_name
+                        ,t.project_name
+                        ,sum(t.total_time) as total_time
+                    from time t
+                    join dates d on d.date_key = t.date_key
+                    where d.year = cast(strftime('%Y', 'now') as integer)
+                        and d.month = cast(strftime('%m', 'now') as integer)
+                    group by t.customer_name, t.project_name
+                    having sum(t.total_time) > 0
+                )
                 select
-                     t.customer_name
-                    ,t.project_name
-                    ,round(sum(t.total_time), 2) as total_time
-                from time t
-                left join dates d on d.date_key = t.date_key
-                where d.year = cast(strftime('%Y', 'now') as integer)
-                    and d.month = cast(strftime('%m', 'now') as integer)
-                group by t.customer_name, t.project_name
-                having sum(t.total_time) > 0
-                union all
-                select '', '', ''
+                    customer_name
+                    ,project_name
+                    ,round(total_time, 2) as total_time
+                from current_period
+                union all select '', '', null
                 union all
                 select
-                     t.customer_name
-                    ,'total' as project_name
-                    ,round(sum(t.total_time), 2) as total_time
-                from time t
-                left join dates d on d.date_key = t.date_key
-                where d.year = cast(strftime('%Y', 'now') as integer)
-                   and d.month = cast(strftime('%m', 'now') as integer)
-                group by t.customer_name
-                having sum(t.total_time) > 0
+                    customer_name
+                    ,'total'
+                    ,round(sum(total_time), 2)
+                from current_period
+                group by customer_name
                 """,
                 ),
             ]
@@ -337,10 +341,10 @@ class Database:
                     )
 
             ## Query Snippets table
-            df_time = self.fetch_query(
+            df_query = self.fetch_query(
                 "select * from sqlite_master where type = 'table' and name = 'queries'"
             )
-            if df_time.empty:
+            if df_query.empty:
                 self.execute_query("""
                 create table if not exists queries (
                     query_name text unique,
