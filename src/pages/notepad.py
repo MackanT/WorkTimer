@@ -52,6 +52,7 @@ EXTERNAL_NOTES = [
         "display_name": "Todo",
         "icon": "todo",
         "readonly_name": True,
+        "developer_only": True,
     },
 ]
 
@@ -141,10 +142,12 @@ def load_notes(notes_dir: Path, meta: dict) -> list[dict]:
     return notes
 
 
-def load_external_notes(project_root: Path, meta: dict) -> list[dict]:
-    """Load hardcoded external notes."""
+def load_external_notes(project_root: Path, meta: dict, developer_mode: bool = False) -> list[dict]:
+    """Load hardcoded external notes. Developer-only notes are excluded unless developer_mode is True."""
     notes = []
     for ext in EXTERNAL_NOTES:
+        if ext.get("developer_only") and not developer_mode:
+            continue
         path = project_root / ext["path"]
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -255,7 +258,7 @@ async def notepad_page():
 
     meta = load_meta(notes_dir)
     regular_notes = load_notes(notes_dir, meta)
-    external_notes = load_external_notes(project_root, meta)
+    external_notes = load_external_notes(project_root, meta, developer_mode=core.settings.developer_mode)
     all_notes = external_notes + regular_notes
 
     state = {

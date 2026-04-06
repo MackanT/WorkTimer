@@ -20,6 +20,7 @@ class ConfigSettings(BaseModel):
     """Settings configuration from config_settings.yml"""
 
     debug_mode: bool = False
+    developer_mode: bool = False
     db_path: str = "worktimer.db"
 
 
@@ -328,6 +329,7 @@ class ConfigLoader:
         self.configs["settings"] = ConfigSettings(
             db_path=db_path,
             debug_mode=os.getenv("DEBUG_MODE", "false").lower() == "true",
+            developer_mode=os.getenv("DEVELOPER_MODE", "false").lower() == "true",
         )
         print(
             f"  DB: {self.configs['settings'].db_path}, Debug: {self.configs['settings'].debug_mode}"

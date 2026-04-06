@@ -3,6 +3,8 @@ __pycache__/
 _Old/*
 *.egg-info/
 
+.env
+
 copilot-instructions.md
 docs/REFACTORING_SUMMARY.md
 docs/ADD_DATA_REFACTORING.md
