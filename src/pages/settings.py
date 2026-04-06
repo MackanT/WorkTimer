@@ -2,11 +2,12 @@
 Settings Page
 
 Sidebar-navigation layout with three sections:
-  - DevOps Contacts   (customer list / contact detail / sync strip)
+  - DevOps Contacts   (customer list / contact detail)
   - DevOps Tags       (tag table + add/edit dialog)
   - Theme             (colour pickers for the app palette)
 
 Add and Reset buttons live next to each section name in the left sidebar.
+DevOps sync buttons live in the toolbar.
 """
 
 from pathlib import Path
@@ -129,51 +130,9 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
         else:
             ui.notify("Template file not found", type="negative")
 
-    # ── detail view + sync strip ──────────────────────────────────────────────
-    with ui.column().classes("w-full h-full gap-0 overflow-hidden"):
-
-        with ui.scroll_area().classes("w-full flex-1"):
-            detail_col = ui.column().classes("w-full p-4 gap-4")
-
-        # ── sync strip ────────────────────────────────────────────────────────
-        with ui.element("div").classes("shrink-0 px-4 py-2").style(
-            "border-top: 1px solid #475569"
-        ):
-            from ..services.services import DevOpsService
-            svc = DevOpsService(core)
-            eng = core.devops_engine
-            with ui.row().classes("items-center gap-3 flex-wrap"):
-                ui.icon("sync", size="xs").classes(f"text-{core.theme.get('muted')}")
-                ui.label("DevOps Sync").classes(
-                    f"text-xs font-semibold text-{core.theme.get('muted')}"
-                )
-                sync_lbl = ui.label(
-                    f"Last incremental: {_fmt_time(eng.last_incremental_sync)}  ·  "
-                    f"Last full: {_fmt_time(eng.last_full_sync)}"
-                ).classes(UI_STYLES.get_layout_classes("muted_text_xs"))
-
-                def _refresh_sync_labels():
-                    sync_lbl.set_text(
-                        f"Last incremental: {_fmt_time(eng.last_incremental_sync)}  ·  "
-                        f"Last full: {_fmt_time(eng.last_full_sync)}"
-                    )
-
-                async def _run_incr():
-                    svc.refresh_incremental_async()
-                    await asyncio.sleep(0.5)
-                    _refresh_sync_labels()
-
-                async def _run_full():
-                    svc.refresh_full_async()
-                    await asyncio.sleep(0.5)
-                    _refresh_sync_labels()
-
-                ui.button("Incremental", icon="sync", on_click=_run_incr).props(
-                    "color=primary dense outline"
-                )
-                ui.button("Full Sync", icon="cloud_download", on_click=_run_full).props(
-                    "color=primary dense outline"
-                )
+    # ── detail view ───────────────────────────────────────────────────────────
+    with ui.scroll_area().classes("w-full h-full"):
+        detail_col = ui.column().classes("w-full p-4 gap-4")
 
     # ── Add-customer dialog ───────────────────────────────────────────────────
     with ui.dialog() as add_cust_dlg, ui.card():
@@ -779,9 +738,43 @@ async def settings_page():
                 _sub_list["el"].classes("hidden")
                 _expand_icon["el"].set_name("chevron_right")
 
+    from ..services.services import DevOpsService
+    _svc = DevOpsService(core)
+    _eng = core.devops_engine
+
     with toolbar(core.theme):
         ui.icon("tune", size="md").classes(f"text-{core.theme.get('accent')}")
         ui.label("Settings").classes(UI_STYLES.get_layout_classes("page_title"))
+
+        ui.element("div").classes("flex-1")
+
+        _sync_lbl = ui.label(
+            f"incr: {_fmt_time(_eng.last_incremental_sync)}  ·  "
+            f"full: {_fmt_time(_eng.last_full_sync)}"
+        ).classes(UI_STYLES.get_layout_classes("muted_text_xs"))
+
+        def _refresh_sync_labels():
+            _sync_lbl.set_text(
+                f"incr: {_fmt_time(_eng.last_incremental_sync)}  ·  "
+                f"full: {_fmt_time(_eng.last_full_sync)}"
+            )
+
+        async def _run_incr():
+            _svc.refresh_incremental_async()
+            await asyncio.sleep(0.5)
+            _refresh_sync_labels()
+
+        async def _run_full():
+            _svc.refresh_full_async()
+            await asyncio.sleep(0.5)
+            _refresh_sync_labels()
+
+        ui.button("Incremental", icon="sync", on_click=_run_incr).props(
+            "color=primary dense outline"
+        )
+        ui.button("Full Sync", icon="cloud_download", on_click=_run_full).props(
+            "color=primary dense outline"
+        )
 
     with page_card(scrollable=False):
         with ui.row().classes("w-full h-full gap-0 overflow-hidden"):
