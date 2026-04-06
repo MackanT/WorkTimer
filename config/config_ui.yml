@@ -640,13 +640,18 @@ info_page:
   read_me:
     meta:
       icon: change_history
-      friendly_name: Read Me
+      friendly_name: Changelog
       file: readme.md
   changelog:
     meta:
       icon: read_more
       friendly_name: Todo
       file: todo.md
+  devops_contacts:
+    meta:
+      icon: contacts
+      friendly_name: DevOps Contacts
+      file: devops_contacts.md
 
 ## Log Page ##
 log_page:
