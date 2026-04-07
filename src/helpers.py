@@ -10,8 +10,7 @@ import pandas as pd
 import markdown as _markdown
 import bleach as _bleach
 from markdownify import markdownify as _markdownify
-
-from .globals import SaveData
+from pygments.formatters import HtmlFormatter as _HtmlFormatter
 
 
 # ===== UI STYLE MANAGER =====
@@ -201,6 +200,9 @@ UI_STYLES = UIStyles.get_instance()
 
 # ===== MARKDOWN & HTML RENDERING =====
 
+# Pygments monokai CSS injected alongside MARKDOWN_DARK_MODE_CSS (class-based, no bleach interaction)
+_PYGMENTS_MONOKAI_CSS = _HtmlFormatter(style="monokai").get_style_defs(".highlight")
+
 # Dark mode CSS for markdown rendering
 MARKDOWN_DARK_MODE_CSS = """
 <style>
@@ -219,6 +221,9 @@ MARKDOWN_DARK_MODE_CSS = """
     code { background-color: #2d2d2d; color: #f8f8f2; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 0.9em; }
     pre { background-color: #2d2d2d; padding: 16px; border-radius: 6px; overflow-x: auto; border: 1px solid #444; }
     pre code { background-color: transparent; padding: 0; }
+    /* Let Pygments control highlighted block styling */
+    div.highlight { border-radius: 6px; overflow: hidden; margin: 1em 0; }
+    div.highlight pre { background-color: transparent; border: none; margin: 0; }
     table { border-collapse: collapse; width: 100%; margin: 1em 0; }
     th, td { border: 1px solid #555; padding: 8px; text-align: left; color: #e0e0e0; }
     th { background-color: #2d2d2d; font-weight: bold; }
@@ -247,17 +252,33 @@ def render_and_sanitize_markdown(text: str) -> str:
     raw_html = _markdown.markdown(
         text,
         extensions=[
-            "extra",
+            # Individual sub-extensions from 'extra' — excluding fenced_code
+            # so pymdownx.superfences can own fenced code block parsing.
+            "abbr",
+            "attr_list",
+            "def_list",
+            "footnotes",
+            "tables",
+            "md_in_html",
             "nl2br",
             "sane_lists",
             "pymdownx.tilde",
+            "pymdownx.highlight",
+            "pymdownx.superfences",
         ],
+        extension_configs={
+            "pymdownx.highlight": {
+                "use_pygments": True,
+                "pygments_style": "monokai",
+            }
+        },
     )
 
     allowed_tags = list(_bleach.sanitizer.ALLOWED_TAGS) + [
         "p",
         "pre",
         "code",
+        "div",
         "span",
         "h1",
         "h2",
@@ -290,6 +311,7 @@ def render_and_sanitize_markdown(text: str) -> str:
         "code": ["class"],
         "pre": ["class"],
         "span": ["class"],
+        "div": ["class"],
         "*": ["class"],
     }
 
@@ -305,6 +327,7 @@ def render_and_sanitize_markdown(text: str) -> str:
     return f"""
     <div style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #e0e0e0;">
         {MARKDOWN_DARK_MODE_CSS}
+        <style>{_PYGMENTS_MONOKAI_CSS}</style>
         {cleaned_html}
     </div>
     """
