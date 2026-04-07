@@ -1,5 +1,5 @@
 ## BUGS
-- "currently no known bugs"
+- When smaller window (width), navigation bar becomes 2 rows hiding portions of the program
 
 ## Features
 
@@ -25,6 +25,7 @@
 #### Notes
 - Notepad++ functionality + markdown (?)
 - remove exces vertical white-space
+- add ``` color support
 
 #### Generic
 - Go over page layouts (ensure consistent ui sizes etc)
