@@ -249,15 +249,28 @@ async def time_tracking_page():
     # ========================================================================
 
     async def update_tab_indicator_now():
-        """Update the active timer indicator and emit event."""
-        # Check for active timers
-        query = "SELECT COUNT(*) as count FROM time WHERE end_time IS NULL"
-        result = await core.query_engine.query_db(query)
-        active_count = result.iloc[0]["count"] if not result.empty else 0
-        ## TODO check this is working
+        """Update the active timer indicator, emit event with names for nav bar."""
+        result = await core.query_engine.query_db(
+            """
+            SELECT c.customer_name, p.project_name
+            FROM time t
+            JOIN customers c ON t.customer_id = c.customer_id
+            JOIN projects p ON t.project_id = p.project_id
+            WHERE t.end_time IS NULL
+            ORDER BY c.customer_name, p.project_name
+            """
+        )
+        active_names = [
+            f"{r['customer_name']} / {r['project_name']}"
+            for _, r in result.iterrows()
+        ] if not result.empty else []
 
-        core.event_bus.emit("active_timer_count_changed", count=active_count)
-        return active_count
+        core.event_bus.emit(
+            "active_timer_count_changed",
+            count=len(active_names),
+            names=active_names,
+        )
+        return len(active_names)
 
     # ========================================================================
     # UI Control Handlers
@@ -1051,3 +1064,4 @@ async def time_tracking_page():
     )
 
     await render_time_tracker()
+    await update_tab_indicator_now()  # Populate active-timer chips on initial load

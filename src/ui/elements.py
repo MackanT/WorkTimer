@@ -21,6 +21,7 @@ class NavigationBar:
         self.buttons = {}
         self.active_path = None
         self.on_navigate = None
+        self._active_timers_row = None
 
     def render(self) -> None:
         """
@@ -75,6 +76,12 @@ class NavigationBar:
                         # Store button reference
                         self.buttons[item["path"]] = button
 
+                    # Active timers section — right side of nav bar
+                    ui.space()
+                    self._active_timers_row = (
+                        ui.row().classes("items-center gap-1 mr-2 shrink-0")
+                    )
+
             # Set initial active state based on current path
             current_path = app.storage.client.get("current_path", "/time")
             self.set_active(current_path, self.theme)
@@ -85,17 +92,40 @@ class NavigationBar:
 
             traceback.print_exc()
 
-    def set_timer_active(self, active: bool):
-        """Update the Time Tracking nav button to indicate an active timer."""
+    def set_active_timers(self, names: list[str]) -> None:
+        """Update the nav bar active timer pills and the Time button icon/glow."""
         btn = self.buttons.get("/time")
-        if not btn:
+        active = bool(names)
+
+        if btn:
+            if active:
+                btn.props("icon=timer")
+                btn.style(
+                    f"box-shadow: 0 0 0 2px {self.theme.get('info')}; border-radius: 4px;"
+                )
+            else:
+                btn.props("icon=schedule")
+                btn.style("box-shadow: none;")
+
+        if self._active_timers_row is None:
             return
-        if active:
-            btn.props("icon=timer")
-            btn.style(f"box-shadow: 0 0 0 2px {self.theme.get('info')}; border-radius: 4px;")
-        else:
-            btn.props("icon=schedule")
-            btn.style("box-shadow: none;")
+        self._active_timers_row.clear()
+        if not active:
+            return
+        with self._active_timers_row:
+            ui.icon("timer", size="xs").classes("text-green-400 shrink-0")
+            for name in names:
+                (
+                    ui.label(name)
+                    .classes(
+                        "text-xs text-green-300 border border-green-600"
+                        " px-2 py-0.5 rounded-full whitespace-nowrap"
+                    )
+                )
+
+    def set_timer_active(self, active: bool, tooltip_lines: list[str] | None = None):
+        """Legacy shim — delegates to set_active_timers."""
+        self.set_active_timers(tooltip_lines or [] if active else [])
 
     def set_active(self, path: str, theme: dict):
         """Update the active navigation button"""

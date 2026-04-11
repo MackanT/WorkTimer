@@ -117,18 +117,28 @@ async def _setup_spa_shell():
     if not app.storage.client.get("timer_indicator_registered", False):
         app.storage.client["timer_indicator_registered"] = True
 
-        async def _on_timer_count_changed(count: int = 0, **_):
-            core.nav_bar.set_timer_active(count > 0)
+        async def _on_timer_count_changed(count: int = 0, names: list = None, **_):
+            core.nav_bar.set_active_timers(names or [])
 
         core.event_bus.register("active_timer_count_changed", _on_timer_count_changed)
 
         # Set initial nav-bar state from DB
         try:
             result = await core.query_engine.query_db(
-                "SELECT COUNT(*) as count FROM time WHERE end_time IS NULL"
+                """
+                SELECT c.customer_name, p.project_name
+                FROM time t
+                JOIN customers c ON t.customer_id = c.customer_id
+                JOIN projects p ON t.project_id = p.project_id
+                WHERE t.end_time IS NULL
+                ORDER BY c.customer_name, p.project_name
+                """
             )
-            active_count = int(result.iloc[0]["count"]) if not result.empty else 0
-            core.nav_bar.set_timer_active(active_count > 0)
+            initial_names = [
+                f"{r['customer_name']} / {r['project_name']}"
+                for _, r in result.iterrows()
+            ] if not result.empty else []
+            core.nav_bar.set_active_timers(initial_names)
         except Exception:
             pass
 
