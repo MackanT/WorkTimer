@@ -46,12 +46,18 @@ class NavigationBar:
             # Create header-like navigation bar using regular elements
             with (
                 ui.header()
-                .classes("items-center justify-between")
-                .style(f"background-color: {self.theme.get('dark_page', '#0f172a')} !important")
+                .classes("items-center")
+                .style(
+                    f"background-color: {self.theme.get('dark_page', '#0f172a')} !important;"
+                    "overflow: hidden !important;"
+                )
                 .props("flat")
             ):
-                with ui.row().classes("items-center gap-1"):
-                    ui.label("WorkTimer").classes("text-h6 text-white font-bold mr-4")
+                with ui.row().classes("items-center gap-1 flex-nowrap overflow-x-auto w-full wt-nav-scroll py-1").style(
+                    "scrollbar-width: none;"  # hide scrollbar (Firefox)
+                    "-ms-overflow-style: none;"  # hide scrollbar (IE/Edge)
+                ):
+                    ui.label("WorkTimer").classes("text-h6 text-white font-bold mr-4 shrink-0")
 
                     # Navigation buttons
                     for item in nav_items:
@@ -71,7 +77,7 @@ class NavigationBar:
                             on_click=create_click_handler(item["path"]),
                         ).props("flat")
 
-                        button.classes(f"text-{nav_text} hover:bg-{nav_hover}")
+                        button.classes(f"text-{nav_text} hover:bg-{nav_hover} shrink-0")
 
                         # Store button reference
                         self.buttons[item["path"]] = button
