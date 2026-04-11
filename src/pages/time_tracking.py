@@ -344,7 +344,7 @@ async def time_tracking_page():
             edit_button = (
                 ui.button("Edit Order", icon="edit", on_click=toggle_edit_mode)
                 .props("outline")
-                .classes("whitespace-nowrap")
+                .classes("whitespace-nowrap shrink-0")
                 .tooltip(
                     "Edit mode allows you to reorder customers and projects using arrow buttons"
                 )

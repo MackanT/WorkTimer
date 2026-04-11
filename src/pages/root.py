@@ -74,8 +74,9 @@ html, body { overflow: hidden !important; }
     min-height: 0 !important;
 }
 
-/* Hide scrollbar on nav bar scroll row while keeping scroll functionality */
-.wt-nav-scroll::-webkit-scrollbar { display: none; }
+/* Hide scrollbar on horizontally-scrollable rows while keeping scroll functionality */
+.wt-nav-scroll::-webkit-scrollbar,
+.wt-toolbar-scroll::-webkit-scrollbar { display: none; }
 
 /* Tab-panels: propagate definite height all the way down the chain.
    nicegui-tab-panel is the class NiceGUI puts on the q-tab-panel element.

@@ -12,7 +12,7 @@ from nicegui import ui
 from ..core.app import AppCore
 from ..helpers import UI_STYLES
 
-from ..ui.elements import toolbar, page_card
+from ..ui.elements import toolbar, toolbar_group, page_card
 
 
 async def log_page():
@@ -35,40 +35,42 @@ async def log_page():
     def render_toolbar() -> Tuple[ui.select, ui.button, ui.button]:
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
-            ui.icon("terminal", size="md").classes(f"text-{core.theme.get('accent')}")
-            ui.label("Application Log").classes(UI_STYLES.get_layout_classes("page_title"))
+            with toolbar_group(core.theme, divider_after=False):
+                ui.icon("terminal", size="md").classes(f"text-{core.theme.get('accent')}")
+                ui.label("Application Log").classes(UI_STYLES.get_layout_classes("page_title"))
             ui.space()
 
-            filter_select = (
-                ui.select(
-                    options=[
-                        "All",
-                        "AppCore",
-                        "Database",
-                        "DevOps",
-                        # "Main",
-                        "EventBus",
-                        # "Navigation",
-                        # "TimeTracking",
-                        # "QueryEditor",
-                        # "AddData",
-                        # "Tasks",
-                        # "Info",
-                    ],
-                    value="All",
-                    label="Filter by Source",
+            with toolbar_group(core.theme, divider_after=False):
+                filter_select = (
+                    ui.select(
+                        options=[
+                            "All",
+                            "AppCore",
+                            "Database",
+                            "DevOps",
+                            # "Main",
+                            "EventBus",
+                            # "Navigation",
+                            # "TimeTracking",
+                            # "QueryEditor",
+                            # "AddData",
+                            # "Tasks",
+                            # "Info",
+                        ],
+                        value="All",
+                        label="Filter by Source",
+                    )
+                    .classes("w-40")
+                    .props("dense")
                 )
-                .classes("w-40")
-                .props("dense")
-            )
 
-            save_button = (
-                ui.button("Save to File", icon="download").props("flat").classes("h-9")
-            )
+                save_button = (
+                    ui.button("Save to File", icon="download").props("flat").classes("h-9")
+                )
 
-            clear_button = (
-                ui.button("Clear Log", icon="clear").props("flat").classes("h-9")
-            )
+                clear_button = (
+                    ui.button("Clear Log", icon="clear").props("flat").classes("h-9")
+                )
 
         return filter_select, save_button, clear_button
 

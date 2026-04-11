@@ -154,7 +154,7 @@ class NavigationBar:
 
 
 def toolbar_divider(theme):
-    ui.element("div").classes(f"h-6 w-px bg-{theme.get('divider')}")
+    ui.element("div").classes(f"h-6 w-px shrink-0 bg-{theme.get('divider')}")
 
 
 # Height constants kept for backward compat (not used for layout calculations).
@@ -172,21 +172,23 @@ def toolbar(theme):
     with (
         ui.row()
         .classes(
-            f"wt-toolbar w-full shrink-0 items-center gap-6 px-6 bg-{theme.get('toolbar_bg')} rounded-md"
+            f"wt-toolbar wt-toolbar-scroll w-full shrink-0 items-center gap-6 px-6 bg-{theme.get('toolbar_bg')} rounded-md flex-nowrap overflow-x-auto"
         )
         .style(
             f"height: {TOOLBAR_HEIGHT_PX}px; min-height: {TOOLBAR_HEIGHT_PX}px; max-height: {TOOLBAR_HEIGHT_PX}px; box-sizing: border-box;"
+            " scrollbar-width: none; -ms-overflow-style: none;"
         )
     ):
         yield
 
 
 @contextmanager
-def toolbar_group(theme, label: str, divider_after: bool = True):
-    with ui.element("div").classes("flex items-center gap-2"):
-        ui.label(label).classes(
-            f"text-xs text-{theme.get('accent')} uppercase tracking-wide whitespace-nowrap"
-        )
+def toolbar_group(theme, label: str | None = None, divider_after: bool = True):
+    with ui.element("div").classes("flex shrink-0 items-center gap-2"):
+        if label is not None:
+            ui.label(label).classes(
+                f"text-xs text-{theme.get('accent')} uppercase tracking-wide whitespace-nowrap"
+            )
         yield
     if divider_after:
         toolbar_divider(theme)
