@@ -496,6 +496,33 @@ class Database:
                 f"Ending timer for customer: {customer_name} - project: {project_name}",
             )
 
+    def insert_timer_start_row(
+        self, customer_id: int, project_id: int, start_time: str
+    ):
+        """Start a timer with an explicit start time instead of now."""
+        def _parse(s):
+            for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    return datetime.strptime(s, fmt)
+                except ValueError:
+                    continue
+            raise ValueError(f"Unrecognized datetime format: {s!r}")
+
+        start_dt = _parse(start_time)
+        date_key = int(start_dt.strftime("%Y%m%d"))
+        start_iso = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        self.execute_query(
+            "insert into time (customer_id, project_id, start_time, date_key) values (?, ?, ?, ?)",
+            (customer_id, project_id, start_iso, date_key),
+        )
+
+        customer_name = self.get_customer_name(customer_id)
+        project_name = self.get_project_name(project_id)
+        self.log_engine.info(
+            f"Timer started (manual start) for {customer_name} - {project_name}: {start_iso}"
+        )
+
     def insert_manual_time_row(
         self,
         customer_id: int,

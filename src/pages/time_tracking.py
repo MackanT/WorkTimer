@@ -701,6 +701,65 @@ async def time_tracking_page():
 
         _manual_dialog.open()
 
+    async def show_manual_start_dialog(customer_id: int, project_id: int):
+        """Open a small dialog to start a timer with a custom start time."""
+        QE = core.query_engine
+
+        df = await QE.query_db(
+            "select c.customer_name, p.project_name from customers c "
+            "join projects p on p.customer_id = c.customer_id "
+            "where c.customer_id = ? and p.project_id = ?",
+            params=(customer_id, project_id),
+        )
+        c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
+        p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
+
+        now = datetime.now()
+        dt_fmt = "%Y-%m-%dT%H:%M"
+
+        _manual_start_card.clear()
+        with _manual_start_card:
+            ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
+            ui.label("Start timer from a past time").classes(
+                f"text-caption text-{core.theme.get('muted')} -mt-2 mb-2"
+            )
+
+            start_input = (
+                ui.input(label="Start time", value=now.strftime(dt_fmt))
+                .props('type="datetime-local"')
+                .classes("w-full")
+            )
+
+            async def handle_save():
+                try:
+                    await QE.function_db(
+                        "insert_timer_start_row",
+                        customer_id,
+                        project_id,
+                        start_input.value,
+                    )
+                    cb = checkbox_refs.get((customer_id, project_id))
+                    if cb:
+                        nonlocal ignore_next_checkbox_event
+                        ignore_next_checkbox_event = True
+                        cb.set_value(True)
+                    await on_timer_started(customer_id, project_id)
+                    core.event_bus.notify("Timer started!", type_="positive")
+                except Exception as e:
+                    core.logger.error(f"Manual start failed: {e}")
+                    core.event_bus.notify(f"Error starting timer: {e}", type_="negative")
+                _manual_start_dialog.close()
+
+            def handle_close():
+                _manual_start_dialog.close()
+
+            with ui.row().classes("justify-end gap-2"):
+                btn_w = UI_STYLES.get_widget_width("button")
+                ui.button("Start", on_click=handle_save).classes(btn_w)
+                ui.button("Close", on_click=handle_close).props("flat").classes(btn_w)
+
+        _manual_start_dialog.open()
+
     # ========================================================================
     # Data Functions
     # ========================================================================
@@ -725,6 +784,7 @@ async def time_tracking_page():
     # Storage for label widgets for incremental updates
     value_label_refs = {}
     customer_total_label_refs = {}
+    checkbox_refs = {}
 
     async def render_time_tracker():
         """
@@ -744,6 +804,7 @@ async def time_tracking_page():
         # Clear label references for new render
         value_label_refs.clear()
         customer_total_label_refs.clear()
+        checkbox_refs.clear()
 
         # Cache display mode
         is_time = not state.show_bonus
@@ -815,12 +876,13 @@ async def time_tracking_page():
                             lambda x: x and project_index < total_projects - 1,
                         )
                 else:
-                    ui.checkbox(
+                    cb = ui.checkbox(
                         on_change=make_callback(
                             project["customer_id"], project["project_id"]
                         ),
                         value=initial_state_val,
                     )
+                    checkbox_refs[(int(project["customer_id"]), int(project["project_id"]))] = cb
 
                 ui.label(str(project["project_name"])).classes(
                     UI_STYLES.get_widget_style("time_tracking_project_name")["classes"]
@@ -846,7 +908,10 @@ async def time_tracking_page():
                 with ui.context_menu():
                     async def _open_manual(cid=int(project["customer_id"]), pid=int(project["project_id"])):
                         await show_manual_time_entry_dialog(cid, pid)
+                    async def _open_manual_start(cid=int(project["customer_id"]), pid=int(project["project_id"])):
+                        await show_manual_start_dialog(cid, pid)
                     ui.menu_item("Add time entry", on_click=_open_manual).props("icon=add_circle")
+                    ui.menu_item("Start from past time", on_click=_open_manual_start).props("icon=history")
 
         async def make_customer_card(
             customer_id, customer_name, group, customer_index=None, total_customers=None
@@ -1058,6 +1123,9 @@ async def time_tracking_page():
     # show_manual_time_entry_dialog() clears + rebuilds the card body and then opens it.
     with ui.dialog().props("persistent") as _manual_dialog:
         _manual_card = ui.card().classes(UI_STYLES.get_widget_width("extra_wide"))
+
+    with ui.dialog().props("persistent") as _manual_start_dialog:
+        _manual_start_card = ui.card().classes(UI_STYLES.get_widget_width("standard"))
 
     core._setup_page_timers(
         "time_tracking", value_refresh_timer, midnight_refresh_timer
