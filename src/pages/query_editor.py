@@ -6,7 +6,6 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 """
 
 import asyncio
-from typing import Tuple
 from nicegui import ui, app
 from nicegui.events import KeyEventArguments
 from ..core.app import AppCore
@@ -81,12 +80,7 @@ async def query_editor_page():
             if not helpers.check_input(widgets, required_fields):
                 return
 
-            kwargs = {}
-            for field in fields:
-                field_name = field["name"]
-                if field_name in widgets:
-                    kwargs[field_name] = widgets[field_name].value
-
+            kwargs = {f["name"]: widgets[f["name"]].value for f in fields if f["name"] in widgets}
             kwargs["table_name"] = table_name
             kwargs["pk_data"] = pk_data
 
@@ -110,9 +104,6 @@ async def query_editor_page():
                 LOG.error(f"Error saving row: {e}")
                 ui.notify(f"Error saving: {str(e)}", type="negative")
 
-        def close_popup():
-            popup.close()
-
         with ui.row().classes(
             helpers.UI_STYLES.get_layout_classes("row_end")
             + " "
@@ -121,7 +112,7 @@ async def query_editor_page():
             ui.button(save_data.button_name, on_click=on_save).props("flat").classes(
                 helpers.UI_STYLES.get_layout_classes("button_fixed")
             )
-            ui.button("Cancel", on_click=close_popup).props("flat").classes(
+            ui.button("Cancel", on_click=popup.close).props("flat").classes(
                 helpers.UI_STYLES.get_layout_classes("button_fixed")
             )
 
@@ -388,9 +379,10 @@ async def query_editor_page():
 
         data_sources = {}
         if table_name == "time":
-            customer_id = table_row.get("customer_id", 0)
+            customer_id = int(table_row.get("customer_id", 0))
             projects = await QE.query_db(
-                f"SELECT project_name FROM projects WHERE customer_id = {customer_id} AND is_current = 1"
+                "SELECT project_name FROM projects WHERE customer_id = ? AND is_current = 1",
+                params=(customer_id,),
             )
             data_sources["project_names"] = projects["project_name"].tolist()
 
@@ -405,6 +397,8 @@ async def query_editor_page():
                 field["default"] = table_row.get("project_name")
 
         helpers.assign_dynamic_options(fields, data_sources=data_sources)
+
+        save_data = SaveData(**action)
 
         async def on_submit():
             required_fields = [
@@ -436,8 +430,6 @@ async def query_editor_page():
             except Exception as e:
                 LOG.error(f"Error saving row: {e}")
                 ui.notify(f"Error saving: {str(e)}", type="negative")
-
-        save_data = SaveData(**action)
         widgets = {}
         dynamic_widgets = []
         parent_map = {}
@@ -528,7 +520,7 @@ async def query_editor_page():
     # ========================================================================
     # UI Rendering
     # ========================================================================
-    def render_toolbar() -> Tuple[ui.row, ui.row]:
+    def render_toolbar() -> tuple[ui.row, ui.row]:
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
             with toolbar_group(core.theme, "Preset", divider_after=True):
@@ -554,7 +546,7 @@ async def query_editor_page():
                 ui.button(
                     "Execute Query (F5)",
                     icon="play_arrow",
-                    on_click=execute_query,  # lambda: asyncio.create_task(execute_query()),
+                    on_click=execute_query,
                 ).props("color=primary size=sm")
                 with ui.row().classes("items-center gap-4"):
                     ui.label("Edit Mode:").classes("text-sm " + helpers.UI_STYLES.get_layout_classes("muted_text"))
