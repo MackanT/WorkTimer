@@ -11,7 +11,7 @@ Full time tracking interface with customer/project cards, timers, and DevOps int
 from nicegui import ui
 import asyncio
 from datetime import datetime, timedelta
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Optional
 from dataclasses import dataclass, field
 
 from ..core import AppCore
@@ -49,17 +49,12 @@ class PageState:
 
     # Display settings
     selected_time: str = "Day"
-    date_range: str = ""
     show_bonus: bool = False
     edit_mode_enabled: bool = False
 
     # Sort orders
     customer_order: list = field(default_factory=list)
     project_orders: Dict[int, list] = field(default_factory=dict)
-
-    # Data cache (keyed by customer_id and (customer_id, project_id))
-    customer_totals: Dict[int, float] = field(default_factory=dict)
-    project_values: Dict[Tuple[int, int], float] = field(default_factory=dict)
 
     # UI data (full dataframe cache)
     ui_data_df = None
@@ -88,9 +83,6 @@ class PageState:
             ].sum()
         )
 
-    def update_data(self, df):
-        """Update data cache from new dataframe."""
-        self.ui_data_df = df
 
 
 # ============================================================================
@@ -233,7 +225,6 @@ async def time_tracking_page():
                 if state.selected_time == "Day":
                     core.logger.info("Midnight refresh: Updating Day view for new date")
                     date_input.value = helpers.get_range_for("Day")
-                    state.date_range = date_input.value
                     await render_time_tracker()
                     core.event_bus.notify("Date changed to new day", type_="info")
                 else:
@@ -270,7 +261,6 @@ async def time_tracking_page():
             count=len(active_names),
             names=active_names,
         )
-        return len(active_names)
 
     # ========================================================================
     # UI Control Handlers
@@ -286,7 +276,6 @@ async def time_tracking_page():
         """Update date range when time span radio changes."""
         state.selected_time = selected_time.value
         date_input.value = helpers.get_range_for(state.selected_time)
-        state.date_range = date_input.value
         asyncio.create_task(update_time_tracker())
         core.logger.info(f"Time span changed to: {state.selected_time}")
 
@@ -360,51 +349,57 @@ async def time_tracking_page():
     # Checkbox Event Handling
     # ========================================================================
 
-    def _create_action_buttons(on_save, on_delete, on_close):
-        """Create standard Save/Delete/Close button row for dialogs."""
+    def _create_action_buttons(on_save, on_close, on_delete=None, save_label="Save"):
+        """Create standard action button row for dialogs. Delete button is optional."""
         with ui.row().classes("justify-end gap-2"):
             btn_classes = UI_STYLES.get_widget_width("button")
-            ui.button("Save", on_click=on_save).classes(btn_classes)
-            ui.button("Delete", on_click=on_delete).props("color=negative").classes(
-                f"q-btn--warning {btn_classes}"
-            )
+            ui.button(save_label, on_click=on_save).classes(btn_classes)
+            if on_delete is not None:
+                ui.button("Delete", on_click=on_delete).props("color=negative").classes(
+                    f"q-btn--warning {btn_classes}"
+                )
             ui.button("Close", on_click=on_close).props("flat").classes(btn_classes)
+
+    def _build_devops_selector(devops_engine, c_name, git_id, has_git_id):
+        """Render DevOps ID dropdown + 'Store to DevOps' toggle. Returns (id_input, id_checkbox)."""
+        id_checkbox = None
+        id_options = devops_engine.df[
+            (devops_engine.df["customer_name"] == c_name)
+            & (devops_engine.df["state"].isin(["Active", "New"]))
+        ][["display_name", "id"]].dropna()
+        id_input = ui.select(
+            id_options["display_name"].tolist(),
+            with_input=True,
+            label="DevOps-ID",
+        ).classes("w-full -mb-2")
+        if has_git_id:
+            match = id_options[id_options["id"] == git_id]
+            id_input.value = match["display_name"].iloc[0] if not match.empty else None
+        with ui.row().classes("w-full items-center justify-between -mt-2"):
+            def toggle_switch():
+                id_checkbox.value = not id_checkbox.value
+                id_checkbox.update()
+            ui.label("Store to DevOps").on("click", toggle_switch).classes("cursor-pointer")
+            id_checkbox = ui.switch(value=has_git_id).props("dense")
+        return id_input, id_checkbox
 
     async def show_time_entry_dialog(
         customer_id: int,
         project_id: int,
-        query_engine,
-        devops_engine,
-        logger,
         on_save_callback: Optional[Callable] = None,
         on_delete_callback: Optional[Callable] = None,
         on_close_callback: Optional[Callable] = None,
     ) -> None:
-        """
-        Show dialog for completing a time entry with comment and DevOps integration.
-
-        Args:
-            customer_id: Customer ID for the time entry
-            project_id: Project ID for the time entry
-            query_engine: Query engine instance
-            devops_engine: DevOps engine instance
-            logger: Logger instance
-            on_save_callback: Async function to call on save with (git_id, comment, store_to_devops)
-            on_delete_callback: Async function to call on delete
-            on_close_callback: Function to call on close/cancel
-        """
-        QE = query_engine
-        DO = devops_engine
-        LOG = logger
-
+        """Show dialog for completing a time entry with comment and DevOps integration."""
         # Query project/customer info
-        df = await QE.query_db(
-            f"""
-            select distinct t.customer_name, t.project_name, p.git_id 
+        df = await core.query_engine.query_db(
+            """
+            select distinct t.customer_name, t.project_name, p.git_id
             from time t
             left join projects p on p.project_id = t.project_id
-            where t.customer_id = {customer_id} and t.project_id = {project_id}
-            """
+            where t.customer_id = ? and t.project_id = ?
+            """,
+            params=(customer_id, project_id),
         )
 
         # Extract values with defaults
@@ -414,7 +409,7 @@ async def time_tracking_page():
         has_git_id = git_id is not None and git_id > 0
 
         # Check DevOps connection using engine method
-        has_devops = DO.has_customer_connection(c_name) if DO else False
+        has_devops = core.devops_engine.has_customer_connection(c_name) if core.devops_engine else False
 
         with ui.dialog().props("persistent") as popup:
             with ui.card().classes(UI_STYLES.get_widget_width("extra_wide")):
@@ -425,32 +420,9 @@ async def time_tracking_page():
                 id_input = None
                 id_checkbox = None
                 if has_devops:
-                    id_options = DO.df[
-                        (DO.df["customer_name"] == c_name)
-                        & (DO.df["state"].isin(["Active", "New"]))
-                    ][["display_name", "id"]].dropna()
-                    id_input = ui.select(
-                        id_options["display_name"].tolist(),
-                        with_input=True,
-                        label="DevOps-ID",
-                    ).classes("w-full -mb-2")
-
-                    if has_git_id:
-                        match = id_options[id_options["id"] == git_id]
-                        id_input.value = (
-                            match["display_name"].iloc[0] if not match.empty else None
-                        )
-
-                    with ui.row().classes("w-full items-center justify-between -mt-2"):
-
-                        def toggle_switch():
-                            id_checkbox.value = not id_checkbox.value
-                            id_checkbox.update()
-
-                        ui.label("Store to DevOps").on("click", toggle_switch).classes(
-                            "cursor-pointer"
-                        )
-                        id_checkbox = ui.switch(value=has_git_id).props("dense")
+                    id_input, id_checkbox = _build_devops_selector(
+                        core.devops_engine, c_name, git_id, has_git_id
+                    )
 
                 # Comment input
                 comment_input = ui.textarea(
@@ -467,11 +439,10 @@ async def time_tracking_page():
                         git_id_val = extract_devops_id(id_input.value)
                         store_to_devops = id_checkbox.value if id_checkbox else False
 
-                    if LOG:
-                        LOG.debug(
-                            f"Time entry save: git_id={git_id_val}, devops={store_to_devops}, "
-                            f"customer={customer_id}, project={project_id}",
-                        )
+                    core.logger.debug(
+                        f"Time entry save: git_id={git_id_val}, devops={store_to_devops}, "
+                        f"customer={customer_id}, project={project_id}",
+                    )
 
                     if on_save_callback:
                         await on_save_callback(
@@ -494,7 +465,7 @@ async def time_tracking_page():
                     popup.close()
 
                 # Button row
-                _create_action_buttons(handle_save, handle_delete, handle_close)
+                _create_action_buttons(handle_save, handle_close, on_delete=handle_delete)
 
         popup.open()
 
@@ -576,35 +547,32 @@ async def time_tracking_page():
         await show_time_entry_dialog(
             customer_id=customer_id_int,
             project_id=project_id_int,
-            query_engine=core.query_engine,
-            devops_engine=core.devops_engine,
-            logger=core.logger,
             on_save_callback=handle_save,
             on_delete_callback=handle_delete,
             on_close_callback=handle_close,
         )
 
     def make_callback(customer_id, project_id):
-        return lambda e: on_checkbox_change(e, e.value, customer_id, project_id)
+        async def _cb(e):
+            await on_checkbox_change(e, e.value, customer_id, project_id)
+        return _cb
 
     async def show_manual_time_entry_dialog(customer_id: int, project_id: int):
         """Populate the pre-created dialog shell and open it."""
-        QE = core.query_engine
-        DO = core.devops_engine
-
-        df = await QE.query_db(
-            f"""
+        df = await core.query_engine.query_db(
+            """
             select c.customer_name, p.project_name, p.git_id
             from customers c
             join projects p on p.customer_id = c.customer_id
-            where c.customer_id = {customer_id} and p.project_id = {project_id}
-            """
+            where c.customer_id = ? and p.project_id = ?
+            """,
+            params=(customer_id, project_id),
         )
         c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
         p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
         git_id = df.iloc[0]["git_id"] if not df.empty else 0
         has_git_id = git_id is not None and git_id > 0
-        has_devops = DO.has_customer_connection(c_name) if DO else False
+        has_devops = core.devops_engine.has_customer_connection(c_name) if core.devops_engine else False
 
         now = datetime.now()
         one_hour_ago = now - timedelta(hours=1)
@@ -633,30 +601,9 @@ async def time_tracking_page():
             id_checkbox = None
             git_id_number_input = None
             if has_devops:
-                id_options = DO.df[
-                    (DO.df["customer_name"] == c_name)
-                    & (DO.df["state"].isin(["Active", "New"]))
-                ][["display_name", "id"]].dropna()
-                id_input = ui.select(
-                    id_options["display_name"].tolist(),
-                    with_input=True,
-                    label="DevOps-ID",
-                ).classes("w-full -mb-2")
-                if has_git_id:
-                    match = id_options[id_options["id"] == git_id]
-                    id_input.value = (
-                        match["display_name"].iloc[0] if not match.empty else None
-                    )
-                with ui.row().classes("w-full items-center justify-between -mt-2"):
-
-                    def toggle_switch():
-                        id_checkbox.value = not id_checkbox.value
-                        id_checkbox.update()
-
-                    ui.label("Store to DevOps").on("click", toggle_switch).classes(
-                        "cursor-pointer"
-                    )
-                    id_checkbox = ui.switch(value=has_git_id).props("dense")
+                id_input, id_checkbox = _build_devops_selector(
+                    core.devops_engine, c_name, git_id, has_git_id
+                )
             else:
                 git_id_number_input = (
                     ui.number(label="Git ID", value=git_id if has_git_id else None, min=0)
@@ -675,7 +622,7 @@ async def time_tracking_page():
                 elif git_id_number_input is not None and git_id_number_input.value:
                     git_id_val = int(git_id_number_input.value)
                 try:
-                    await QE.function_db(
+                    await core.query_engine.function_db(
                         "insert_manual_time_row",
                         customer_id,
                         project_id,
@@ -694,18 +641,25 @@ async def time_tracking_page():
             def handle_close():
                 _manual_dialog.close()
 
-            with ui.row().classes("justify-end gap-2"):
-                btn_w = UI_STYLES.get_widget_width("button")
-                ui.button("Save", on_click=handle_save).classes(btn_w)
-                ui.button("Close", on_click=handle_close).props("flat").classes(btn_w)
+            _create_action_buttons(handle_save, handle_close)
 
         _manual_dialog.open()
 
     async def show_manual_start_dialog(customer_id: int, project_id: int):
         """Open a small dialog to start a timer with a custom start time."""
-        QE = core.query_engine
+        # Guard: refuse if a timer is already running for this project
+        active = await core.query_engine.query_db(
+            "select 1 from time where customer_id = ? and project_id = ? and end_time is null limit 1",
+            params=(customer_id, project_id),
+        )
+        if not active.empty:
+            core.event_bus.notify(
+                "A timer is already running for this project — stop it first",
+                type_="warning",
+            )
+            return
 
-        df = await QE.query_db(
+        df = await core.query_engine.query_db(
             "select c.customer_name, p.project_name from customers c "
             "join projects p on p.customer_id = c.customer_id "
             "where c.customer_id = ? and p.project_id = ?",
@@ -732,7 +686,7 @@ async def time_tracking_page():
 
             async def handle_save():
                 try:
-                    await QE.function_db(
+                    await core.query_engine.function_db(
                         "insert_timer_start_row",
                         customer_id,
                         project_id,
@@ -753,10 +707,7 @@ async def time_tracking_page():
             def handle_close():
                 _manual_start_dialog.close()
 
-            with ui.row().classes("justify-end gap-2"):
-                btn_w = UI_STYLES.get_widget_width("button")
-                ui.button("Start", on_click=handle_save).classes(btn_w)
-                ui.button("Close", on_click=handle_close).props("flat").classes(btn_w)
+            _create_action_buttons(handle_save, handle_close, save_label="Start")
 
         _manual_start_dialog.open()
 
@@ -798,8 +749,7 @@ async def time_tracking_page():
         core.logger.debug("Running render_time_tracker (full rebuild)")
 
         df = await get_ui_data()
-        state.update_data(df)
-        container.clear()
+        state.ui_data_df = df
 
         # Clear label references for new render
         value_label_refs.clear()
@@ -819,12 +769,11 @@ async def time_tracking_page():
             project, customer_id, project_index=None, total_projects=None
         ):
             """Create a single project row with checkbox/arrows and value."""
-            sql_query = (
-                f"select * from time where customer_id = {customer_id} "
-                f"and project_id = {project['project_id']} and end_time is null"
+            df_counts = await core.query_engine.query_db(
+                "select 1 from time where customer_id = ? and project_id = ? and end_time is null limit 1",
+                params=(customer_id, int(project["project_id"])),
             )
-            df_counts = await core.query_engine.query_db(sql_query)
-            initial_state_val = bool(len(df_counts) > 0)
+            initial_state_val = not df_counts.empty
 
             with (
                 ui.row()
@@ -897,7 +846,7 @@ async def time_tracking_page():
                     "time_tracking_project_value"
                 )
                 value_label = (
-                    ui.label(f"{total_string}")
+                    ui.label(total_string)
                     .classes(project_value_style["classes"])
                     .style(
                         project_value_style.get("style", "") + " white-space: nowrap;"
@@ -918,7 +867,6 @@ async def time_tracking_page():
         ):
             """Create a customer card with all its projects."""
             total_string = get_total_string(customer_id)
-            label_ref = []
 
             with entity_card_shell():
                 with entity_card_header():
@@ -997,7 +945,6 @@ async def time_tracking_page():
                             + " white-space:nowrap;"
                         )
                     )
-                    label_ref.append(lbl)
 
                 ui.separator().classes(
                     UI_STYLES.get_layout_classes("divider_row")
@@ -1035,7 +982,7 @@ async def time_tracking_page():
                             total_projects=total_projects,
                         )
 
-            customer_total_label_refs[customer_id] = label_ref[0] if label_ref else None
+            customer_total_label_refs[customer_id] = lbl
 
         # Get customers from database
         customers_from_db = df[
@@ -1043,21 +990,17 @@ async def time_tracking_page():
         ].drop_duplicates()
         customers_from_db = customers_from_db.sort_values("customer_sort_order")
 
-        customers_dict = {
-            cust_id: (cust_id, cust_name)
-            for cust_id, cust_name in zip(
-                customers_from_db["customer_id"], customers_from_db["customer_name"]
-            )
-        }
+        customers_list = list(
+            zip(customers_from_db["customer_id"], customers_from_db["customer_name"])
+        )
+        current_ids = {c[0] for c in customers_list}
 
         # Initialize customer order if needed
-        if not state.customer_order or set(c[0] for c in state.customer_order) != set(
-            customers_dict.keys()
-        ):
+        if not state.customer_order or {c[0] for c in state.customer_order} != current_ids:
             state.customer_order.clear()
-            state.customer_order.extend(customers_dict.values())
+            state.customer_order.extend(customers_list)
 
-        # Clear and rebuild container
+        # Rebuild container
         container.clear()
         with container:
             with ui.row(wrap=False):
@@ -1085,7 +1028,7 @@ async def time_tracking_page():
         Used when toggling time/bonus or after timer stops.
         """
         df = await get_ui_data()
-        state.update_data(df)
+        state.ui_data_df = df
 
         # Determine display mode
         is_time = not state.show_bonus
@@ -1109,7 +1052,6 @@ async def time_tracking_page():
 
     # Wire up event handlers
     date_input.value = helpers.get_range_for(selected_time.value)
-    state.date_range = date_input.value
     selected_time.on("update:model-value", on_radio_time_change)
 
     ## DEBUG: Uncomment to add red outline to all elements for layout debugging
