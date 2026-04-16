@@ -270,7 +270,10 @@ def render_and_sanitize_markdown(text: str) -> str:
             "pymdownx.highlight": {
                 "use_pygments": True,
                 "pygments_style": "monokai",
-            }
+            },
+            "pymdownx.tilde": {
+                "subscript": False,
+            },
         },
     )
 
