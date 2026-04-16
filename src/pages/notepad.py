@@ -145,9 +145,7 @@ def load_notes(notes_dir: Path, meta: dict) -> list[dict]:
 def load_external_notes(project_root: Path, meta: dict, developer_mode: bool = False) -> list[dict]:
     """Load hardcoded external notes. Developer-only notes are excluded unless developer_mode is True."""
     notes = []
-    for ext in EXTERNAL_NOTES:
-        if ext.get("developer_only") and not developer_mode:
-            continue
+    for ext in ext_notes:
         path = project_root / ext["path"]
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
