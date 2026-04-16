@@ -1,0 +1,14 @@
+note_colors:
+    amber: "amber-400"
+    red: "red-400"
+    green: "green-400"
+    blue: "blue-400"
+    purple: "purple-400"
+
+note_icons:
+    note: description
+    todo: check_box
+    idea: lightbulb
+    warning: warning
+    star: star
+    link: link

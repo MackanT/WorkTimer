@@ -17,3 +17,4 @@ config/config_theme.yml
 config/devops_tags.yml
 config/devops_contacts.yml
 config/task_visuals.yml
+config/config_notepad.yml

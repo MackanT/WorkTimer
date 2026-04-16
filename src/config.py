@@ -219,6 +219,12 @@ class ThemeConfig(BaseModel):
     nav_bg: str
     border: str
 
+class ConfigNotepad(BaseModel):
+    """Notepad configuration from config_notepad.yml"""
+
+    note_colors: Dict[str, str] = Field(default_factory=dict)
+    note_icons: Dict[str, str] = Field(default_factory=dict)
+    external_notes: List[Dict[str, Any]] = Field(default_factory=list)
 
 class ConfigTaskVisuals(BaseModel):
     """Task visuals configuration from task_visuals.yml"""
@@ -388,6 +394,12 @@ class ConfigLoader:
         self._ensure_from_template("config_theme.yml")
         theme_yaml = self._load_yaml("config_theme.yml", required=True)
         self.configs["theme"] = ThemeConfig(**theme_yaml.get("colors", {}))
+
+        # Load notepad config (created from template on first boot)
+        self._ensure_from_template("config_notepad.yml")
+        notepad_yaml = self._load_yaml("config_notepad.yml", required=True)
+        self.configs["notepad"] = ConfigNotepad(**notepad_yaml)
+
 
         print("=== Configuration Loading Complete ===\n")
         return self.configs

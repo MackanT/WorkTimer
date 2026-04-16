@@ -27,34 +27,9 @@ from ..helpers import render_and_sanitize_markdown, UI_STYLES
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-NOTE_COLORS = {
-    "none": {"bg": "", "dot": "bg-gray-400"},
-    "amber": {"bg": "border-l-4 border-amber-400", "dot": "bg-amber-400"},
-    "red": {"bg": "border-l-4 border-red-400", "dot": "bg-red-400"},
-    "green": {"bg": "border-l-4 border-green-400", "dot": "bg-green-400"},
-    "blue": {"bg": "border-l-4 border-blue-400", "dot": "bg-blue-400"},
-    "purple": {"bg": "border-l-4 border-purple-400", "dot": "bg-purple-400"},
-}
-
-NOTE_ICONS = {
-    "note": "description",
-    "todo": "check_box",
-    "idea": "lightbulb",
-    "warning": "warning",
-    "star": "star",
-    "link": "link",  # used for external files
-}
-
-# External pinned files — path relative to project root, display name, locked name
-EXTERNAL_NOTES = [
-    {
-        "path": "docs/todo.md",
-        "display_name": "Todo",
-        "icon": "todo",
-        "readonly_name": True,
-        "developer_only": True,
-    },
-]
+NOTE_COLORS = {}
+NOTE_ICONS = {}
+EXTERNAL_NOTES = []
 
 
 # ── Path helpers ───────────────────────────────────────────────────────────────
@@ -142,8 +117,8 @@ def load_notes(notes_dir: Path, meta: dict) -> list[dict]:
     return notes
 
 
-def load_external_notes(project_root: Path, meta: dict, developer_mode: bool = False) -> list[dict]:
-    """Load hardcoded external notes. Developer-only notes are excluded unless developer_mode is True."""
+def load_external_notes(project_root: Path, meta: dict, ext_notes: list) -> list[dict]:
+    """Load hardcoded external notes."""
     notes = []
     for ext in ext_notes:
         path = project_root / ext["path"]
@@ -263,10 +238,21 @@ async def notepad_page():
     core = await AppCore.get_or_initialize()
     notes_dir = get_notes_dir()
     project_root = get_project_root()
+    
+    note_config = core.config_loader.configs["notepad"]
+    
+    for col in note_config.note_colors:
+        NOTE_COLORS[col] = {
+            "bg": f"border-l-4 border-{note_config.note_colors[col]}",
+            "dot": f"bg-{note_config.note_colors[col]}",
+        }
+    NOTE_COLORS['none'] = {"bg": "", "dot": "bg-gray-400"}
+    NOTE_ICONS = note_config.note_icons
+
 
     meta = load_meta(notes_dir)
     regular_notes = load_notes(notes_dir, meta)
-    external_notes = load_external_notes(project_root, meta, developer_mode=core.settings.developer_mode)
+    external_notes = load_external_notes(project_root, meta, note_config.external_notes)
     all_notes = external_notes + regular_notes
 
     state = {
