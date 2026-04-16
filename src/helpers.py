@@ -232,6 +232,9 @@ MARKDOWN_DARK_MODE_CSS = """
     hr { border: none; border-top: 2px solid #555; margin: 2em 0; }
     a { color: #64b5f6; text-decoration: none; }
     a:hover { text-decoration: underline; }
+    ul.contains-task-list { list-style: none; padding-left: 1.5em; }
+    .task-list-item { list-style: none; padding-left: 0; }
+    .task-list-item input[type="checkbox"] { margin-right: 0.5em; cursor: pointer; accent-color: #64b5f6; vertical-align: middle; width: 1em; height: 1em; }
 </style>
 """
 
@@ -263,6 +266,7 @@ def render_and_sanitize_markdown(text: str) -> str:
             "nl2br",
             "sane_lists",
             "pymdownx.tilde",
+            "pymdownx.tasklist",
             "pymdownx.highlight",
             "pymdownx.superfences",
         ],
@@ -273,6 +277,10 @@ def render_and_sanitize_markdown(text: str) -> str:
             },
             "pymdownx.tilde": {
                 "subscript": False,
+            },
+            "pymdownx.tasklist": {
+                "custom_checkbox": False,
+                "clickable_checkbox": True,
             },
         },
     )
@@ -298,6 +306,7 @@ def render_and_sanitize_markdown(text: str) -> str:
         "img",
         "br",
         "hr",
+        "input",
         "ul",
         "ol",
         "li",
@@ -311,6 +320,7 @@ def render_and_sanitize_markdown(text: str) -> str:
     allowed_attrs = {
         "a": ["href", "title", "target"],
         "img": ["src", "alt", "width", "height"],
+        "input": ["type", "checked", "disabled", "id"],
         "code": ["class"],
         "pre": ["class"],
         "span": ["class"],
@@ -325,6 +335,20 @@ def render_and_sanitize_markdown(text: str) -> str:
         protocols=["http", "https", "mailto", "data"],
         strip=True,
     )
+
+    # Post-process: stamp each checkbox with a sequential id so JS can
+    # report which one was clicked back to Python.
+    # bleach/html5lib reorders attributes alphabetically, so the regex must
+    # match <input ...> tags that contain type="checkbox" anywhere.
+    _cbidx = [0]
+
+    def _stamp_cbidx(m: re.Match) -> str:
+        tag = m.group(0)
+        idx = _cbidx[0]
+        _cbidx[0] += 1
+        return tag[:-1] + f' id="notepad-cb-{idx}">'
+
+    cleaned_html = re.sub(r'<input\b[^>]*\btype="checkbox"[^>]*>', _stamp_cbidx, cleaned_html)
 
     # Return with dark mode styling
     return f"""
