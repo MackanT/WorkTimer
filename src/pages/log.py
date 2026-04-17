@@ -6,13 +6,13 @@ Uses per-client AppCore and event-driven updates.
 """
 
 from datetime import datetime
-from typing import Tuple
 
 from nicegui import ui
 from ..core.app import AppCore
+from ..core.events import get_global_recent_logs
 from ..helpers import UI_STYLES
-
 from ..ui.elements import toolbar, toolbar_group, page_card
+from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 
 
 async def log_page():
@@ -25,14 +25,12 @@ async def log_page():
     # Get or create AppCore for this client
     core = await AppCore.get_or_initialize()
 
-    from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
-    
     log_page_config = core.ui_config.get("log_page", {})
     log_colors = log_page_config.get('log', {}).get('log_colors', {})
 
     setup_debug_keyboard_handlers(core)
 
-    def render_toolbar() -> Tuple[ui.select, ui.button, ui.button]:
+    def render_toolbar() -> tuple[ui.select, ui.button, ui.button]:
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
             with toolbar_group(core.theme, divider_after=False):
@@ -74,13 +72,6 @@ async def log_page():
 
         return filter_select, save_button, clear_button
 
-    if not core:
-        with page_card():
-            ui.label("Log engine not available").classes(
-                UI_STYLES.get_layout_classes("text_negative")
-            )
-        return
-
     filter_select, save_button, clear_button = render_toolbar()
 
     # Filter state
@@ -96,8 +87,6 @@ async def log_page():
         )
 
         # Load historical logs (no filter applied initially)
-        from ..core.events import get_global_recent_logs
-
         seen = set()
 
         # Global logs (oldest first)
@@ -180,10 +169,8 @@ async def log_page():
                 selected_filter["value"] = filter_select.value
 
                 log_widget.clear()
-                from ..core.events import _GLOBAL_RECENT_LOGS
-
-                seen = set()
-                for log_entry in _GLOBAL_RECENT_LOGS:
+                seen_filter = set()
+                for log_entry in get_global_recent_logs():
                     # Apply filter
                     if selected_filter["value"] != "All":
                         logger_name = log_entry.get("logger", "")
@@ -198,15 +185,14 @@ async def log_page():
                         log_entry.get("logger"),
                         log_entry.get("message"),
                     )
-                    if key in seen:
+                    if key in seen_filter:
                         continue
-                    seen.add(key)
+                    seen_filter.add(key)
 
-                    # Format the log entry (might not have 'formatted' key)
-                    if "formatted" in log_entry:
-                        formatted = log_entry["formatted"]
-                    else:
-                        formatted = f"{log_entry.get('timestamp')} | {log_entry.get('level', 'INFO'):<8} | {log_entry.get('logger', 'App'):<9} :: {log_entry.get('message', '')}"
+                    formatted = log_entry.get(
+                        "formatted",
+                        f"{log_entry.get('timestamp')} | {log_entry.get('level', 'INFO'):<8} | {log_entry.get('logger', 'App'):<9} :: {log_entry.get('message', '')}",
+                    )
 
                     color = log_colors.get(log_entry.get("level", "INFO"), "white")
                     try:
@@ -217,10 +203,10 @@ async def log_page():
                     f"Filter applied: {selected_filter['value']}", type="info"
                 )
             except Exception as e:
-                print(f"[Log] Error applying filter: {e}")
+                core.logger.error(f"[Log] Error applying filter: {e}")
 
-        # Bind filter change to apply_filter (single binding)
-        filter_select.on("update:model-value", lambda: apply_filter())
+        # Bind filter change
+        filter_select.on("update:model-value", apply_filter)
 
         # Clear handler - clears widget only, not the buffer
         def clear_log():
@@ -236,9 +222,6 @@ async def log_page():
         # Save to file handler
         def save_log_to_file():
             try:
-                # Get all logs from global buffer
-                from ..core.events import get_global_recent_logs
-
                 logs = get_global_recent_logs()
 
                 # Format logs as text
