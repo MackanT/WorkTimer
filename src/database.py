@@ -1,5 +1,6 @@
 import sqlite3
 from textwrap import dedent
+from typing import Literal
 import pandas as pd
 from datetime import datetime, timedelta
 
@@ -13,165 +14,12 @@ class Database:
         self.log_engine = log_engine
 
     def initialize_db(self):
-        """
-        Initialize the database by creating necessary tables, triggers, and populating the dates table.
-        """
-
-        def add_default_queries():
-            query_settings = [
-                (
-                    "time",
-                    """
-                select
-                     time_id
-                    ,start_time, end_time, round(total_time, 2) as total_time
-                    ,customer_id, customer_name
-                    ,project_id, project_name
-                    ,git_id, comment
-                from time
-                order by time_id desc
-                limit 100
-                """,
-                ),
-                (
-                    "customers",
-                    """
-                select
-                     customer_id
-                    ,customer_name
-                    ,wage
-                    ,org_url
-                    ,pat_token
-                from customers
-                where is_current = 1
-                """,
-                ),
-                (
-                    "projects",
-                    """
-                select
-                     project_id
-                    ,project_name
-                    ,customer_id
-                    ,git_id
-                from projects
-                where is_current = 1
-                """,
-                ),
-                (
-                    "weekly",
-                    """
-                with current_period as (
-                    select
-                        t.customer_name
-                        ,t.project_name
-                        ,sum(t.total_time) as total_time
-                    from time t
-                    join dates d on d.date_key = t.date_key
-                    where d.year = cast(strftime('%Y', 'now') as integer)
-                        and d.week = cast(strftime('%W', 'now') as integer)
-                    group by t.customer_name, t.project_name
-                    having sum(t.total_time) > 0
-                )
-                select
-                    customer_name
-                    ,project_name
-                    ,round(total_time, 2) as total_time
-                from current_period
-                union all select '', '', null
-                union all
-                select
-                    customer_name
-                    ,'total'
-                    ,round(sum(total_time), 2)
-                from current_period
-                group by customer_name
-                """,
-                ),
-                (
-                    "monthly",
-                    """
-                with current_period as (
-                    select
-                        t.customer_name
-                        ,t.project_name
-                        ,sum(t.total_time) as total_time
-                    from time t
-                    join dates d on d.date_key = t.date_key
-                    where d.year = cast(strftime('%Y', 'now') as integer)
-                        and d.month = cast(strftime('%m', 'now') as integer)
-                    group by t.customer_name, t.project_name
-                    having sum(t.total_time) > 0
-                )
-                select
-                    customer_name
-                    ,project_name
-                    ,round(total_time, 2) as total_time
-                from current_period
-                union all select '', '', null
-                union all
-                select
-                    customer_name
-                    ,'total'
-                    ,round(sum(total_time), 2)
-                from current_period
-                group by customer_name
-                """,
-                ),
-            ]
-
-            def remove_leading_blank_line(sql_code: str) -> str:
-                lines = sql_code.splitlines()
-                if lines and lines[0].strip() == "":
-                    lines = lines[1:]
-                return "\n".join(lines)
-
-            rows = [
-                {
-                    "query_name": name,
-                    "query_sql": remove_leading_blank_line(dedent(sql_code)),
-                    "is_default": 1,
-                }
-                for name, sql_code in query_settings
-            ]
-
-            # Create DataFrame
-            queries_table = pd.DataFrame(rows)
-            queries_table.to_sql("queries", self.conn, if_exists="append", index=False)
-
-        def add_dates(s_date, e_date):
-            """
-            Add a range of dates to the 'dates' table.
-            """
-            # Create a date range
-            date_range = pd.date_range(start=s_date, end=e_date)
-
-            # Build the date table
-            date_table = pd.DataFrame(
-                {
-                    "date_key": date_range.to_series().dt.strftime("%Y%m%d"),
-                    "date": date_range.to_series().dt.strftime("%Y-%m-%d"),
-                    "year": date_range.year,
-                    "month": date_range.month,
-                    "week": date_range.to_series().apply(
-                        lambda x: x.isocalendar().week
-                    ),  # ISO week
-                    "day": date_range.day,
-                }
-            )
-
-            # Insert the date table into the database
-            date_table.to_sql("dates", self.conn, if_exists="append", index=False)
-
+        """Initialize the database by creating necessary tables, triggers, and populating seed data."""
         try:
-            # Log the initialization process
             self.log_engine.info("Initializing database...")
 
             ## Time Table
-            df_temp = self.fetch_query(
-                "select * from sqlite_master where type = 'table' and name = 'time'"
-            )
-            if df_temp.empty:
+            if not self._table_exists("time"):
                 self.execute_query("""
                 create table if not exists time (
                     time_id integer primary key autoincrement,
@@ -256,10 +104,7 @@ class Database:
                 )
 
             ## Customers Table
-            df_temp = self.fetch_query(
-                "select * from sqlite_master where type = 'table' and name = 'customers'"
-            )
-            if df_temp.empty:
+            if not self._table_exists("customers"):
                 self.execute_query("""
                 create table if not exists customers (
                     customer_id integer primary key autoincrement,
@@ -278,10 +123,7 @@ class Database:
                 self.log_engine.info("Table 'customers' created successfully.")
 
             ## Projects Table
-            df_time = self.fetch_query(
-                "select * from sqlite_master where type = 'table' and name = 'projects'"
-            )
-            if df_time.empty:
+            if not self._table_exists("projects"):
                 self.execute_query("""
                 create table if not exists projects (
                     project_id integer primary key autoincrement,
@@ -295,10 +137,7 @@ class Database:
                 self.log_engine.info("Table 'projects' created successfully.")
 
             ## Bonus Table
-            df_time = self.fetch_query(
-                "select * from sqlite_master where type = 'table' and name = 'bonus'"
-            )
-            if df_time.empty:
+            if not self._table_exists("bonus"):
                 self.execute_query("""
                 create table if not exists bonus (
                     bonus_id integer primary key autoincrement,
@@ -310,10 +149,7 @@ class Database:
                 self.log_engine.info("Table 'bonus' created successfully.")
 
             ## Dates Table
-            df_time = self.fetch_query(
-                "select * from sqlite_master where type = 'table' and name = 'dates'"
-            )
-            if df_time.empty:
+            if not self._table_exists("dates"):
                 self.execute_query("""
                 create table if not exists dates (
                     date_key integer unique,
@@ -328,23 +164,20 @@ class Database:
 
                 # Populate the dates table
                 try:
-                    add_dates(s_date="2020-01-01", e_date="2030-12-31")
+                    self._add_dates(s_date="2020-01-01", e_date="2030-12-31")
                     self.log_engine.info("Dates table populated successfully.")
                 except Exception as e:
                     self.log_engine.error(f"Error populating dates table: {e}")
             else:
                 df_count = self.fetch_query("select count(*) as cnt from dates")
                 if df_count.empty or int(df_count.iloc[0]["cnt"]) == 0:
-                    add_dates(s_date="2020-01-01", e_date="2030-12-31")
+                    self._add_dates(s_date="2020-01-01", e_date="2030-12-31")
                     self.log_engine.info(
                         "Found blank Dates table, successfully populated it."
                     )
 
             ## Query Snippets table
-            df_query = self.fetch_query(
-                "select * from sqlite_master where type = 'table' and name = 'queries'"
-            )
-            if df_query.empty:
+            if not self._table_exists("queries"):
                 self.execute_query("""
                 create table if not exists queries (
                     query_name text unique,
@@ -355,23 +188,20 @@ class Database:
                 self.log_engine.info("Table 'queries' created successfully.")
 
                 try:
-                    add_default_queries()
+                    self._add_default_queries()
                     self.log_engine.info("Queries table populated successfully.")
                 except Exception as e:
                     self.log_engine.error(f"Error populating queries table: {e}")
             else:
                 df_count = self.fetch_query("select count(*) as cnt from queries")
                 if df_count.empty or int(df_count.iloc[0]["cnt"]) == 0:
-                    add_default_queries()
+                    self._add_default_queries()
                     self.log_engine.info(
                         "Found blank Queries table, successfully populated it."
                     )
 
             ## DevOps Table
-            df_devops = self.fetch_query(
-                "select * from sqlite_master where type = 'table' and name = 'devops'"
-            )
-            if df_devops.empty:
+            if not self._table_exists("devops"):
                 self.execute_query("""
                 create table if not exists devops (
                     customer_name text,
@@ -385,10 +215,7 @@ class Database:
                 self.log_engine.info("Table 'devops' created successfully.")
 
             ## Tasks table
-            df_tasks = self.fetch_query(
-                "select * from sqlite_master where type = 'table' and name = 'tasks'"
-            )
-            if df_tasks.empty:
+            if not self._table_exists("tasks"):
                 self.execute_query("""
                 create table if not exists tasks (
                     task_id integer primary key autoincrement,
@@ -434,10 +261,158 @@ class Database:
             self.conn.commit()
             self.log_engine.info("Database loaded without errors!")
 
-    def _update_ui(self, exception: str) -> None:
-        pass
+    def _table_exists(self, table_name: str) -> bool:
+        """Return True if the given table exists in the database."""
+        result = self.fetch_query(
+            "select 1 from sqlite_master where type = 'table' and name = ?",
+            (table_name,),
+        )
+        return not result.empty
 
-    ### Time Table Operations ###
+    @staticmethod
+    def _parse_datetime(s: str) -> datetime:
+        """Parse a datetime string in any of the accepted formats."""
+        for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        raise ValueError(f"Unrecognized datetime format: {s!r}")
+
+    def _add_dates(self, s_date: str, e_date: str) -> None:
+        """Populate the dates table with a range of dates."""
+        date_range = pd.date_range(start=s_date, end=e_date)
+        date_table = pd.DataFrame(
+            {
+                "date_key": date_range.to_series().dt.strftime("%Y%m%d"),
+                "date": date_range.to_series().dt.strftime("%Y-%m-%d"),
+                "year": date_range.year,
+                "month": date_range.month,
+                "week": date_range.to_series().apply(lambda x: x.isocalendar().week),
+                "day": date_range.day,
+            }
+        )
+        date_table.to_sql("dates", self.conn, if_exists="append", index=False)
+
+    def _add_default_queries(self) -> None:
+        """Seed the queries table with default SQL snippets."""
+        query_settings = [
+            (
+                "time",
+                """
+                select
+                     time_id
+                    ,start_time, end_time, round(total_time, 2) as total_time
+                    ,customer_id, customer_name
+                    ,project_id, project_name
+                    ,git_id, comment
+                from time
+                order by time_id desc
+                limit 100
+                """,
+            ),
+            (
+                "customers",
+                """
+                select
+                     customer_id
+                    ,customer_name
+                    ,wage
+                    ,org_url
+                    ,pat_token
+                from customers
+                where is_current = 1
+                """,
+            ),
+            (
+                "projects",
+                """
+                select
+                     project_id
+                    ,project_name
+                    ,customer_id
+                    ,git_id
+                from projects
+                where is_current = 1
+                """,
+            ),
+            (
+                "weekly",
+                """
+                with current_period as (
+                    select
+                        t.customer_name
+                        ,t.project_name
+                        ,sum(t.total_time) as total_time
+                    from time t
+                    join dates d on d.date_key = t.date_key
+                    where d.year = cast(strftime('%Y', 'now') as integer)
+                        and d.week = cast(strftime('%W', 'now') as integer)
+                    group by t.customer_name, t.project_name
+                    having sum(t.total_time) > 0
+                )
+                select
+                    customer_name
+                    ,project_name
+                    ,round(total_time, 2) as total_time
+                from current_period
+                union all select '', '', null
+                union all
+                select
+                    customer_name
+                    ,'total'
+                    ,round(sum(total_time), 2)
+                from current_period
+                group by customer_name
+                """,
+            ),
+            (
+                "monthly",
+                """
+                with current_period as (
+                    select
+                        t.customer_name
+                        ,t.project_name
+                        ,sum(t.total_time) as total_time
+                    from time t
+                    join dates d on d.date_key = t.date_key
+                    where d.year = cast(strftime('%Y', 'now') as integer)
+                        and d.month = cast(strftime('%m', 'now') as integer)
+                    group by t.customer_name, t.project_name
+                    having sum(t.total_time) > 0
+                )
+                select
+                    customer_name
+                    ,project_name
+                    ,round(total_time, 2) as total_time
+                from current_period
+                union all select '', '', null
+                union all
+                select
+                    customer_name
+                    ,'total'
+                    ,round(sum(total_time), 2)
+                from current_period
+                group by customer_name
+                """,
+            ),
+        ]
+
+        def _strip_leading_blank(sql: str) -> str:
+            lines = sql.splitlines()
+            if lines and lines[0].strip() == "":
+                lines = lines[1:]
+            return "\n".join(lines)
+
+        rows = [
+            {
+                "query_name": name,
+                "query_sql": _strip_leading_blank(dedent(sql)),
+                "is_default": 1,
+            }
+            for name, sql in query_settings
+        ]
+        pd.DataFrame(rows).to_sql("queries", self.conn, if_exists="append", index=False)
 
     def insert_time_row(
         self, customer_id: int, project_id: int, git_id: int = None, comment: str = None
@@ -445,9 +420,6 @@ class Database:
         dt = datetime.now()
         now = dt.strftime("%Y-%m-%d %H:%M:%S")
         date_key = int(dt.strftime("%Y%m%d"))
-
-        customer_name = self.get_customer_name(customer_id)
-        project_name = self.get_project_name(project_id)
 
         # Check if there's an active timer
         rows = self.fetch_query(
@@ -474,6 +446,8 @@ class Database:
                     date_key,
                 ),
             )
+            customer_name = self.get_customer_name(customer_id)
+            project_name = self.get_project_name(project_id)
             self.log_engine.info(
                 f"Starting timer for customer: {customer_name} - project: {project_name}",
             )
@@ -492,6 +466,8 @@ class Database:
             """,
                 (now, comment, git_id, last_row_id),
             )
+            customer_name = self.get_customer_name(customer_id)
+            project_name = self.get_project_name(project_id)
             self.log_engine.info(
                 f"Ending timer for customer: {customer_name} - project: {project_name}",
             )
@@ -500,15 +476,7 @@ class Database:
         self, customer_id: int, project_id: int, start_time: str
     ):
         """Start a timer with an explicit start time instead of now."""
-        def _parse(s):
-            for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
-                try:
-                    return datetime.strptime(s, fmt)
-                except ValueError:
-                    continue
-            raise ValueError(f"Unrecognized datetime format: {s!r}")
-
-        start_dt = _parse(start_time)
+        start_dt = self._parse_datetime(start_time)
         date_key = int(start_dt.strftime("%Y%m%d"))
         start_iso = start_dt.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -538,16 +506,8 @@ class Database:
           1. INSERT fires trigger_time_insert_row → fills customer_name, project_name, wage, bonus
           2. UPDATE fires trigger_time_after_update → fills total_time, cost, user_bonus
         """
-        def _parse(s):
-            for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
-                try:
-                    return datetime.strptime(s, fmt)
-                except ValueError:
-                    continue
-            raise ValueError(f"Unrecognized datetime format: {s!r}")
-
-        start_dt = _parse(start_time)
-        end_dt = _parse(end_time)
+        start_dt = self._parse_datetime(start_time)
+        end_dt = self._parse_datetime(end_time)
         date_key = int(start_dt.strftime("%Y%m%d"))
         start_iso = start_dt.strftime("%Y-%m-%d %H:%M:%S")
         end_iso = end_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -583,7 +543,12 @@ class Database:
             """
             delete
             from time
-            where customer_id = ? and project_id = ? and end_time is null
+            where time_id = (
+                select time_id from time
+                where customer_id = ? and project_id = ? and end_time is null
+                order by time_id desc
+                limit 1
+            )
         """,
             (customer_id, project_id),
         )
@@ -602,10 +567,11 @@ class Database:
         pat_token: str = None,
         valid_from: str = None,
     ):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now()
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
         if not valid_from:
-            valid_from = min(start_date, datetime.now().strftime("%Y-%m-%d"))
+            valid_from = min(start_date, now.strftime("%Y-%m-%d"))
 
         date_obj = datetime.strptime(start_date, "%Y-%m-%d")
         day_before = date_obj - timedelta(days=1)
@@ -647,11 +613,10 @@ class Database:
                 org_url,
                 valid_from,
                 None,
-                now,
+                now_str,
             ),
         )
         self.log_engine.info(f"Inserted new customer '{customer_name}'")
-        self._update_ui("Error triggering UI refresh after inserting customer")
 
         # Get the new customer_id
         new_customer_id = self._get_value_from_db(
@@ -712,7 +677,6 @@ class Database:
         self.log_engine.info(
             f"Updated customer name from '{customer_name}' to '{new_customer_name}'",
         )
-        self._update_ui("Error triggering UI refresh after updating customer")
 
     def disable_customer(self, customer_name: str):
         self.execute_query(
@@ -725,14 +689,12 @@ class Database:
         )
         self.log_engine.info(f"Disabled customer '{customer_name}'")
 
-        self._update_ui("Error triggering UI refresh after disabling customer")
-
     def enable_customer(self, customer_name: str):
         self.execute_query(
             """
             update customers
-            set is_current = 1  
-            where customer_name = ? 
+            set is_current = 1
+            where customer_name = ?
             and valid_to is null
             and customer_id = (
                 select customer_id from customers
@@ -745,8 +707,6 @@ class Database:
             (customer_name, customer_name),
         )
         self.log_engine.info(f"Enabled customer '{customer_name}'")
-
-        self._update_ui("Error triggering UI refresh after enabling customer")
 
     ### Project Table Operations ###
 
@@ -778,7 +738,6 @@ class Database:
             self.log_engine.info(
                 f"Enabled project '{project_name}' for customer '{customer_name}'",
             )
-            self._update_ui("Error triggering UI refresh after enabling project")
         else:
             self.execute_query(
                 """
@@ -790,7 +749,6 @@ class Database:
             self.log_engine.info(
                 f"Inserted new project '{project_name}' for customer '{customer_name}'",
             )
-            self._update_ui("Error triggering UI refresh after inserting project")
 
     def update_project(
         self,
@@ -825,8 +783,6 @@ class Database:
             f"Updated project '{project_name}' for customer '{customer_name}'"
         )
 
-        self._update_ui("Error triggering UI refresh after updating project")
-
     def disable_project(self, customer_name: str, project_name: str):
         self.execute_query(
             """
@@ -842,15 +798,13 @@ class Database:
             f"Disabled project '{project_name}' for customer '{customer_name}'"
         )
 
-        self._update_ui("Error triggering UI refresh after disabling project")
-
     def enable_project(self, customer_name: str, project_name: str):
         self.execute_query(
             """
             update projects
             set is_current = 1
             where project_name = ? and customer_id in (
-                select customer_id from customers where customer_name = ?
+                select customer_id from customers where customer_name = ? and is_current = 1
             )
         """,
             (project_name, customer_name),
@@ -859,8 +813,6 @@ class Database:
             f"Enabled project '{project_name}' for customer '{customer_name}'"
         )
 
-        self._update_ui("Error triggering UI refresh after enabling project")
-
     ### Bonus Table Operations ###
 
     def insert_bonus(self, start_date: str, bonus_percent: int) -> None:
@@ -868,7 +820,8 @@ class Database:
             datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)
         ).strftime("%Y-%m-%d")
         self.execute_query(
-            f"update bonus set end_date = '{day_before_start_date}' where end_date is Null"
+            "update bonus set end_date = ? where end_date is null",
+            (day_before_start_date,),
         )
         amount = min(bonus_percent / 100, 1)
         self.execute_query(
@@ -878,8 +831,6 @@ class Database:
         self.log_engine.info(
             f"Inserted new bonus percent {bonus_percent}% starting from {start_date}",
         )
-
-        self._update_ui("Error triggering UI refresh after inserting bonus")
 
     ### Task Table Operations ###
 
@@ -1002,13 +953,13 @@ class Database:
                 set_clauses.append("updated_by = ?")
                 params.append(updated_by)
 
-            # Always update the updated_at timestamp
-            set_clauses.append("updated_at = current_timestamp")
-
             if not set_clauses:
                 warning_msg = "No fields to update for task"
                 self.log_engine.warning(warning_msg)
                 return False, warning_msg
+
+            # Always update the updated_at timestamp
+            set_clauses.append("updated_at = current_timestamp")
 
             query = f"update tasks set {', '.join(set_clauses)} where task_id = ?"
             params.append(task_id)
@@ -1058,27 +1009,17 @@ class Database:
                 self.log_engine.warning(warning_msg)
                 return False, warning_msg
 
-            # Update completion status and completed_at timestamp
-            if completed:
-                query = """
-                    update tasks 
-                    set completed = true, 
-                        completed_at = current_timestamp,
-                        updated_at = current_timestamp
-                    where task_id = ?
+            action = "completed" if completed else "marked as incomplete"
+            self.execute_query(
                 """
-                action = "completed"
-            else:
-                query = """
-                    update tasks 
-                    set completed = false, 
-                        completed_at = null,
-                        updated_at = current_timestamp
-                    where task_id = ?
-                """
-                action = "marked as incomplete"
-
-            self.execute_query(query, (task_id,))
+                update tasks
+                set completed = ?,
+                    completed_at = case when ? then current_timestamp else null end,
+                    updated_at = current_timestamp
+                where task_id = ?
+                """,
+                (completed, completed, task_id),
+            )
 
             task_title = task_check.iloc[0]["title"]
             success_msg = f"Task '{task_title}' (ID: {task_id}) {action}"
@@ -1110,23 +1051,22 @@ class Database:
         """Get tasks filtered by customer"""
         try:
             if customer_name:
-                query = """
+                return self.fetch_query(
+                    """
                     select *
                     from tasks
                     where customer_name = ?
                     order by created_at desc
+                    """,
+                    (customer_name,),
+                )
+            return self.fetch_query(
                 """
-                params = (customer_name,)
-            else:
-                query = """
-                    select t
-                    from tasks
-                    order by created_at desc
+                select *
+                from tasks
+                order by created_at desc
                 """
-                params = ()
-
-            result = self.fetch_query(query, params)
-            return result
+            )
         except Exception as e:
             self.log_engine.error(f"Failed to get tasks: {e}")
             return pd.DataFrame()
@@ -1134,15 +1074,13 @@ class Database:
     ### Query Operations ###
 
     def get_query_list(self):
-        query = """
+        return self.fetch_query("""
             select
                 query_name,
                 query_sql,
                 is_default
             from queries
-        """
-        result = self.fetch_query(query)
-        return result
+        """)
 
     ### DevOps Operations ###
 
@@ -1174,11 +1112,10 @@ class Database:
             df.to_sql("devops", self.conn, if_exists="append", index=False)
         elif mode == "merge":
             self.log_engine.info(f"Merging {len(df)} devops records")
-            # Delete existing records that will be updated
             cursor = self.conn.cursor()
             for _, row in df.iterrows():
                 cursor.execute(
-                    "DELETE FROM devops WHERE customer_name = ? AND id = ?",
+                    "delete from devops where customer_name = ? and id = ?",
                     (row["customer_name"], row["id"]),
                 )
             # Append the new/updated records
@@ -1189,8 +1126,8 @@ class Database:
     ### UI Operations ###
 
     def get_customer_ui_list(self, start_date: str, end_date: str):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        query = f"""
+        return self.fetch_query(
+            """
             with calculated_time as (
                 select
                     p.customer_id,
@@ -1198,17 +1135,17 @@ class Database:
                     p.project_id,
                     p.project_name,
                     ifnull(sum(
-                        ifnull(t.total_time, (julianday('{now}') - julianday(start_time)) * 24)
+                        ifnull(t.total_time, (julianday('now', 'localtime') - julianday(start_time)) * 24)
                     ), 0) as total_time,
                     ifnull(sum(
-                        ifnull(t.total_time, (julianday('{now}') - julianday(start_time)) * 24)
+                        ifnull(t.total_time, (julianday('now', 'localtime') - julianday(start_time)) * 24)
                         * ifnull(t.wage, 0)
                         * ifnull(t.bonus, 0)
                     ), 0) as user_bonus
                 from projects p
                 join customers c on c.customer_id = p.customer_id and c.is_current = 1
                 left join time t on t.customer_id = p.customer_id and t.project_id = p.project_id
-                    and t.date_key between {start_date} and {end_date}
+                    and t.date_key between ? and ?
                 where p.is_current = 1
                 group by
                     p.customer_id,
@@ -1229,12 +1166,12 @@ class Database:
             join customers c on c.customer_id = ct.customer_id
             join projects p on p.project_id = ct.project_id
             order by c.sort_order, ct.customer_name, p.sort_order, ct.project_name;
-        """
-        result = self.fetch_query(query)
-        return result
+            """,
+            (start_date, end_date),
+        )
 
     def get_data_input_list(self):
-        query = """
+        return self.fetch_query("""
             select 
                 c.customer_name, 
                 c.customer_id, 
@@ -1248,19 +1185,18 @@ class Database:
                 c.is_current as c_current 
             from customers c
             left join projects p on p.customer_id = c.customer_id
-        """
-        result = self.fetch_query(query)
-        return result
+        """)
 
     def get_project_list_from_project_id(self, project_id: int):
-        query = """
+        return self.fetch_query(
+            """
             select 
                 p.project_id, p.project_name
             from projects p
             where p.customer_id in (select customer_id from projects where project_id = ?)
-        """
-        result = self.fetch_query(query, (project_id,))
-        return result
+        """,
+            (project_id,),
+        )
 
     def save_sort_order(self, customer_order: list, project_orders: dict):
         """
@@ -1605,9 +1541,6 @@ class Database:
                 self.log_engine.info(
                     "Schema validation passed - database is up to date"
                 )
-                self.log_engine.info(
-                    "Schema validation passed - database is up to date"
-                )
 
         except Exception as e:
             error_msg = f"Error during schema validation: {e}"
@@ -1621,28 +1554,26 @@ class Database:
     @staticmethod
     def get_schema_info(db_path):
         conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        # Get tables
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        tables = set(row[0] for row in cursor.fetchall())
-        # Get triggers
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='trigger';")
-        triggers = set(row[0] for row in cursor.fetchall())
-        # Get indexes
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='index';")
-        indexes = set(row[0] for row in cursor.fetchall())
-        # Get columns per table
-        columns = {}
-        for table in tables:
-            cursor.execute(f"PRAGMA table_info('{table}')")
-            columns[table] = [row[1] for row in cursor.fetchall()]
-        conn.close()
-        return {
-            "tables": tables,
-            "triggers": triggers,
-            "indexes": indexes,
-            "columns": columns,
-        }
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = set(row[0] for row in cursor.fetchall())
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='trigger';")
+            triggers = set(row[0] for row in cursor.fetchall())
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='index';")
+            indexes = set(row[0] for row in cursor.fetchall())
+            columns = {}
+            for table in tables:
+                cursor.execute(f"PRAGMA table_info('{table}')")
+                columns[table] = [row[1] for row in cursor.fetchall()]
+            return {
+                "tables": tables,
+                "triggers": triggers,
+                "indexes": indexes,
+                "columns": columns,
+            }
+        finally:
+            conn.close()
 
     @staticmethod
     def compare_schemas(schema1, schema2):
@@ -1682,83 +1613,85 @@ class Database:
     def generate_sync_sql(main_db_path, uploaded_db_path):
         conn_main = sqlite3.connect(main_db_path)
         conn_uploaded = sqlite3.connect(uploaded_db_path)
-        cursor_main = conn_main.cursor()
-        cursor_uploaded = conn_uploaded.cursor()
-        sql_statements = []
+        try:
+            cursor_main = conn_main.cursor()
+            cursor_uploaded = conn_uploaded.cursor()
+            sql_statements = []
 
-        # Tables
-        cursor_main.execute("select name, sql from sqlite_master where type='table';")
-        main_tables = {row[0]: row[1] for row in cursor_main.fetchall()}
-        cursor_uploaded.execute("select name from sqlite_master where type='table';")
-        uploaded_tables = set(row[0] for row in cursor_uploaded.fetchall())
-        missing_tables = set(main_tables.keys()) - uploaded_tables
-        for table in missing_tables:
-            sql_statements.append(main_tables[table])
+            # Tables
+            cursor_main.execute("select name, sql from sqlite_master where type='table';")
+            main_tables = {row[0]: row[1] for row in cursor_main.fetchall()}
+            cursor_uploaded.execute("select name from sqlite_master where type='table';")
+            uploaded_tables = set(row[0] for row in cursor_uploaded.fetchall())
+            missing_tables = set(main_tables.keys()) - uploaded_tables
+            for table in missing_tables:
+                sql_statements.append(main_tables[table])
 
-        # Columns
-        for table in set(main_tables.keys()) & uploaded_tables:
-            cursor_main.execute(f"pragma table_info('{table}')")
-            main_cols = {row[1]: row for row in cursor_main.fetchall()}
-            cursor_uploaded.execute(f"pragma table_info('{table}')")
-            uploaded_cols = {row[1]: row for row in cursor_uploaded.fetchall()}
-            missing_cols = set(main_cols.keys()) - set(uploaded_cols.keys())
-            for col in missing_cols:
-                col_type = main_cols[col][2]
-                sql_statements.append(
-                    f"alter table {table} add column {col} {col_type};"
-                )
-            # Detect columns with different datatypes
-            common_cols = set(main_cols.keys()) & set(uploaded_cols.keys())
-            for col in common_cols:
-                main_type = main_cols[col][2]
-                uploaded_type = uploaded_cols[col][2]
-                if main_type.lower() != uploaded_type.lower():
+            # Columns
+            for table in set(main_tables.keys()) & uploaded_tables:
+                cursor_main.execute(f"pragma table_info('{table}')")
+                main_cols = {row[1]: row for row in cursor_main.fetchall()}
+                cursor_uploaded.execute(f"pragma table_info('{table}')")
+                uploaded_cols = {row[1]: row for row in cursor_uploaded.fetchall()}
+                missing_cols = set(main_cols.keys()) - set(uploaded_cols.keys())
+                for col in missing_cols:
+                    col_type = main_cols[col][2]
                     sql_statements.append(
-                        f"-- WARNING: Column '{col}' in table '{table}' has type '{uploaded_type}' in uploaded DB but '{main_type}' in main DB. Manual review required."
+                        f"alter table {table} add column {col} {col_type};"
                     )
+                # Detect columns with different datatypes
+                common_cols = set(main_cols.keys()) & set(uploaded_cols.keys())
+                for col in common_cols:
+                    main_type = main_cols[col][2]
+                    uploaded_type = uploaded_cols[col][2]
+                    if main_type.lower() != uploaded_type.lower():
+                        sql_statements.append(
+                            f"-- WARNING: Column '{col}' in table '{table}' has type '{uploaded_type}' in uploaded DB but '{main_type}' in main DB. Manual review required."
+                        )
 
-        # Triggers
-        cursor_main.execute("select name, sql from sqlite_master where type='trigger';")
-        main_triggers = {row[0]: row[1] for row in cursor_main.fetchall()}
-        cursor_uploaded.execute("select name from sqlite_master where type='trigger';")
-        uploaded_triggers = set(row[0] for row in cursor_uploaded.fetchall())
-        missing_triggers = set(main_triggers.keys()) - uploaded_triggers
-        for trigger in missing_triggers:
-            sql_statements.append(main_triggers[trigger])
+            # Triggers
+            cursor_main.execute("select name, sql from sqlite_master where type='trigger';")
+            main_triggers = {row[0]: row[1] for row in cursor_main.fetchall()}
+            cursor_uploaded.execute("select name from sqlite_master where type='trigger';")
+            uploaded_triggers = set(row[0] for row in cursor_uploaded.fetchall())
+            missing_triggers = set(main_triggers.keys()) - uploaded_triggers
+            for trigger in missing_triggers:
+                sql_statements.append(main_triggers[trigger])
 
-        # Indexes
-        cursor_main.execute(
-            "select name, sql from sqlite_master where type='index' and sql is not null;"
-        )
-        main_indexes = {row[0]: row[1] for row in cursor_main.fetchall()}
-        cursor_uploaded.execute("select name from sqlite_master where type='index';")
-        uploaded_indexes = set(row[0] for row in cursor_uploaded.fetchall())
-        missing_indexes = set(main_indexes.keys()) - uploaded_indexes
-        for idx in missing_indexes:
-            sql_statements.append(main_indexes[idx])
+            # Indexes
+            cursor_main.execute(
+                "select name, sql from sqlite_master where type='index' and sql is not null;"
+            )
+            main_indexes = {row[0]: row[1] for row in cursor_main.fetchall()}
+            cursor_uploaded.execute("select name from sqlite_master where type='index';")
+            uploaded_indexes = set(row[0] for row in cursor_uploaded.fetchall())
+            missing_indexes = set(main_indexes.keys()) - uploaded_indexes
+            for idx in missing_indexes:
+                sql_statements.append(main_indexes[idx])
 
-        # Remove extra tables
-        extra_tables = uploaded_tables - set(main_tables.keys())
-        for table in extra_tables:
-            sql_statements.append(f"drop table if exists {table};")
+            # Remove extra tables
+            extra_tables = uploaded_tables - set(main_tables.keys())
+            for table in extra_tables:
+                sql_statements.append(f"drop table if exists {table};")
 
-        # Remove extra triggers
-        cursor_uploaded.execute("select name from sqlite_master where type='trigger';")
-        uploaded_triggers = set(row[0] for row in cursor_uploaded.fetchall())
-        extra_triggers = uploaded_triggers - set(main_triggers.keys())
-        for trigger in extra_triggers:
-            sql_statements.append(f"drop trigger if exists {trigger};")
+            # Remove extra triggers
+            cursor_uploaded.execute("select name from sqlite_master where type='trigger';")
+            uploaded_triggers = set(row[0] for row in cursor_uploaded.fetchall())
+            extra_triggers = uploaded_triggers - set(main_triggers.keys())
+            for trigger in extra_triggers:
+                sql_statements.append(f"drop trigger if exists {trigger};")
 
-        # Remove extra indexes
-        cursor_uploaded.execute("select name from sqlite_master where type='index';")
-        uploaded_indexes = set(row[0] for row in cursor_uploaded.fetchall())
-        extra_indexes = uploaded_indexes - set(main_indexes.keys())
-        for idx in extra_indexes:
-            sql_statements.append(f"drop index if exists {idx};")
+            # Remove extra indexes
+            cursor_uploaded.execute("select name from sqlite_master where type='index';")
+            uploaded_indexes = set(row[0] for row in cursor_uploaded.fetchall())
+            extra_indexes = uploaded_indexes - set(main_indexes.keys())
+            for idx in extra_indexes:
+                sql_statements.append(f"drop index if exists {idx};")
 
-        conn_main.close()
-        conn_uploaded.close()
-        return "\n\n".join(sql_statements) if sql_statements else "-- No changes needed"
+            return "\n\n".join(sql_statements) if sql_statements else "-- No changes needed"
+        finally:
+            conn_main.close()
+            conn_uploaded.close()
 
     ### General DB Operations ###
 
@@ -1825,7 +1758,7 @@ class Database:
             raise
 
     def _get_value_from_db(
-        self, query: str, params: tuple = (), data_type: str = "str"
+        self, query: str, params: tuple = (), data_type: Literal["str", "int", "float"] = "str"
     ):
         result = self.fetch_query(query, params)
         if not result.empty:
@@ -1846,7 +1779,7 @@ class Database:
     def close(self):
         self.conn.close()
 
-    def update_data_from_query(self, *args, **kwargs):
+    def update_data_from_query(self, **kwargs):
         table_name = kwargs.get("table_name")
         pk_data = kwargs.get("pk_data")
         pk_col = pk_data[0]
@@ -1876,7 +1809,8 @@ class Database:
 
     def get_query_edit_data(self, table_name: str, pk: int):
         if table_name == "time":
-            query = """
+            return self.fetch_query(
+                """
                 select 
                      customer_id
                     ,project_id
@@ -1887,25 +1821,27 @@ class Database:
                     ,git_id
                 from time
                 where time_id = ?
-            """
-            result = self.fetch_query(query, (pk,))
-            return result
+            """,
+                (pk,),
+            )
         elif table_name == "projects":
-            query = """
+            return self.fetch_query(
+                """
                 select 
                     git_id
                 from projects
                 where project_id = ?
-            """
-            result = self.fetch_query(query, (pk,))
-            return result
+            """,
+                (pk,),
+            )
         elif table_name == "customers":
-            query = """
+            return self.fetch_query(
+                """
                 select 
                      pat_token
                     ,org_url
                 from customers
                 where customer_id = ?
-            """
-            result = self.fetch_query(query, (pk,))
-            return result
+            """,
+                (pk,),
+            )
