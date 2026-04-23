@@ -6,8 +6,10 @@ Uses Pydantic models for type safety and validation.
 """
 
 import os
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -219,12 +221,14 @@ class ThemeConfig(BaseModel):
     nav_bg: str
     border: str
 
+
 class ConfigNotepad(BaseModel):
     """Notepad configuration from config_notepad.yml"""
 
     note_colors: Dict[str, str] = Field(default_factory=dict)
     note_icons: Dict[str, str] = Field(default_factory=dict)
     external_notes: List[Dict[str, Any]] = Field(default_factory=list)
+
 
 class ConfigTaskVisuals(BaseModel):
     """Task visuals configuration from task_visuals.yml"""
@@ -279,8 +283,69 @@ class ConfigDevOpsContacts(BaseModel):
 ## Configuration Loader ##
 
 
+@dataclass
+class _ConfigSpec:
+    """Declarative spec for a single YAML config file."""
+
+    filename: str
+    key: str
+    model: type
+    required: bool = True
+    has_template: bool = False
+    transform: Optional[Callable] = None       # raw_dict -> dict passed to model(**...)
+    default_factory: Optional[Callable] = None  # () -> model instance when file is missing
+
+
 class ConfigLoader:
     """Load and validate all configuration files"""
+
+    _REGISTRY: List[_ConfigSpec] = [
+        _ConfigSpec(
+            filename="task_visuals.yml",
+            key="task_visuals",
+            model=ConfigTaskVisuals,
+            required=False,
+            default_factory=lambda: ConfigTaskVisuals(
+                visual={
+                    "customers": {"default": VisualConfig(icon="group", color="blue-grey")},
+                    "projects": {"default": VisualConfig(icon="folder", color="indigo")},
+                }
+            ),
+        ),
+        _ConfigSpec(
+            filename="devops_contacts.yml",
+            key="devops_contacts",
+            model=ConfigDevOpsContacts,
+            required=False,
+            has_template=True,
+            default_factory=lambda: ConfigDevOpsContacts(
+                customers={}, default=DevOpsContactConfig(contacts=[], assignees=[])
+            ),
+        ),
+        _ConfigSpec(
+            filename="devops_tags.yml",
+            key="devops_tags",
+            model=ConfigDevOpsTags,
+            required=False,
+            has_template=True,
+            default_factory=lambda: ConfigDevOpsTags(),
+        ),
+        _ConfigSpec(
+            filename="config_theme.yml",
+            key="theme",
+            model=ThemeConfig,
+            required=True,
+            has_template=True,
+            transform=lambda d: d.get("colors", {}),
+        ),
+        _ConfigSpec(
+            filename="config_notepad.yml",
+            key="notepad",
+            model=ConfigNotepad,
+            required=True,
+            has_template=True,
+        ),
+    ]
 
     def __init__(self, config_folder: str = "config"):
         self.config_folder = Path(config_folder)
@@ -312,25 +377,28 @@ class ConfigLoader:
         template = self.config_folder / f"{filename}.template"
         if not live.exists():
             if template.exists():
-                import shutil
                 shutil.copy2(template, live)
                 print(f"  Created {filename} from template")
             else:
                 print(f"WARNING: Neither {filename} nor its template found.")
 
-    def load_all(self) -> Dict[str, Any]:
-        """Load and validate all configuration files"""
-        # Return cached configs if already loaded
-        if self.configs:
-            return self.configs
+    def _load_spec(self, spec: _ConfigSpec) -> None:
+        """Load a single config spec and store the result in self.configs."""
+        if spec.has_template:
+            self._ensure_from_template(spec.filename)
+        raw = self._load_yaml(spec.filename, required=spec.required)
+        if raw is None:
+            if spec.default_factory:
+                self.configs[spec.key] = spec.default_factory()
+            return
+        data = spec.transform(raw) if spec.transform else raw
+        self.configs[spec.key] = spec.model(**data)
 
-        print("\n=== Loading Configuration Files ===")
-
-        # Load settings (required)
-        db_name = os.getenv("DB_NAME", "worktimer.db")  # default just in case
+    def _load_settings(self) -> None:
+        """Load settings from environment variables (no YAML file)."""
+        db_name = os.getenv("DB_NAME", "worktimer.db")
         db_path = os.path.join("data", db_name)
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-
         self.configs["settings"] = ConfigSettings(
             db_path=db_path,
             debug_mode=os.getenv("DEBUG_MODE", "false").lower() == "true",
@@ -339,68 +407,27 @@ class ConfigLoader:
             f"  DB: {self.configs['settings'].db_path}, Debug: {self.configs['settings'].debug_mode}"
         )
 
-        # Load UI config (required)
+    def _load_ui_config(self) -> None:
+        """Load config_ui.yml and extract ui, query, and tasks sub-configs."""
         ui_yaml = self._load_yaml("config_ui.yml", required=True)
         self.configs["ui"] = ConfigUI(**ui_yaml)
-
-        # Extract query config from ui config
         self.configs["query"] = QueryConfig(**{"query": ui_yaml.get("query", {})})
-
-        # Extract tasks config from ui config
-        tasks_yaml = {"task": ui_yaml.get("task", {})}
-        self.configs["tasks"] = ConfigTasks(**tasks_yaml)
-        if "task" in tasks_yaml:
-            actions = [k for k in tasks_yaml["task"].keys() if k != "meta"]
+        tasks_yaml = ui_yaml.get("task", {})
+        self.configs["tasks"] = ConfigTasks(**{"task": tasks_yaml})
+        if tasks_yaml:
+            actions = [k for k in tasks_yaml.keys() if k != "meta"]
             print(f"  Task actions: {actions}")
 
-        # Load task visuals (optional with defaults)
-        visuals_yaml = self._load_yaml("task_visuals.yml", required=False)
-        if visuals_yaml:
-            self.configs["task_visuals"] = ConfigTaskVisuals(**visuals_yaml)
-        else:
-            print("  Using default task visuals (run scripts/generate_task_visuals.py)")
-            self.configs["task_visuals"] = ConfigTaskVisuals(
-                visual={
-                    "customers": {
-                        "default": VisualConfig(icon="group", color="blue-grey")
-                    },
-                    "projects": {
-                        "default": VisualConfig(icon="folder", color="indigo")
-                    },
-                }
-            )
+    def load_all(self) -> Dict[str, Any]:
+        """Load and validate all configuration files"""
+        if self.configs:
+            return self.configs
 
-        # Load DevOps contacts (optional, created from template on first boot)
-        self._ensure_from_template("devops_contacts.yml")
-        contacts_yaml = self._load_yaml("devops_contacts.yml", required=False)
-        if contacts_yaml:
-            self.configs["devops_contacts"] = ConfigDevOpsContacts(**contacts_yaml)
-            customer_count = len(self.configs["devops_contacts"].customers)
-            print(f"  DevOps contacts: {customer_count} customers")
-        else:
-            self.configs["devops_contacts"] = ConfigDevOpsContacts(
-                customers={}, default=DevOpsContactConfig(contacts=[], assignees=[])
-            )
-
-        # Load DevOps tags (created from template on first boot)
-        self._ensure_from_template("devops_tags.yml")
-        tags_yaml = self._load_yaml("devops_tags.yml", required=False)
-        if tags_yaml:
-            self.configs["devops_tags"] = ConfigDevOpsTags(**tags_yaml)
-        else:
-            self.configs["devops_tags"] = ConfigDevOpsTags()
-
-        # Load theme config (created from template on first boot)
-        self._ensure_from_template("config_theme.yml")
-        theme_yaml = self._load_yaml("config_theme.yml", required=True)
-        self.configs["theme"] = ThemeConfig(**theme_yaml.get("colors", {}))
-
-        # Load notepad config (created from template on first boot)
-        self._ensure_from_template("config_notepad.yml")
-        notepad_yaml = self._load_yaml("config_notepad.yml", required=True)
-        self.configs["notepad"] = ConfigNotepad(**notepad_yaml)
-
-
+        print("\n=== Loading Configuration Files ===")
+        self._load_settings()
+        self._load_ui_config()
+        for spec in self._REGISTRY:
+            self._load_spec(spec)
         print("=== Configuration Loading Complete ===\n")
         return self.configs
 
@@ -423,32 +450,8 @@ class ConfigLoader:
         Args:
             filename: The config filename (e.g. 'devops_contacts.yml').
         """
-        if filename == "devops_contacts.yml":
-            contacts_yaml = self._load_yaml(filename, required=False)
-            if contacts_yaml:
-                self.configs["devops_contacts"] = ConfigDevOpsContacts(**contacts_yaml)
-            else:
-                self.configs["devops_contacts"] = ConfigDevOpsContacts(
-                    customers={}, default=DevOpsContactConfig(contacts=[], assignees=[])
-                )
-        elif filename == "task_visuals.yml":
-            visuals_yaml = self._load_yaml(filename, required=False)
-            if visuals_yaml:
-                self.configs["task_visuals"] = ConfigTaskVisuals(**visuals_yaml)
-            else:
-                self.configs["task_visuals"] = ConfigTaskVisuals(
-                    visual={
-                        "customers": {
-                            "default": VisualConfig(icon="group", color="blue-grey")
-                        },
-                        "projects": {
-                            "default": VisualConfig(icon="folder", color="indigo")
-                        },
-                    }
-                )
-        elif filename == "devops_tags.yml":
-            tags_yaml = self._load_yaml(filename, required=False)
-            self.configs["devops_tags"] = ConfigDevOpsTags(**(tags_yaml or {}))
-        elif filename == "config_theme.yml":
-            theme_yaml = self._load_yaml(filename, required=True)
-            self.configs["theme"] = ThemeConfig(**theme_yaml.get("colors", {}))
+        for spec in self._REGISTRY:
+            if spec.filename == filename:
+                self._load_spec(spec)
+                return
+        print(f"WARNING: No reload handler for '{filename}'")
