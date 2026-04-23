@@ -1,9 +1,10 @@
 import os
 import asyncio
+import html as _html
 import yaml
 from nicegui import ui
 from datetime import date, timedelta
-from typing import Optional, Callable
+from typing import Callable
 import re
 import numpy as np
 import pandas as pd
@@ -56,8 +57,6 @@ class UIStyles:
         # theme dict may be the full config_theme.yml (with "colors" key) or just the
         # colors sub-dict — handle both.
         flat_theme = theme.get("colors", theme) if isinstance(theme, dict) else {}
-
-        import re
 
         def _resolve(value):
             if isinstance(value, str):
@@ -390,9 +389,7 @@ def convert_html_to_markdown(html_text: str) -> str:
     ).strip()
 
     # Clean up common HTML artifacts
-    import html
-
-    markdown_text = html.unescape(markdown_text)
+    markdown_text = _html.unescape(markdown_text)
 
     # Clean up excessive whitespace and normalize line breaks
     cleaned_lines = [line.rstrip() for line in markdown_text.split("\n")]
@@ -474,7 +471,7 @@ def parse_date_range(date_range_str: str) -> tuple[str | None, str | None]:
 # ===== DATA VALIDATION =====
 
 
-def has_dataframe_data(df: Optional[pd.DataFrame]) -> bool:
+def has_dataframe_data(df: pd.DataFrame | None) -> bool:
     """
     Check if a DataFrame has data (not None and not empty).
 
@@ -1075,9 +1072,9 @@ def create_task_card(
     task_id: int | str,
     columns: list[dict[str, str]],
     completed: bool = False,
-    on_checkbox_click: Optional[Callable] = None,
-    on_edit_click: Optional[Callable] = None,
-    on_card_click: Optional[Callable] = None,
+    on_checkbox_click: Callable | None = None,
+    on_edit_click: Callable | None = None,
+    on_card_click: Callable | None = None,
     config_task_visuals: dict | None = None,
 ) -> ui.card:
     """Create a reusable task card component.
@@ -1257,9 +1254,6 @@ def create_task_card(
     return card
 
 
-# ===== PARENT-CHILD WIDGET BINDING =====
-
-
 # ===== PARENT-CHILD BINDING HELPERS =====
 
 
@@ -1278,9 +1272,7 @@ def _update_select_field(
 
     # Check if field has static options defined in config
     has_static_options = (
-        field_config.get("options")
-        and isinstance(field_config.get("options"), list)
-        and len(field_config.get("options")) > 0
+        isinstance(field_config.get("options"), list) and field_config.get("options")
     )
 
     if not has_static_options:
@@ -1735,16 +1727,16 @@ def bind_parent_relations(
                     try:
                         last = {"value": getattr(parent_widget, "value", None)}
 
-                        async def _poll_parent():
+                        async def _poll_parent(pw=parent_widget, _last=last, _handler=update_handler):
                             try:
-                                v = getattr(parent_widget, "value", None)
+                                v = getattr(pw, "value", None)
                             except Exception:
                                 v = None
-                            if v != last["value"]:
-                                last["value"] = v
+                            if v != _last["value"]:
+                                _last["value"] = v
                                 # call update handler (it reads current parent value from widgets)
                                 try:
-                                    await update_handler(None)
+                                    await _handler(None)
                                 except Exception:
                                     pass
 

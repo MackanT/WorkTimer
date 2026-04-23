@@ -23,9 +23,9 @@ class DevOpsManager:
         self.clients = {}
         self.log = log
         for _, row in df.iterrows():
-            if row["org_url"].lower() in ["", "none", "null"] or row[
+            if row["org_url"].lower() in ("", "none", "null") or row[
                 "pat_token"
-            ].lower() in ["", "none", "null"]:
+            ].lower() in ("", "none", "null"):
                 continue
             org_url = f"https://dev.azure.com/{row['org_url']}"
             client = DevOpsClient(row["pat_token"], org_url, self.log)
@@ -55,13 +55,13 @@ class DevOpsManager:
     def save_comment(self, customer_name, comment, git_id):
         client = self._get_client(customer_name)
         if not client:
-            return f"No DevOps connection for {customer_name}"
+            return (False, f"No DevOps connection for {customer_name}")
         return client.add_comment_to_work_item(git_id, comment)
 
     def get_workitem_level(self, customer_name, level=None, work_item_id=None):
         client = self._get_client(customer_name)
         if not client:
-            return f"No DevOps connection for {customer_name}"
+            return (False, f"No DevOps connection for {customer_name}")
         return client.get_workitem_level(level, work_item_id)
 
     def get_description(self, customer_name, work_item_id):
@@ -193,7 +193,6 @@ class DevOpsManager:
             # Add all features
             for feature in features.values():
                 parent_id = feature.fields.get("System.Parent")
-                # Store parent_id even if the parent wasn't in this fetch (for incremental updates)
                 rows.append(
                     {
                         "customer_name": customer_name,
@@ -201,14 +200,13 @@ class DevOpsManager:
                         "id": feature.id,
                         "title": feature.fields.get("System.Title"),
                         "state": feature.fields.get("System.State"),
-                        "parent_id": parent_id,  # Store the parent_id regardless
+                        "parent_id": parent_id,
                     }
                 )
 
             # Add all user stories
             for us in user_stories.values():
                 parent_id = us.fields.get("System.Parent")
-                # Store parent_id even if the parent wasn't in this fetch (for incremental updates)
                 rows.append(
                     {
                         "customer_name": customer_name,
@@ -216,7 +214,7 @@ class DevOpsManager:
                         "id": us.id,
                         "title": us.fields.get("System.Title"),
                         "state": us.fields.get("System.State"),
-                        "parent_id": parent_id,  # Store the parent_id regardless
+                        "parent_id": parent_id,
                     }
                 )
 
@@ -256,6 +254,7 @@ class DevOpsClient:
         self.personal_access_token = personal_access_token
         self.organization_url = organization_url
         self.log = log
+        self.connection = None
 
     def connect(self):
         # Create a connection to the Azure DevOps organization
@@ -270,6 +269,8 @@ class DevOpsClient:
             core_client = self.connection.clients.get_core_client()
 
             project_list = core_client.get_projects(top=1)  # This is a list now
+            if not project_list:
+                raise Exception("No projects found in the Azure DevOps organization.")
             self.project_name = project_list[0].name  # Get the first project's name
 
         except Exception as e:
@@ -310,6 +311,9 @@ class DevOpsClient:
             else:
                 self.log.error(f"Azure DevOps error occurred: {e}")
                 return (False, f"Azure DevOps error occurred: {e}")
+        except Exception as e:
+            self.log.error(f"Error adding comment to work item {work_item_id}: {e}")
+            return (False, f"Error adding comment to work item {work_item_id}: {e}")
         return (True, "Comment added successfully.")
 
     def get_workitem_level(
@@ -815,6 +819,8 @@ class DevOpsClient:
                 board_detail = work_client.get_board(team_context, stories_board.id)
                 columns = [c.name for c in board_detail.columns]
                 return (True, columns)
+
+            return (False, f"No board '{board_type}' found in any team")
         except Exception as e:
             self.log.error(f"Fallback board column fetch failed: {e}")
             return (False, f"Error: {e}")
