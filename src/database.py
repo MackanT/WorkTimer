@@ -1144,7 +1144,7 @@ class Database:
                     ), 0) as user_bonus
                 from projects p
                 join customers c on c.customer_id = p.customer_id and c.is_current = 1
-                left join time t on t.customer_id = p.customer_id and t.project_id = p.project_id
+                left join time t on t.customer_name = c.customer_name and t.project_id = p.project_id
                     and t.date_key between ? and ?
                 where p.is_current = 1
                 group by
