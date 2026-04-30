@@ -1,17 +1,17 @@
 import os
 import asyncio
+import html as _html
 import yaml
 from nicegui import ui
 from datetime import date, timedelta
-from typing import Optional, Callable
+from typing import Callable
 import re
 import numpy as np
 import pandas as pd
 import markdown as _markdown
 import bleach as _bleach
 from markdownify import markdownify as _markdownify
-
-from .globals import SaveData
+from pygments.formatters import HtmlFormatter as _HtmlFormatter
 
 
 # ===== UI STYLE MANAGER =====
@@ -57,8 +57,6 @@ class UIStyles:
         # theme dict may be the full config_theme.yml (with "colors" key) or just the
         # colors sub-dict — handle both.
         flat_theme = theme.get("colors", theme) if isinstance(theme, dict) else {}
-
-        import re
 
         def _resolve(value):
             if isinstance(value, str):
@@ -201,6 +199,9 @@ UI_STYLES = UIStyles.get_instance()
 
 # ===== MARKDOWN & HTML RENDERING =====
 
+# Pygments monokai CSS injected alongside MARKDOWN_DARK_MODE_CSS (class-based, no bleach interaction)
+_PYGMENTS_MONOKAI_CSS = _HtmlFormatter(style="monokai").get_style_defs(".highlight")
+
 # Dark mode CSS for markdown rendering
 MARKDOWN_DARK_MODE_CSS = """
 <style>
@@ -219,6 +220,9 @@ MARKDOWN_DARK_MODE_CSS = """
     code { background-color: #2d2d2d; color: #f8f8f2; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 0.9em; }
     pre { background-color: #2d2d2d; padding: 16px; border-radius: 6px; overflow-x: auto; border: 1px solid #444; }
     pre code { background-color: transparent; padding: 0; }
+    /* Let Pygments control highlighted block styling */
+    div.highlight { border-radius: 6px; overflow: hidden; margin: 1em 0; }
+    div.highlight pre { background-color: transparent; border: none; margin: 0; }
     table { border-collapse: collapse; width: 100%; margin: 1em 0; }
     th, td { border: 1px solid #555; padding: 8px; text-align: left; color: #e0e0e0; }
     th { background-color: #2d2d2d; font-weight: bold; }
@@ -227,6 +231,9 @@ MARKDOWN_DARK_MODE_CSS = """
     hr { border: none; border-top: 2px solid #555; margin: 2em 0; }
     a { color: #64b5f6; text-decoration: none; }
     a:hover { text-decoration: underline; }
+    ul.contains-task-list { list-style: none; padding-left: 1.5em; }
+    .task-list-item { list-style: none; padding-left: 0; }
+    .task-list-item input[type="checkbox"] { margin-right: 0.5em; cursor: pointer; accent-color: #64b5f6; vertical-align: middle; width: 1em; height: 1em; }
 </style>
 """
 
@@ -247,17 +254,41 @@ def render_and_sanitize_markdown(text: str) -> str:
     raw_html = _markdown.markdown(
         text,
         extensions=[
-            "extra",
+            # Individual sub-extensions from 'extra' — excluding fenced_code
+            # so pymdownx.superfences can own fenced code block parsing.
+            "abbr",
+            "attr_list",
+            "def_list",
+            "footnotes",
+            "tables",
+            "md_in_html",
             "nl2br",
             "sane_lists",
             "pymdownx.tilde",
+            "pymdownx.tasklist",
+            "pymdownx.highlight",
+            "pymdownx.superfences",
         ],
+        extension_configs={
+            "pymdownx.highlight": {
+                "use_pygments": True,
+                "pygments_style": "monokai",
+            },
+            "pymdownx.tilde": {
+                "subscript": False,
+            },
+            "pymdownx.tasklist": {
+                "custom_checkbox": False,
+                "clickable_checkbox": True,
+            },
+        },
     )
 
     allowed_tags = list(_bleach.sanitizer.ALLOWED_TAGS) + [
         "p",
         "pre",
         "code",
+        "div",
         "span",
         "h1",
         "h2",
@@ -274,6 +305,7 @@ def render_and_sanitize_markdown(text: str) -> str:
         "img",
         "br",
         "hr",
+        "input",
         "ul",
         "ol",
         "li",
@@ -287,9 +319,11 @@ def render_and_sanitize_markdown(text: str) -> str:
     allowed_attrs = {
         "a": ["href", "title", "target"],
         "img": ["src", "alt", "width", "height"],
+        "input": ["type", "checked", "disabled", "id"],
         "code": ["class"],
         "pre": ["class"],
         "span": ["class"],
+        "div": ["class"],
         "*": ["class"],
     }
 
@@ -301,10 +335,25 @@ def render_and_sanitize_markdown(text: str) -> str:
         strip=True,
     )
 
+    # Post-process: stamp each checkbox with a sequential id so JS can
+    # report which one was clicked back to Python.
+    # bleach/html5lib reorders attributes alphabetically, so the regex must
+    # match <input ...> tags that contain type="checkbox" anywhere.
+    _cbidx = [0]
+
+    def _stamp_cbidx(m: re.Match) -> str:
+        tag = m.group(0)
+        idx = _cbidx[0]
+        _cbidx[0] += 1
+        return tag[:-1] + f' id="notepad-cb-{idx}">'
+
+    cleaned_html = re.sub(r'<input\b[^>]*\btype="checkbox"[^>]*>', _stamp_cbidx, cleaned_html)
+
     # Return with dark mode styling
     return f"""
     <div style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #e0e0e0;">
         {MARKDOWN_DARK_MODE_CSS}
+        <style>{_PYGMENTS_MONOKAI_CSS}</style>
         {cleaned_html}
     </div>
     """
@@ -340,9 +389,7 @@ def convert_html_to_markdown(html_text: str) -> str:
     ).strip()
 
     # Clean up common HTML artifacts
-    import html
-
-    markdown_text = html.unescape(markdown_text)
+    markdown_text = _html.unescape(markdown_text)
 
     # Clean up excessive whitespace and normalize line breaks
     cleaned_lines = [line.rstrip() for line in markdown_text.split("\n")]
@@ -424,7 +471,7 @@ def parse_date_range(date_range_str: str) -> tuple[str | None, str | None]:
 # ===== DATA VALIDATION =====
 
 
-def has_dataframe_data(df: Optional[pd.DataFrame]) -> bool:
+def has_dataframe_data(df: pd.DataFrame | None) -> bool:
     """
     Check if a DataFrame has data (not None and not empty).
 
@@ -1025,9 +1072,9 @@ def create_task_card(
     task_id: int | str,
     columns: list[dict[str, str]],
     completed: bool = False,
-    on_checkbox_click: Optional[Callable] = None,
-    on_edit_click: Optional[Callable] = None,
-    on_card_click: Optional[Callable] = None,
+    on_checkbox_click: Callable | None = None,
+    on_edit_click: Callable | None = None,
+    on_card_click: Callable | None = None,
     config_task_visuals: dict | None = None,
 ) -> ui.card:
     """Create a reusable task card component.
@@ -1207,9 +1254,6 @@ def create_task_card(
     return card
 
 
-# ===== PARENT-CHILD WIDGET BINDING =====
-
-
 # ===== PARENT-CHILD BINDING HELPERS =====
 
 
@@ -1228,9 +1272,7 @@ def _update_select_field(
 
     # Check if field has static options defined in config
     has_static_options = (
-        field_config.get("options")
-        and isinstance(field_config.get("options"), list)
-        and len(field_config.get("options")) > 0
+        isinstance(field_config.get("options"), list) and field_config.get("options")
     )
 
     if not has_static_options:
@@ -1685,16 +1727,16 @@ def bind_parent_relations(
                     try:
                         last = {"value": getattr(parent_widget, "value", None)}
 
-                        async def _poll_parent():
+                        async def _poll_parent(pw=parent_widget, _last=last, _handler=update_handler):
                             try:
-                                v = getattr(parent_widget, "value", None)
+                                v = getattr(pw, "value", None)
                             except Exception:
                                 v = None
-                            if v != last["value"]:
-                                last["value"] = v
+                            if v != _last["value"]:
+                                _last["value"] = v
                                 # call update handler (it reads current parent value from widgets)
                                 try:
-                                    await update_handler(None)
+                                    await _handler(None)
                                 except Exception:
                                     pass
 

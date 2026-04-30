@@ -6,7 +6,6 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 """
 
 import asyncio
-from typing import Tuple
 from nicegui import ui, app
 from nicegui.events import KeyEventArguments
 from ..core.app import AppCore
@@ -28,12 +27,19 @@ async def query_editor_page():
 
     setup_debug_keyboard_handlers(core)
 
-    if "query_editor_query" not in app.storage.user:
-        app.storage.user["query_editor_query"] = "time"
-
     # Shortcuts to engines and logger
     QE = core.query_engine
     LOG = core.logger
+
+    if "query_editor_query" not in app.storage.user:
+        try:
+            app.storage.user["query_editor_query"] = (
+                QE.df[QE.df["query_name"] == "time"]["query_sql"].values[0]
+            )
+        except Exception:
+            app.storage.user["query_editor_query"] = (
+                "select * from time order by time_id desc limit 100"
+            )
 
     config_query = core.query_config if hasattr(core, "query_config") else {}
 
@@ -57,7 +63,7 @@ async def query_editor_page():
 
     async def _validate_query_syntax(query: str) -> bool:
         try:
-            await QE.query_db(query)
+            await QE.query_db(f"EXPLAIN {query}")
             return True
         except Exception:
             ui.notify("Query is invalid", type="warning")
@@ -68,69 +74,12 @@ async def query_editor_page():
         await QE.refresh()
         render_query_buttons()
 
-    def _add_save_button(
-        save_data, fields, widgets, table_name, pk_data, popup, query_engine
-    ) -> None:
-        """Add save button for row editing"""
-
-        async def on_save():
-            """Handle save operation using query engine."""
-            required_fields = [
-                field["name"] for field in fields if not field.get("optional", False)
-            ]
-            if not helpers.check_input(widgets, required_fields):
-                return
-
-            kwargs = {}
-            for field in fields:
-                field_name = field["name"]
-                if field_name in widgets:
-                    kwargs[field_name] = widgets[field_name].value
-
-            kwargs["table_name"] = table_name
-            kwargs["pk_data"] = pk_data
-
-            try:
-                await query_engine.function_db(save_data.function, **kwargs)
-                msg_1, msg_2 = helpers.print_success(
-                    table_name, save_data.main_param, save_data.main_action, widgets
-                )
-                LOG.info(msg_1)
-                if msg_2:
-                    LOG.info(msg_2)
-
-                popup.close()
-
-                try:
-                    core.event_bus.emit("ui_refresh_requested")
-                except Exception:
-                    pass
-
-            except Exception as e:
-                LOG.error(f"Error saving row: {e}")
-                ui.notify(f"Error saving: {str(e)}", type="negative")
-
-        def close_popup():
-            popup.close()
-
-        with ui.row().classes(
-            helpers.UI_STYLES.get_layout_classes("row_end")
-            + " "
-            + helpers.UI_STYLES.get_layout_classes("row_gap_2")
-        ):
-            ui.button(save_data.button_name, on_click=on_save).props("flat").classes(
-                helpers.UI_STYLES.get_layout_classes("button_fixed")
-            )
-            ui.button("Cancel", on_click=close_popup).props("flat").classes(
-                helpers.UI_STYLES.get_layout_classes("button_fixed")
-            )
-
     def render_query_buttons() -> None:
         preset_queries.clear()
         custom_queries.clear()
         with preset_queries:
             for _, row in QE.df[QE.df["is_default"] == 1].iterrows():
-                render_query_chip(row["query_name"], row["query_sql"], is_default=True)
+                render_query_chip(row["query_name"], row["query_sql"])
         with custom_queries:
             custom_df = QE.df[QE.df["is_default"] != 1]
             if custom_df.empty:
@@ -139,18 +88,13 @@ async def query_editor_page():
                 )
             else:
                 for _, row in custom_df.iterrows():
-                    render_query_chip(
-                        row["query_name"], row["query_sql"], is_default=False
-                    )
+                    render_query_chip(row["query_name"], row["query_sql"])
 
-    def render_query_chip(
-        query_name: str, query_sql: str, is_default: bool = True
-    ) -> None:
+    def render_query_chip(query_name: str, query_sql: str) -> None:
+        chip_style = helpers.UI_STYLES.get_widget_style("query_chip")
         ui.button(query_name, on_click=lambda: editor.set_value(query_sql)).props(
             "outline dense no-caps"
-        ).classes(helpers.UI_STYLES.get_widget_style("query_chip")["classes"]).style(
-            helpers.UI_STYLES.get_widget_style("query_chip")["style"]
-        )
+        ).classes(chip_style["classes"]).style(chip_style["style"])
 
     # ========================================================================
     # Query Functions
@@ -301,11 +245,6 @@ async def query_editor_page():
                 ]
                 grid_box.options["columnDefs"] = column_defs
 
-                grid_box.options["enableRangeSelection"] = True
-                grid_box.options["enableClipboard"] = True
-                grid_box.options["suppressRowClickSelection"] = True
-                grid_box.options["suppressCopyRowsToClipboard"] = True
-
                 df.columns = unique_cols
                 row_data = df.to_dict(orient="records")
                 grid_box.options["rowData"] = row_data
@@ -346,15 +285,6 @@ async def query_editor_page():
             grid_box.options["rowData"] = [{"error": str(e)}]
             grid_box.update()
 
-    def clear_query() -> None:
-        editor.set_value("")
-        try:
-            grid_box.options["columnDefs"] = [{"field": ""}]
-            grid_box.options["rowData"] = []
-            grid_box.update()
-        except Exception:
-            pass
-
     # ========================================================================
     # Table Cell Editing
     # ========================================================================
@@ -388,9 +318,10 @@ async def query_editor_page():
 
         data_sources = {}
         if table_name == "time":
-            customer_id = table_row.get("customer_id", 0)
+            customer_id = int(table_row.get("customer_id", 0))
             projects = await QE.query_db(
-                f"SELECT project_name FROM projects WHERE customer_id = {customer_id} AND is_current = 1"
+                "SELECT project_name FROM projects WHERE customer_id = ? AND is_current = 1",
+                params=(customer_id,),
             )
             data_sources["project_names"] = projects["project_name"].tolist()
 
@@ -405,6 +336,11 @@ async def query_editor_page():
                 field["default"] = table_row.get("project_name")
 
         helpers.assign_dynamic_options(fields, data_sources=data_sources)
+
+        save_data = SaveData(**action)
+        widgets = {}
+        dynamic_widgets = []
+        parent_map = {}
 
         async def on_submit():
             required_fields = [
@@ -436,11 +372,6 @@ async def query_editor_page():
             except Exception as e:
                 LOG.error(f"Error saving row: {e}")
                 ui.notify(f"Error saving: {str(e)}", type="negative")
-
-        save_data = SaveData(**action)
-        widgets = {}
-        dynamic_widgets = []
-        parent_map = {}
 
         with ui.dialog() as popup:
             with ui.card().classes("rounded-lg").props("flat"):
@@ -528,7 +459,7 @@ async def query_editor_page():
     # ========================================================================
     # UI Rendering
     # ========================================================================
-    def render_toolbar() -> Tuple[ui.row, ui.row]:
+    def render_toolbar() -> tuple[ui.row, ui.row]:
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
             with toolbar_group(core.theme, "Preset", divider_after=True):
@@ -554,7 +485,7 @@ async def query_editor_page():
                 ui.button(
                     "Execute Query (F5)",
                     icon="play_arrow",
-                    on_click=execute_query,  # lambda: asyncio.create_task(execute_query()),
+                    on_click=execute_query,
                 ).props("color=primary size=sm")
                 with ui.row().classes("items-center gap-4"):
                     ui.label("Edit Mode:").classes("text-sm " + helpers.UI_STYLES.get_layout_classes("muted_text"))
@@ -566,17 +497,8 @@ async def query_editor_page():
                         )
                     )
 
-            initial_query = app.storage.user.get("query_editor_query", "")
-            if not initial_query:
-                try:
-                    initial_query = QE.df[QE.df["query_name"] == "time"][
-                        "query_sql"
-                    ].values[0]
-                except Exception:
-                    initial_query = "select * from time order by time_id desc limit 100"
-
             editor = ui.codemirror(
-                initial_query, language="SQLite", theme="dracula"
+                app.storage.user.get("query_editor_query", ""), language="SQLite", theme="dracula"
             ).classes("h-48 w-full")
             editor.bind_value(app.storage.user, "query_editor_query")
 
@@ -595,6 +517,9 @@ async def query_editor_page():
                         "suppressRowClickSelection": False,
                         "enableCellTextSelection": True,
                         "copyHeadersToClipboard": True,
+                        "enableRangeSelection": True,
+                        "enableClipboard": True,
+                        "suppressCopyRowsToClipboard": True,
                     },
                     theme="alpine-dark",
                 )

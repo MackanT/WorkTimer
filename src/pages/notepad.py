@@ -27,34 +27,9 @@ from ..helpers import render_and_sanitize_markdown, UI_STYLES
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-NOTE_COLORS = {
-    "none": {"bg": "", "dot": "bg-gray-400"},
-    "amber": {"bg": "border-l-4 border-amber-400", "dot": "bg-amber-400"},
-    "red": {"bg": "border-l-4 border-red-400", "dot": "bg-red-400"},
-    "green": {"bg": "border-l-4 border-green-400", "dot": "bg-green-400"},
-    "blue": {"bg": "border-l-4 border-blue-400", "dot": "bg-blue-400"},
-    "purple": {"bg": "border-l-4 border-purple-400", "dot": "bg-purple-400"},
-}
-
-NOTE_ICONS = {
-    "note": "description",
-    "todo": "check_box",
-    "idea": "lightbulb",
-    "warning": "warning",
-    "star": "star",
-    "link": "link",  # used for external files
-}
-
-# External pinned files — path relative to project root, display name, locked name
-EXTERNAL_NOTES = [
-    {
-        "path": "docs/todo.md",
-        "display_name": "Todo",
-        "icon": "todo",
-        "readonly_name": True,
-        "developer_only": True,
-    },
-]
+NOTE_COLORS = {}
+NOTE_ICONS = {}
+EXTERNAL_NOTES = []
 
 
 # ── Path helpers ───────────────────────────────────────────────────────────────
@@ -142,12 +117,10 @@ def load_notes(notes_dir: Path, meta: dict) -> list[dict]:
     return notes
 
 
-def load_external_notes(project_root: Path, meta: dict, developer_mode: bool = False) -> list[dict]:
-    """Load hardcoded external notes. Developer-only notes are excluded unless developer_mode is True."""
+def load_external_notes(project_root: Path, meta: dict, ext_notes: list) -> list[dict]:
+    """Load hardcoded external notes."""
     notes = []
-    for ext in EXTERNAL_NOTES:
-        if ext.get("developer_only") and not developer_mode:
-            continue
+    for ext in ext_notes:
         path = project_root / ext["path"]
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -211,6 +184,16 @@ def create_note(notes_dir: Path) -> dict:
     }
 
 
+def toggle_checkbox_in_content(content: str, index: int) -> str:
+    """Toggle the Nth checkbox marker ([ ] ↔ [x]) in markdown source."""
+    matches = list(re.finditer(r'\[([ xX])\]', content))
+    if index < 0 or index >= len(matches):
+        return content
+    m = matches[index]
+    replacement = '[x]' if m.group(1) == ' ' else '[ ]'
+    return content[:m.start()] + replacement + content[m.end():]
+
+
 def delete_note(notes_dir: Path, note: dict):
     if note["external"]:
         return  # never delete external files
@@ -255,10 +238,21 @@ async def notepad_page():
     core = await AppCore.get_or_initialize()
     notes_dir = get_notes_dir()
     project_root = get_project_root()
+    
+    note_config = core.config_loader.configs["notepad"]
+    
+    for col in note_config.note_colors:
+        NOTE_COLORS[col] = {
+            "bg": f"border-l-4 border-{note_config.note_colors[col]}",
+            "dot": f"bg-{note_config.note_colors[col]}",
+        }
+    NOTE_COLORS['none'] = {"bg": "", "dot": "bg-gray-400"}
+    NOTE_ICONS = note_config.note_icons
+
 
     meta = load_meta(notes_dir)
     regular_notes = load_notes(notes_dir, meta)
-    external_notes = load_external_notes(project_root, meta, developer_mode=core.settings.developer_mode)
+    external_notes = load_external_notes(project_root, meta, note_config.external_notes)
     all_notes = external_notes + regular_notes
 
     state = {
@@ -271,6 +265,7 @@ async def notepad_page():
         "sidebar_container": None,
         "content_area": None,
         "meta": meta,
+        "cb_handler": None,
     }
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -288,6 +283,38 @@ async def notepad_page():
             for i, n in enumerate(state["notes"])
             if not q or q in n["title"].lower() or q in n["content"].lower()
         ]
+
+    # ── Checkbox wiring ───────────────────────────────────────────────────────
+
+    def _wire_checkboxes(marker: str):
+        """Inject a capture-phase JS listener on the element with class `marker`.
+
+        Checkbox clicks are stopped from propagating (so the parent click handler
+        that triggers enter_edit_mode never fires) and forwarded to Python via
+        emitEvent('notepad_cb_toggle', idx).
+        """
+        ui.run_javascript(f"""
+            (function() {{
+                var el = document.querySelector('.{marker}');
+                if (!el) return;
+                if (el._cbHandler) {{
+                    el.removeEventListener('click', el._cbHandler, true);
+                }}
+                el._cbHandler = function(e) {{
+                    var t = e.target;
+                    if (t.tagName === 'INPUT' && t.type === 'checkbox' &&
+                            t.id && t.id.startsWith('notepad-cb-')) {{
+                        e.stopImmediatePropagation();
+                        e.preventDefault();
+                        emitEvent('notepad_cb_toggle', parseInt(t.id.split('-').pop()));
+                    }}
+                }};
+                el.addEventListener('click', el._cbHandler, true);
+            }})();
+        """)
+
+    # Single per-page dispatcher — routes to whichever mode is currently active.
+    ui.on('notepad_cb_toggle', lambda e: state['cb_handler'] and state['cb_handler'](e))
 
     def schedule_save(content: str):
         if state["save_timer"]:
@@ -521,12 +548,28 @@ async def notepad_page():
 
     def _render_view_mode(note: dict):
         content = note["content"] or "*Empty note — click to start writing*"
+        marker = f"notepad-view-{id(note)}"
+
         html_view = (
             ui.html(render_and_sanitize_markdown(content))
-            .classes("w-full cursor-text")
+            .classes(f"w-full cursor-text {marker}")
             .style("min-height: 200px; margin-top: 0; padding-top: 0;")
         )
         html_view.on("click", lambda _: enter_edit_mode())
+
+        def on_cb_toggle(e):
+            try:
+                idx = int(e.args)
+            except (TypeError, ValueError):
+                return
+            new_content = toggle_checkbox_in_content(note["content"], idx)
+            note["content"] = new_content
+            schedule_save(new_content)
+            html_view.set_content(render_and_sanitize_markdown(new_content))
+            ui.timer(0.05, lambda: _wire_checkboxes(marker), once=True)
+
+        state["cb_handler"] = on_cb_toggle
+        ui.timer(0.05, lambda: _wire_checkboxes(marker), once=True)
         ui.keyboard(on_key=lambda e: exit_edit_mode() if e.key == "Escape" else None)
 
     def _render_edit_mode(note: dict):
@@ -642,11 +685,27 @@ async def notepad_page():
 
             # Right: preview
             with ui.column().classes("flex-1 h-full overflow-auto p-4"):
+                preview_marker = f"notepad-preview-{id(note)}"
                 preview = (
                     ui.html(render_and_sanitize_markdown(note["content"]))
-                    .classes("w-full")
+                    .classes(f"w-full {preview_marker}")
                     .style("margin-top: 0; padding-top: 0;")
                 )
+
+            def on_cb_toggle_preview(e):
+                try:
+                    idx = int(e.args)
+                except (TypeError, ValueError):
+                    return
+                new_content = toggle_checkbox_in_content(note["content"], idx)
+                note["content"] = new_content
+                editor.value = new_content
+                schedule_save(new_content)
+                preview.set_content(render_and_sanitize_markdown(new_content))
+                ui.timer(0.05, lambda: _wire_checkboxes(preview_marker), once=True)
+
+            state["cb_handler"] = on_cb_toggle_preview
+            ui.timer(0.05, lambda: _wire_checkboxes(preview_marker), once=True)
 
             def on_change(e):
                 content = editor.value or ""

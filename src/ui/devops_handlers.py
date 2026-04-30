@@ -57,10 +57,10 @@ class DevOpsWorkItemHandlers:
         }
 
         if not customer_name or not self.DO.manager:
-            return
+            return None
         client = self.DO.manager._get_client(customer_name)
         if not client:
-            return
+            return None
         col_status, columns = client.get_board_columns_via_team_autodetect(
             board_type=board_types.get(board_type, "Stories")
         )
@@ -306,7 +306,11 @@ class DevOpsWorkItemHandlers:
                 b_type, None
             )
             if cached_list is None:
-                columns, col_status = self.load_board_columns(c_name, b_type)
+                result = self.load_board_columns(c_name, b_type)
+                if result is None:
+                    self.LOG.warning(f"Could not load board columns for {c_name}/{b_type}")
+                    return
+                columns, col_status = result
             else:
                 columns = cached_list
                 col_status = True
@@ -354,7 +358,11 @@ class DevOpsWorkItemHandlers:
                 ).setdefault(b_type, None)
 
                 if cached_list is None:
-                    columns, col_status = self.load_board_columns(c_name, b_type)
+                    result = self.load_board_columns(c_name, b_type)
+                    if result is None:
+                        self.LOG.warning(f"Could not load board columns for {c_name}/{b_type}")
+                        return
+                    columns, col_status = result
                 else:
                     columns = cached_list
                     col_status = True

@@ -26,4 +26,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 EXPOSE 8080
 
-ENTRYPOINT ["uv", "run", "-m", "src.main"]
+ENTRYPOINT ["uv", "run", "-m", "main"]

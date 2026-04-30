@@ -8,6 +8,20 @@ A modern web-based time tracking application with built-in task management and A
 
 ## Changelog
 
+### 5.0.1 (2026-04-30)
+- **Minor improvements**
+  - ad support for syntax-highlighting in markdown viewers
+  - ad support for checkboxes in markdown viewers
+  - ad active-timer indicator in navigation bar
+  - ad better small screen support
+  - ad support for starting timers in post
+  - rf simplifed time_tracking code
+  - up notepad colors/icons/external documents are now defined in config files
+- **Bug Fixes**
+  - fx issue where drop-downs do not auto-set defualt values
+  - fx issue where notepad markdown had issues on different browsers
+  - fx issue where summing total time per customer did not include scd2 historic data
+
 ### 5.0.0 (2026-04-06)
 
 - **Architecture — complete rewrite**

@@ -2,7 +2,6 @@
 from .devops import DevOpsManager
 from .database import Database
 from dataclasses import dataclass
-from typing import Optional
 import asyncio
 import logging
 import datetime
@@ -59,8 +58,8 @@ class DevOpsEngine:
         self.log = log_engine
         self._scheduled_tasks = []
         self._scheduled_started = False
-        self.last_incremental_sync: Optional[datetime.datetime] = None
-        self.last_full_sync: Optional[datetime.datetime] = None
+        self.last_incremental_sync: datetime.datetime | None = None
+        self.last_full_sync: datetime.datetime | None = None
 
     async def start_scheduled_updates(self):
         """Start background tasks for scheduled DevOps updates (called once globally)."""
@@ -98,7 +97,7 @@ class DevOpsEngine:
                     await asyncio.sleep(seconds_until_2am)
                     self.log.info("Running scheduled daily full refresh")
                     await self.update_devops(incremental=False)
-                    await asyncio.sleep(86400)  # Sleep for rest of day
+                    # Loop back immediately — next iteration recalculates time until 2 AM
                 except Exception as e:
                     self.log.error(f"Error in daily full refresh: {e}")
                     await asyncio.sleep(3600)  # Wait 1 hour before retrying
@@ -112,9 +111,12 @@ class DevOpsEngine:
 
     def stop_scheduled_updates(self):
         """Stop all scheduled update tasks."""
+        global _devops_scheduled_started
         for task in self._scheduled_tasks:
             task.cancel()
         self._scheduled_tasks.clear()
+        _devops_scheduled_started = False
+        self._scheduled_started = False
 
     def has_customer_connection(self, customer_name: str) -> bool:
         """
@@ -126,18 +128,14 @@ class DevOpsEngine:
         Returns:
             True if customer has active DevOps connection
         """
-        return bool(
-            self.manager
-            and hasattr(self.manager, "clients")
-            and customer_name in self.manager.clients
-        )
+        return bool(self.manager and customer_name in self.manager.clients)
 
     async def initialize(self):
         """Initialize DevOps connections and data (without starting scheduled tasks)."""
         try:
             await self.setup_manager()
 
-            if not getattr(self.manager, "clients", None) or self.manager.clients == {}:
+            if not self.manager.clients:
                 self.log.warning(
                     "No customers with DevOps credentials. Skipping devops table generation.",
                 )
@@ -232,7 +230,7 @@ class DevOpsEngine:
     async def load_df(self):
         df = await self.query_engine.query_db("select * from devops")
         self.df = df if not df.empty else None
-        if self.df is None or self.df.empty:
+        if self.df is None:
             self.log.warning("DevOps dataframe is empty")
         else:
             self.df["display_name"] = self.df.apply(
@@ -290,6 +288,10 @@ class DevOpsEngine:
                 parent=kwargs.get("parent"),
             )
             # Note: DevOps refresh is handled by on_success_callback in the UI
+
+        else:
+            self.log.warning(f"Unknown DevOps function: {func_name}")
+            return False, f"Unknown DevOps function: {func_name}"
 
         if not status:
             self.log.error(msg)

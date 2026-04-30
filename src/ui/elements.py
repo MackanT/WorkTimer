@@ -21,6 +21,7 @@ class NavigationBar:
         self.buttons = {}
         self.active_path = None
         self.on_navigate = None
+        self._active_timers_row = None
 
     def render(self) -> None:
         """
@@ -45,12 +46,18 @@ class NavigationBar:
             # Create header-like navigation bar using regular elements
             with (
                 ui.header()
-                .classes("items-center justify-between")
-                .style(f"background-color: {self.theme.get('dark_page', '#0f172a')} !important")
+                .classes("items-center")
+                .style(
+                    f"background-color: {self.theme.get('dark_page', '#0f172a')} !important;"
+                    "overflow: hidden !important;"
+                )
                 .props("flat")
             ):
-                with ui.row().classes("items-center gap-1"):
-                    ui.label("WorkTimer").classes("text-h6 text-white font-bold mr-4")
+                with ui.row().classes("items-center gap-1 flex-nowrap overflow-x-auto w-full wt-nav-scroll py-1").style(
+                    "scrollbar-width: none;"  # hide scrollbar (Firefox)
+                    "-ms-overflow-style: none;"  # hide scrollbar (IE/Edge)
+                ):
+                    ui.label("WorkTimer").classes("text-h6 text-white font-bold mr-4 shrink-0")
 
                     # Navigation buttons
                     for item in nav_items:
@@ -70,10 +77,16 @@ class NavigationBar:
                             on_click=create_click_handler(item["path"]),
                         ).props("flat")
 
-                        button.classes(f"text-{nav_text} hover:bg-{nav_hover}")
+                        button.classes(f"text-{nav_text} hover:bg-{nav_hover} shrink-0")
 
                         # Store button reference
                         self.buttons[item["path"]] = button
+
+                    # Active timers section — right side of nav bar
+                    ui.space()
+                    self._active_timers_row = (
+                        ui.row().classes("items-center gap-1 mr-2 shrink-0")
+                    )
 
             # Set initial active state based on current path
             current_path = app.storage.client.get("current_path", "/time")
@@ -85,17 +98,40 @@ class NavigationBar:
 
             traceback.print_exc()
 
-    def set_timer_active(self, active: bool):
-        """Update the Time Tracking nav button to indicate an active timer."""
+    def set_active_timers(self, names: list[str]) -> None:
+        """Update the nav bar active timer pills and the Time button icon/glow."""
         btn = self.buttons.get("/time")
-        if not btn:
+        active = bool(names)
+
+        if btn:
+            if active:
+                btn.props("icon=timer")
+                btn.style(
+                    f"box-shadow: 0 0 0 2px {self.theme.get('info')}; border-radius: 4px;"
+                )
+            else:
+                btn.props("icon=schedule")
+                btn.style("box-shadow: none;")
+
+        if self._active_timers_row is None:
             return
-        if active:
-            btn.props("icon=timer")
-            btn.style(f"box-shadow: 0 0 0 2px {self.theme.get('info')}; border-radius: 4px;")
-        else:
-            btn.props("icon=schedule")
-            btn.style("box-shadow: none;")
+        self._active_timers_row.clear()
+        if not active:
+            return
+        with self._active_timers_row:
+            ui.icon("timer", size="xs").classes("text-green-400 shrink-0")
+            for name in names:
+                (
+                    ui.label(name)
+                    .classes(
+                        "text-xs text-green-300 border border-green-600"
+                        " px-2 py-0.5 rounded-full whitespace-nowrap"
+                    )
+                )
+
+    def set_timer_active(self, active: bool, tooltip_lines: list[str] | None = None):
+        """Legacy shim — delegates to set_active_timers."""
+        self.set_active_timers(tooltip_lines or [] if active else [])
 
     def set_active(self, path: str, theme: dict):
         """Update the active navigation button"""
@@ -118,7 +154,7 @@ class NavigationBar:
 
 
 def toolbar_divider(theme):
-    ui.element("div").classes(f"h-6 w-px bg-{theme.get('divider')}")
+    ui.element("div").classes(f"h-6 w-px shrink-0 bg-{theme.get('divider')}")
 
 
 # Height constants kept for backward compat (not used for layout calculations).
@@ -136,21 +172,23 @@ def toolbar(theme):
     with (
         ui.row()
         .classes(
-            f"wt-toolbar w-full shrink-0 items-center gap-6 px-6 bg-{theme.get('toolbar_bg')} rounded-md"
+            f"wt-toolbar wt-toolbar-scroll w-full shrink-0 items-center gap-6 px-6 bg-{theme.get('toolbar_bg')} rounded-md flex-nowrap overflow-x-auto"
         )
         .style(
             f"height: {TOOLBAR_HEIGHT_PX}px; min-height: {TOOLBAR_HEIGHT_PX}px; max-height: {TOOLBAR_HEIGHT_PX}px; box-sizing: border-box;"
+            " scrollbar-width: none; -ms-overflow-style: none;"
         )
     ):
         yield
 
 
 @contextmanager
-def toolbar_group(theme, label: str, divider_after: bool = True):
-    with ui.element("div").classes("flex items-center gap-2"):
-        ui.label(label).classes(
-            f"text-xs text-{theme.get('accent')} uppercase tracking-wide whitespace-nowrap"
-        )
+def toolbar_group(theme, label: str | None = None, divider_after: bool = True):
+    with ui.element("div").classes("flex shrink-0 items-center gap-2"):
+        if label is not None:
+            ui.label(label).classes(
+                f"text-xs text-{theme.get('accent')} uppercase tracking-wide whitespace-nowrap"
+            )
         yield
     if divider_after:
         toolbar_divider(theme)

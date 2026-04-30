@@ -6,8 +6,12 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 Fully config-driven using config_ui.yml structure.
 """
 
+import os
+import sqlite3
+import tempfile
+import pandas as pd
 from datetime import date
-from nicegui import ui
+from nicegui import ui, events
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
@@ -50,13 +54,13 @@ async def add_data_page():
                 )
                 .classes(helpers.UI_STYLES.get_layout_classes("tab_label"))
             ) as main_tabs:
-                for page_dict in add_data_page_config:
-                    p_data = add_data_page_config.get(page_dict, {}).get("meta", {})
+                for page_dict, page_section in add_data_page_config.items():
+                    p_data = page_section.get("meta", {})
                     icon = p_data.get("icon", "warning")
                     label = p_data.get("friendly_name", page_dict)
                     ui.tab(page_dict, label=label, icon=icon)
 
-                return main_tabs
+        return main_tabs
 
     main_tabs = render_toolbar()
 
@@ -73,8 +77,8 @@ async def add_data_page():
                     try:
                         await refresh_fn()
                         core.logger.debug(f"Refreshed {tab_name}.{op} on tab change")
-                    except Exception as e:
-                        core.logger.error(f"Error refreshing {tab_name}.{op}: {e}")
+                    except Exception as err:
+                        core.logger.error(f"Error refreshing {tab_name}.{op}: {err}")
 
     main_tabs.on_value_change(on_tab_change)
 
@@ -88,8 +92,8 @@ async def add_data_page():
             "background: transparent;"
         )
     ):
-        for page_dict in add_data_page_config:
-            p_data = add_data_page_config.get(page_dict, {}).get("meta", {})
+        for page_dict, page_section in add_data_page_config.items():
+            p_data = page_section.get("meta", {})
             build_fn_name = p_data.get("build_function")
 
             with ui.tab_panel(page_dict):
@@ -116,11 +120,10 @@ async def render_entity_tabs(
     """Render sub-tabs for entity operations (Add/Update/Disable/Reenable)"""
     entity_config = page_config.get(entity_type, {})
 
-    # Initialize storage for refresh functions if not exists
+    # Initialize storage for refresh functions
     if not hasattr(core, "_entity_refresh_fns"):
         core._entity_refresh_fns = {}
-    if entity_type not in core._entity_refresh_fns:
-        core._entity_refresh_fns[entity_type] = {}
+    core._entity_refresh_fns.setdefault(entity_type, {})
 
     with ui.row(wrap=False):
         for op in operations:
@@ -137,9 +140,6 @@ async def render_entity_form(
     core: AppCore, entity_type: str, operation: str, form_config: dict
 ):
     """Render a single entity form based on config"""
-    QE = core.query_engine
-    LOG = core.logger
-
     fields = form_config.get("fields", [])
     action = form_config.get("action", {})
 
@@ -156,16 +156,16 @@ async def render_entity_form(
             return
         kwargs = {name: widget.value for name, widget in widgets.items()}
         try:
-            await QE.function_db(action["function"], **kwargs)
+            await core.query_engine.function_db(action["function"], **kwargs)
             msg_1, msg_2 = helpers.print_success(
                 entity_type,
                 kwargs[action["main_param"]],
                 action["secondary_action"],
                 widgets,
             )
-            LOG.info(msg_1)
+            core.logger.info(msg_1)
             if msg_2:
-                LOG.info(msg_2)
+                core.logger.info(msg_2)
             for widget in widgets.values():
                 if hasattr(widget, "value"):
                     widget.value = "" if isinstance(widget.value, str) else None
@@ -185,7 +185,7 @@ async def render_entity_form(
                             )
             core.event_bus.emit("ui_refresh_requested")
         except Exception as e:
-            LOG.error(f"Error in {operation} {entity_type}: {e}")
+            core.logger.error(f"Error in {operation} {entity_type}: {e}")
             ui.notify(f"Error: {e}", type="negative")
 
     with entity_card_shell():
@@ -233,7 +233,7 @@ async def render_entity_form(
 
                     widget_class = WIDGET_CLASSES.get(field_type)
                     if not widget_class:
-                        LOG.warning(
+                        core.logger.warning(
                             f"Unknown field type '{field_type}', using fallback"
                         )
                         fallback_widgets, _ = helpers.make_input_row(
@@ -272,6 +272,7 @@ async def render_entity_form(
 async def render_devops_tabs(
     core: AppCore, entity_type: str, operations: list, page_config: dict
 ):
+    """Render DevOps sub-tabs (Add / Update work items)."""
     devops_config = page_config.get(entity_type, {})
 
     if not hasattr(core, "_entity_refresh_fns"):
@@ -305,16 +306,16 @@ async def render_devops_tabs(
 
     async def _refresh_devops():
         for fn in refresh_fns:
-            await fn()
+            try:
+                await fn()
+            except Exception as e:
+                core.logger.error(f"Error refreshing DevOps form: {e}")
 
     core._entity_refresh_fns[entity_type]["devops"] = _refresh_devops
 
 
 async def render_devops_form(core: AppCore, operation: str, form_config: dict):
     """Render DevOps work item form (shared by add and update)."""
-    LOG = core.logger
-    DO = core.devops_engine
-
     fields = form_config.get("fields", [])
     action = form_config.get("action", {})
 
@@ -335,35 +336,34 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
         if not helpers.check_input(widgets, required_fields):
             return
 
-        if not DO or not hasattr(DO, "manager") or not DO.manager:
+        if (
+            not core.devops_engine
+            or not hasattr(core.devops_engine, "manager")
+            or not core.devops_engine.manager
+        ):
             ui.notify("DevOps not configured – check PAT token / org URL", type="negative")
             return
 
         try:
-            devops_handlers = DevOpsWorkItemHandlers(DO, LOG)
+            devops_handlers = DevOpsWorkItemHandlers(core.devops_engine, core.logger)
             if operation == "add":
+                wid_title = widgets.get("work_item_title")
                 success, message = devops_handlers.add_work_item(widgets)
-                if success:
-                    wid_title = widgets.get("work_item_title")
-                    ui.notify(f"Work item created: {wid_title.value if wid_title else ''}", type="positive")
-                    LOG.info(message)
-                    await DO.update_devops(incremental=True)
-                    core.event_bus.emit("ui_refresh_requested")
-                else:
-                    ui.notify(f"Failed: {message}", type="negative")
-                    LOG.error(message)
+                success_msg = f"Work item created: {wid_title.value if wid_title else ''}"
             else:
                 success, message = await devops_handlers.update_work_item(widgets)
-                if success:
-                    ui.notify("Work item updated", type="positive")
-                    LOG.info(message)
-                    await DO.update_devops(incremental=True)
-                    core.event_bus.emit("ui_refresh_requested")
-                else:
-                    ui.notify(f"Failed: {message}", type="negative")
-                    LOG.error(message)
+                success_msg = "Work item updated"
+
+            if success:
+                ui.notify(success_msg, type="positive")
+                core.logger.info(message)
+                await core.devops_engine.update_devops(incremental=True)
+                core.event_bus.emit("ui_refresh_requested")
+            else:
+                ui.notify(f"Failed: {message}", type="negative")
+                core.logger.error(message)
         except Exception as e:
-            LOG.error(f"Error in DevOps {operation}: {e}")
+            core.logger.error(f"Error in DevOps {operation}: {e}")
             ui.notify(f"Error: {e}", type="negative")
 
     with (
@@ -397,11 +397,12 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
             if source_key == "parent_names" and isinstance(data, dict) and parent_val:
                 customer_dict = data.get(parent_val, {})
                 if isinstance(customer_dict, dict):
-                    all_parents = []
-                    for parent_list in customer_dict.values():
-                        if isinstance(parent_list, list):
-                            all_parents.extend(parent_list)
-                    return list(set(all_parents))
+                    return list({
+                        item
+                        for parent_list in customer_dict.values()
+                        if isinstance(parent_list, list)
+                        for item in parent_list
+                    })
                 return customer_dict if isinstance(customer_dict, list) else []
             if parent_val and isinstance(data, dict):
                 return data.get(parent_val, [])
@@ -411,21 +412,17 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
                 return data
             return [] if parent_val is not None else ""
 
+        field_name_to_type = {f.get("name") or f.get("field_id"): f.get("type") for f in fields}
+        fields_by_name = {f.get("name") or f.get("field_id"): f for f in fields}
         has_wide_layout = any(
-            helpers.UI_STYLES.is_wide_widget(
-                next((f.get("type") for f in fields if f.get("name") == fn or f.get("field_id") == fn), None)
-            )
+            helpers.UI_STYLES.is_wide_widget(field_name_to_type.get(fn))
             for row in rows_layout
             for fn in row
         )
 
         with ui.column().classes(helpers.UI_STYLES.get_layout_classes("form_column")):
             for row in rows_layout:
-                row_field_configs = [
-                    fc
-                    for fn in row
-                    if (fc := next((f for f in fields if f.get("name") == fn or f.get("field_id") == fn), None))
-                ]
+                row_field_configs = [fields_by_name[fn] for fn in row if fn in fields_by_name]
                 if not row_field_configs:
                     continue
 
@@ -440,7 +437,7 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
 
                         widget_class = WIDGET_CLASSES.get(field_type)
                         if not widget_class:
-                            LOG.warning(f"Unknown field type '{field_type}', skipping {field_name}")
+                            core.logger.warning(f"Unknown field type '{field_type}', skipping {field_name}")
                             continue
 
                         dw = widget_class(
@@ -458,7 +455,7 @@ async def render_devops_form(core: AppCore, operation: str, form_config: dict):
                         dynamic_widgets.append(dw)
 
         helpers.setup_template_handling(widgets)
-        devops_handlers_setup = DevOpsWorkItemHandlers(DO, LOG)
+        devops_handlers_setup = DevOpsWorkItemHandlers(core.devops_engine, core.logger)
         if operation == "add":
             devops_handlers_setup.setup_add_tab_handlers(widgets)
         else:
@@ -505,19 +502,16 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                         data_sources["new_customer_name"][cname] = cname
 
             elif operation == "reenable":
-                # Get disabled customers
+                # Get customers that are disabled and have no active entry
                 df = await QE.query_db(
-                    "SELECT DISTINCT customer_name FROM customers WHERE is_current = 0"
+                    """SELECT DISTINCT customer_name FROM customers
+                       WHERE is_current = 0
+                       AND customer_name NOT IN (
+                           SELECT customer_name FROM customers WHERE is_current = 1
+                       )"""
                 )
-                active_df = await QE.query_db(
-                    "SELECT customer_name FROM customers WHERE is_current = 1"
-                )
-                active_names = set(
-                    active_df["customer_name"].tolist() if not active_df.empty else []
-                )
-                all_disabled = set(df["customer_name"].tolist() if not df.empty else [])
                 data_sources["customer_data"] = sorted(
-                    list(all_disabled - active_names)
+                    df["customer_name"].tolist() if not df.empty else []
                 )
 
             # Today's date for start_date
@@ -566,32 +560,24 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                         data_sources["new_project_name"][pname] = pname
                         git_val = row["git_id"]
                         data_sources["new_git_id"][pname] = (
-                            int(git_val)
-                            if git_val is not None and git_val == git_val
-                            else 0
+                            int(git_val) if pd.notna(git_val) else 0
                         )
 
             elif operation == "reenable":
-                # Disabled projects grouped by customer (exclude any now-active ones)
+                # Disabled projects grouped by customer (excluding any now-active ones)
                 dis_df = await QE.query_db(
                     """SELECT DISTINCT p.project_name, c.customer_name
                        FROM projects p
                        JOIN customers c ON p.customer_id = c.customer_id
-                       WHERE p.is_current = 0"""
-                )
-                active_df2 = await QE.query_db(
-                    "SELECT project_name FROM projects WHERE is_current = 1"
-                )
-                active_proj = set(
-                    active_df2["project_name"].tolist() if not active_df2.empty else []
+                       WHERE p.is_current = 0
+                       AND p.project_name NOT IN (
+                           SELECT project_name FROM projects WHERE is_current = 1
+                       )"""
                 )
                 project_names_by_cust = {}
-                for _, row in (dis_df if not dis_df.empty else dis_df).iterrows():
-                    pname = row["project_name"]
-                    if pname in active_proj:
-                        continue
+                for _, row in dis_df.iterrows():
                     project_names_by_cust.setdefault(row["customer_name"], []).append(
-                        pname
+                        row["project_name"]
                     )
                 data_sources["project_names"] = project_names_by_cust
                 data_sources["project_data"] = [
@@ -686,8 +672,8 @@ async def prepare_devops_data_sources(core: AppCore, operation: str) -> dict:
             data_sources["assignees"] = assignees
             data_sources["default_assignee"] = default_assignee
 
-        except Exception:
-            pass  # DevOps contacts config is optional
+        except Exception as e:
+            core.logger.debug(f"DevOps contacts config not available: {e}")
 
     except Exception as e:
         core.logger.error(f"Error preparing DevOps data sources: {e}")
@@ -707,9 +693,6 @@ async def render_database_tabs(
         page_config: Page configuration dict (unused, for signature compatibility)
     """
     from ..database import Database
-    import os
-    import tempfile
-    from nicegui import events
 
     # Get database name from settings
     db_name = core.settings.db_path
@@ -787,25 +770,26 @@ async def render_database_tabs(
                     "", language="text", theme="dracula"
                 ).classes("w-full h-96")
 
-                uploaded_db_path = {"path": None}
+                uploaded_db_path = None
 
                 def handle_db_upload(e: events.UploadEventArguments):
+                    nonlocal uploaded_db_path
                     ui.notify(f"Database uploaded: {e.name}", color="positive")
                     try:
                         with tempfile.NamedTemporaryFile(
                             delete=False, suffix=".db"
                         ) as tmp:
                             tmp.write(e.content.read())
-                            uploaded_db_path["path"] = tmp.name
+                            uploaded_db_path = tmp.name
                         core.logger.info(
-                            f"Database uploaded to: {uploaded_db_path['path']}"
+                            f"Database uploaded to: {uploaded_db_path}"
                         )
                     except Exception as ex:
                         core.logger.error(f"Error uploading database: {ex}")
                         ui.notify(f"Error: {ex}", type="negative")
 
                 async def execute_query():
-                    if not uploaded_db_path["path"]:
+                    if not uploaded_db_path:
                         ui.notify("Please upload a database first", type="warning")
                         return
 
@@ -815,32 +799,29 @@ async def render_database_tabs(
                         return
 
                     try:
-                        import sqlite3
-                        import pandas as pd
-
-                        conn = sqlite3.connect(uploaded_db_path["path"])
-
-                        if query.strip().upper().startswith("SELECT"):
-                            # Read query - show results
-                            df = pd.read_sql_query(query, conn)
-                            result_display.set_content(df.to_string())
-                            ui.notify(f"Query returned {len(df)} rows", type="positive")
-                        else:
-                            # Write query - execute and show rows affected
-                            cursor = conn.cursor()
-                            cursor.execute(query)
-                            conn.commit()
-                            rows_affected = cursor.rowcount
-                            result_display.set_content(
-                                f"Query executed successfully. Rows affected: {rows_affected}"
-                            )
-                            ui.notify(
-                                f"Query executed. {rows_affected} rows affected",
-                                type="positive",
-                            )
-
-                        conn.close()
-                        core.logger.info("Query executed successfully")
+                        conn = sqlite3.connect(uploaded_db_path)
+                        try:
+                            if query.strip().upper().startswith("SELECT"):
+                                # Read query - show results
+                                df = pd.read_sql_query(query, conn)
+                                result_display.set_content(df.to_string())
+                                ui.notify(f"Query returned {len(df)} rows", type="positive")
+                            else:
+                                # Write query - execute and show rows affected
+                                cursor = conn.cursor()
+                                cursor.execute(query)
+                                conn.commit()
+                                rows_affected = cursor.rowcount
+                                result_display.set_content(
+                                    f"Query executed successfully. Rows affected: {rows_affected}"
+                                )
+                                ui.notify(
+                                    f"Query executed. {rows_affected} rows affected",
+                                    type="positive",
+                                )
+                            core.logger.info("Query executed successfully")
+                        finally:
+                            conn.close()
                     except Exception as ex:
                         core.logger.error(f"Error executing query: {ex}")
                         result_display.set_content(f"Error: {ex}")

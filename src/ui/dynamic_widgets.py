@@ -97,6 +97,9 @@ class DynamicWidget(ABC):
         if not self.data_fetcher:
             return
 
+        if not self.options_source and not self.parent:
+            return
+
         try:
             parent_val = self.parent.widget.value if self.parent else None
             await self._refresh_impl(parent_val)

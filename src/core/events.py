@@ -166,29 +166,27 @@ class EventBus:
                 except Exception as e:
                     self.logger.error(f"Error in handler for '{event_name}': {e}")
 
-        # Execute in UI context
-        with self._ui_context:
-            try:
-                # If we're already running inside an event loop, schedule as a task
-                # If a running loop exists in this thread, schedule as a task
-                asyncio.get_running_loop()
+        # Execute in UI context — but only when we're already on the UI thread.
+        # If called from a background thread, the NiceGUI slot stack is empty and
+        # entering _ui_context would corrupt it.  In that case, schedule directly.
+        try:
+            asyncio.get_running_loop()
+            # We're on the UI/async thread — safe to use the context manager.
+            with self._ui_context:
                 asyncio.create_task(execute_handlers())
-            except RuntimeError:
-                # No running event loop in this thread. Try to schedule into the
-                # main loop captured during `capture_context` using a thread-safe
-                # coroutine submit. This allows worker threads to emit events.
-                if self._main_loop and self._main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(
-                        execute_handlers(), self._main_loop
+        except RuntimeError:
+            # Background thread: no running loop here.
+            if self._main_loop and self._main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    execute_handlers(), self._main_loop
+                )
+            else:
+                try:
+                    asyncio.run(execute_handlers())
+                except Exception as e:
+                    self.logger.error(
+                        f"Failed to execute handlers synchronously: {e}"
                     )
-                else:
-                    # Final fallback: run the coroutine synchronously in a new loop
-                    try:
-                        asyncio.run(execute_handlers())
-                    except Exception as e:
-                        self.logger.error(
-                            f"Failed to execute handlers synchronously: {e}"
-                        )
 
     def run_in_ui(self, func: Callable, *args, **kwargs):
         """

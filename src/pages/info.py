@@ -38,12 +38,13 @@ async def info_page():
                 )
                 .classes(UI_STYLES.get_layout_classes("tab_label"))
             ) as main_tabs:
-                for page_dict in info_page_config:
-                    p_data = info_page_config.get(page_dict, {}).get("meta", {})
+                for page_dict, page_section in info_page_config.items():
+                    p_data = page_section.get("meta", {})
                     icon = p_data.get("icon", "warning")
                     label = p_data.get("friendly_name", page_dict)
                     ui.tab(page_dict, label=label, icon=icon)
-                return main_tabs
+
+        return main_tabs
 
     main_tabs = render_toolbar()
 
@@ -69,8 +70,8 @@ async def info_page():
             "background: transparent;"
         )
     ):
-        for page_dict in info_page_config:
-            p_data = info_page_config.get(page_dict, {}).get("meta", {})
+        for page_dict, page_section in info_page_config.items():
+            p_data = page_section.get("meta", {})
             filename = p_data.get("file", f"{page_dict}.md")
             with ui.tab_panel(page_dict).classes("p-0 h-full"):
                 render_info_text(filename)

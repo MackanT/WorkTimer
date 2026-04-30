@@ -16,7 +16,7 @@ import re
 import yaml
 from nicegui import ui
 from ..core.app import AppCore
-from ..ui.elements import toolbar, page_card
+from ..ui.elements import toolbar, toolbar_group, page_card
 from ..helpers import UI_STYLES
 
 # ── Quasar colour palette offered in dropdowns ──────────────────────────────
@@ -743,38 +743,40 @@ async def settings_page():
     _eng = core.devops_engine
 
     with toolbar(core.theme):
-        ui.icon("tune", size="md").classes(f"text-{core.theme.get('accent')}")
-        ui.label("Settings").classes(UI_STYLES.get_layout_classes("page_title"))
+        with toolbar_group(core.theme, divider_after=False):
+            ui.icon("tune", size="md").classes(f"text-{core.theme.get('accent')}")
+            ui.label("Settings").classes(UI_STYLES.get_layout_classes("page_title"))
 
         ui.element("div").classes("flex-1")
 
-        _sync_lbl = ui.label(
-            f"incr: {_fmt_time(_eng.last_incremental_sync)}  ·  "
-            f"full: {_fmt_time(_eng.last_full_sync)}"
-        ).classes(UI_STYLES.get_layout_classes("muted_text_xs"))
-
-        def _refresh_sync_labels():
-            _sync_lbl.set_text(
+        with toolbar_group(core.theme, divider_after=False):
+            _sync_lbl = ui.label(
                 f"incr: {_fmt_time(_eng.last_incremental_sync)}  ·  "
                 f"full: {_fmt_time(_eng.last_full_sync)}"
+            ).classes(UI_STYLES.get_layout_classes("muted_text_xs"))
+
+            def _refresh_sync_labels():
+                _sync_lbl.set_text(
+                    f"incr: {_fmt_time(_eng.last_incremental_sync)}  ·  "
+                    f"full: {_fmt_time(_eng.last_full_sync)}"
+                )
+
+            async def _run_incr():
+                _svc.refresh_incremental_async()
+                await asyncio.sleep(0.5)
+                _refresh_sync_labels()
+
+            async def _run_full():
+                _svc.refresh_full_async()
+                await asyncio.sleep(0.5)
+                _refresh_sync_labels()
+
+            ui.button("Incremental", icon="sync", on_click=_run_incr).props(
+                "color=primary dense outline"
             )
-
-        async def _run_incr():
-            _svc.refresh_incremental_async()
-            await asyncio.sleep(0.5)
-            _refresh_sync_labels()
-
-        async def _run_full():
-            _svc.refresh_full_async()
-            await asyncio.sleep(0.5)
-            _refresh_sync_labels()
-
-        ui.button("Incremental", icon="sync", on_click=_run_incr).props(
-            "color=primary dense outline"
-        )
-        ui.button("Full Sync", icon="cloud_download", on_click=_run_full).props(
-            "color=primary dense outline"
-        )
+            ui.button("Full Sync", icon="cloud_download", on_click=_run_full).props(
+                "color=primary dense outline"
+            )
 
     with page_card(scrollable=False):
         with ui.row().classes("w-full h-full gap-0 overflow-hidden"):
