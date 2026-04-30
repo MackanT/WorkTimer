@@ -8,7 +8,7 @@ A modern web-based time tracking application with built-in task management and A
 
 ## Changelog
 
-### 5.0.1 (2026-04-XX)
+### 5.0.1 (2026-04-30)
 - **Minor improvements**
   - ad support for syntax-highlighting in markdown viewers
   - ad support for checkboxes in markdown viewers
