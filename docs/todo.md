@@ -1,13 +1,15 @@
 ## BUGS
-- [ ] markdown code not working in chromium (?)
+- [x] markdown code not working in chromium (?)
 
 ## Features
 
+
 #### TimeTracker
-- [ ] At midnight, date "today" does not switch automatically. Might be fixed but have not verified it (bug)
+- [x] At midnight, date "today" does not switch automatically. Might be fixed but have not verified it (bug)
 
 #### Database / QueryEditor
-- [ ] Make PAT-tokens etc masked (not easily possible)
+- [x] Make PAT-tokens etc masked (not easily possible)
+- [ ] Drag/Drop slider för att göra query-fönstret större på bekostnad av tabellen
 
 #### Devops
 - [ ] Devops visualize as dag?
@@ -18,10 +20,6 @@
 
 #### Tasks
 - [ ] Tasks missing delete task option?
-
-#### Notes
-- [ ] Notepad++ functionality + markdown (?)
-- [ ] remove exces vertical white-space
 
 #### Generic
 - [ ] Go over page layouts (ensure consistent ui sizes etc)
