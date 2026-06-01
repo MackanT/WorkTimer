@@ -142,19 +142,21 @@ class DevOpsManager:
             title, description, additional_fields, markdown, parent
         )
 
-    def get_epics_feature_df(self, max_ids: dict = None):
+    def get_epics_feature_df(self, max_ids: dict = None, changed_dates: dict = None):
         """Get work items in long format with parent_id column.
 
         Args:
-            max_ids: Dict of {customer_name: max_id} for incremental refresh
+            max_ids: Dict of {customer_name: max_id} for incremental refresh (new items)
+            changed_dates: Dict of {customer_name: iso_datetime_str} for catching edits
         """
         rows = []
         for customer_name, client in self.clients.items():
             # Get customer-specific min_id for filtering
             min_id = max_ids.get(customer_name) if max_ids else None
+            min_changed_date = changed_dates.get(customer_name) if changed_dates else None
 
             status, items = client.get_workitem_level(
-                level=None, return_full=True, min_id=min_id
+                level=None, return_full=True, min_id=min_id, min_changed_date=min_changed_date
             )
             if not status or not items:
                 continue
@@ -177,6 +179,14 @@ class DevOpsManager:
                 == "User Story"
             }
 
+            def _assigned_to(fields):
+                af = fields.get("System.AssignedTo")
+                if not af:
+                    return ""
+                if isinstance(af, dict):
+                    return af.get("displayName", af.get("uniqueName", ""))
+                return str(af)
+
             # Add all epics
             for epic in epics.values():
                 rows.append(
@@ -187,6 +197,11 @@ class DevOpsManager:
                         "title": epic.fields.get("System.Title"),
                         "state": epic.fields.get("System.State"),
                         "parent_id": None,
+                        "board_column": epic.fields.get("System.BoardColumn", ""),
+                        "board_column_done": int(bool(epic.fields.get("System.BoardColumnDone", False))),
+                        "assigned_to": _assigned_to(epic.fields),
+                        "changed_date": epic.fields.get("System.ChangedDate", ""),
+                        "priority": epic.fields.get("Microsoft.VSTS.Common.Priority"),
                     }
                 )
 
@@ -201,6 +216,11 @@ class DevOpsManager:
                         "title": feature.fields.get("System.Title"),
                         "state": feature.fields.get("System.State"),
                         "parent_id": parent_id,
+                        "board_column": feature.fields.get("System.BoardColumn", ""),
+                        "board_column_done": int(bool(feature.fields.get("System.BoardColumnDone", False))),
+                        "assigned_to": _assigned_to(feature.fields),
+                        "changed_date": feature.fields.get("System.ChangedDate", ""),
+                        "priority": feature.fields.get("Microsoft.VSTS.Common.Priority"),
                     }
                 )
 
@@ -215,6 +235,11 @@ class DevOpsManager:
                         "title": us.fields.get("System.Title"),
                         "state": us.fields.get("System.State"),
                         "parent_id": parent_id,
+                        "board_column": us.fields.get("System.BoardColumn", ""),
+                        "board_column_done": int(bool(us.fields.get("System.BoardColumnDone", False))),
+                        "assigned_to": _assigned_to(us.fields),
+                        "changed_date": us.fields.get("System.ChangedDate", ""),
+                        "priority": us.fields.get("Microsoft.VSTS.Common.Priority"),
                     }
                 )
 
@@ -322,6 +347,7 @@ class DevOpsClient:
         work_item_id: int = None,
         return_full=False,
         min_id: int = None,
+        min_changed_date: str = None,
     ):
         def batched(iterable, n):
             for i in range(0, len(iterable), n):
@@ -336,8 +362,14 @@ class DevOpsClient:
             query += f" AND [System.WorkItemType] = '{level}'"
         if work_item_id:
             query += f" AND [System.Id] = {work_item_id}"
-        if min_id is not None:
+        def _date_only(dt_str: str) -> str:
+            return dt_str[:10] if dt_str else dt_str
+        if min_id is not None and min_changed_date:
+            query += f" AND ([System.Id] > {min_id} OR [System.ChangedDate] > '{_date_only(min_changed_date)}')"
+        elif min_id is not None:
             query += f" AND [System.Id] > {min_id}"
+        elif min_changed_date:
+            query += f" AND [System.ChangedDate] > '{_date_only(min_changed_date)}'"
         wiql_query = {"query": query}
         try:
             result = self.wit_client.query_by_wiql(wiql=wiql_query)
@@ -494,9 +526,9 @@ class DevOpsClient:
         """
         try:
             item = self.wit_client.get_work_item(int(work_item_id), expand="All")
-            desc = ""
-            if getattr(item, "fields", None):
-                desc = item.fields.get("System.Description", "")
+            fields = getattr(item, "fields", {}) or {}
+            desc = fields.get("System.Description", "")
+
             # Detect whether the description appears to be HTML (Azure DevOps stores HTML)
             fmt = "markdown"
             try:
@@ -505,11 +537,28 @@ class DevOpsClient:
             except Exception:
                 fmt = "markdown"
 
-            # Log successful retrieval
+            # Extract the assigned_to display name
+            af = fields.get("System.AssignedTo")
+            if isinstance(af, dict):
+                assigned_to = af.get("displayName", af.get("uniqueName", ""))
+            else:
+                assigned_to = str(af) if af else ""
+
+            # Bundle all cacheable scalars so callers can update the local DB
+            live_fields = {
+                "board_column": fields.get("System.BoardColumn", ""),
+                "board_column_done": int(bool(fields.get("System.BoardColumnDone", False))),
+                "state": fields.get("System.State", ""),
+                "assigned_to": assigned_to,
+                "assigned_to_raw": af,
+                "priority": fields.get("Microsoft.VSTS.Common.Priority"),
+                "changed_date": fields.get("System.ChangedDate", ""),
+            }
+
             self.log.info(
                 f"Loaded description for work item {work_item_id} (format: {fmt})"
             )
-            return (True, desc, fmt)
+            return (True, desc, fmt, live_fields)
         except Exception as e:
             self.log.error(f"Error fetching work item {work_item_id}: {e}")
             return (False, f"Error fetching work item {work_item_id}: {e}")

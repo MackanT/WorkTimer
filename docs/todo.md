@@ -1,11 +1,11 @@
 ## BUGS
-- [x] markdown code not working in chromium (?)
+- [ ] markdown code not working in chromium (?)
 
 ## Features
 
 
 #### TimeTracker
-- [x] At midnight, date "today" does not switch automatically. Might be fixed but have not verified it (bug)
+- [ ] At midnight, date "today" does not switch automatically. Might be fixed but have not verified it (bug)
 
 #### Database / QueryEditor
 - [x] Make PAT-tokens etc masked (not easily possible)
@@ -22,4 +22,4 @@
 - [ ] Tasks missing delete task option?
 
 #### Generic
-- [ ] Go over page layouts (ensure consistent ui sizes etc)
+- [x] Go over page layouts (ensure consistent ui sizes etc)

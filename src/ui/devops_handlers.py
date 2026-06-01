@@ -10,8 +10,6 @@ import re
 import asyncio
 from collections import defaultdict
 
-from nicegui import ui
-
 from .. import helpers
 
 
@@ -66,6 +64,18 @@ class DevOpsWorkItemHandlers:
         )
         self.devops_columns_cache[customer_name][board_type] = columns
         return columns, col_status
+
+    async def _write_through_cache(self, work_item_id: int, fields: dict):
+        """Persist live API field values to the local DB cache and reload the df."""
+        try:
+            await self.DO.query_engine.function_db(
+                "update_devops_item_fields",
+                work_item_id=work_item_id,
+                fields=fields,
+            )
+            await self.DO.load_df()
+        except Exception as e:
+            self.LOG.warning(f"Write-through cache update failed for {work_item_id}: {e}")
 
     def add_work_item(self, widgets):
         """
@@ -239,6 +249,26 @@ class DevOpsWorkItemHandlers:
                 self.LOG.warning(f"Board column move failed: {col_msg}")
                 return (True, f"Fields updated but column move failed: {col_msg}")
 
+        # Write-through: update local DB cache immediately so the board/df
+        # reflects the new state without waiting for the next incremental sync.
+        db_fields = {}
+        if state and state.value:
+            db_fields["state"] = state.value
+        if assigned_to and assigned_to.value:
+            db_fields["assigned_to"] = assigned_to.value
+        if priority and priority.value:
+            db_fields["priority"] = int(priority.value)
+        if board_column and board_column.value:
+            db_fields["board_column"] = board_column.value
+            db_fields["board_column_done"] = 0  # reset done-sub-state when moving columns
+        if db_fields:
+            await self.DO.query_engine.function_db(
+                "update_devops_item_fields",
+                work_item_id=int(work_item_id),
+                fields=db_fields,
+            )
+            await self.DO.load_df()
+
         self.LOG.info(f"Work item {work_item_id} updated successfully")
         return (True, f"Work item {work_item_id} updated successfully")
 
@@ -261,50 +291,77 @@ class DevOpsWorkItemHandlers:
             if not self.DO.manager:
                 return
 
-            status, details = self.DO.manager.get_work_item_details(
-                customer_name=c_name, work_item_id=work_item_id
-            )
-            if not status:
-                ui.notify(
-                    f"Failed to load work item details: {details}", color="negative"
+            # --- b_type from df cache (not in description response) ---
+            b_type = work_item_display.split(":")[0].strip()
+            cached_col = ""
+            if self.DO.df is not None:
+                matches = self.DO.df[self.DO.df["id"] == int(work_item_id)]
+                if not matches.empty:
+                    cached_row = matches.iloc[0]
+                    b_type = str(cached_row.get("type", b_type))
+                    cached_col = str(cached_row.get("board_column", "") or "")
+
+            # --- Description + live scalar fields: one API call, free extra data ---
+            desc_result = self.DO.manager.get_description(c_name, work_item_id)
+            desc_status = desc_result[0]
+            description_raw = desc_result[1] if len(desc_result) > 1 else ""
+            live_fields = desc_result[3] if desc_status and len(desc_result) > 3 else {}
+
+            if desc_status:
+                is_html_content = bool(
+                    description_raw and ("<" in description_raw and ">" in description_raw)
                 )
-                self.LOG.error(f"Failed to load work item details: {details}")
-                return
+                description_clean = (
+                    helpers.convert_html_to_markdown(description_raw)
+                    if is_html_content
+                    else html.unescape(description_raw or "")
+                )
+                editor_widget.value = description_clean
+            else:
+                self.LOG.warning(f"Could not load description for {work_item_id}: {description_raw}")
+                editor_widget.value = ""
 
-            # Description
-            description_raw = details.get("description", "")
-            is_html_content = bool(
-                description_raw and ("<" in description_raw and ">" in description_raw)
-            )
-            description_clean = (
-                helpers.convert_html_to_markdown(description_raw)
-                if is_html_content
-                else html.unescape(description_raw)
-            )
-            editor_widget.value = description_clean
+            # Use live values from the API response (authoritative)
+            state_val = live_fields.get("state", "")
+            assigned_to_val = live_fields.get("assigned_to_raw") or live_fields.get("assigned_to", "")
+            priority_val = live_fields.get("priority")
+            current_col = str(live_fields.get("board_column", "") or "")
 
-            # Standard fields
-            self._set_widget_value_safe(state_widget, details.get("state"), "string")
-            self._set_widget_value_safe(
-                assigned_to_widget,
-                details.get("assigned_to_raw") or details.get("assigned_to"),
-                "assignee",
-            )
-            self._set_widget_value_safe(priority_widget, details.get("priority"), "int")
+            # Write-through: update cache if board_column (or other fields) drifted
+            if live_fields and desc_status:
+                fields_to_cache = {
+                    k: live_fields[k]
+                    for k in ("board_column", "board_column_done", "state", "assigned_to", "priority", "changed_date")
+                    if live_fields.get(k) is not None
+                }
+                cached_differs = cached_col != current_col
+                if cached_differs:
+                    self.LOG.debug(
+                        f"Board column drift detected for {work_item_id}: "
+                        f"cached='{cached_col}' live='{current_col}' — updating cache"
+                    )
+                if fields_to_cache:
+                    asyncio.ensure_future(
+                        self._write_through_cache(int(work_item_id), fields_to_cache)
+                    )
+
+            # Populate scalar widgets
+            self._set_widget_value_safe(state_widget, state_val, "string")
+
+            # Ensure assignee options are refreshed for current customer before setting value.
+            # This prevents a parent-triggered async refresh from clearing the assigned value.
+            if assigned_to_widget and hasattr(assigned_to_widget, "refresh"):
+                await assigned_to_widget.refresh()
+            self._set_widget_value_safe(assigned_to_widget, assigned_to_val, "assignee")
+            self._set_widget_value_safe(priority_widget, priority_val, "int")
 
             # Current column — readonly display
-            current_col = details.get("board_column", "")
             if current_column_widget:
-                self._set_widget_value_safe(
-                    current_column_widget, current_col, "string"
-                )
+                self._set_widget_value_safe(current_column_widget, current_col, "string")
                 current_column_widget.widget.props("readonly outlined")
 
-            # Get cached columns if exist, else load from API
-            b_type = work_item_display.split(":")[0].strip()
-            cached_list = self.devops_columns_cache.setdefault(c_name, {}).setdefault(
-                b_type, None
-            )
+            # Board column options from preloaded cache (API only called once at startup)
+            cached_list = self.devops_columns_cache.setdefault(c_name, {}).setdefault(b_type, None)
             if cached_list is None:
                 result = self.load_board_columns(c_name, b_type)
                 if result is None:
@@ -317,7 +374,6 @@ class DevOpsWorkItemHandlers:
 
             if col_status and board_column_widget:
                 board_column_widget.widget.options = columns
-                board_column_widget.widget.value = None
                 board_column_widget.widget.update()
                 if current_col and current_col in columns:
                     board_column_widget.widget.value = current_col
@@ -327,6 +383,8 @@ class DevOpsWorkItemHandlers:
 
         if work_item_widget:
             work_item_widget.on("update:model-value", load_work_item_details)
+
+        return load_work_item_details
 
     def setup_add_tab_handlers(self, widgets):
         """

@@ -209,10 +209,37 @@ class Database:
                     id integer,
                     title text,
                     state text,
-                    parent_id integer
+                    parent_id integer,
+                    board_column text,
+                    board_column_done integer,
+                    assigned_to text,
+                    changed_date text,
+                    priority integer
                 )
                 """)
                 self.log_engine.info("Table 'devops' created successfully.")
+            else: ## TEMP Solution for now
+                # Migrate: add any missing columns introduced in later versions
+                existing_cols = [
+                    row[1]
+                    for row in self.conn.execute("PRAGMA table_info(devops)").fetchall()
+                ]
+                new_cols = [
+                    ("board_column", "TEXT"),
+                    ("board_column_done", "INTEGER"),
+                    ("assigned_to", "TEXT"),
+                    ("changed_date", "TEXT"),
+                    ("priority", "INTEGER"),
+                ]
+                for col_name, col_type in new_cols:
+                    if col_name not in existing_cols:
+                        self.conn.execute(
+                            f"ALTER TABLE devops ADD COLUMN {col_name} {col_type}"
+                        )
+                        self.log_engine.info(
+                            f"Migrated 'devops' table: added '{col_name}' column."
+                        )
+                self.conn.commit()
 
             ## Tasks table
             if not self._table_exists("tasks"):
@@ -1123,6 +1150,39 @@ class Database:
 
         self.conn.commit()
 
+    def update_devops_board_column(self, work_item_id: int, board_column: str):
+        """Update the cached board_column for a single work item.
+
+        Called after a successful drag-and-drop move so the local cache stays
+        in sync without waiting for the next full/incremental DevOps sync.
+        """
+        self.update_devops_item_fields(work_item_id, {"board_column": board_column, "board_column_done": 0})
+
+    def update_devops_item_fields(self, work_item_id: int, fields: dict):
+        """Update specific fields for a cached devops work item (write-through cache).
+
+        Called immediately after a successful API update so the local cache
+        reflects the new state without waiting for the next sync.
+
+        Only columns in the allowed set are written to prevent SQL injection.
+        """
+        if not fields:
+            return
+        allowed_cols = {"state", "board_column", "board_column_done", "assigned_to", "changed_date", "priority", "title"}
+        safe_fields = {k: v for k, v in fields.items() if k in allowed_cols}
+        if not safe_fields:
+            return
+        set_clauses = ", ".join(f"{col} = ?" for col in safe_fields)
+        values = list(safe_fields.values()) + [work_item_id]
+        self.conn.execute(
+            f"UPDATE devops SET {set_clauses} WHERE id = ?",
+            values,
+        )
+        self.conn.commit()
+        self.log_engine.info(
+            f"Write-through cache update for work item {work_item_id}: {list(safe_fields.keys())}"
+        )
+
     ### UI Operations ###
 
     def get_customer_ui_list(self, start_date: str, end_date: str):
@@ -1329,6 +1389,11 @@ class Database:
                     ("title", "TEXT", None, None),
                     ("state", "TEXT", None, None),
                     ("parent_id", "INTEGER", None, None),
+                    ("board_column", "TEXT", None, None),
+                    ("board_column_done", "INTEGER", None, None),
+                    ("assigned_to", "TEXT", None, None),
+                    ("changed_date", "TEXT", None, None),
+                    ("priority", "INTEGER", None, None),
                 ],
                 "tasks": [
                     ("task_id", "INTEGER", None, None),

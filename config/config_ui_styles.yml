@@ -242,6 +242,14 @@ inline_styles:
     # Project row grid - constrain within card width
     project_row: "display: grid; grid-template-columns: 20px 1fr 100px; align-items: center; margin-bottom:2px; min-height:20px; width: 100%;"
 
+  # DevOps board module
+  board:
+    # Dialog card used for add/update item popups.
+    dialog_card: "margin: 2rem auto; width: calc(100% - 4rem); max-width: 980px; max-height: calc(100vh - 4rem); overflow-y: auto;"
+    # Center the whole columns package when it's narrower than viewport,
+    # but still allow horizontal overflow scrolling when wider.
+    columns_row: "padding: 0.5rem; width: max-content; margin: 0 auto;"
+
 # ===== LAYOUT MODE DETECTION =====
 # Widget types that trigger "wide layout mode" for their container
 wide_widget_types:

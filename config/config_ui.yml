@@ -13,6 +13,12 @@ navigation:
     path: /add_data
     key: add_data
     enabled: true
+  board:
+    label: Board
+    icon: view_kanban
+    path: /board
+    key: board
+    enabled: true
   query_editor:
     label: Query Editor
     icon: code
@@ -49,6 +55,249 @@ navigation:
     path: /settings
     key: settings
     enabled: true
+
+board_devops_forms:
+  add:
+    fields:
+      - name: customer_name
+        label: Customer
+        type: select
+        options: []
+        options_source: customer_data
+        optional: False
+      - name: work_item_type
+        label: Work Item Type
+        type: select
+        options:
+          - Epic
+          - Feature
+          - User Story
+        default: User Story
+        optional: False
+      - name: work_item_title
+        label: Title
+        type: input
+        optional: False
+      - name: state
+        label: State
+        type: select
+        options:
+          - New
+          - Active
+          - Resolved
+          - Closed
+          - Removed
+        default: New
+        optional: False
+      - name: source
+        label: Source
+        type: select
+        with_input: true
+        options:
+          - Teams
+          - Email
+          - Call
+          - In person
+          - Other
+        optional: True
+        conditional: true
+        visible_when:
+          work_item_type: [User Story]
+      - name: contact_person
+        label: Contact Person
+        type: select
+        with_input: true
+        options: []
+        options_source: contact_persons
+        optional: True
+        parent: customer_name
+        conditional: true
+        visible_when:
+          work_item_type: [User Story]
+      - name: assigned_to
+        label: Assigned To
+        type: select
+        with_input: true
+        options: []
+        options_source: assignees
+        default_source: default_assignee
+        optional: True
+        parent: customer_name
+      - name: tags
+        label: Tags
+        type: chip_group
+        options: []
+        options_source: devops_tags
+        optional: True
+      - name: parent_name
+        label: Parent
+        type: select
+        options: []
+        options_source: parent_names
+        optional: True
+        parent: customer_name
+        conditional: true
+        visible_when:
+          work_item_type: [Feature, User Story]
+      - name: priority
+        label: Priority
+        type: select
+        options:
+          - 1
+          - 2
+          - 3
+          - 4
+        default: 2
+        optional: False
+      - name: "board_column"
+        type: "select"
+        label: "Initial Board Column"
+        options: []
+        with_input: false
+        optional: true
+        default: ""
+        parent: "customer_name"
+      - name: use_markdown
+        label: Use Markdown
+        type: switch
+        optional: False
+        default: True
+      - name: description_editor
+        label: Description
+        type: editor_with_preview
+        language: markdown
+        optional: False
+        parent_fields: [source, contact_person]
+        render_function: render_and_sanitize_markdown
+        templates:
+          Epic: |
+            **Created Date:** {today}
+
+            ## Strategic Goal
+
+
+            ## Business Value
+
+
+            ## Success Criteria
+
+
+            ## Timeline
+
+          Feature: |
+            **Created Date:** {today}
+
+            ## Feature Description
+
+
+            ## Business Value
+
+
+            ## Acceptance Criteria
+
+
+            ## Dependencies
+
+          User Story: |
+            **Received Date:** {today}
+            **Source:** 
+            **Contact:** 
+
+            ## Problem
+
+
+            ## More Information
+
+
+            ## Solution
+
+
+            ## Validation
+
+    rows:
+      - [customer_name, work_item_type, work_item_title]
+      - [parent_name, assigned_to]
+      - [contact_person, source]
+      - [state, priority, board_column]
+      - [tags]
+      - [description_editor]
+    action:
+      function: add_work_item
+      main_action: Work Item
+      main_param: work_item_title
+      secondary_action: added
+      button_name: Add
+  update:
+    fields:
+      - name: customer_name
+        label: Customer
+        type: select
+        options: []
+        options_source: customer_data
+        optional: False
+      - name: work_item
+        label: Work Item
+        type: select
+        options: []
+        options_source: work_items
+        optional: False
+        parent: customer_name
+      - name: state
+        label: State
+        type: select
+        options:
+          - New
+          - Active
+          - Resolved
+          - Closed
+          - Removed
+        optional: True
+      - name: assigned_to
+        label: Assigned To
+        type: select
+        with_input: true
+        options: []
+        options_source: assignees
+        optional: True
+        parent: customer_name
+      - name: priority
+        label: Priority
+        type: select
+        options:
+          - 1
+          - 2
+          - 3
+          - 4
+        optional: True
+      - name: "current_column"
+        type: "input"
+        label: "Current Board Column"
+        optional: true
+        default: ""
+      - name: "board_column"
+        type: "select"
+        label: "Move to Column"
+        options: []
+        with_input: false
+        optional: true
+        parent: "customer_name"
+      - name: description_editor
+        label: Description
+        type: editor_with_preview
+        language: markdown
+        optional: False
+        render_function: render_and_sanitize_markdown
+    rows:
+      - [customer_name, work_item]
+      - [state, assigned_to, priority]
+      - [current_column, board_column]
+      - [description_editor]
+    action:
+      function: update_work_item
+      main_action: Work Item
+      main_param: work_item
+      secondary_action: updated
+      button_name: Update
 
 
 add_data_page:
@@ -301,257 +550,6 @@ add_data_page:
       build_function: render_entity_tabs
       options:
         - add
-
-  ### Work Items Information ###
-  devops_work_item:
-    add:
-      fields:
-        - name: customer_name
-          label: Customer
-          type: select
-          options: []
-          options_source: customer_data
-          optional: False
-        - name: work_item_type
-          label: Work Item Type
-          type: select
-          options:
-            - Epic
-            - Feature
-            - User Story
-          default: User Story
-          optional: False
-        - name: work_item_title
-          label: Title
-          type: input
-          optional: False
-        - name: state
-          label: State
-          type: select
-          options:
-            - New
-            - Active
-            - Resolved
-            - Closed
-            - Removed
-          default: New
-          optional: False
-        - name: source
-          label: Source
-          type: select
-          with_input: true
-          options:
-            - Teams
-            - Email
-            - Call
-            - In person
-            - Other
-          optional: True
-          conditional: true
-          visible_when:
-            work_item_type: [User Story]
-        - name: contact_person
-          label: Contact Person
-          type: select
-          with_input: true
-          options: []
-          options_source: contact_persons
-          optional: True
-          parent: customer_name
-          conditional: true
-          visible_when:
-            work_item_type: [User Story]
-        - name: assigned_to
-          label: Assigned To
-          type: select
-          with_input: true
-          options: []
-          options_source: assignees
-          default_source: default_assignee
-          optional: True
-          parent: customer_name
-        - name: tags
-          label: Tags
-          type: chip_group
-          options: []
-          options_source: devops_tags
-          optional: True
-        - name: parent_name
-          label: Parent
-          type: select
-          options: []
-          options_source: parent_names
-          optional: True
-          parent: customer_name
-          conditional: true
-          visible_when:
-            work_item_type: [Feature, User Story]
-        - name: priority
-          label: Priority
-          type: select
-          options:
-            - 1
-            - 2
-            - 3
-            - 4
-          default: 2
-          optional: False
-        - name: "board_column"
-          type: "select"
-          label: "Initial Board Column"
-          options: []
-          with_input: false
-          optional: true
-          default: ""
-          parent: "customer_name"
-        - name: use_markdown
-          label: Use Markdown
-          type: switch
-          optional: False
-          default: True
-        - name: description_editor
-          label: Description
-          type: editor_with_preview
-          language: markdown
-          optional: False
-          parent_fields: [source, contact_person]
-          render_function: render_and_sanitize_markdown
-          templates:
-            Epic: |
-              **Created Date:** {today}
-
-              ## Strategic Goal
-
-
-              ## Business Value
-
-
-              ## Success Criteria
-
-
-              ## Timeline
-
-            Feature: |
-              **Created Date:** {today}
-
-              ## Feature Description
-
-
-              ## Business Value
-
-
-              ## Acceptance Criteria
-
-
-              ## Dependencies
-
-            User Story: |
-              **Received Date:** {today}
-              **Source:** 
-              **Contact:** 
-
-              ## Problem
-
-
-              ## More Information
-
-
-              ## Solution
-
-
-              ## Validation
-
-      rows:
-        - [customer_name, work_item_type, work_item_title]
-        - [parent_name, assigned_to]
-        - [contact_person, source]
-        - [state, priority, board_column]
-        - [tags]
-        - [description_editor]
-      action:
-        function: add_work_item
-        main_action: Work Item
-        main_param: work_item_title
-        secondary_action: added
-        button_name: Add
-    update:
-      fields:
-        - name: customer_name
-          label: Customer
-          type: select
-          options: []
-          options_source: customer_data
-          optional: False
-        - name: work_item
-          label: Work Item
-          type: select
-          options: []
-          options_source: work_items
-          optional: False
-          parent: customer_name
-        - name: state
-          label: State
-          type: select
-          options:
-            - New
-            - Active
-            - Resolved
-            - Closed
-            - Removed
-          optional: True
-        - name: assigned_to
-          label: Assigned To
-          type: select
-          with_input: true
-          options: []
-          options_source: assignees
-          optional: True
-          parent: customer_name
-        - name: priority
-          label: Priority
-          type: select
-          options:
-            - 1
-            - 2
-            - 3
-            - 4
-          optional: True
-        - name: "current_column"
-          type: "input"
-          label: "Current Board Column"
-          optional: true
-          default: ""
-        - name: "board_column"
-          type: "select"
-          label: "Move to Column"
-          options: []
-          with_input: false
-          optional: true
-          parent: "customer_name"
-        - name: description_editor
-          label: Description
-          type: editor_with_preview
-          language: markdown
-          optional: False
-          render_function: render_and_sanitize_markdown
-      rows:
-        - [customer_name, work_item]
-        - [state, assigned_to, priority]
-        - [current_column, board_column]
-        - [description_editor]
-      action:
-        function: update_work_item
-        main_action: Work Item
-        main_param: work_item
-        secondary_action: updated
-        button_name: Update
-    meta:
-      icon: merge
-      friendly_name: DevOps
-      build_function: render_devops_tabs
-      options:
-        - add
-        - update
 
 ## Query Editor Field Definitions ##
 query:
@@ -1006,3 +1004,22 @@ task:
 
       - name: "created_at"
         label: "Created"
+
+## Board Page Settings ##
+board_settings:
+  # Work item states treated as "done" and hidden from the board
+  terminal_states:
+    - Closed
+    - Removed
+  # Priority number → Quasar color class
+  priority_colors:
+    1: red-5
+    2: orange-4
+    3: blue-4
+    4: grey-4
+  # Priority number → human label
+  priority_labels:
+    1: Critical
+    2: High
+    3: Medium
+    4: Low
