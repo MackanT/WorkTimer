@@ -3,10 +3,14 @@ Generalized UI Components used throughout the application.
 """
 
 import asyncio
+import logging
 
 from nicegui import ui, app
 from contextlib import contextmanager
 from ..helpers import UI_STYLES
+
+
+logger = logging.getLogger(__name__)
 
 
 class NavigationBar:
@@ -93,10 +97,7 @@ class NavigationBar:
             self.set_active(current_path, self.theme)
 
         except Exception as e:
-            print(f"[Navigation] ERROR creating navigation: {e}")
-            import traceback
-
-            traceback.print_exc()
+            logger.exception(f"[Navigation] ERROR creating navigation: {e}")
 
     def set_active_timers(self, names: list[str]) -> None:
         """Update the nav bar active timer pills and the Time button icon/glow."""

@@ -6,9 +6,13 @@ Base class handles parent-child relationships, data fetching, and common operati
 """
 
 from abc import ABC, abstractmethod
+import logging
 from nicegui import ui
 from typing import Callable, Optional, Any, Dict
 from datetime import date
+
+
+logger = logging.getLogger(__name__)
 
 
 class DynamicWidget(ABC):
@@ -104,7 +108,7 @@ class DynamicWidget(ABC):
             parent_val = self.parent.widget.value if self.parent else None
             await self._refresh_impl(parent_val)
         except Exception as e:
-            print(f"Error refreshing {self.name}: {e}")
+            logger.exception(f"Error refreshing widget '{self.name}': {e}")
 
     async def _refresh_impl(self, parent_val):
         """
@@ -562,7 +566,7 @@ class DynamicHtml(DynamicWidget):
                         render_fn = getattr(helpers, render_fn_name)
                         content = render_fn(content)
                 except Exception as e:
-                    print(f"Error rendering HTML: {e}")
+                    logger.exception(f"Error rendering HTML preview for '{self.name}': {e}")
 
             # Update content - set it directly on the widget
             self.widget.set_content(content)
@@ -627,7 +631,7 @@ class DynamicEditorWithPreview(DynamicWidget):
                             render_fn = getattr(helpers, render_fn_name)
                             content = render_fn(content)
                         except Exception as ex:
-                            print(f"Error rendering: {ex}")
+                            logger.exception(f"Error rendering editor preview for '{self.name}': {ex}")
                     self._preview.set_content(content)
 
                 self._editor.on_value_change(update_preview)
