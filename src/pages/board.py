@@ -18,7 +18,8 @@ from ..ui.devops_forms import render_devops_form
 
 
 _BOARD_CSS = """<style>
-.board-card { cursor: grab; user-select: none; }
+.board-card { cursor: grab; user-select: none; transition: box-shadow 0.15s ease, transform 0.15s ease; }
+.board-card:hover { box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35); transform: translateY(-1px); }
 .board-card:active { cursor: grabbing; }
 .wt-board-col-hover { outline: 2px dashed rgba(100, 160, 255, 0.65) !important; outline-offset: -3px; }
 .board-col { transition: outline 0.1s ease; }
@@ -38,12 +39,18 @@ async def board_page():
         "max-height: calc(100vh - 4rem); overflow-y: auto;"
     )
     COLUMNS_ROW_STYLE = helpers.UI_STYLES.get_inline_style("board", "columns_row") or (
-        "padding: 0.5rem; width: max-content; margin: 0 auto;"
+        "padding: 0.5rem; width: 100%;"
     )
     BOARD_COLUMN_STYLE = (
-        "min-width: 272px; max-width: 272px;"
+        "flex: 1 1 272px; min-width: 272px; max-width: 420px;"
         "background: rgba(255,255,255,0.05);"
+        "border: 1px solid rgba(255,255,255,0.08);"
         "padding: 0.5rem 0.5rem 0.75rem 0.5rem;"
+    )
+    DONE_ZONE_STYLE = (
+        "flex: 0 0 130px; min-width: 130px;"
+        "background: rgba(255,255,255,0.05);"
+        "padding: 0.5rem;"
     )
 
     # ── board settings from config ───────────────────────────────────────────────────
@@ -53,6 +60,8 @@ async def board_page():
     PRIORITY_COLORS = {int(k): v for k, v in _pc_raw.items()} if _pc_raw else {1: "red-5", 2: "orange-4", 3: "blue-4", 4: "grey-4"}
     _pl_raw = _bsettings.get("priority_labels", {})
     PRIORITY_LABELS = {int(k): v for k, v in _pl_raw.items()} if _pl_raw else {1: "Critical", 2: "High", 3: "Medium", 4: "Low"}
+    DONE_COLUMN_LIMIT = int(_bsettings.get("done_column_limit", 10))
+    DONE_TOKENS = {"done", "closed", "resolved", "completed"}
 
     # ── per-client mutable state (captured by all inner closures) ──────────────
     drag_state: dict = {"card": None}
@@ -118,9 +127,8 @@ async def board_page():
         return deduped
 
     def _sort_done_columns_last(cols: list[str]) -> list[str]:
-        done_tokens = {"done", "closed", "resolved", "completed"}
-        normal = [c for c in cols if _col_norm(c) not in done_tokens]
-        done = [c for c in cols if _col_norm(c) in done_tokens]
+        normal = [c for c in cols if _col_norm(c) not in DONE_TOKENS]
+        done = [c for c in cols if _col_norm(c) in DONE_TOKENS]
         return normal + done
 
     def _canonical_column_name(raw_name: str, ordered_cols: list[str]) -> str:
@@ -133,22 +141,63 @@ async def board_page():
         return str(raw_name).strip()
 
     def _board_data() -> dict[str, list[dict]]:
-        """Return {col_name: [row_dict, ...]} ordered by ADO column order."""
+        """Return {col_name: [row_dict, ...]} ordered by ADO column order.
+
+        Done-token columns (Done/Closed/Resolved/Completed) are excluded entirely —
+        they have no space-consuming column of their own. Instead they're surfaced
+        through the persistent Done drop-zone (see render_done_zone / _done_items).
+        """
         if DO is None or DO.df is None:
             return {}
         cust = filter_state["customer"]
         wtype = filter_state["type"]
-        mask = (DO.df["type"] == wtype) & (~DO.df["state"].isin(TERMINAL_STATES))
-        if cust:
-            mask &= DO.df["customer_name"] == cust
 
-        ordered_cols = _column_order(cust, wtype)
+        base_mask = DO.df["type"] == wtype
+        if cust:
+            base_mask &= DO.df["customer_name"] == cust
+
+        ordered_cols_all = _column_order(cust, wtype)
+        done_cols = {c for c in ordered_cols_all if _col_norm(c) in DONE_TOKENS}
+        ordered_cols = [c for c in ordered_cols_all if c not in done_cols]
         data: dict[str, list[dict]] = {c: [] for c in ordered_cols}
-        for _, row in DO.df[mask].iterrows():
+
+        active_mask = base_mask & (~DO.df["state"].isin(TERMINAL_STATES))
+        for _, row in DO.df[active_mask].iterrows():
             raw_col = str(row.get("board_column") or "")
-            col = _canonical_column_name(raw_col, ordered_cols)
+            col = _canonical_column_name(raw_col, ordered_cols_all)
+            if col in done_cols:
+                continue  # surfaced via the Done drop-zone instead
             data.setdefault(col, []).append(row.to_dict())
+
         return data
+
+    def _done_target_column(cust: str, wtype: str) -> str | None:
+        """The canonical Done-token column name to drop items onto, if any."""
+        if not cust:
+            return None
+        for col in _column_order(cust, wtype):
+            if _col_norm(col) in DONE_TOKENS:
+                return col
+        return None
+
+    def _done_items(cust: str, wtype: str) -> tuple[list[dict], int]:
+        """Return (most-recent DONE_COLUMN_LIMIT done items, total done count).
+
+        Includes terminal-state items (e.g. Closed), which are otherwise hidden
+        from the regular board columns — this is the only place they're shown.
+        """
+        if DO is None or DO.df is None or not cust:
+            return [], 0
+        base_mask = (DO.df["type"] == wtype) & (DO.df["customer_name"] == cust)
+        done_mask = base_mask & DO.df["board_column"].apply(
+            lambda v: _col_norm(v) in DONE_TOKENS
+        )
+        done_df = DO.df[done_mask]
+        total = len(done_df)
+        if "changed_date" in done_df.columns:
+            done_df = done_df.sort_values("changed_date", ascending=False)
+        recent = [row.to_dict() for _, row in done_df.head(DONE_COLUMN_LIMIT).iterrows()]
+        return recent, total
 
     async def _reload_board_data(show_notify: bool = False, notify_msg: str = ""):
         if DO is None:
@@ -159,6 +208,7 @@ async def board_page():
         parent_label_cache.clear()
         ui_state["loading"] = False
         render_board.refresh()
+        render_done_zone.refresh()
         if show_notify and notify_msg:
             ui.notify(notify_msg, type="positive", position="bottom-right")
 
@@ -400,7 +450,7 @@ async def board_page():
                     show_internal_header=False,
                 )
 
-                _, widgets, _, submit_fn = result if result else (None, {}, None, None)
+                _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
                 form_actions["submit"] = submit_fn
 
                 if widgets:
@@ -424,6 +474,12 @@ async def board_page():
                     if "customer_name" in widgets:
                         widgets["customer_name"].on_value_change(_sync_add_header)
                     _sync_add_header()
+
+                    # The customer/type values above are set programmatically, which does
+                    # not fire the widgets' "update:model-value" browser event that normally
+                    # triggers board-column loading — so call it once here directly.
+                    if load_fn:
+                        await load_fn()
 
         dlg.open()
 
@@ -570,6 +626,68 @@ async def board_page():
                         for card_row in cards:
                             _render_card(card_row)
 
+    # ── Done drop-zone (persistent, outside the scrollable column area) ────────
+    async def _open_done_popup(items: list[dict]):
+        """Read-only popup of the most recently completed items."""
+        with ui.dialog() as dlg, ui.card().classes("rounded-lg").style(
+            "min-width: 320px; max-width: 420px; max-height: 70vh;"
+            "overflow-y: auto; padding: 0.75rem;"
+        ):
+            with ui.row().classes("items-center gap-2 w-full"):
+                ui.icon("done_all", size="18px").classes("text-green-5 shrink-0")
+                ui.label("Recently Completed").classes("text-sm font-semibold flex-1")
+                ui.button(icon="close", on_click=dlg.close).props("flat dense round color=grey-6")
+            ui.label(f"Showing the {DONE_COLUMN_LIMIT} most recently changed items").classes(
+                "text-xs text-grey-5 mb-1"
+            )
+            ui.separator().classes("opacity-20 mb-2")
+            if not items:
+                ui.label("No completed items yet.").classes("text-grey-5 text-sm")
+            else:
+                with ui.column().classes("gap-2 w-full"):
+                    for row in items:
+                        _render_card(row)
+        dlg.open()
+
+    @ui.refreshable
+    def render_done_zone():
+        cust = filter_state["customer"]
+        wtype = filter_state["type"]
+        target_col = _done_target_column(cust, wtype)
+        recent, total = _done_items(cust, wtype) if target_col else ([], 0)
+
+        with (
+            ui.card()
+            .classes("board-col rounded-lg gap-1 items-center justify-center")
+            .style(DONE_ZONE_STYLE)
+            .props("flat bordered")
+        ) as zone:
+            ui.icon("done_all", size="22px").classes(
+                "text-green-5" if target_col else "text-grey-7"
+            )
+            ui.label("Done").classes("text-xs font-semibold text-grey-4")
+            ui.badge(str(total)).props(
+                f"color={'green-7' if target_col else 'grey-7'} rounded"
+            )
+
+            if target_col:
+                zone.classes("cursor-pointer")
+                zone.tooltip("Drop an item here to mark it Done, or click to view recent ones")
+                zone.on("dragover.prevent", lambda e: None)
+                zone.on("dragenter", lambda e, z=zone: z.classes(add="wt-board-col-hover"))
+                zone.on("dragleave", lambda e, z=zone: z.classes(remove="wt-board-col-hover"))
+
+                async def _on_done_drop(e, tc=target_col):
+                    await _handle_drop(tc, zone)
+
+                async def _on_done_click(e, items=recent):
+                    await _open_done_popup(items)
+
+                zone.on("drop", _on_done_drop)
+                zone.on("click", _on_done_click)
+            else:
+                zone.tooltip("No Done column found for this board")
+
     # ── toolbar ────────────────────────────────────────────────────────────────
     with toolbar(core.theme):
         with ui.row().classes("items-center gap-3 w-full flex-nowrap"):
@@ -592,6 +710,7 @@ async def board_page():
                 async def _on_customer_change(e):
                     filter_state["customer"] = e.value
                     render_board.refresh()
+                    render_done_zone.refresh()
 
                 cust_tabs.on_value_change(_on_customer_change)
             elif customer_names:
@@ -599,21 +718,31 @@ async def board_page():
 
             ui.space()
 
-            # Item type toggle
-            type_toggle = (
-                ui.toggle(
-                    ["User Story", "Feature", "Epic"],
-                    value=filter_state["type"],
-                )
-                .props("dense")
-                .classes("shrink-0")
-            )
-
-            async def _on_type_change(e):
-                filter_state["type"] = e.value
+            # Item type chips — styled to match the saved-query chips on the
+            # query_editor page (helpers.UI_STYLES "query_chip"), with the active
+            # type filled in the theme accent color instead of outlined.
+            async def _on_type_chip_click(t: str):
+                filter_state["type"] = t
                 render_board.refresh()
+                render_done_zone.refresh()
+                render_type_chips.refresh()
 
-            type_toggle.on_value_change(_on_type_change)
+            @ui.refreshable
+            def render_type_chips():
+                chip_style = helpers.UI_STYLES.get_widget_style("query_chip")
+                with ui.row().classes("gap-2 items-center shrink-0 no-wrap"):
+                    for t in ("User Story", "Feature", "Epic"):
+                        btn = ui.button(
+                            t, on_click=lambda e, tt=t: _on_type_chip_click(tt)
+                        )
+                        if t == filter_state["type"]:
+                            btn.props(f"unelevated dense no-caps color={core.theme.get('accent')}")
+                        else:
+                            btn.props("outline dense no-caps").classes(
+                                chip_style["classes"]
+                            ).style(chip_style["style"])
+
+            render_type_chips()
 
             # Refresh from local cache (no API)
             async def _on_refresh():
@@ -630,13 +759,27 @@ async def board_page():
                 "flat dense color=white"
             ).tooltip("Add new DevOps work item")
 
-    # ── board area (scrollable) ────────────────────────────────────────────────
+    # ── board area: scrollable columns + persistent Done drop-zone ─────────────
+    # wt-page-content + mx-4 my-2 matches the chrome other pages get from
+    # elements.page_card(), while still spanning the full screen width.
     with (
-        ui.element("div")
-        .classes("wt-page-content overflow-x-auto overflow-y-auto")
-        .style("padding: 0.25rem 0.5rem;")
+        ui.row()
+        .classes("wt-page-content mx-4 my-2 flex-nowrap items-stretch")
+        .style("width: calc(100% - 2rem); box-sizing: border-box; gap: 0.5rem;")
     ):
-        # This wrapper centers the entire scroll content area when columns are sparse,
-        # while still allowing natural left-to-right horizontal scrolling when wide.
-        with ui.element("div").style("width: max-content; min-width: 100%; margin: 0 auto;"):
-            render_board()
+        with (
+            ui.card()
+            .classes("rounded-md overflow-x-auto overflow-y-auto flex-1 min-w-0")
+            .style("box-sizing: border-box; padding: 0.5rem;")
+            .props("flat")
+        ):
+            # Full width lets columns (flex-grow, see BOARD_COLUMN_STYLE) fill the
+            # available space when there are few of them; flex-nowrap + overflow-x-auto
+            # above still kicks in for natural horizontal scrolling once columns no
+            # longer fit.
+            with ui.element("div").style("width: 100%;"):
+                render_board()
+
+        # Outside the scrollable card so it stays visible regardless of horizontal
+        # scroll position — a permanent target for dragging items to Done.
+        render_done_zone()

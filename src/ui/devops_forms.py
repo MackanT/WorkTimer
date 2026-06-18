@@ -188,9 +188,8 @@ async def render_devops_form(
 
         helpers.setup_template_handling(widgets)
         devops_handlers_setup = DevOpsWorkItemHandlers(core.devops_engine, core.logger)
-        load_fn = None
         if operation == "add":
-            devops_handlers_setup.setup_add_tab_handlers(widgets)
+            load_fn = devops_handlers_setup.setup_add_tab_handlers(widgets)
         else:
             load_fn = devops_handlers_setup.setup_update_tab_handlers(widgets)
 

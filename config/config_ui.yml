@@ -156,7 +156,6 @@ board_devops_forms:
         with_input: false
         optional: true
         default: ""
-        parent: "customer_name"
       - name: use_markdown
         label: Use Markdown
         type: switch
@@ -280,7 +279,6 @@ board_devops_forms:
         options: []
         with_input: false
         optional: true
-        parent: "customer_name"
       - name: description_editor
         label: Description
         type: editor_with_preview
@@ -1011,6 +1009,8 @@ board_settings:
   terminal_states:
     - Closed
     - Removed
+  # How many most-recent items to show in the Done column when it's toggled on
+  done_column_limit: 10
   # Priority number → Quasar color class
   priority_colors:
     1: red-5

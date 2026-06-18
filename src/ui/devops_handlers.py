@@ -39,12 +39,14 @@ class DevOpsWorkItemHandlers:
 
     async def preload_cached_board_columns(self):
         loop = asyncio.get_event_loop()
-        for customer in self.DO.manager.clients.keys():
-            for board_type in ["Epic", "Feature", "User Story"]:
-                if self.devops_columns_cache[customer].get(board_type) is None:
-                    await loop.run_in_executor(
-                        None, self.load_board_columns, customer, board_type
-                    )
+        tasks = [
+            loop.run_in_executor(None, self.load_board_columns, customer, board_type)
+            for customer in self.DO.manager.clients.keys()
+            for board_type in ["Epic", "Feature", "User Story"]
+            if self.devops_columns_cache[customer].get(board_type) is None
+        ]
+        if tasks:
+            await asyncio.gather(*tasks)
 
     def load_board_columns(self, customer_name: str, board_type: str):
         """Loads and caches board columns for a given customer and board type."""
@@ -405,6 +407,8 @@ class DevOpsWorkItemHandlers:
         work_item_widget = widgets.get("work_item_type")
         board_column_widget = widgets.get("board_column")
 
+        load_columns_for_customer = None
+
         # Load board columns when customer is selected
         if customer_widget and board_column_widget:
 
@@ -481,6 +485,8 @@ class DevOpsWorkItemHandlers:
 
                 contact_widget.on("update:model-value", on_contact_change)
 
+        return load_columns_for_customer
+
     def _set_widget_value_safe(self, widget, value, value_type="string"):
         """
         Safely set widget value with type-specific handling.
@@ -518,8 +524,10 @@ class DevOpsWorkItemHandlers:
                 # Convert to int if needed
                 int_value = int(value) if value is not None else None
                 if int_value is not None:
-                    widget.set_value(int_value)
-                    widget.value = int_value
+                    # Priority/select widgets are normalized to string values.
+                    str_value = str(int_value)
+                    widget.set_value(str_value)
+                    widget.value = str_value
 
             else:  # string or default
                 widget.set_value(value)

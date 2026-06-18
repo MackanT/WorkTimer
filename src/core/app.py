@@ -299,6 +299,14 @@ class AppCore:
                 self.logger.info(
                     f"DevOps initialized — {len(self.devops_engine.manager.clients)} customer(s) connected"
                 )
+
+                # Warm the Kanban board's column-order cache now (once per process) so the
+                # board is correct on its very first render instead of only after a user
+                # opens a work-item dialog (see src/pages/board.py _column_order fallback).
+                from ..ui.devops_handlers import DevOpsWorkItemHandlers
+                DevOpsWorkItemHandlers._preload_started = True
+                await DevOpsWorkItemHandlers(self.devops_engine, self.logger).preload_cached_board_columns()
+
                 import asyncio as _asyncio
                 _asyncio.create_task(self.devops_engine.start_scheduled_updates())
             else:

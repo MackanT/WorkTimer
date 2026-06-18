@@ -155,6 +155,33 @@ class DynamicWidget(ABC):
 class DynamicDropDown(DynamicWidget):
     """Dropdown with auto-refreshing options"""
 
+    def _normalize_options_for_select(self, options):
+        """Normalize options to avoid NiceGUI select int payload edge cases."""
+        # Track if this dropdown should store numeric-like values as strings.
+        self._stringify_numeric_values = False
+
+        if isinstance(options, list):
+            if options and all(isinstance(v, (int, float)) for v in options):
+                self._stringify_numeric_values = True
+                return [str(v) for v in options]
+            return options
+
+        if isinstance(options, dict):
+            # Keep labels as-is, but stringify numeric values (dict keys) for select safety.
+            if options and all(isinstance(k, (int, float)) for k in options.keys()):
+                self._stringify_numeric_values = True
+                return {str(k): v for k, v in options.items()}
+            return options
+
+        return options
+
+    def _coerce_value_for_select(self, value):
+        if value is None:
+            return None
+        if getattr(self, "_stringify_numeric_values", False):
+            return str(value)
+        return value
+
     def _create_widget(self):
         """Create ui.select widget"""
         with_input = self.field_config.get("with_input", True)
@@ -165,6 +192,8 @@ class DynamicDropDown(DynamicWidget):
         # start with empty options until the parent makes a selection.
         if isinstance(initial_options, dict) or self.parent:
             initial_options = []
+
+        initial_options = self._normalize_options_for_select(initial_options)
 
         widget = ui.select(
             options=initial_options,
@@ -183,25 +212,40 @@ class DynamicDropDown(DynamicWidget):
         """Refresh dropdown options"""
         # Get fresh options from data fetcher
         new_options = await self.data_fetcher(self.options_source, parent_val)
-        old_value = self.widget.value
+        old_value = self._coerce_value_for_select(self.widget.value)
 
-        # Guard: only set options if we got a list back
-        if isinstance(new_options, list):
-            self.widget.options = new_options
-            if old_value and old_value not in self.widget.options:
+        # Guard: set options only for list/dict payloads
+        if isinstance(new_options, (list, dict)):
+            normalized_options = self._normalize_options_for_select(new_options)
+            self.widget.options = normalized_options
+
+            option_values = (
+                set(normalized_options.keys())
+                if isinstance(normalized_options, dict)
+                else set(normalized_options)
+            )
+
+            if old_value and old_value not in option_values:
                 self.widget.value = None
         else:
             # It's a plain value, not an options list — just set the value
-            self.widget.value = new_options
+            self.widget.value = self._coerce_value_for_select(new_options)
 
         # Apply default_source when widget has no value (e.g. after parent change)
         default_source = self.field_config.get("default_source")
         if default_source and not self.widget.value:
             default_val = await self.data_fetcher(default_source, parent_val)
+            coerced_default = self._coerce_value_for_select(default_val)
+            normalized_options = self.widget.options
+            option_values = (
+                set(normalized_options.keys())
+                if isinstance(normalized_options, dict)
+                else set(normalized_options)
+            ) if isinstance(normalized_options, (list, dict)) else set()
             if default_val and (
-                not isinstance(new_options, list) or default_val in new_options
+                not option_values or coerced_default in option_values
             ):
-                self.widget.value = default_val
+                self.widget.value = coerced_default
 
         self.widget.update()
 
@@ -213,7 +257,7 @@ class DynamicDropDown(DynamicWidget):
     @options.setter
     def options(self, opts):
         """Set options"""
-        self.widget.options = opts
+        self.widget.options = self._normalize_options_for_select(opts)
 
 
 class DynamicInput(DynamicWidget):
