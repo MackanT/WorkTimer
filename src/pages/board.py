@@ -41,17 +41,13 @@ async def board_page():
     COLUMNS_ROW_STYLE = helpers.UI_STYLES.get_inline_style("board", "columns_row") or (
         "padding: 0.5rem; width: 100%;"
     )
+    # Sizing only — each column/zone is its own ui.card() (like time_tracking's
+    # entity_card_shell), so it gets the app's normal card surface/background for free.
     BOARD_COLUMN_STYLE = (
         "flex: 1 1 272px; min-width: 272px; max-width: 420px;"
-        "background: rgba(255,255,255,0.05);"
-        "border: 1px solid rgba(255,255,255,0.08);"
         "padding: 0.5rem 0.5rem 0.75rem 0.5rem;"
     )
-    DONE_ZONE_STYLE = (
-        "flex: 0 0 130px; min-width: 130px;"
-        "background: rgba(255,255,255,0.05);"
-        "padding: 0.5rem;"
-    )
+    DONE_ZONE_STYLE = "flex: 0 0 130px; min-width: 130px; padding: 0.5rem;"
 
     # ── board settings from config ───────────────────────────────────────────────────
     _bsettings = core.ui_config.get("board_settings", {})
@@ -571,9 +567,14 @@ async def board_page():
         if ui_state["loading"]:
             with ui.row().classes("gap-3 items-start flex-nowrap").style(COLUMNS_ROW_STYLE):
                 for _ in range(4):
-                    with ui.column().classes("board-col rounded-lg gap-2").style(BOARD_COLUMN_STYLE):
+                    with (
+                        ui.card()
+                        .classes("board-col rounded-md gap-2")
+                        .style(BOARD_COLUMN_STYLE)
+                        .props("flat")
+                    ):
                         ui.skeleton("text", width="70%").classes("mb-2")
-                        ui.separator().classes("opacity-20")
+                        ui.separator().classes(helpers.UI_STYLES.get_layout_classes("divider_row"))
                         for _ in range(3):
                             ui.skeleton("rect", width="100%", height="72px")
             return
@@ -596,18 +597,18 @@ async def board_page():
         with ui.row().classes("gap-3 items-start flex-nowrap").style(COLUMNS_ROW_STYLE):
             for col_name, cards in data.items():
                 with (
-                    ui.column()
-                    .classes("board-col rounded-lg gap-2")
+                    ui.card()
+                    .classes("board-col rounded-md gap-2")
                     .style(BOARD_COLUMN_STYLE)
+                    .props("flat")
                 ) as col_el:
-                    # Column header
+                    # Column header — same label size and divider as time_tracking's
+                    # entity_card_header (time_tracking_customer_name / divider_row).
                     with ui.row().classes("items-center gap-2 w-full").style("padding: 0.1rem 0.2rem 0.3rem;"):
-                        ui.label(col_name).classes("text-sm font-semibold flex-1").style(
-                            "color: rgba(255,255,255,0.8);"
-                        )
+                        ui.label(col_name).classes("text-lg flex-1")
                         ui.badge(str(len(cards))).props("color=grey-7 rounded")
 
-                    ui.separator().classes("opacity-20")
+                    ui.separator().classes(helpers.UI_STYLES.get_layout_classes("divider_row"))
 
                     # Drop zone on the column container
                     col_el.on("dragover.prevent", lambda e: None)
@@ -658,9 +659,9 @@ async def board_page():
 
         with (
             ui.card()
-            .classes("board-col rounded-lg gap-1 items-center justify-center")
+            .classes("board-col rounded-md gap-1 items-center justify-center")
             .style(DONE_ZONE_STYLE)
-            .props("flat bordered")
+            .props("flat")
         ) as zone:
             ui.icon("done_all", size="22px").classes(
                 "text-green-5" if target_col else "text-grey-7"
@@ -760,19 +761,15 @@ async def board_page():
             ).tooltip("Add new DevOps work item")
 
     # ── board area: scrollable columns + persistent Done drop-zone ─────────────
-    # wt-page-content + mx-4 my-2 matches the chrome other pages get from
-    # elements.page_card(), while still spanning the full screen width.
+    # No single big wrapping card here — like time_tracking's entity_card_shell
+    # cards or add_data's forms, each column (and the Done zone) is its own
+    # ui.card sitting directly on the page background.
     with (
         ui.row()
-        .classes("wt-page-content mx-4 my-2 flex-nowrap items-stretch")
-        .style("width: calc(100% - 2rem); box-sizing: border-box; gap: 0.5rem;")
+        .classes("wt-page-content w-full flex-nowrap items-stretch")
+        .style("box-sizing: border-box; padding: 0.5rem 1rem; gap: 0.5rem;")
     ):
-        with (
-            ui.card()
-            .classes("rounded-md overflow-x-auto overflow-y-auto flex-1 min-w-0")
-            .style("box-sizing: border-box; padding: 0.5rem;")
-            .props("flat")
-        ):
+        with ui.element("div").classes("overflow-x-auto overflow-y-auto flex-1 min-w-0"):
             # Full width lets columns (flex-grow, see BOARD_COLUMN_STYLE) fill the
             # available space when there are few of them; flex-nowrap + overflow-x-auto
             # above still kicks in for natural horizontal scrolling once columns no
@@ -780,6 +777,6 @@ async def board_page():
             with ui.element("div").style("width: 100%;"):
                 render_board()
 
-        # Outside the scrollable card so it stays visible regardless of horizontal
+        # Outside the scrollable area so it stays visible regardless of horizontal
         # scroll position — a permanent target for dragging items to Done.
         render_done_zone()
