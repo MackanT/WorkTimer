@@ -13,6 +13,9 @@ A modern web-based time tracking application with built-in task management and A
   - ad new boards tab to be new devops/kanban base
   - ad easier way to move items between columns in devops + see work item descriptions and info
   - mv devops logic from data-input tab to new devops tab
+- **Minor improvements**
+  - ad safety checks to db-operations
+  - ad missing logging to code (change print -> logger)
 
 ### 5.0.1 (2026-04-30)
 - **Minor improvements**
