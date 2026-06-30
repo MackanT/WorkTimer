@@ -936,6 +936,17 @@ def make_input_row(
 
             if options is None:
                 options = []
+
+            # NiceGUI select can emit raw numeric payloads in some versions;
+            # stringify purely numeric option lists to keep event payload shape stable.
+            stringify_numeric_options = (
+                isinstance(options, list)
+                and len(options) > 0
+                and all(isinstance(v, (int, float)) for v in options)
+            )
+            if stringify_numeric_options:
+                options = [str(v) for v in options]
+
             # Check if with_input is specified in field config, default to True
             with_input = field.get("with_input", True)
             select_widget = ui.select(
@@ -951,7 +962,10 @@ def make_input_row(
                 # else: search enabled but no custom values allowed
             select_widget.classes(widget_classes)
             if "default" in field:
-                select_widget.value = field["default"]
+                default_value = field["default"]
+                if stringify_numeric_options and default_value is not None:
+                    default_value = str(default_value)
+                select_widget.value = default_value
             created[fname] = select_widget
         elif ftype == "switch":
             created[fname] = ui.switch(text=label).classes(widget_classes)

@@ -170,15 +170,22 @@ class DevOpsEngine:
             return None
 
         max_ids = None
+        changed_dates = None
         if incremental:
             self.log.info("Performing incremental update of devops data")
             max_id_df = await self.query_engine.query_db(
-                "select customer_name, max(id) as max_id from devops group by customer_name"
+                "select customer_name, max(id) as max_id, max(changed_date) as max_changed_date from devops group by customer_name"
             )
             if not max_id_df.empty:
                 max_ids = dict(
                     zip(max_id_df["customer_name"], max_id_df["max_id"].astype(int))
                 )
+                # Track max changed_date per customer to catch external edits
+                changed_dates = {
+                    row["customer_name"]: row["max_changed_date"]
+                    for _, row in max_id_df.iterrows()
+                    if row["max_changed_date"]
+                }
                 self.log.info(
                     f"Performing incremental refresh with max IDs per customer: {max_ids}",
                 )
@@ -189,23 +196,23 @@ class DevOpsEngine:
                 incremental = False
         else:
             self.log.info("Getting latest devops data (full refresh)")
-            # TODO add some date when it was last collected
 
         status, devops_df = self.manager.get_epics_feature_df(
-            max_ids=max_ids if incremental else None
+            max_ids=max_ids if incremental else None,
+            changed_dates=changed_dates if incremental else None,
         )
 
         if status:
             if incremental and not devops_df.empty:
-                self.log.info(f"Appending {len(devops_df)} new devops records")
+                self.log.info(f"Merging {len(devops_df)} devops records (new + edited)")
                 await self.query_engine.function_db(
-                    "update_devops_data", df=devops_df, mode="append"
+                    "update_devops_data", df=devops_df, mode="merge"
                 )
                 user_msg = (
-                    f"DevOps refresh complete — appended {len(devops_df)} new records"
+                    f"DevOps refresh complete — merged {len(devops_df)} records"
                 )
             elif incremental and devops_df.empty:
-                self.log.info("No new devops records to append")
+                self.log.info("No new or changed devops records")
                 user_msg = "DevOps refresh complete — no new records"
             else:
                 await self.query_engine.function_db(

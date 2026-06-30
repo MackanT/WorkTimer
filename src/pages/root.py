@@ -4,6 +4,7 @@ from . import (
     log_page,
     query_editor_page,
     add_data_page,
+    board_page,
     tasks_page,
     notepad_page,
     info_page,
@@ -150,6 +151,7 @@ async def _setup_spa_shell():
         {
             "/time": time_tracking_page,
             "/add_data": add_data_page,
+            "/board": board_page,
             "/query_editor": query_editor_page,
             "/tasks": tasks_page,
             "/notepad": notepad_page,
@@ -184,6 +186,12 @@ async def time_page():
 @ui.page("/add_data")
 async def add_data_page_route():
     """Add data page (supports direct access and SPA navigation)."""
+    await _setup_spa_shell()
+
+
+@ui.page("/board")
+async def board_page_route():
+    """Board page (supports direct access and SPA navigation)."""
     await _setup_spa_shell()
 
 

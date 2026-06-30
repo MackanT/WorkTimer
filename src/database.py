@@ -1,4 +1,6 @@
 import sqlite3
+import threading
+import re
 from textwrap import dedent
 from typing import Literal
 import pandas as pd
@@ -7,11 +9,33 @@ from datetime import datetime, timedelta
 
 class Database:
     db = None
+    _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    _QUERY_EDITABLE_TABLES = {"time", "customers", "projects"}
 
     def __init__(self, db_file: str, log_engine):
         self.conn = sqlite3.connect(db_file, check_same_thread=False)
+        self._conn_lock = threading.RLock()
         Database.db = self
         self.log_engine = log_engine
+
+    def _validate_identifier(self, identifier: str, label: str = "identifier") -> str:
+        if not isinstance(identifier, str) or not identifier:
+            raise ValueError(f"Invalid {label}: {identifier}")
+        if not self._SQL_IDENTIFIER_RE.match(identifier):
+            raise ValueError(f"Unsafe {label}: {identifier}")
+        return identifier
+
+    def _validate_query_edit_table(self, table_name: str) -> str:
+        table_name = self._validate_identifier(table_name, "table name")
+        if table_name not in self._QUERY_EDITABLE_TABLES:
+            raise ValueError(f"Table not allowed for query edit: {table_name}")
+        return table_name
+
+    def _get_table_columns(self, table_name: str) -> set[str]:
+        safe_table = self._validate_identifier(table_name, "table name")
+        with self._conn_lock:
+            rows = self.conn.execute(f'PRAGMA table_info("{safe_table}")').fetchall()
+        return {row[1] for row in rows}
 
     def initialize_db(self):
         """Initialize the database by creating necessary tables, triggers, and populating seed data."""
@@ -209,10 +233,37 @@ class Database:
                     id integer,
                     title text,
                     state text,
-                    parent_id integer
+                    parent_id integer,
+                    board_column text,
+                    board_column_done integer,
+                    assigned_to text,
+                    changed_date text,
+                    priority integer
                 )
                 """)
                 self.log_engine.info("Table 'devops' created successfully.")
+            else: ## TEMP Solution for now
+                # Migrate: add any missing columns introduced in later versions
+                existing_cols = [
+                    row[1]
+                    for row in self.conn.execute("PRAGMA table_info(devops)").fetchall()
+                ]
+                new_cols = [
+                    ("board_column", "TEXT"),
+                    ("board_column_done", "INTEGER"),
+                    ("assigned_to", "TEXT"),
+                    ("changed_date", "TEXT"),
+                    ("priority", "INTEGER"),
+                ]
+                for col_name, col_type in new_cols:
+                    if col_name not in existing_cols:
+                        self.conn.execute(
+                            f"ALTER TABLE devops ADD COLUMN {col_name} {col_type}"
+                        )
+                        self.log_engine.info(
+                            f"Migrated 'devops' table: added '{col_name}' column."
+                        )
+                self.conn.commit()
 
             ## Tasks table
             if not self._table_exists("tasks"):
@@ -1123,6 +1174,39 @@ class Database:
 
         self.conn.commit()
 
+    def update_devops_board_column(self, work_item_id: int, board_column: str):
+        """Update the cached board_column for a single work item.
+
+        Called after a successful drag-and-drop move so the local cache stays
+        in sync without waiting for the next full/incremental DevOps sync.
+        """
+        self.update_devops_item_fields(work_item_id, {"board_column": board_column, "board_column_done": 0})
+
+    def update_devops_item_fields(self, work_item_id: int, fields: dict):
+        """Update specific fields for a cached devops work item (write-through cache).
+
+        Called immediately after a successful API update so the local cache
+        reflects the new state without waiting for the next sync.
+
+        Only columns in the allowed set are written to prevent SQL injection.
+        """
+        if not fields:
+            return
+        allowed_cols = {"state", "board_column", "board_column_done", "assigned_to", "changed_date", "priority", "title"}
+        safe_fields = {k: v for k, v in fields.items() if k in allowed_cols}
+        if not safe_fields:
+            return
+        set_clauses = ", ".join(f"{col} = ?" for col in safe_fields)
+        values = list(safe_fields.values()) + [work_item_id]
+        self.conn.execute(
+            f"UPDATE devops SET {set_clauses} WHERE id = ?",
+            values,
+        )
+        self.conn.commit()
+        self.log_engine.info(
+            f"Write-through cache update for work item {work_item_id}: {list(safe_fields.keys())}"
+        )
+
     ### UI Operations ###
 
     def get_customer_ui_list(self, start_date: str, end_date: str):
@@ -1329,6 +1413,11 @@ class Database:
                     ("title", "TEXT", None, None),
                     ("state", "TEXT", None, None),
                     ("parent_id", "INTEGER", None, None),
+                    ("board_column", "TEXT", None, None),
+                    ("board_column_done", "INTEGER", None, None),
+                    ("assigned_to", "TEXT", None, None),
+                    ("changed_date", "TEXT", None, None),
+                    ("priority", "INTEGER", None, None),
                 ],
                 "tasks": [
                     ("task_id", "INTEGER", None, None),
@@ -1706,12 +1795,14 @@ class Database:
         Returns:
             Entity name as string, or empty string if not found
         """
-        table_name = f"{entity_type}s"  # customers, projects
-        column_name = f"{entity_type}_name"
-        id_column = f"{entity_type}_id"
+        table_name = self._validate_identifier(f"{entity_type}s", "table name")  # customers, projects
+        if table_name not in {"customers", "projects"}:
+            raise ValueError(f"Unsupported entity_type: {entity_type}")
+        column_name = self._validate_identifier(f"{entity_type}_name", "column name")
+        id_column = self._validate_identifier(f"{entity_type}_id", "id column")
 
         return self._get_value_from_db(
-            f"select {column_name} from {table_name} where {id_column} = ?",
+            f'select "{column_name}" from "{table_name}" where "{id_column}" = ?',
             (entity_id,),
             data_type="str",
         )
@@ -1724,16 +1815,18 @@ class Database:
 
     def execute_query(self, query: str, params: tuple = ()):
         try:
-            cursor = self.conn.cursor()
-            cursor.execute(query, params)
-            self.conn.commit()
+            with self._conn_lock:
+                cursor = self.conn.cursor()
+                cursor.execute(query, params)
+                self.conn.commit()
         except Exception as e:
             self.log_engine.error(f"Error executing query: {query}\n{e}")
             raise
 
     def fetch_query(self, query: str, params: tuple = ()):
         try:
-            return pd.read_sql(query, self.conn, params=params)
+            with self._conn_lock:
+                return pd.read_sql(query, self.conn, params=params)
         except Exception as e:
             self.log_engine.error(f"Error fetching query: {query}\n{e}")
             raise
@@ -1744,15 +1837,16 @@ class Database:
         If not, commit and return None.
         """
         try:
-            cursor = self.conn.cursor()
-            cursor.execute(query, params)
-            if cursor.description:  # Query returns rows
-                rows = cursor.fetchall()
-                columns = [desc[0] for desc in cursor.description]
-                return pd.DataFrame(rows, columns=columns)
-            else:  # Query does not return rows
-                self.conn.commit()
-                return None
+            with self._conn_lock:
+                cursor = self.conn.cursor()
+                cursor.execute(query, params)
+                if cursor.description:  # Query returns rows
+                    rows = cursor.fetchall()
+                    columns = [desc[0] for desc in cursor.description]
+                    return pd.DataFrame(rows, columns=columns)
+                else:  # Query does not return rows
+                    self.conn.commit()
+                    return None
         except Exception as e:
             self.log_engine.error(f"Error running query: {query}\n{e}")
             raise
@@ -1777,13 +1871,17 @@ class Database:
             raise ValueError("Invalid data type specified.")
 
     def close(self):
-        self.conn.close()
+        with self._conn_lock:
+            self.conn.close()
 
     def update_data_from_query(self, **kwargs):
-        table_name = kwargs.get("table_name")
+        table_name = self._validate_query_edit_table(kwargs.get("table_name"))
         pk_data = kwargs.get("pk_data")
-        pk_col = pk_data[0]
+        pk_col = self._validate_identifier(pk_data[0], "primary key column")
         pk = pk_data[1]
+        table_columns = self._get_table_columns(table_name)
+        if pk_col not in table_columns:
+            raise ValueError(f"Invalid primary key column '{pk_col}' for table '{table_name}'")
 
         ## Specific logic for 'time' table to get project_id from project_name and customer_id
         if table_name == "time":
@@ -1797,17 +1895,25 @@ class Database:
                 (kwargs.get("project_name"), customer_id),
                 data_type="int",
             )
-            kwargs.pop("project_name")
+            kwargs.pop("project_name", None)
             kwargs["project_id"] = project_id
 
         update_fields = [k for k in kwargs if k not in ("table_name", "pk_data")]
-        set_clause = ", ".join([f"{field} = ?" for field in update_fields])
+        safe_update_fields = []
+        for field in update_fields:
+            safe_field = self._validate_identifier(field, "column name")
+            if safe_field not in table_columns:
+                raise ValueError(f"Invalid column '{safe_field}' for table '{table_name}'")
+            safe_update_fields.append(safe_field)
+
+        set_clause = ", ".join([f'"{field}" = ?' for field in safe_update_fields])
         values = [kwargs[field] for field in update_fields]
         values.append(pk)
-        query = f"update {table_name} set {set_clause} where {pk_col} = ?"
+        query = f'update "{table_name}" set {set_clause} where "{pk_col}" = ?'
         self.execute_query(query, tuple(values))
 
     def get_query_edit_data(self, table_name: str, pk: int):
+        table_name = self._validate_query_edit_table(table_name)
         if table_name == "time":
             return self.fetch_query(
                 """

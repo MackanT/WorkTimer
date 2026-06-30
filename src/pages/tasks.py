@@ -8,6 +8,7 @@ Fully config-driven using the 'task' section in config_ui.yml.
 
 import asyncio
 import inspect
+import logging
 from dataclasses import dataclass
 from typing import Optional
 import re
@@ -27,6 +28,9 @@ from ..ui.elements import (
     entity_card_header,
     entity_card_content,
 )
+
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Data Models
@@ -772,7 +776,7 @@ def build_form_widgets(
                     widget_class = WIDGET_CLASSES.get(field_config.get("type"))
 
                     if not widget_class:
-                        print(f"Unknown widget type for field '{field_name}'")
+                        logger.warning(f"Unknown widget type for field '{field_name}'")
                         continue
 
                     parent_name = field_config.get("parent")

@@ -299,6 +299,14 @@ class AppCore:
                 self.logger.info(
                     f"DevOps initialized — {len(self.devops_engine.manager.clients)} customer(s) connected"
                 )
+
+                # Warm the Kanban board's column-order cache now (once per process) so the
+                # board is correct on its very first render instead of only after a user
+                # opens a work-item dialog (see src/pages/board.py _column_order fallback).
+                from ..ui.devops_handlers import DevOpsWorkItemHandlers
+                DevOpsWorkItemHandlers._preload_started = True
+                await DevOpsWorkItemHandlers(self.devops_engine, self.logger).preload_cached_board_columns()
+
                 import asyncio as _asyncio
                 _asyncio.create_task(self.devops_engine.start_scheduled_updates())
             else:
@@ -389,6 +397,20 @@ class AppCore:
                 await core.initialize_devops()
 
         core.apply_theme()
+
+        # Toggle Board nav availability based on DevOps connectivity.
+        # This replaces the old idea of enabling/disabling DevOps inside add-data tabs.
+        try:
+            board_cfg = core.nav_bar.navigation_config.get("board", {})
+            has_devops = bool(
+                core.devops_engine
+                and getattr(core.devops_engine, "manager", None)
+                and getattr(core.devops_engine.manager, "clients", None)
+            )
+            board_cfg["enabled"] = has_devops
+            core.nav_bar.navigation_config["board"] = board_cfg
+        except Exception:
+            pass
 
         if not app.storage.client.get("navigation_created", False):
             core.nav_bar.render()
