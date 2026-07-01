@@ -7,6 +7,9 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
+### 5.0.3 (2026-xx-xx)
+- **Minor improvements**
+  - ad indicator in software to warn/notify user if they are running a older version of the software
 
 ### 5.0.2 (2026-06-01)
 - **Major changes**

@@ -1,3 +1,5 @@
+import asyncio
+
 from nicegui import ui, app
 from . import (
     time_tracking_page,
@@ -126,6 +128,18 @@ async def _setup_spa_shell():
             core.nav_bar.set_active_timers(names or [])
 
         core.event_bus.register("active_timer_count_changed", _on_timer_count_changed)
+
+        # Background update check — fires once per process per 24 h
+        async def _check_for_update():
+            from ..services.update_checker import check_for_update
+            try:
+                result = await check_for_update()
+                if result["available"]:
+                    core.nav_bar.set_update_available(result["latest"])
+            except Exception:
+                pass
+
+        asyncio.create_task(_check_for_update())
 
         # Set initial nav-bar state from DB
         try:

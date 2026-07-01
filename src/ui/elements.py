@@ -26,6 +26,7 @@ class NavigationBar:
         self.active_path = None
         self.on_navigate = None
         self._active_timers_row = None
+        self._update_badge = None
 
     def render(self) -> None:
         """
@@ -92,6 +93,11 @@ class NavigationBar:
                         ui.row().classes("items-center gap-1 mr-2 shrink-0")
                     )
 
+                    # Update available badge (empty = hidden, populated by set_update_available)
+                    self._update_badge = (
+                        ui.row().classes("items-center gap-1 mr-2 shrink-0")
+                    )
+
             # Set initial active state based on current path
             current_path = app.storage.client.get("current_path", "/time")
             self.set_active(current_path, self.theme)
@@ -133,6 +139,28 @@ class NavigationBar:
     def set_timer_active(self, active: bool, tooltip_lines: list[str] | None = None):
         """Legacy shim — delegates to set_active_timers."""
         self.set_active_timers(tooltip_lines or [] if active else [])
+
+    def set_update_available(self, version: str | None) -> None:
+        """Show or hide the update badge in the nav bar right side.
+
+        Args:
+            version: Latest version string to display, or None/empty to hide.
+        """
+        if self._update_badge is None:
+            return
+        self._update_badge.clear()
+        if not version:
+            return
+        with self._update_badge:
+            ui.icon("upgrade", size="xs").classes("text-amber-400 shrink-0")
+            (
+                ui.label(f"v{version} available")
+                .classes(
+                    "text-xs text-amber-300 border border-amber-600"
+                    " px-2 py-0.5 rounded-full whitespace-nowrap"
+                )
+                .tooltip("Run: pip install --upgrade worktimer")
+            )
 
     def set_active(self, path: str, theme: dict):
         """Update the active navigation button"""
