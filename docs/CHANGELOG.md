@@ -9,6 +9,9 @@ A modern web-based time tracking application with built-in task management and A
 ## Changelog
 ### 5.0.3 (2026-xx-xx)
 - **Features**
+  - ad work-item comments to the devops dialog (board card click + hierarchy node click) and an "open in azure devops" link
+  - ad interactive hierarchy - click a node to view/edit its fields, description and comments in a dialog
+  - ad informative hierarchy nodes - progress rollups on epics/features ("144 of 154 done") and done items greyed out, with a legend entry
   - ad devops hierarchy page - epic/feature/user-story tree rendered as a mermaid graph, per customer, with a "show closed" toggle, zoom controls, a scrollable viewport, a focus selector to drill into a single epic/feature's subtree, a colour legend, a top-down/left-right layout toggle, and visible arrows
   - fx hierarchy nodes rendering empty for titles with special characters - "[ref:...]" metadata tags are stripped and node labels are now whitelisted to letters/digits/space/.,:- so no mermaid-breaking character (()[]{}<>|"/+%?! etc.) can survive
   - fx hierarchy large trees opening as an unreadable 170-node scatter - customers with many items now open focused on the first epic (a tight subtree); small trees still open whole, and "Whole tree" stays in the focus dropdown

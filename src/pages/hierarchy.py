@@ -25,10 +25,50 @@ from ..ui.elements import page_card, toolbar
 _hier_click_targets: dict = {}
 
 _TERMINAL_STATES = {"Closed", "Removed"}
+_DONE_STATES = {"Resolved", "Closed"}
 _TYPE_CLASS = {"Epic": "epic", "Feature": "feature", "User Story": "story"}
 
 # Legend colours mirror the classDefs in build_mermaid().
-LEGEND = (("Epic", "#6d28d9"), ("Feature", "#1d4ed8"), ("User Story", "#0f766e"))
+LEGEND = (
+    ("Epic", "#6d28d9"),
+    ("Feature", "#1d4ed8"),
+    ("User Story", "#0f766e"),
+    ("Done", "#334155"),
+)
+
+
+def _story_progress_map(df: pd.DataFrame, customer: str) -> dict:
+    """Map each work item id -> (done_stories, total_stories) over its whole
+    subtree, computed from ALL states (so rollups count hidden/closed items too).
+    """
+    full = df[df["customer_name"] == customer]
+    children: dict[int, list[int]] = {}
+    info: dict[int, tuple] = {}
+    for _, r in full.iterrows():
+        rid = int(r["id"])
+        info[rid] = (str(r.get("type") or ""), str(r.get("state") or ""))
+        pid = r.get("parent_id")
+        if pid is not None and not pd.isna(pid):
+            children.setdefault(int(pid), []).append(rid)
+
+    progress: dict[int, tuple] = {}
+    for node_id in info:
+        done = total = 0
+        stack = list(children.get(node_id, []))
+        seen = set()
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            typ, st = info.get(cur, ("", ""))
+            if typ == "User Story" and st != "Removed":
+                total += 1
+                if st in _DONE_STATES:
+                    done += 1
+            stack.extend(children.get(cur, []))
+        progress[node_id] = (done, total)
+    return progress
 
 # Passed to ui.mermaid:
 #  - useMaxWidth:false -> render at natural (readable) size in the scroll viewport
@@ -125,12 +165,14 @@ def build_mermaid(
         return ""
 
     present = {int(r["id"]) for _, r in sub.iterrows()}
+    progress = _story_progress_map(df, customer)
 
     header = [
         f"flowchart {direction}",
         "classDef epic fill:#6d28d9,stroke:#a78bfa,color:#fff;",
         "classDef feature fill:#1d4ed8,stroke:#60a5fa,color:#fff;",
         "classDef story fill:#0f766e,stroke:#2dd4bf,color:#fff;",
+        "classDef done fill:#334155,stroke:#64748b,color:#cbd5e1;",
     ]
 
     node_lines = []
@@ -138,8 +180,17 @@ def build_mermaid(
         wid = int(r["id"])
         title = _sanitize_label(r.get("title"))
         label = f"#{wid}: {title}" if title else f"#{wid}"
+        item_type = str(r.get("type"))
+        # Progress rollup on Epics/Features ("2 of 5 done"). No / or ( ) — those
+        # break Mermaid labels; only whitelist-safe characters here.
+        if item_type in ("Epic", "Feature"):
+            done, total = progress.get(wid, (0, 0))
+            if total:
+                label += f"  {done} of {total} done"
         node_lines.append(f'n{wid}["{label}"]')
-        cls = _TYPE_CLASS.get(str(r.get("type")))
+        # Done items grey out; everything else is coloured by type.
+        state = str(r.get("state") or "")
+        cls = "done" if state in _DONE_STATES else _TYPE_CLASS.get(item_type)
         if cls:
             node_lines.append(f"class n{wid} {cls};")
 

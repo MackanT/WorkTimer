@@ -35,8 +35,9 @@ def test_builds_nodes_edges_and_type_classes():
     code = build_mermaid(df, "A")
 
     assert code.startswith("flowchart TD")
-    assert 'n1["#1: E"]' in code
-    assert 'n2["#2: F"]' in code
+    # Epic/Feature labels may carry a progress rollup suffix, so match loosely.
+    assert "#1: E" in code
+    assert "#2: F" in code
     assert 'n3["#3: US"]' in code
     assert "n1 --> n2" in code
     assert "n2 --> n3" in code
@@ -144,6 +145,30 @@ def test_focus_on_feature_shows_feature_and_below():
     code = build_mermaid(_two_epic_tree(), "A", focus_id=2)
     assert "n2[" in code and "n3[" in code
     assert "n1[" not in code and "n10[" not in code
+
+
+def test_progress_rollup_on_parents_counts_all_states():
+    rows = [
+        {"customer_name": "A", "type": "Epic", "id": 1, "title": "E", "state": "Active", "parent_id": None},
+        {"customer_name": "A", "type": "Feature", "id": 2, "title": "F", "state": "Active", "parent_id": 1},
+        {"customer_name": "A", "type": "User Story", "id": 3, "title": "S1", "state": "Closed", "parent_id": 2},
+        {"customer_name": "A", "type": "User Story", "id": 4, "title": "S2", "state": "Resolved", "parent_id": 2},
+        {"customer_name": "A", "type": "User Story", "id": 5, "title": "S3", "state": "Active", "parent_id": 2},
+    ]
+    code = build_mermaid(_df(rows), "A", include_closed=True)
+    # Epic and Feature both roll up 2 done of 3 stories (Closed + Resolved = done).
+    assert 'n1["#1: E  2 of 3 done"]' in code
+    assert 'n2["#2: F  2 of 3 done"]' in code
+
+
+def test_done_items_get_the_done_class():
+    rows = [
+        {"customer_name": "A", "type": "User Story", "id": 9, "title": "S", "state": "Resolved", "parent_id": None},
+    ]
+    code = build_mermaid(_df(rows), "A")
+    assert "classDef done" in code
+    assert "class n9 done;" in code
+    assert "class n9 story;" not in code
 
 
 def test_default_focus_small_tree_is_whole():
