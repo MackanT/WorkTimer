@@ -17,7 +17,7 @@ from nicegui import app, ui
 from ..core.app import AppCore
 from ..helpers import UI_STYLES
 from ..ui.devops_forms import open_work_item_dialog
-from ..ui.elements import page_card, toolbar
+from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
 
 # Per-client node-click handler, keyed by client id. A module dict (not
 # app.storage.client, which copies) so the JS-emitted click routes to the
@@ -379,11 +379,44 @@ async def hierarchy_page():
         )
 
     # ── toolbar ──────────────────────────────────────────────────────────────
-    with toolbar(core.theme):
-        with ui.row().classes("items-center gap-3 w-full flex-nowrap"):
-            ui.label("Hierarchy").classes("text-white font-bold shrink-0")
+    def _on_direction(value):
+        state["direction"] = value
+        render_direction_chips.refresh()
+        render_graph.refresh()
 
-            if len(customer_names) > 1:
+    @ui.refreshable
+    def render_direction_chips():
+        segmented_chips(
+            core.theme,
+            [("TD", "Top-down"), ("LR", "Left-right")],
+            state["direction"],
+            _on_direction,
+        )
+
+    def _on_show_closed(e):
+        state["show_closed"] = e.value
+        # Keep the current focus (render_focus_select drops it if it's no longer
+        # an available option).
+        render_focus_select.refresh()
+        render_graph.refresh()
+
+    def _zoom(mult=None):
+        state["zoom"] = 1.0 if mult is None else max(0.2, min(5.0, state["zoom"] * mult))
+        _apply_zoom()
+
+    async def _on_refresh():
+        if DO is not None:
+            await DO.load_df()
+        render_focus_select.refresh()
+        render_graph.refresh()
+
+    with toolbar(core.theme):
+        with toolbar_group(core.theme, divider_after=True):
+            ui.icon("account_tree", size="md").classes(f"text-{core.theme.get('accent')}")
+            ui.label("Hierarchy").classes(UI_STYLES.get_layout_classes("page_title"))
+
+        if len(customer_names) > 1:
+            with toolbar_group(core.theme, "Customer", divider_after=True):
                 with (
                     ui.tabs(value=state["customer"])
                     .props(
@@ -407,62 +440,37 @@ async def hierarchy_page():
                     render_graph.refresh()
 
                 cust_tabs.on_value_change(_on_customer_change)
-            elif customer_names:
+        elif customer_names:
+            with toolbar_group(core.theme, "Customer", divider_after=True):
                 ui.label(customer_names[0]).classes("text-white text-sm shrink-0")
 
-            ui.space()
-
+        with toolbar_group(core.theme, "Focus", divider_after=True):
             render_focus_select()
 
-            def _on_show_closed(e):
-                state["show_closed"] = e.value
-                # Keep the current focus (render_focus_select drops it if it's
-                # no longer an available option).
-                render_focus_select.refresh()
-                render_graph.refresh()
+        with toolbar_group(core.theme, "Layout", divider_after=True):
+            render_direction_chips()
 
-            ui.switch("Show closed", value=False, on_change=_on_show_closed).props(
-                "dense"
-            ).classes("text-white shrink-0")
+        with toolbar_group(core.theme, "Closed", divider_after=False):
+            ui.switch(value=False, on_change=_on_show_closed).props("dense").tooltip(
+                "Show closed / removed items"
+            )
 
-            def _on_direction(e):
-                state["direction"] = e.value
-                render_graph.refresh()
+        ui.space()
 
-            ui.toggle(
-                {"TD": "Top-down", "LR": "Left-right"},
-                value="TD",
-                on_change=_on_direction,
-            ).props("dense no-caps unelevated").classes("shrink-0")
-
-            # zoom controls
-            def _zoom(mult=None):
-                if mult is None:
-                    state["zoom"] = 1.0
-                else:
-                    state["zoom"] = max(0.2, min(5.0, state["zoom"] * mult))
-                _apply_zoom()
-
-            with ui.row().classes("items-center gap-0 shrink-0"):
-                ui.button(icon="zoom_out", on_click=lambda: _zoom(0.8)).props(
-                    "flat dense color=white"
-                ).tooltip("Zoom out")
-                ui.button(icon="restart_alt", on_click=lambda: _zoom()).props(
-                    "flat dense color=white"
-                ).tooltip("Reset zoom")
-                ui.button(icon="zoom_in", on_click=lambda: _zoom(1.25)).props(
-                    "flat dense color=white"
-                ).tooltip("Zoom in")
-
-            async def _on_refresh():
-                if DO is not None:
-                    await DO.load_df()
-                render_focus_select.refresh()
-                render_graph.refresh()
-
-            ui.button(icon="refresh", on_click=_on_refresh).props(
+        with ui.row().classes("items-center gap-0 shrink-0"):
+            ui.button(icon="zoom_out", on_click=lambda: _zoom(0.8)).props(
                 "flat dense color=white"
-            ).tooltip("Reload from local cache")
+            ).tooltip("Zoom out")
+            ui.button(icon="restart_alt", on_click=lambda: _zoom()).props(
+                "flat dense color=white"
+            ).tooltip("Reset zoom")
+            ui.button(icon="zoom_in", on_click=lambda: _zoom(1.25)).props(
+                "flat dense color=white"
+            ).tooltip("Zoom in")
+
+        ui.button(icon="refresh", on_click=_on_refresh).props(
+            "flat dense color=white"
+        ).tooltip("Reload from local cache")
 
     # ── legend + scrollable graph viewport ───────────────────────────────────
     with page_card(scrollable=False):

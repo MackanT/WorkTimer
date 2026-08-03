@@ -217,6 +217,29 @@ def toolbar_group(theme, label: str | None = None, divider_after: bool = True):
         toolbar_divider(theme)
 
 
+def segmented_chips(theme, options, active_value, on_select) -> None:
+    """A row of pill buttons in the shared "chip" style (as on the board's type
+    filter): the active option is filled with the accent colour, the rest are
+    outlined.
+
+    Args:
+        theme: the app theme dict.
+        options: list of (value, label) pairs.
+        active_value: the currently-selected value (filled).
+        on_select: callable(value) fired on click (may be async).
+    """
+    chip_style = UI_STYLES.get_widget_style("query_chip")
+    with ui.row().classes("gap-2 items-center shrink-0 no-wrap"):
+        for value, label in options:
+            btn = ui.button(label, on_click=lambda e, v=value: on_select(v))
+            if value == active_value:
+                btn.props(f"unelevated dense no-caps color={theme.get('accent')}")
+            else:
+                btn.props("outline dense no-caps").classes(
+                    chip_style["classes"]
+                ).style(chip_style["style"])
+
+
 @contextmanager
 def entity_card_shell(constrain_width: bool = True):
     """Top level card shell for entity cards (customers/projects).

@@ -12,7 +12,7 @@ import math
 from nicegui import ui, app
 from ..core.app import AppCore
 from .. import helpers
-from ..ui.elements import toolbar
+from ..ui.elements import segmented_chips, toolbar, toolbar_group
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
 from ..ui.devops_forms import open_work_item_dialog, render_devops_form
 
@@ -587,17 +587,37 @@ async def board_page():
                 zone.tooltip("No Done column found for this board")
 
     # ── toolbar ────────────────────────────────────────────────────────────────
-    with toolbar(core.theme):
-        with ui.row().classes("items-center gap-3 w-full flex-nowrap"):
-            ui.label("Board").classes("text-white font-bold shrink-0")
+    async def _on_type_chip_click(t: str):
+        filter_state["type"] = t
+        render_board.refresh()
+        render_done_zone.refresh()
+        render_type_chips.refresh()
 
-            # Customer tabs (if multiple)
-            if len(customer_names) > 1:
+    @ui.refreshable
+    def render_type_chips():
+        segmented_chips(
+            core.theme,
+            [(t, t) for t in ("User Story", "Feature", "Epic")],
+            filter_state["type"],
+            _on_type_chip_click,
+        )
+
+    async def _on_refresh():
+        await _reload_board_data(
+            show_notify=True, notify_msg="Board refreshed from local cache"
+        )
+
+    with toolbar(core.theme):
+        with toolbar_group(core.theme, divider_after=True):
+            ui.icon("view_kanban", size="md").classes(f"text-{core.theme.get('accent')}")
+            ui.label("Board").classes(helpers.UI_STYLES.get_layout_classes("page_title"))
+
+        if len(customer_names) > 1:
+            with toolbar_group(core.theme, "Customer", divider_after=True):
                 with (
                     ui.tabs(value=filter_state["customer"])
                     .props(
-                        f"horizontal dense "
-                        f'active-color="{core.theme.get("accent")}" '
+                        f'horizontal dense active-color="{core.theme.get("accent")}" '
                         f'indicator-color="{core.theme.get("accent")}"'
                     )
                     .classes(helpers.UI_STYLES.get_layout_classes("tab_label"))
@@ -611,51 +631,21 @@ async def board_page():
                     render_done_zone.refresh()
 
                 cust_tabs.on_value_change(_on_customer_change)
-            elif customer_names:
+        elif customer_names:
+            with toolbar_group(core.theme, "Customer", divider_after=True):
                 ui.label(customer_names[0]).classes("text-white text-sm shrink-0")
 
-            ui.space()
-
-            # Item type chips — styled to match the saved-query chips on the
-            # query_editor page (helpers.UI_STYLES "query_chip"), with the active
-            # type filled in the theme accent color instead of outlined.
-            async def _on_type_chip_click(t: str):
-                filter_state["type"] = t
-                render_board.refresh()
-                render_done_zone.refresh()
-                render_type_chips.refresh()
-
-            @ui.refreshable
-            def render_type_chips():
-                chip_style = helpers.UI_STYLES.get_widget_style("query_chip")
-                with ui.row().classes("gap-2 items-center shrink-0 no-wrap"):
-                    for t in ("User Story", "Feature", "Epic"):
-                        btn = ui.button(
-                            t, on_click=lambda e, tt=t: _on_type_chip_click(tt)
-                        )
-                        if t == filter_state["type"]:
-                            btn.props(f"unelevated dense no-caps color={core.theme.get('accent')}")
-                        else:
-                            btn.props("outline dense no-caps").classes(
-                                chip_style["classes"]
-                            ).style(chip_style["style"])
-
+        with toolbar_group(core.theme, "Type", divider_after=False):
             render_type_chips()
 
-            # Refresh from local cache (no API)
-            async def _on_refresh():
-                await _reload_board_data(
-                    show_notify=True,
-                    notify_msg="Board refreshed from local cache",
-                )
+        ui.space()
 
-            ui.button(icon="refresh", on_click=_on_refresh).props(
-                "flat dense color=white"
-            ).tooltip("Reload from local DB (no API call)")
-
-            ui.button(icon="add", on_click=_open_add_dialog).props(
-                "flat dense color=white"
-            ).tooltip("Add new DevOps work item")
+        ui.button(icon="refresh", on_click=_on_refresh).props(
+            "flat dense color=white"
+        ).tooltip("Reload from local DB (no API call)")
+        ui.button(icon="add", on_click=_open_add_dialog).props(
+            "flat dense color=white"
+        ).tooltip("Add new DevOps work item")
 
     # Reload the board when a DevOps sync completes elsewhere (settings page
     # emits "devops_refreshed" after manual incremental/full syncs).
