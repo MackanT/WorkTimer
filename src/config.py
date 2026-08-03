@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ConfigSettings(BaseModel):
-    """Settings configuration from config_settings.yml"""
+    """Settings configuration (resolved from .env, not a YAML file)"""
 
     debug_mode: bool = False
     db_path: str = "worktimer.db"
@@ -37,13 +37,6 @@ class ConfigDevOpsTags(BaseModel):
     """DevOps tags configuration from devops_tags.yml"""
 
     devops_tags: List[DevOpsTagConfig] = Field(default_factory=list)
-
-
-class ConfigData(BaseModel):
-    """Data configuration from config_data.yml"""
-
-    log_colors: Dict[str, str] = Field(default_factory=dict)
-    # Add other fields as needed
 
 
 class FieldConfig(BaseModel):
@@ -186,7 +179,7 @@ class TableColumnConfig(BaseModel):
 
 
 class QueryConfig(BaseModel):
-    """Query configuration from config_query.yml"""
+    """Query editor form configuration (the 'query' section of config_ui.yml)"""
 
     query: Dict[str, Any] = Field(default_factory=dict)
 

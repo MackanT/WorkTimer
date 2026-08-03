@@ -159,7 +159,7 @@ class NavigationBar:
                     "text-xs text-amber-300 border border-amber-600"
                     " px-2 py-0.5 rounded-full whitespace-nowrap"
                 )
-                .tooltip("Run: pip install --upgrade worktimer")
+                .tooltip("Update with: git pull (then restart the app)")
             )
 
     def set_active(self, path: str, theme: dict):
@@ -186,13 +186,7 @@ def toolbar_divider(theme):
     ui.element("div").classes(f"h-6 w-px shrink-0 bg-{theme.get('divider')}")
 
 
-# Height constants kept for backward compat (not used for layout calculations).
 TOOLBAR_HEIGHT_PX = 56
-
-# Kept so existing imports don't break — not used for layout anymore.
-NAV_HEIGHT_PX = 50
-PAGE_HEIGHT = "var(--wt-page-h)"   # legacy; prefer the flex model
-INNER_HEIGHT = "var(--wt-inner-h)" # legacy; prefer the flex model
 
 
 @contextmanager

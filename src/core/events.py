@@ -80,6 +80,7 @@ class EventBus:
     def __init__(self, logger: Optional[logging.Logger] = None):
         self.logger = logger or logging.getLogger("EventBus")
         self._handlers = {}
+        self._unique_handlers = {}  # (event_name, key) -> handler, for register_unique()
         self._ui_context = None
         self._recent_logs = deque(maxlen=500)
         # store the main asyncio loop when we capture context so background threads
@@ -125,6 +126,21 @@ class EventBus:
         self._handlers[event_name].append(handler)
         self.logger.debug(f"Registered handler for '{event_name}'")
         return handler
+
+    def register_unique(self, event_name: str, handler: Callable, key: str):
+        """
+        Register a handler, replacing any previous handler registered with the same key.
+
+        Use this from SPA sub-pages: page functions re-run on every navigation, and a
+        plain register() there would stack one handler per visit. The key identifies
+        the logical subscriber (e.g. "tasks_page") so re-visits swap the handler
+        instead of accumulating.
+        """
+        prev = self._unique_handlers.get((event_name, key))
+        if prev:
+            self.unregister(event_name, prev)
+        self._unique_handlers[(event_name, key)] = handler
+        return self.register(event_name, handler)
 
     def unregister(self, event_name: str, handler: Callable):
         """Unregister a previously registered handler for an event."""
@@ -211,21 +227,22 @@ class EventBus:
             except Exception as e:
                 self.logger.error(f"Error running function in UI context: {e}")
 
-        with self._ui_context:
-            try:
-                # If a running loop exists in this thread, schedule as a task
-                asyncio.get_running_loop()
+        # Same rule as emit(): only enter the NiceGUI slot context on the UI thread.
+        # From a background thread, schedule a coroutine that enters it on the loop.
+        try:
+            asyncio.get_running_loop()
+            with self._ui_context:
                 asyncio.create_task(execute())
-            except RuntimeError:
-                if self._main_loop and self._main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(execute(), self._main_loop)
-                else:
-                    try:
-                        asyncio.run(execute())
-                    except Exception as e:
-                        self.logger.error(
-                            f"Failed to execute function synchronously in UI context: {e}"
-                        )
+        except RuntimeError:
+            if self._main_loop and self._main_loop.is_running():
+
+                async def _execute_in_context():
+                    with self._ui_context:
+                        await execute()
+
+                asyncio.run_coroutine_threadsafe(_execute_in_context(), self._main_loop)
+            else:
+                self.logger.error("Cannot run in UI: no running UI loop available")
 
     def notify(
         self,
@@ -256,9 +273,22 @@ class EventBus:
         def show_notification():
             ui.notify(message, type=type_, position=position, close_button=close_button)
 
-        # Execute in UI context
-        with self._ui_context:
-            show_notification()
+        # Same rule as emit(): entering the slot context from a background thread
+        # corrupts the NiceGUI slot stack — schedule onto the main loop instead.
+        try:
+            asyncio.get_running_loop()
+            with self._ui_context:
+                show_notification()
+        except RuntimeError:
+            if self._main_loop and self._main_loop.is_running():
+
+                def _notify_in_context():
+                    with self._ui_context:
+                        show_notification()
+
+                self._main_loop.call_soon_threadsafe(_notify_in_context)
+            else:
+                self.logger.error("Cannot show notification: no running UI loop available")
 
     def clear_handlers(self, event_name: Optional[str] = None):
         """

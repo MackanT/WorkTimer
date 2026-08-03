@@ -6,6 +6,7 @@ Base class handles parent-child relationships, data fetching, and common operati
 """
 
 from abc import ABC, abstractmethod
+import asyncio
 import logging
 from nicegui import ui
 from typing import Callable, Optional, Any, Dict
@@ -92,8 +93,6 @@ class DynamicWidget(ABC):
 
     def _on_parent_change(self):
         """Called when parent value changes"""
-        import asyncio
-
         asyncio.create_task(self.refresh())
 
     async def refresh(self):
@@ -330,7 +329,8 @@ class DynamicNumber(DynamicWidget):
 
         if isinstance(new_value, dict) and parent_val in new_value:
             val = new_value[parent_val]
-            self.widget.value = int(val) if val is not None else 0
+            # float, not int — int() silently truncated decimal values (e.g. wages)
+            self.widget.value = float(val) if val is not None else 0
         elif isinstance(new_value, (int, float)):
             self.widget.value = new_value
         else:
@@ -381,6 +381,21 @@ class DynamicDateInput(DynamicWidget):
             self.widget.value = date.today().isoformat()
 
         self.widget.update()
+
+
+class DynamicDateTime(DynamicInput):
+    """Plain-text datetime input (YYYY-MM-DD HH:MM:SS), e.g. time-table editing.
+
+    Deliberately NOT type="datetime-local": DB values are stored/edited in the
+    'YYYY-MM-DD HH:MM:SS' format, which a native datetime-local input rejects.
+    """
+
+    def _create_widget(self):
+        return ui.input(
+            label=self.label,
+            placeholder="YYYY-MM-DD HH:MM:SS",
+            **self.widget_kwargs,
+        ).props("outlined")
 
 
 class DynamicSwitch(DynamicWidget):
@@ -518,8 +533,6 @@ class DynamicCodeMirror(DynamicWidget):
 
     def _create_widget(self):
         """Create CodeMirror editor"""
-        from datetime import date
-
         language = self.field_config.get("type_language", "markdown")
         templates = self.field_config.get("templates", {})
         default_val = self.field_config.get("default", "")
@@ -718,21 +731,6 @@ class DynamicEditorWithPreview(DynamicWidget):
         """Allow widget assignment during initialization"""
         self._container = val
 
-    def on_value_change(self, handler):
-        """Register value change handler on the editor"""
-        if hasattr(self, "_editor"):
-            self._editor.on_value_change(handler)
-
-    @property
-    def widget(self):
-        """Return the editor widget for compatibility with template handling"""
-        return self._editor if hasattr(self, "_editor") else self._container
-
-    @widget.setter
-    def widget(self, val):
-        """Allow widget assignment during initialization"""
-        self._container = val
-
 
 class DynamicMarkdown(DynamicWidget):
     """Markdown preview widget with auto-refresh"""
@@ -755,10 +753,11 @@ class DynamicMarkdown(DynamicWidget):
 WIDGET_CLASSES = {
     "select": DynamicDropDown,
     "input": DynamicInput,
-    "text": DynamicInput,  # Alias
+    "text": DynamicTextArea,  # multi-line, matching the legacy make_input_row behavior
     "textarea": DynamicTextArea,
     "number": DynamicNumber,
     "date": DynamicDateInput,
+    "datetime": DynamicDateTime,
     "switch": DynamicSwitch,
     "chip_group": DynamicChipGroup,
     "codemirror": DynamicCodeMirror,

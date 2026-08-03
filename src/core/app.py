@@ -46,6 +46,9 @@ class AppCore:
         self._init_lock = asyncio.Lock()
         self._root_logger_attached = False
         self._client_alive = True  # Set False on disconnect so background tasks can skip UI updates
+        # (logger, handler) pairs owned by THIS client — removed again on disconnect
+        # so handlers for dead event buses don't pile up on the process-wide loggers.
+        self._log_handlers: list = []
 
         self.nav_bar = NavigationBar(theme=self.theme, navigation_config=self.ui_config.get("navigation", {}))
         self.event_bus = PageEventBus()
@@ -57,7 +60,6 @@ class AppCore:
         # Engines — initialized lazily
         self.query_engine = None
         self.devops_engine = None
-        self.add_data_engine = None
         self._initialized = False
         self._devops_initialized = False
         self._devops_last_attempt = 0
@@ -79,7 +81,7 @@ class AppCore:
         self.debug = self.settings.debug_mode
         self.theme = self.config_loader.get_raw_dict("theme")
         from ..helpers import UI_STYLES
-        UI_STYLES.__class__._theme_configured = False
+        # Idempotent by theme content — re-resolves only when the theme changed
         UI_STYLES.configure_theme(self.theme)
 
     # ── Logging ───────────────────────────────────────────────────────────────
@@ -110,13 +112,23 @@ class AppCore:
         self.event_bus.register("log_message", handler)
 
     def _setup_logger(self, name: str) -> logging.Logger:
-        """Set up a named logger with EventBus handler."""
+        """Set up a named logger with an EventBus handler for THIS client.
+
+        Logger names ("AppCore", "Database", …) are process-wide, so with multiple
+        browser tabs the same logger carries one EventBusLogHandler per live client
+        — each client's Log page sees the shared logs. detach_log_handlers()
+        removes this client's handlers again on disconnect.
+        """
         from .events import EventBusLogHandler
 
         logger = logging.getLogger(name)
 
-        # Early return if already configured
-        if any(isinstance(h, EventBusLogHandler) for h in logger.handlers):
+        # Early return if THIS client's handler is already attached (another
+        # client's handler on the same logger must not short-circuit ours).
+        if any(
+            isinstance(h, EventBusLogHandler) and h.event_bus is self.event_bus
+            for h in logger.handlers
+        ):
             return logger
 
         level = logging.DEBUG if self.debug else logging.INFO
@@ -127,8 +139,15 @@ class AppCore:
             handler = EventBusLogHandler(self.event_bus)
             handler.setLevel(level)
             logger.addHandler(handler)
+            self._log_handlers.append((logger, handler))
 
         return logger
+
+    def detach_log_handlers(self):
+        """Remove this client's EventBus handlers from all process-wide loggers."""
+        for logger, handler in self._log_handlers:
+            logger.removeHandler(handler)
+        self._log_handlers.clear()
 
     def _attach_root_logger_handler(self):
         """Attach EventBus + console handlers to root logger for global log capture."""
@@ -140,23 +159,29 @@ class AppCore:
         root = logging.getLogger()
         level = logging.DEBUG if self.debug else logging.INFO
 
-        # Remove any stale EventBus handlers
-        root.handlers = [
-            h for h in root.handlers if not isinstance(h, EventBusLogHandler)
-        ]
+        # Console handler — once per process, not per client
+        if not any(
+            isinstance(h, logging.StreamHandler)
+            and not isinstance(h, EventBusLogHandler)
+            for h in root.handlers
+        ):
+            fmt = logging.Formatter(
+                "%(asctime)s | %(levelname)-8s | %(name)-12s :: %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+            console = logging.StreamHandler()
+            console.setFormatter(fmt)
+            console.setLevel(level)
+            root.addHandler(console)
 
-        # Console handler
-        fmt = logging.Formatter(
-            "%(asctime)s | %(levelname)-8s | %(name)-12s :: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-        console = logging.StreamHandler()
-        console.setFormatter(fmt)
-        console.setLevel(level)
-        root.addHandler(console)
-
-        # EventBus handler
-        root.addHandler(EventBusLogHandler(self.event_bus))
+        # EventBus handler for this client (other clients keep theirs)
+        if not any(
+            isinstance(h, EventBusLogHandler) and h.event_bus is self.event_bus
+            for h in root.handlers
+        ):
+            handler = EventBusLogHandler(self.event_bus)
+            root.addHandler(handler)
+            self._log_handlers.append((root, handler))
         root.setLevel(level)
 
         self._root_logger_attached = True
@@ -176,7 +201,7 @@ class AppCore:
         self.logger.info("Initializing engines...")
 
         try:
-            from ..globals import QueryEngine, AddData
+            from ..globals import QueryEngine
 
             db_logger = self._setup_logger("Database")
             self.query_engine = QueryEngine(
@@ -184,12 +209,6 @@ class AppCore:
             )
             await self.query_engine.refresh()
             self.logger.info("Query engine initialized")
-
-            self.add_data_engine = AddData(
-                query_engine=self.query_engine, log_engine=self.logger
-            )
-            await self.add_data_engine.refresh()
-            self.logger.info("Data engine initialized")
 
             self._initialized = True
             self.logger.info("Local engines initialized successfully")
@@ -307,8 +326,7 @@ class AppCore:
                 DevOpsWorkItemHandlers._preload_started = True
                 await DevOpsWorkItemHandlers(self.devops_engine, self.logger).preload_cached_board_columns()
 
-                import asyncio as _asyncio
-                _asyncio.create_task(self.devops_engine.start_scheduled_updates())
+                asyncio.create_task(self.devops_engine.start_scheduled_updates())
             else:
                 self._devops_initialized = False
                 self._devops_no_customers = True
@@ -382,6 +400,9 @@ class AppCore:
             core._background_tasks.clear()
             _app_cores.pop(client_id, None)
             core.logger.debug(f"Client {client_id} disconnected, core cleaned up")
+            # Last: detach this client's log handlers from the process-wide loggers
+            # (after the final debug line above so it still reaches the buffers).
+            core.detach_log_handlers()
 
         context.client.on_disconnect(cleanup)
         return core
