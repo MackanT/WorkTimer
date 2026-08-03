@@ -31,22 +31,23 @@ MERMAID_CONFIG = {
 }
 
 # "[ref:… | kst:… pnr:…]" tags on work items are metadata noise AND break the
-# Mermaid label — strip the whole bracketed segment.
+# Mermaid label — strip the whole bracketed segment first.
 _METADATA_TAG_RE = re.compile(r"\[[^\]]*\]")
 
-# Bracket-family / delimiter characters break a Mermaid `["..."]` label even when
-# quoted (() and {} are shape delimiters, [] shape/edge, | edge-label, <> HTML,
-# " closes the label). None of these survive into a node label.
-_UNSAFE_CHARS = '[]{}()<>|"`'
+# Whitelist the rest: keep letters (incl. Nordic via \w), digits, whitespace and
+# a tiny safe punctuation set. Everything else becomes a space. Many characters
+# break a quoted Mermaid label even inside quotes — () [] {} are shape
+# delimiters, | is an edge label, <>/"/` are markup, and /, +, %, ?, ! and
+# friends also trip the parser — so a whitelist is the only reliable rule.
+_LABEL_SAFE_RE = re.compile(r"[^\w\s.,:\-]", re.UNICODE)
 
 
 def _sanitize_label(text) -> str:
     """Make a title safe inside a Mermaid `["..."]` node and keep it short."""
     text = str(text or "").strip()
     text = _METADATA_TAG_RE.sub("", text)  # drop "[ref:… | kst:…]" tags entirely
-    text = text.replace("&", " and ")
-    for ch in _UNSAFE_CHARS:
-        text = text.replace(ch, " ")
+    text = text.replace("&", " and ")  # keep the common ampersand as a word
+    text = _LABEL_SAFE_RE.sub(" ", text)  # whitelist everything else out
     text = re.sub(r"\s+", " ", text).strip()  # collapse whitespace left behind
     if len(text) > 42:
         text = text[:39].rstrip() + "..."  # <= 42 chars total

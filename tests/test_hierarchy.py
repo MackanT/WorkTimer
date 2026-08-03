@@ -98,8 +98,17 @@ def test_label_strips_metadata_tags_and_delimiters():
     # Real epic titles look like "Navigator [ref:X | kst:100407 pnr:1007355]".
     out = _sanitize_label("Navigator [ref:Johan | kst:100407]")
     assert out == "Navigator"  # the whole [ ... ] tag is dropped
-    for breaker in ("[", "]", "|", "{", "}", "<", ">", "(", ")", '"'):
-        assert breaker not in out
+
+
+def test_label_whitelist_leaves_only_safe_chars():
+    import re as _re
+
+    out = _sanitize_label("A/B + C 5%? (x) [y] {z} <w> |v| #h; d")
+    assert _re.search(r"[^\w\s.,:\-]", out) is None  # nothing unsafe survives
+
+
+def test_label_keeps_nordic_letters_and_dashes():
+    assert _sanitize_label("Förvaltning å ä ö - test") == "Förvaltning å ä ö - test"
 
 
 def test_real_world_title_produces_readable_label():
