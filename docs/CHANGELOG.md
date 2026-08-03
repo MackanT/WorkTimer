@@ -8,8 +8,41 @@ A modern web-based time tracking application with built-in task management and A
 
 ## Changelog
 ### 5.0.3 (2026-xx-xx)
+- **Major changes**
+  - fx run all azure devops api-calls in worker threads - ui no longer freezes during syncs, board dialogs or form saves
+  - rf remove dead scaffolding code (broken services, unused engines, events and devops methods)
 - **Minor improvements**
   - ad indicator in software to warn/notify user if they are running a older version of the software
+  - fx task creation reporting success even when the insert failed
+  - fx settings page crashing when devops is not configured
+  - fx event-handler leaks when re-visiting tasks/log/notepad pages
+  - fx note rename overwriting existing notes with the same title + ad delete confirmation
+  - fx task update form breaking on titles containing quotes (parameterized dynamic queries)
+  - fx daily 2am devops sync waiting an extra day when app started between 00:00-02:00
+  - fx devops cache updates hitting the wrong customer on work-item id collisions
+  - fx markdown preview css leaking styles into the rest of the app
+  - fx "text" form fields rendering single-line (now multiline, affects task description)
+  - fx bind to 127.0.0.1 by default + per-install random storage secret (set HOST in .env for lan access)
+  - ad db busy_timeout + consistent locking (avoids "database is locked" with multiple tabs)
+  - ad auto-extension of dates table horizon (weekly/monthly reports would go blank after 2030)
+  - ad live theme apply on save + correct reload hint (ctrl+r, f5 is reserved for query editor)
+  - ad board/time pages now auto-refresh after devops syncs and data edits (wired up existing events)
+  - fx pin python 3.11 via .python-version + declare missing direct deps in pyproject (dotenv, pyyaml, requests, pygments)
+  - rf share one db connection across all browser tabs (was one connection + schema init per tab)
+  - ad schema auto-migration on startup - adds missing columns and recreates missing/outdated triggers from one source of truth (replaces the temp devops migration)
+  - fx backdated manual time entries now get the bonus rate valid on the entry date (was: today's rate)
+  - fx scripts now read DB_NAME from .env like the app (scanned a nonexistent database before)
+  - ad confirmation dialogs on the settings reset buttons
+  - fx "All-Time" range now starts at the first recorded entry (was hardcoded 2000-01-01)
+  - fx log page filter no longer drops client-local entries
+  - rf misc cleanup - form loads awaited instead of sleeps, cached form data sources, theme re-resolution by content, temp-file cleanup, removed unenforceable task foreign keys
+  - rf remove the legacy form factory (~700 lines) - all forms now render via the dynamic widget system (ad datetime widget type to cover the last gap)
+  - fx restore conditional field visibility in devops forms (source/contact/parent now hide again based on work item type - silently broken since the board rework)
+  - rf split helpers.py into ui_styles.py + markdown_utils.py, mv task card component into tasks page
+  - fx updating a customer/project without passing devops credentials/git-id no longer wipes them
+  - fx notepad checkbox clicks not toggling the markdown (dispatcher state was silently copied by app.storage.client)
+  - ad local regression test suite (66 tests, `uv run pytest`) covering the schema/db, forms, markdown, events and devops logic changed in this release
+  - fx stop uv rebuilding worktimer as a package on every sync (`package = false`) - fixes the intermittent "Access is denied" on the dist-info inside OneDrive
 
 ### 5.0.2 (2026-06-01)
 - **Major changes**
