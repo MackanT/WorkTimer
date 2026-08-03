@@ -521,9 +521,13 @@ async def board_page():
 
                     col_el.on("drop", _make_drop_handler(col_name, col_el))
 
-                    # Cards
-                    with ui.column().classes("gap-2 w-full"):
-                        for card_row in cards:
+                    # Cards, with a faint hairline between them for separation.
+                    with ui.column().classes("w-full").style("gap: 0.45rem;"):
+                        for idx, card_row in enumerate(cards):
+                            if idx:
+                                ui.element("div").classes("w-full").style(
+                                    "border-top: 1px solid rgba(255, 255, 255, 0.08);"
+                                )
                             _render_card(card_row)
 
     # ── Done drop-zone (persistent, outside the scrollable column area) ────────
@@ -544,8 +548,12 @@ async def board_page():
             if not items:
                 ui.label("No completed items yet.").classes("text-grey-5 text-sm")
             else:
-                with ui.column().classes("gap-2 w-full"):
-                    for row in items:
+                with ui.column().classes("w-full").style("gap: 0.45rem;"):
+                    for idx, row in enumerate(items):
+                        if idx:
+                            ui.element("div").classes("w-full").style(
+                                "border-top: 1px solid rgba(255, 255, 255, 0.08);"
+                            )
                         _render_card(row)
         dlg.open()
 
