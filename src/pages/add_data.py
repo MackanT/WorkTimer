@@ -6,6 +6,7 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 Fully config-driven using config_ui.yml structure.
 """
 
+import copy
 import os
 import sqlite3
 import tempfile
@@ -138,7 +139,9 @@ async def render_entity_form(
     core: AppCore, entity_type: str, operation: str, form_config: dict
 ):
     """Render a single entity form based on config"""
-    fields = form_config.get("fields", [])
+    # Deep-copy: the config dicts are shared process-wide; assign_dynamic_options
+    # writes options into the field dicts, which must not leak across clients.
+    fields = copy.deepcopy(form_config.get("fields", []))
     action = form_config.get("action", {})
 
     data_sources = await prepare_data_sources(core, entity_type, operation)
@@ -206,9 +209,17 @@ async def render_entity_form(
         )
 
         with entity_card_content():
+            # Per-cycle cache: without it, every child-widget refresh re-ran all
+            # of prepare_data_sources' queries. refresh_all_widgets() invalidates
+            # it once per cycle so data stays fresh after submits/tab changes.
+            _sources_cache: dict = {"data": None}
 
             async def data_fetcher(source_key, parent_val=None):
-                fresh = await prepare_data_sources(core, entity_type, operation)
+                if _sources_cache["data"] is None:
+                    _sources_cache["data"] = await prepare_data_sources(
+                        core, entity_type, operation
+                    )
+                fresh = _sources_cache["data"]
                 if source_key not in fresh:
                     return [] if parent_val is not None else ""
                 data = fresh[source_key]
@@ -232,12 +243,8 @@ async def render_entity_form(
                     widget_class = WIDGET_CLASSES.get(field_type)
                     if not widget_class:
                         core.logger.warning(
-                            f"Unknown field type '{field_type}', using fallback"
+                            f"Unknown field type '{field_type}' for '{field_name}' — skipping"
                         )
-                        fallback_widgets, _ = helpers.make_input_row(
-                            [field], defer_parent_wiring=True
-                        )
-                        widgets.update(fallback_widgets)
                         continue
 
                     widget_width = helpers.UI_STYLES.get_widget_width(
@@ -259,6 +266,7 @@ async def render_entity_form(
 
     async def refresh_all_widgets():
         try:
+            _sources_cache["data"] = None  # refetch once for this refresh cycle
             for dw in dynamic_widgets:
                 await dw.refresh()
         except Exception as e:
@@ -352,7 +360,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     data_sources["new_git_id"] = {}
                     for _, row in full_df.iterrows():
                         pname = row["project_name"]
-                        # Plain strings/numbers so _update_input_field sets correct values
+                        # Plain strings/numbers so widget refresh sets correct values
                         data_sources["new_project_name"][pname] = pname
                         git_val = row["git_id"]
                         data_sources["new_git_id"][pname] = (
@@ -456,6 +464,7 @@ async def render_database_tabs(
 
                 def handle_upload(e: events.UploadEventArguments):
                     ui.notify(f"File uploaded: {e.name}", color="positive")
+                    uploaded_path = None
                     try:
                         with tempfile.NamedTemporaryFile(
                             delete=False, suffix=".db"
@@ -465,10 +474,13 @@ async def render_database_tabs(
 
                         sync_sql = Database.generate_sync_sql(db_name, uploaded_path)
                         db_deltas.set_content(sync_sql)
-                        os.remove(uploaded_path)  # Clean up temp file
                     except Exception as ex:
                         core.logger.error(f"Error comparing databases: {ex}")
                         ui.notify(f"Error: {ex}", type="negative")
+                    finally:
+                        # Clean up temp file even when the comparison fails
+                        if uploaded_path and os.path.exists(uploaded_path):
+                            os.remove(uploaded_path)
 
                 ui.upload(on_upload=handle_upload).props("accept=.db").classes(
                     "q-pa-xs q-ma-xs"
@@ -503,6 +515,9 @@ async def render_database_tabs(
                     nonlocal uploaded_db_path
                     ui.notify(f"Database uploaded: {e.name}", color="positive")
                     try:
+                        # Drop the previous upload's temp file before replacing it
+                        if uploaded_db_path and os.path.exists(uploaded_db_path):
+                            os.remove(uploaded_db_path)
                         with tempfile.NamedTemporaryFile(
                             delete=False, suffix=".db"
                         ) as tmp:

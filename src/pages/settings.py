@@ -13,6 +13,7 @@ DevOps sync buttons live in the toolbar.
 from pathlib import Path
 import asyncio
 import re
+import shutil
 import yaml
 from nicegui import ui
 from ..core.app import AppCore
@@ -107,6 +108,19 @@ def _save_yaml(path: Path, data: dict) -> None:
         )
 
 
+async def _confirm_reset(what: str) -> bool:
+    """Confirm dialog for the destructive reset-to-template actions."""
+    with ui.dialog() as dlg, ui.card().classes("w-96"):
+        ui.label(f"Reset {what} to defaults?").classes("text-sm font-semibold")
+        ui.label("Your current configuration will be overwritten with the template.").classes(
+            UI_STYLES.get_layout_classes("muted_text_xs")
+        )
+        with ui.row().classes("w-full justify-end gap-2 mt-2"):
+            ui.button("Cancel", on_click=lambda: dlg.submit(False)).props("flat")
+            ui.button("Reset", on_click=lambda: dlg.submit(True)).props("color=negative")
+    return await dlg
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DevOps Contacts panel
 # ─────────────────────────────────────────────────────────────────────────────
@@ -119,16 +133,20 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
     contacts_template = path.parent / "devops_contacts.yml.template"
 
     def _reset_contacts():
-        import shutil
-        if contacts_template.exists():
+        async def _do():
+            if not contacts_template.exists():
+                ui.notify("Template file not found", type="negative")
+                return
+            if not await _confirm_reset("DevOps contacts"):
+                return
             shutil.copy2(contacts_template, path)
             core.config_loader.reload_config("devops_contacts.yml")
             selected["customer"] = None
             _rebuild_customer_list()
             _reload_detail()
             ui.notify("Contacts reset to defaults", type="warning")
-        else:
-            ui.notify("Template file not found", type="negative")
+
+        asyncio.create_task(_do())
 
     # ── detail view ───────────────────────────────────────────────────────────
     with ui.scroll_area().classes("w-full h-full"):
@@ -509,14 +527,18 @@ async def _render_devops_tags_tab(core: AppCore, reg: dict):
     tags_template = path.parent / "devops_tags.yml.template"
 
     def _reset_tags():
-        import shutil
-        if tags_template.exists():
+        async def _do():
+            if not tags_template.exists():
+                ui.notify("Template file not found", type="negative")
+                return
+            if not await _confirm_reset("DevOps tags"):
+                return
             shutil.copy2(tags_template, path)
             core.config_loader.reload_config("devops_tags.yml")
             _reload_table()
             ui.notify("Tags reset to defaults", type="warning")
-        else:
-            ui.notify("Template file not found", type="negative")
+
+        asyncio.create_task(_do())
 
     # ── expose actions for sidebar ────────────────────────────────────────────
     reg["add"]   = _open_add
@@ -557,13 +579,19 @@ async def _render_theme_tab(core: AppCore, reg: dict):
     ]
 
     def _reset_theme():
-        import shutil
-        if template_path.exists():
+        async def _do():
+            if not template_path.exists():
+                ui.notify("Template file not found", type="negative")
+                return
+            if not await _confirm_reset("the theme"):
+                return
             shutil.copy2(template_path, theme_path)
             core.config_loader.reload_config("config_theme.yml")
-            ui.notify("Theme reset to defaults — refresh page (F5)", type="warning")
-        else:
-            ui.notify("Template file not found", type="negative")
+            # Ctrl+R, not F5 — F5 is intentionally suppressed app-wide (query editor
+            # binds it to Execute), so don't advise a shortcut that won't work.
+            ui.notify("Theme reset to defaults — reload the page (Ctrl+R) to apply", type="warning")
+
+        asyncio.create_task(_do())
 
     reg["reset"] = _reset_theme
 
@@ -680,7 +708,14 @@ async def _render_theme_tab(core: AppCore, reg: dict):
                     c[k] = meta["token_holder"]["value"]
             _save_yaml(theme_path, d)
             core.config_loader.reload_config("config_theme.yml")
-            ui.notify("Theme saved — refresh page to apply (F5)", type="positive")
+            # Apply the Quasar palette live; class-based (Tailwind) colours still
+            # need a page reload. Ctrl+R, not F5 — F5 is suppressed app-wide.
+            core.theme = core.config_loader.get_raw_dict("theme")
+            core.apply_theme()
+            ui.notify(
+                "Theme saved — colours applied, reload the page (Ctrl+R) for full effect",
+                type="positive",
+            )
 
         with ui.row().classes("gap-3 mt-4"):
             ui.button("Save Theme", icon="save", on_click=_save_theme).props("color=primary")
@@ -740,6 +775,8 @@ async def settings_page():
 
     from ..services.services import DevOpsService
     _svc = DevOpsService(core)
+    # May be None when DevOps init was skipped (no PAT customers / no internet) —
+    # the page must still render, just without the sync controls.
     _eng = core.devops_engine
 
     with toolbar(core.theme):
@@ -750,33 +787,39 @@ async def settings_page():
         ui.element("div").classes("flex-1")
 
         with toolbar_group(core.theme, divider_after=False):
-            _sync_lbl = ui.label(
-                f"incr: {_fmt_time(_eng.last_incremental_sync)}  ·  "
-                f"full: {_fmt_time(_eng.last_full_sync)}"
-            ).classes(UI_STYLES.get_layout_classes("muted_text_xs"))
-
-            def _refresh_sync_labels():
-                _sync_lbl.set_text(
+            if _eng is None:
+                ui.label("DevOps not configured").classes(
+                    UI_STYLES.get_layout_classes("muted_text_xs")
+                ).tooltip("Add a customer with PAT token + org URL to enable syncing")
+            else:
+                _sync_lbl = ui.label(
                     f"incr: {_fmt_time(_eng.last_incremental_sync)}  ·  "
                     f"full: {_fmt_time(_eng.last_full_sync)}"
+                ).classes(UI_STYLES.get_layout_classes("muted_text_xs"))
+
+                def _refresh_sync_labels():
+                    try:
+                        _sync_lbl.set_text(
+                            f"incr: {_fmt_time(_eng.last_incremental_sync)}  ·  "
+                            f"full: {_fmt_time(_eng.last_full_sync)}"
+                        )
+                    except Exception:
+                        pass  # user navigated away while the sync was running
+
+                async def _run_incr():
+                    await _svc.refresh_incremental()
+                    _refresh_sync_labels()
+
+                async def _run_full():
+                    await _svc.refresh_full()
+                    _refresh_sync_labels()
+
+                ui.button("Incremental", icon="sync", on_click=_run_incr).props(
+                    "color=primary dense outline"
                 )
-
-            async def _run_incr():
-                _svc.refresh_incremental_async()
-                await asyncio.sleep(0.5)
-                _refresh_sync_labels()
-
-            async def _run_full():
-                _svc.refresh_full_async()
-                await asyncio.sleep(0.5)
-                _refresh_sync_labels()
-
-            ui.button("Incremental", icon="sync", on_click=_run_incr).props(
-                "color=primary dense outline"
-            )
-            ui.button("Full Sync", icon="cloud_download", on_click=_run_full).props(
-                "color=primary dense outline"
-            )
+                ui.button("Full Sync", icon="cloud_download", on_click=_run_full).props(
+                    "color=primary dense outline"
+                )
 
     with page_card(scrollable=False):
         with ui.row().classes("w-full h-full gap-0 overflow-hidden"):

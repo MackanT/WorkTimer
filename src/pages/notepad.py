@@ -21,18 +21,18 @@ from fastapi import UploadFile, Request, File
 from nicegui import ui, app
 
 from ..core.app import AppCore
-from ..ui.elements import toolbar, page_card, toolbar_divider, PAGE_HEIGHT
+from ..ui.elements import toolbar, page_card, toolbar_divider
 from ..helpers import render_and_sanitize_markdown, UI_STYLES
 
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-
-NOTE_COLORS = {}
-NOTE_ICONS = {}
-EXTERNAL_NOTES = []
-
-
 # ── Path helpers ───────────────────────────────────────────────────────────────
+
+
+# Per-client notepad page state, keyed by client id. A plain module dict on
+# purpose: app.storage.client wraps assigned dicts in observable COPIES, so the
+# checkbox dispatcher stored there read a stale snapshot whose cb_handler was
+# still None — clicks silently did nothing. Entries are removed on disconnect.
+_notepad_state_by_client: dict = {}
 
 
 def get_notes_dir() -> Path:
@@ -153,11 +153,19 @@ def save_note(notes_dir: Path, note: dict, content: str) -> str:
     new_title = title_from_content(content, note["filename"])
     new_filename = filename_from_title(new_title)
     old_path = notes_dir / note["filename"]
+
+    if new_filename != note["filename"]:
+        # Never rename onto another note's file — that raises on Windows and
+        # silently destroys the other note on POSIX. Suffix instead.
+        stem = Path(new_filename).stem
+        counter = 1
+        while (notes_dir / new_filename).exists():
+            new_filename = f"{stem}-{counter}.md"
+            counter += 1
+        if old_path.exists():
+            old_path.rename(notes_dir / new_filename)
+
     new_path = notes_dir / new_filename
-
-    if old_path.exists() and new_filename != note["filename"]:
-        old_path.rename(new_path)
-
     new_path.write_text(content, encoding="utf-8")
     return new_filename
 
@@ -240,15 +248,19 @@ async def notepad_page():
     project_root = get_project_root()
     
     note_config = core.config_loader.configs["notepad"]
-    
-    for col in note_config.note_colors:
-        NOTE_COLORS[col] = {
-            "bg": f"border-l-4 border-{note_config.note_colors[col]}",
-            "dot": f"bg-{note_config.note_colors[col]}",
-        }
-    NOTE_COLORS['none'] = {"bg": "", "dot": "bg-gray-400"}
-    NOTE_ICONS = note_config.note_icons
 
+    # Per-page lookups built from config. Locals, not module globals — the old
+    # globals were mutated by every client and one of the two assignments only
+    # ever shadowed a local by accident.
+    NOTE_COLORS = {
+        col: {
+            "bg": f"border-l-4 border-{val}",
+            "dot": f"bg-{val}",
+        }
+        for col, val in note_config.note_colors.items()
+    }
+    NOTE_COLORS["none"] = {"bg": "", "dot": "bg-gray-400"}
+    NOTE_ICONS = note_config.note_icons
 
     meta = load_meta(notes_dir)
     regular_notes = load_notes(notes_dir, meta)
@@ -313,8 +325,25 @@ async def notepad_page():
             }})();
         """)
 
-    # Single per-page dispatcher — routes to whichever mode is currently active.
-    ui.on('notepad_cb_toggle', lambda e: state['cb_handler'] and state['cb_handler'](e))
+    # Single per-CLIENT dispatcher — registered once and routed through the
+    # module-level registry so SPA re-visits swap the target state instead of
+    # stacking handlers (stale handlers double-toggled checkboxes). The state
+    # must NOT live in app.storage.client: storage copies assigned dicts, and
+    # the copy never sees the cb_handler set later during render.
+    client = ui.context.client
+    _notepad_state_by_client[client.id] = state
+    if not app.storage.client.get("notepad_cb_registered"):
+        app.storage.client["notepad_cb_registered"] = True
+
+        def _dispatch_cb_toggle(e, client_id=client.id):
+            st = _notepad_state_by_client.get(client_id)
+            if st and st.get("cb_handler"):
+                st["cb_handler"](e)
+
+        ui.on("notepad_cb_toggle", _dispatch_cb_toggle)
+        client.on_disconnect(
+            lambda client_id=client.id: _notepad_state_by_client.pop(client_id, None)
+        )
 
     def schedule_save(content: str):
         if state["save_timer"]:
@@ -791,6 +820,24 @@ async def notepad_page():
         if note["external"]:
             ui.notify("External notes cannot be deleted.", type="warning")
             return
+
+        # Confirm first — deleting a note removes the file on disk.
+        with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
+            ui.label(f"Delete '{note['title'] or 'Untitled'}'?").classes(
+                "text-sm font-semibold"
+            )
+            ui.label("The note file will be removed from disk.").classes(
+                UI_STYLES.get_layout_classes("muted_text_xs")
+            )
+            with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                ui.button("Cancel", on_click=lambda: confirm_dlg.submit(False)).props("flat")
+                ui.button("Delete", on_click=lambda: confirm_dlg.submit(True)).props(
+                    "color=negative"
+                )
+        confirmed = await confirm_dlg
+        if not confirmed:
+            return
+
         delete_note(notes_dir, note)
         state["notes"].pop(state["active_index"])
         state["active_index"] = (

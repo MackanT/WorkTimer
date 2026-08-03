@@ -6,6 +6,7 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 """
 
 import asyncio
+import copy
 from nicegui import ui, app
 from nicegui.events import KeyEventArguments
 from ..core.app import AppCore
@@ -325,7 +326,9 @@ async def query_editor_page():
             )
             data_sources["project_names"] = projects["project_name"].tolist()
 
-        fields = config_query["query"][table_name]["fields"]
+        # Deep-copy: these dicts come from the process-wide config singleton —
+        # writing row defaults into them would leak into other dialogs/clients.
+        fields = copy.deepcopy(config_query["query"][table_name]["fields"])
         action = config_query["query"][table_name]["action"]
 
         for field in fields:
@@ -425,10 +428,9 @@ async def query_editor_page():
 
                         widget_class = WIDGET_CLASSES.get(field_type)
                         if not widget_class:
-                            fallback_widgets, _ = helpers.make_input_row(
-                                [field], defer_parent_wiring=True
+                            LOG.warning(
+                                f"Unknown field type '{field_type}' for '{field_name}' — skipping"
                             )
-                            widgets.update(fallback_widgets)
                             continue
 
                         widget_width = helpers.UI_STYLES.get_widget_width(
@@ -543,44 +545,43 @@ async def query_editor_page():
     preset_queries, custom_queries = render_toolbar()
     edit_mode_enabled, editor, grid_box = render_query_window()
 
-    # Prevent F5 from refreshing the page using JavaScript
+    # Document-level listeners survive SPA navigation — guard with a window flag
+    # so re-visits don't stack duplicates (each Ctrl+C wrote the clipboard N times).
+    # Note: F5 suppression lives in root.py's global script; Ctrl+R is deliberately
+    # NOT blocked so a normal page reload stays possible (settings advises it).
     ui.run_javascript("""
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
-                e.preventDefault();
-            }
-        });
-    """)
+        if (!window._wtQueryEditorJs) {
+            window._wtQueryEditorJs = true;
 
-    ui.run_javascript("""
-        // Prevent text selection on grid when not in edit mode
-        const style = document.createElement('style');
-        style.id = 'ag-no-select';
-        style.textContent = '.ag-root-wrapper * { user-select: none; !important; }';
-        document.head.appendChild(style);
-        
-        document.addEventListener('keydown', function(e) {
-            if (e.ctrlKey && e.key === 'c') {
-                const selectedRows = Array.from(document.querySelectorAll('.ag-row-selected'));
-                if (!selectedRows.length) return;
-                
-                e.preventDefault();  // stop browser default copy
-                e.stopPropagation();
-                
-                selectedRows.sort((a, b) => {
-                    const aTop = parseInt(a.style.transform?.match(/translateY\\((\\d+)px\\)/)?.[1] || 0);
-                    const bTop = parseInt(b.style.transform?.match(/translateY\\((\\d+)px\\)/)?.[1] || 0);
-                    return aTop - bTop;
-                });
-                
-                const lines = selectedRows.map(row => {
-                    const cells = Array.from(row.querySelectorAll('.ag-cell[col-id]'));
-                    return cells.map(cell => cell.textContent.replace(/\\s+/g, ' ').trim()).join('\\t');
-                });
-                
-                navigator.clipboard.writeText(lines.join('\\n'));
-            }
-        }, true);  // true = capture phase, fires before browser default
+            // Prevent text selection on grid when not in edit mode
+            const style = document.createElement('style');
+            style.id = 'ag-no-select';
+            style.textContent = '.ag-root-wrapper * { user-select: none; !important; }';
+            document.head.appendChild(style);
+
+            document.addEventListener('keydown', function(e) {
+                if (e.ctrlKey && e.key === 'c') {
+                    const selectedRows = Array.from(document.querySelectorAll('.ag-row-selected'));
+                    if (!selectedRows.length) return;
+
+                    e.preventDefault();  // stop browser default copy
+                    e.stopPropagation();
+
+                    selectedRows.sort((a, b) => {
+                        const aTop = parseInt(a.style.transform?.match(/translateY\\((\\d+)px\\)/)?.[1] || 0);
+                        const bTop = parseInt(b.style.transform?.match(/translateY\\((\\d+)px\\)/)?.[1] || 0);
+                        return aTop - bTop;
+                    });
+
+                    const lines = selectedRows.map(row => {
+                        const cells = Array.from(row.querySelectorAll('.ag-cell[col-id]'));
+                        return cells.map(cell => cell.textContent.replace(/\\s+/g, ' ').trim()).join('\\t');
+                    });
+
+                    navigator.clipboard.writeText(lines.join('\\n'));
+                }
+            }, true);  // true = capture phase, fires before browser default
+        }
     """)
 
     async def handle_key(e: KeyEventArguments):

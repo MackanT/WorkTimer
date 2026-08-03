@@ -186,60 +186,31 @@ async def root_page():
 
 # ============================================================================
 # Direct Access Pages (for refresh support)
-# These allow refreshing on /time, /add_data, etc. without 404 errors
-# Each renders the SPA shell which includes the sub-page for that route
+# These allow refreshing on /time, /add_data, etc. without 404 errors.
+# Every route renders the same SPA shell, which routes to the matching sub-page
+# — registered in a loop instead of nine identical handler functions.
 # ============================================================================
 
-
-@ui.page("/time")
-async def time_page():
-    """Time tracking page (supports direct access and SPA navigation)."""
-    await _setup_spa_shell()
-
-
-@ui.page("/add_data")
-async def add_data_page_route():
-    """Add data page (supports direct access and SPA navigation)."""
-    await _setup_spa_shell()
-
-
-@ui.page("/board")
-async def board_page_route():
-    """Board page (supports direct access and SPA navigation)."""
-    await _setup_spa_shell()
+_SPA_ROUTES = [
+    "/time",
+    "/add_data",
+    "/board",
+    "/query_editor",
+    "/tasks",
+    "/notepad",
+    "/log",
+    "/info",
+    "/settings",
+]
 
 
-@ui.page("/query_editor")
-async def query_editor_page_route():
-    """Query editor page (supports direct access and SPA navigation)."""
-    await _setup_spa_shell()
+def _register_spa_route(path: str) -> None:
+    async def spa_route():
+        await _setup_spa_shell()
+
+    spa_route.__name__ = f"spa_route_{path.strip('/')}"
+    ui.page(path)(spa_route)
 
 
-@ui.page("/tasks")
-async def tasks_page_route():
-    """Tasks page (supports direct access and SPA navigation)."""
-    await _setup_spa_shell()
-
-
-@ui.page("/log")
-async def log_page_route():
-    """Log page (supports direct access and SPA navigation)."""
-    await _setup_spa_shell()
-
-
-@ui.page("/info")
-async def info_page_route():
-    """Info page (supports direct access and SPA navigation)."""
-    await _setup_spa_shell()
-
-
-@ui.page("/settings")
-async def settings_page_route():
-    """Settings page (supports direct access and SPA navigation)."""
-    await _setup_spa_shell()
-
-
-@ui.page("/notepad")
-async def notepad_page_route():
-    """Notepad page (supports direct access and SPA navigation)."""
-    await _setup_spa_shell()
+for _path in _SPA_ROUTES:
+    _register_spa_route(_path)

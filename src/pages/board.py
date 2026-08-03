@@ -7,9 +7,9 @@ v2 — Live mode:
   The + button opens the full add form in a dialog.
 """
 
-import asyncio  # kept for _handle_drop which is async
+import asyncio
 import math
-from nicegui import ui
+from nicegui import ui, app
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.elements import toolbar
@@ -31,7 +31,10 @@ async def board_page():
     core = await AppCore.get_or_initialize()
     DO = core.devops_engine
 
-    ui.add_head_html(_BOARD_CSS)
+    # Inject once per client — SPA re-visits would stack duplicate <style> blocks.
+    if not app.storage.client.get("board_css_injected"):
+        app.storage.client["board_css_injected"] = True
+        ui.add_head_html(_BOARD_CSS)
 
     # Shared board inline styles from centralized style config
     DIALOG_CARD_STYLE = helpers.UI_STYLES.get_inline_style("board", "dialog_card") or (
@@ -218,6 +221,7 @@ async def board_page():
             "update_devops_item_fields",
             work_item_id=item_id,
             fields={"board_column": target_col, "board_column_done": 0},
+            customer_name=customer,
         )
 
         if DO.manager:
@@ -241,10 +245,12 @@ async def board_page():
                     timeout=6000,
                 )
 
-        # Optimistic in-memory update, then reload from DB
+        # Optimistic in-memory update, then reload from DB.
+        # Scoped by customer — work item IDs are only unique per organization.
         if DO.df is not None:
-            DO.df.loc[DO.df["id"] == item_id, "board_column"] = target_col
-            DO.df.loc[DO.df["id"] == item_id, "board_column_done"] = 0
+            row_mask = (DO.df["id"] == item_id) & (DO.df["customer_name"] == customer)
+            DO.df.loc[row_mask, "board_column"] = target_col
+            DO.df.loc[row_mask, "board_column_done"] = 0
         await _reload_board_data(show_notify=False)
 
     # ── drag handlers ──────────────────────────────────────────────────────────
@@ -759,6 +765,15 @@ async def board_page():
             ui.button(icon="add", on_click=_open_add_dialog).props(
                 "flat dense color=white"
             ).tooltip("Add new DevOps work item")
+
+    # Reload the board when a DevOps sync completes elsewhere (settings page
+    # emits "devops_refreshed" after manual incremental/full syncs).
+    def _on_devops_refreshed(**_):
+        asyncio.create_task(_reload_board_data(show_notify=False))
+
+    core.event_bus.register_unique(
+        "devops_refreshed", _on_devops_refreshed, key="board_page"
+    )
 
     # ── board area: scrollable columns + persistent Done drop-zone ─────────────
     # No single big wrapping card here — like time_tracking's entity_card_shell
