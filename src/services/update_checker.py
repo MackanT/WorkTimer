@@ -83,7 +83,6 @@ async def check_for_update(force: bool = False) -> dict:
 
         app.storage.general["update_last_check"] = datetime.now().isoformat()
         app.storage.general["update_latest_version"] = latest
-        app.storage.general["update_available"] = available
 
         _process_cache = {"available": available, "latest": latest, "current": current}
         logger.info(f"Update check: current={current}, latest={latest}, available={available}")

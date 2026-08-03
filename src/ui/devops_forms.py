@@ -5,6 +5,8 @@ This module decouples DevOps add/update UI from add_data page so the
 board can own the full DevOps workflow.
 """
 
+import copy
+
 from nicegui import ui
 
 from .. import helpers
@@ -22,7 +24,9 @@ async def render_devops_form(
     show_internal_header: bool = True,
 ):
     """Render DevOps work item form (shared by add and update)."""
-    fields = form_config.get("fields", [])
+    # Deep-copy: the config dicts are shared process-wide; assign_dynamic_options
+    # writes options into the field dicts, which must not leak across clients.
+    fields = copy.deepcopy(form_config.get("fields", []))
     action = form_config.get("action", {})
 
     data_sources = await prepare_devops_data_sources(core, operation)
@@ -53,7 +57,7 @@ async def render_devops_form(
             devops_handlers = DevOpsWorkItemHandlers(core.devops_engine, core.logger)
             if operation == "add":
                 wid_title = widgets.get("work_item_title")
-                success, message = devops_handlers.add_work_item(widgets)
+                success, message = await devops_handlers.add_work_item(widgets)
                 success_msg = f"Work item created: {wid_title.value if wid_title else ''}"
             else:
                 success, message = await devops_handlers.update_work_item(widgets)
@@ -187,6 +191,7 @@ async def render_devops_form(
                         dynamic_widgets.append(dw)
 
         helpers.setup_template_handling(widgets)
+        _setup_conditional_visibility(widgets, fields_by_name, hidden)
         devops_handlers_setup = DevOpsWorkItemHandlers(core.devops_engine, core.logger)
         if operation == "add":
             load_fn = devops_handlers_setup.setup_add_tab_handlers(widgets)
@@ -201,6 +206,49 @@ async def render_devops_form(
             core.logger.error(f"Error refreshing DevOps.{operation} widgets: {e}")
 
     return refresh_all_widgets, widgets, load_fn, on_submit
+
+
+def _setup_conditional_visibility(widgets: dict, fields_by_name: dict, hidden: set) -> None:
+    """Wire `conditional: true` / `visible_when:` field configs to widget visibility.
+
+    Restores a feature the legacy form factory used to provide: e.g. the DevOps
+    add form hides Source/Contact/Parent unless the work item type matches.
+    Bound via on_value_change, which also fires on programmatic value sets
+    (e.g. the board dialog pre-selecting the work item type).
+    """
+    conditional = [
+        (name, cfg.get("visible_when"))
+        for name, cfg in fields_by_name.items()
+        if cfg.get("conditional") and cfg.get("visible_when")
+        and name in widgets and name not in hidden
+    ]
+    if not conditional:
+        return
+
+    def apply_visibility(_e=None):
+        for name, visible_when in conditional:
+            visible = True
+            for cond_field, cond_values in visible_when.items():
+                cond_widget = widgets.get(cond_field)
+                value = cond_widget.value if cond_widget is not None else None
+                if not value:
+                    visible = False
+                    break
+                if isinstance(cond_values, list):
+                    if value not in cond_values:
+                        visible = False
+                        break
+                elif value != cond_values:
+                    visible = False
+                    break
+            widgets[name].widget.set_visibility(visible)
+
+    condition_fields = {cf for _, vw in conditional for cf in vw}
+    for cond_field in condition_fields:
+        if cond_field in widgets:
+            widgets[cond_field].on_value_change(apply_visibility)
+
+    apply_visibility()
 
 
 async def prepare_devops_data_sources(core, operation: str) -> dict:
