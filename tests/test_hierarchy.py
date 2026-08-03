@@ -3,11 +3,26 @@
 import numpy as np
 import pandas as pd
 
-from src.pages.hierarchy import _sanitize_label, build_mermaid
+from src.pages.hierarchy import (
+    _descendants,
+    _sanitize_label,
+    build_mermaid,
+    focus_options,
+)
 
 
 def _df(rows):
     return pd.DataFrame(rows)
+
+
+def _two_epic_tree():
+    return _df([
+        {"customer_name": "A", "type": "Epic", "id": 1, "title": "E1", "state": "Active", "parent_id": None},
+        {"customer_name": "A", "type": "Feature", "id": 2, "title": "F", "state": "Active", "parent_id": 1},
+        {"customer_name": "A", "type": "User Story", "id": 3, "title": "US", "state": "New", "parent_id": 2},
+        {"customer_name": "A", "type": "Epic", "id": 10, "title": "E2", "state": "Active", "parent_id": None},
+        {"customer_name": "A", "type": "Feature", "id": 11, "title": "F2", "state": "Active", "parent_id": 10},
+    ])
 
 
 def test_builds_nodes_edges_and_type_classes():
@@ -77,3 +92,31 @@ def test_label_sanitization_and_truncation():
     assert "<" not in _sanitize_label("a <tag> b")
     assert ">" not in _sanitize_label("a <tag> b")
     assert len(_sanitize_label("x" * 100)) <= 42
+
+
+def test_descendants_collects_transitive_children():
+    keep = _descendants(_two_epic_tree(), 1)
+    assert keep == {1, 2, 3}
+
+
+def test_focus_on_epic_shows_only_its_subtree():
+    code = build_mermaid(_two_epic_tree(), "A", focus_id=1)
+    for node in ("n1", "n2", "n3"):
+        assert f"{node}[" in code
+    assert "n10[" not in code
+    assert "n11[" not in code
+
+
+def test_focus_on_feature_shows_feature_and_below():
+    code = build_mermaid(_two_epic_tree(), "A", focus_id=2)
+    assert "n2[" in code and "n3[" in code
+    assert "n1[" not in code and "n10[" not in code
+
+
+def test_focus_options_lists_epics_and_features_only():
+    opts = focus_options(_two_epic_tree(), "A")
+    assert opts[""] == "Whole tree"
+    assert set(opts) == {"", "1", "2", "10", "11"}  # no user story (id 3)
+    # Epics are listed before Features.
+    keys = [k for k in opts if k]
+    assert keys.index("1") < keys.index("2")
