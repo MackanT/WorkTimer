@@ -94,6 +94,28 @@ def test_label_sanitization_and_truncation():
     assert len(_sanitize_label("x" * 100)) <= 42
 
 
+def test_label_neutralizes_mermaid_delimiters():
+    # Real epic titles look like "Navigator [ref:X | kst:100407 pnr:1007355]".
+    out = _sanitize_label("Navigator [ref:Johan | kst:100407]")
+    for breaker in ("[", "]", "|", "{", "}", "<", ">"):
+        assert breaker not in out
+
+
+def test_real_world_title_produces_readable_label():
+    df = _df([
+        {"customer_name": "A", "type": "Epic", "id": 9, "title": "Navigator [ref:X | kst:100]", "state": "Active", "parent_id": None},
+    ])
+    code = build_mermaid(df, "A")
+    # The node exists and carries text, and no delimiter leaked into the label.
+    assert 'n9["#9: Navigator (ref:X / kst:100)"]' in code
+
+
+def test_direction_prefix():
+    df = _two_epic_tree()
+    assert build_mermaid(df, "A").startswith("flowchart TD")
+    assert build_mermaid(df, "A", direction="LR").startswith("flowchart LR")
+
+
 def test_descendants_collects_transitive_children():
     keep = _descendants(_two_epic_tree(), 1)
     assert keep == {1, 2, 3}

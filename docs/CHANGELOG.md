@@ -9,7 +9,8 @@ A modern web-based time tracking application with built-in task management and A
 ## Changelog
 ### 5.0.3 (2026-xx-xx)
 - **Features**
-  - ad devops hierarchy page - epic/feature/user-story tree rendered as a mermaid graph, per customer, with a "show closed" toggle, zoom controls, a scrollable viewport, and a focus selector to drill into a single epic/feature's subtree
+  - ad devops hierarchy page - epic/feature/user-story tree rendered as a mermaid graph, per customer, with a "show closed" toggle, zoom controls, a scrollable viewport, a focus selector to drill into a single epic/feature's subtree, a colour legend, a top-down/left-right layout toggle, and visible arrows
+  - fx hierarchy nodes rendering empty when a work-item title contained [ ] or | (the "[ref:... | kst:...]" tags on epics broke the mermaid label)
   - ad delete option for tasks (delete button in the task update panel, with confirmation)
   - ad auto re-initialize devops when a customer's pat token / org url is added or changed (no app restart needed)
 - **Major changes**

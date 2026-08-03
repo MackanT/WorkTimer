@@ -19,14 +19,40 @@ from ..ui.elements import page_card, toolbar
 _TERMINAL_STATES = {"Closed", "Removed"}
 _TYPE_CLASS = {"Epic": "epic", "Feature": "feature", "User Story": "story"}
 
+# Legend colours mirror the classDefs in build_mermaid().
+LEGEND = (("Epic", "#6d28d9"), ("Feature", "#1d4ed8"), ("User Story", "#0f766e"))
+
+# Passed to ui.mermaid: render at natural size and use a light edge colour so the
+# arrows are visible on the dark card (default lineColor is near-invisible).
+MERMAID_CONFIG = {
+    "themeVariables": {"lineColor": "#94a3b8", "fontSize": "14px"},
+    "flowchart": {"useMaxWidth": False, "nodeSpacing": 45, "rankSpacing": 55},
+}
+
+# Characters that break a Mermaid `["..."]` label even when quoted — [] and |
+# are shape / edge-label delimiters (work-item titles carry "[ref:… | kst:…]"),
+# {} <> are other delimiters, and a literal double-quote closes the label.
+_LABEL_REPLACEMENTS = {
+    '"': "'",
+    "`": "'",
+    "[": "(",
+    "]": ")",
+    "{": "(",
+    "}": ")",
+    "<": "(",
+    ">": ")",
+    "|": "/",
+    "\n": " ",
+}
+
 
 def _sanitize_label(text) -> str:
     """Make a title safe inside a Mermaid `["..."]` node and keep it short."""
     text = str(text or "").strip()
-    # Double quotes close the node label; angle brackets can be read as HTML.
-    text = text.replace('"', "'").replace("<", "(").replace(">", ")").replace("\n", " ")
+    for bad, good in _LABEL_REPLACEMENTS.items():
+        text = text.replace(bad, good)
     if len(text) > 42:
-        text = text[:41].rstrip() + "…"
+        text = text[:39].rstrip() + "..."  # <= 42 chars total
     return text
 
 
@@ -62,12 +88,14 @@ def build_mermaid(
     customer: str,
     include_closed: bool = False,
     focus_id: int | None = None,
+    direction: str = "TD",
 ) -> str:
     """Return a Mermaid flowchart of one customer's work-item hierarchy.
 
     Nodes are coloured by type. An item whose parent isn't in the rendered set
     (filtered out, or a non-Epic/Feature/Story parent) becomes a root. When
-    focus_id is given, only that item and its descendants are shown. Returns an
+    focus_id is given, only that item and its descendants are shown. `direction`
+    is a Mermaid flowchart direction (TD = top-down, LR = left-right). Returns an
     empty string when there is nothing to show.
     """
     if df is None or df.empty or not customer:
@@ -82,30 +110,36 @@ def build_mermaid(
 
     present = {int(r["id"]) for _, r in sub.iterrows()}
 
-    lines = [
-        "flowchart TD",
+    header = [
+        f"flowchart {direction}",
         "classDef epic fill:#6d28d9,stroke:#a78bfa,color:#fff;",
         "classDef feature fill:#1d4ed8,stroke:#60a5fa,color:#fff;",
         "classDef story fill:#0f766e,stroke:#2dd4bf,color:#fff;",
     ]
 
+    node_lines = []
     for _, r in sub.iterrows():
         wid = int(r["id"])
         title = _sanitize_label(r.get("title"))
         label = f"#{wid}: {title}" if title else f"#{wid}"
-        lines.append(f'n{wid}["{label}"]')
+        node_lines.append(f'n{wid}["{label}"]')
         cls = _TYPE_CLASS.get(str(r.get("type")))
         if cls:
-            lines.append(f"class n{wid} {cls};")
+            node_lines.append(f"class n{wid} {cls};")
 
+    edge_lines = []
     for _, r in sub.iterrows():
         pid = r.get("parent_id")
         if pid is None or pd.isna(pid):
             continue
         pid = int(pid)
         if pid in present:
-            lines.append(f"n{pid} --> n{int(r['id'])}")
+            edge_lines.append(f"n{pid} --> n{int(r['id'])}")
 
+    lines = header + node_lines + edge_lines
+    if edge_lines:
+        # Thicker, lighter links (belt-and-suspenders with themeVariables.lineColor).
+        lines.append("linkStyle default stroke:#94a3b8,stroke-width:2px;")
     return "\n".join(lines)
 
 
@@ -147,6 +181,7 @@ async def hierarchy_page():
         "show_closed": False,
         "focus_id": None,
         "zoom": 1.0,
+        "direction": "TD",
     }
 
     def _apply_zoom():
@@ -172,6 +207,7 @@ async def hierarchy_page():
             state["customer"],
             include_closed=state["show_closed"],
             focus_id=state["focus_id"],
+            direction=state["direction"],
         )
         if not code:
             with ui.column().classes("items-center justify-center w-full").style(
@@ -188,7 +224,7 @@ async def hierarchy_page():
         with ui.element("div").classes("wt-hier-graph").style(
             f"zoom: {state['zoom']}; display: inline-block;"
         ):
-            ui.mermaid(code, config={"flowchart": {"useMaxWidth": False}})
+            ui.mermaid(code, config=MERMAID_CONFIG)
 
     @ui.refreshable
     def render_focus_select():
@@ -250,6 +286,16 @@ async def hierarchy_page():
                 "dense"
             ).classes("text-white shrink-0")
 
+            def _on_direction(e):
+                state["direction"] = e.value
+                render_graph.refresh()
+
+            ui.toggle(
+                {"TD": "Top-down", "LR": "Left-right"},
+                value="TD",
+                on_change=_on_direction,
+            ).props("dense no-caps unelevated").classes("shrink-0")
+
             # zoom controls
             def _zoom(mult=None):
                 if mult is None:
@@ -279,8 +325,18 @@ async def hierarchy_page():
                 "flat dense color=white"
             ).tooltip("Reload from local cache")
 
-    # ── scrollable graph viewport ────────────────────────────────────────────
+    # ── legend + scrollable graph viewport ───────────────────────────────────
     with page_card(scrollable=False):
+        with ui.row().classes("items-center gap-4 px-1 pb-1 shrink-0"):
+            for lbl, color in LEGEND:
+                with ui.row().classes("items-center gap-1"):
+                    ui.element("div").style(
+                        f"width:12px; height:12px; border-radius:3px; background:{color};"
+                    )
+                    ui.label(lbl).classes(
+                        "text-xs " + UI_STYLES.get_layout_classes("muted_text")
+                    )
+
         with ui.element("div").classes("w-full").style(
             "flex: 1; min-height: 0; overflow: auto;"
         ):
