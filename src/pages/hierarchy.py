@@ -7,6 +7,7 @@ renders at natural size in a scrollable viewport) and a Focus selector to drill
 into a single Epic or Feature's subtree.
 """
 
+import re
 from collections import deque
 
 import pandas as pd
@@ -29,28 +30,24 @@ MERMAID_CONFIG = {
     "flowchart": {"useMaxWidth": False, "nodeSpacing": 45, "rankSpacing": 55},
 }
 
-# Characters that break a Mermaid `["..."]` label even when quoted — [] and |
-# are shape / edge-label delimiters (work-item titles carry "[ref:… | kst:…]"),
-# {} <> are other delimiters, and a literal double-quote closes the label.
-_LABEL_REPLACEMENTS = {
-    '"': "'",
-    "`": "'",
-    "[": "(",
-    "]": ")",
-    "{": "(",
-    "}": ")",
-    "<": "(",
-    ">": ")",
-    "|": "/",
-    "\n": " ",
-}
+# "[ref:… | kst:… pnr:…]" tags on work items are metadata noise AND break the
+# Mermaid label — strip the whole bracketed segment.
+_METADATA_TAG_RE = re.compile(r"\[[^\]]*\]")
+
+# Bracket-family / delimiter characters break a Mermaid `["..."]` label even when
+# quoted (() and {} are shape delimiters, [] shape/edge, | edge-label, <> HTML,
+# " closes the label). None of these survive into a node label.
+_UNSAFE_CHARS = '[]{}()<>|"`'
 
 
 def _sanitize_label(text) -> str:
     """Make a title safe inside a Mermaid `["..."]` node and keep it short."""
     text = str(text or "").strip()
-    for bad, good in _LABEL_REPLACEMENTS.items():
-        text = text.replace(bad, good)
+    text = _METADATA_TAG_RE.sub("", text)  # drop "[ref:… | kst:…]" tags entirely
+    text = text.replace("&", " and ")
+    for ch in _UNSAFE_CHARS:
+        text = text.replace(ch, " ")
+    text = re.sub(r"\s+", " ", text).strip()  # collapse whitespace left behind
     if len(text) > 42:
         text = text[:39].rstrip() + "..."  # <= 42 chars total
     return text

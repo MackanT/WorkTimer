@@ -94,10 +94,11 @@ def test_label_sanitization_and_truncation():
     assert len(_sanitize_label("x" * 100)) <= 42
 
 
-def test_label_neutralizes_mermaid_delimiters():
+def test_label_strips_metadata_tags_and_delimiters():
     # Real epic titles look like "Navigator [ref:X | kst:100407 pnr:1007355]".
     out = _sanitize_label("Navigator [ref:Johan | kst:100407]")
-    for breaker in ("[", "]", "|", "{", "}", "<", ">"):
+    assert out == "Navigator"  # the whole [ ... ] tag is dropped
+    for breaker in ("[", "]", "|", "{", "}", "<", ">", "(", ")", '"'):
         assert breaker not in out
 
 
@@ -106,8 +107,8 @@ def test_real_world_title_produces_readable_label():
         {"customer_name": "A", "type": "Epic", "id": 9, "title": "Navigator [ref:X | kst:100]", "state": "Active", "parent_id": None},
     ])
     code = build_mermaid(df, "A")
-    # The node exists and carries text, and no delimiter leaked into the label.
-    assert 'n9["#9: Navigator (ref:X / kst:100)"]' in code
+    # The node carries clean text, no bracket-family delimiter leaked.
+    assert 'n9["#9: Navigator"]' in code
 
 
 def test_direction_prefix():
