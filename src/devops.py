@@ -66,6 +66,20 @@ class DevOpsManager:
             return (False, f"No DevOps connection for {customer_name}", "markdown", {})
         return client.get_work_item_description(work_item_id)
 
+    def get_comments(self, customer_name, work_item_id):
+        """Return a work item's comments. (True, [ {author,date,text}, ... ]) or (False, msg)."""
+        client = self._get_client(customer_name)
+        if not client:
+            return (False, f"No DevOps connection for {customer_name}")
+        return client.get_work_item_comments(work_item_id)
+
+    def get_work_item_url(self, customer_name, work_item_id):
+        """Return the Azure DevOps web URL for a work item, or None."""
+        client = self._get_client(customer_name)
+        if not client:
+            return None
+        return client.get_work_item_url(work_item_id)
+
     def update_work_item_fields(
         self, customer_name, work_item_id, fields, markdown=False
     ):
@@ -306,6 +320,46 @@ class DevOpsClient:
         except Exception as e:
             self.log.error(f"Error fetching work items: {e}")
             return (False, f"Error fetching work items: {e}")
+
+    def get_work_item_comments(self, work_item_id: int):
+        """Return a work item's comments, oldest first.
+
+        Returns (True, [ {author, date, text}, ... ]) or (False, message).
+        """
+        try:
+            result = self.wit_client.get_comments(
+                project=self.project_name, work_item_id=int(work_item_id)
+            )
+            raw = getattr(result, "comments", None) or []
+
+            def _author(created_by):
+                if isinstance(created_by, dict):
+                    return created_by.get("displayName") or created_by.get("uniqueName") or ""
+                return (
+                    getattr(created_by, "display_name", None)
+                    or getattr(created_by, "unique_name", None)
+                    or ""
+                )
+
+            comments = [
+                {
+                    "author": _author(getattr(c, "created_by", None)),
+                    "date": str(getattr(c, "created_date", "") or ""),
+                    "text": getattr(c, "text", "") or "",
+                }
+                for c in raw
+            ]
+            # Azure returns newest first; show oldest first like a thread.
+            comments.reverse()
+            self.log.info(f"Loaded {len(comments)} comments for work item {work_item_id}")
+            return (True, comments)
+        except Exception as e:
+            self.log.error(f"Error fetching comments for {work_item_id}: {e}")
+            return (False, f"Error fetching comments: {e}")
+
+    def get_work_item_url(self, work_item_id: int) -> str:
+        """Build the Azure DevOps web URL for a work item."""
+        return f"{self.organization_url}/{self.project_name}/_workitems/edit/{int(work_item_id)}"
 
     def _create_work_item(
         self,

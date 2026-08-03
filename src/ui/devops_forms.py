@@ -5,6 +5,7 @@ This module decouples DevOps add/update UI from add_data page so the
 board can own the full DevOps workflow.
 """
 
+import asyncio
 import copy
 
 from nicegui import ui
@@ -12,6 +13,47 @@ from nicegui import ui
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
+
+
+def _render_comment(comment: dict) -> None:
+    """Render one Azure DevOps comment (author/date header + body)."""
+    with ui.card().props("flat bordered").classes("w-full"):
+        ui.label(
+            f"{comment.get('author') or 'Unknown'} · {str(comment.get('date') or '')[:16].replace('T', ' ')}"
+        ).classes("text-xs text-grey-5")
+        text = comment.get("text") or ""
+        # ADO comments are usually HTML; render as sanitized markdown either way.
+        md = helpers.convert_html_to_markdown(text) if "<" in text else text
+        ui.html(helpers.render_and_sanitize_markdown(md)).classes("text-sm w-full")
+
+
+async def _load_comments_into(core, widgets: dict, container) -> None:
+    """Fetch the selected work item's comments and render them into `container`."""
+    wid_widget = widgets.get("work_item")
+    cust_widget = widgets.get("customer_name")
+    container.clear()
+    if not wid_widget or not cust_widget:
+        return
+    work_item_id = helpers.extract_devops_id(wid_widget.value)
+    customer = cust_widget.value
+    if not work_item_id or not customer:
+        return
+    manager = getattr(core.devops_engine, "manager", None)
+    if not manager:
+        return
+
+    with container:
+        ui.label("Loading comments…").classes("text-xs text-grey-5")
+    ok, data = await asyncio.to_thread(manager.get_comments, customer, work_item_id)
+    container.clear()
+    with container:
+        if not ok:
+            ui.label(f"Could not load comments: {data}").classes("text-xs text-negative")
+        elif not data:
+            ui.label("No comments yet.").classes("text-xs text-grey-5")
+        else:
+            for comment in data:
+                _render_comment(comment)
 
 
 async def render_devops_form(
@@ -197,6 +239,31 @@ async def render_devops_form(
             load_fn = devops_handlers_setup.setup_add_tab_handlers(widgets)
         else:
             load_fn = devops_handlers_setup.setup_update_tab_handlers(widgets)
+
+        # Comments panel (update only) — the work item's discussion thread, read
+        # only. Shown in the board dialog and the hierarchy dialog alike.
+        if operation == "update":
+            ui.separator().classes("mt-3")
+            ui.label("Comments").classes(
+                helpers.UI_STYLES.get_layout_classes("muted_text_xs") + " mt-2"
+            )
+            comments_box = ui.column().classes("w-full gap-2")
+
+            async def _reload_comments(_e=None):
+                await _load_comments_into(core, widgets, comments_box)
+
+            work_item_widget = widgets.get("work_item")
+            if work_item_widget:
+                work_item_widget.on("update:model-value", _reload_comments)
+
+            # Fold comment-loading into load_fn so callers that prefill the work
+            # item (the board/hierarchy dialogs) load comments too.
+            _inner_load = load_fn
+
+            async def load_fn(_e=None, _base=_inner_load):
+                if _base:
+                    await _base(_e)
+                await _reload_comments(_e)
 
     async def refresh_all_widgets():
         try:
