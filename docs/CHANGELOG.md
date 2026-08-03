@@ -9,6 +9,7 @@ A modern web-based time tracking application with built-in task management and A
 ## Changelog
 ### 5.0.3 (2026-xx-xx)
 - **Features**
+  - ad devops hierarchy page - epic/feature/user-story tree rendered as a mermaid graph, per customer, with a "show closed" toggle
   - ad delete option for tasks (delete button in the task update panel, with confirmation)
   - ad auto re-initialize devops when a customer's pat token / org url is added or changed (no app restart needed)
 - **Major changes**

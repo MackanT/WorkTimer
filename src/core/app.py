@@ -419,17 +419,19 @@ class AppCore:
 
         core.apply_theme()
 
-        # Toggle Board nav availability based on DevOps connectivity.
-        # This replaces the old idea of enabling/disabling DevOps inside add-data tabs.
+        # Toggle the DevOps-only nav items (Board, Hierarchy) based on
+        # connectivity. Replaces the old idea of enabling/disabling DevOps
+        # inside add-data tabs.
         try:
-            board_cfg = core.nav_bar.navigation_config.get("board", {})
             has_devops = bool(
                 core.devops_engine
                 and getattr(core.devops_engine, "manager", None)
                 and getattr(core.devops_engine.manager, "clients", None)
             )
-            board_cfg["enabled"] = has_devops
-            core.nav_bar.navigation_config["board"] = board_cfg
+            for _key in ("board", "hierarchy"):
+                cfg = core.nav_bar.navigation_config.get(_key, {})
+                cfg["enabled"] = has_devops
+                core.nav_bar.navigation_config[_key] = cfg
         except Exception:
             pass
 

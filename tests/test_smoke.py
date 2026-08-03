@@ -10,6 +10,7 @@ def test_all_page_modules_import():
     from src.pages import (  # noqa: F401
         add_data_page,
         board_page,
+        hierarchy_page,
         info_page,
         log_page,
         notepad_page,
