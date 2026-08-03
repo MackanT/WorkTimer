@@ -14,6 +14,7 @@ A modern web-based time tracking application with built-in task management and A
   - ad informative hierarchy nodes - progress rollups on epics/features ("144 of 154 done") and done items greyed out, with a legend entry
   - rf hierarchy nodes look nicer - rounded borderless shapes with a soft shadow to match the app's cards
   - rf board + hierarchy toolbars now use the app's labelled toolbar-group layout (icon + page title, uppercase section labels, dividers) to match the other pages; hierarchy's layout direction is now chip buttons matching the board's type chips (shared segmented_chips component)
+  - rf board cards are now rounded and borderless with a soft shadow (matching the app's cards / hierarchy nodes), and column headers use a consistent semibold title + subtle count
   - rf devops comments - newest first, with the add-comment box above the thread
   - ad devops hierarchy page - epic/feature/user-story tree rendered as a mermaid graph, per customer, with a "show closed" toggle, zoom controls, a scrollable viewport, a focus selector to drill into a single epic/feature's subtree, a colour legend, a top-down/left-right layout toggle, and visible arrows
   - fx hierarchy nodes rendering empty for titles with special characters - "[ref:...]" metadata tags are stripped and node labels are now whitelisted to letters/digits/space/.,:- so no mermaid-breaking character (()[]{}<>|"/+%?! etc.) can survive

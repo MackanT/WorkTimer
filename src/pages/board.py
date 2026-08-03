@@ -18,8 +18,10 @@ from ..ui.devops_forms import open_work_item_dialog, render_devops_form
 
 
 _BOARD_CSS = """<style>
-.board-card { cursor: grab; user-select: none; transition: box-shadow 0.15s ease, transform 0.15s ease; }
-.board-card:hover { box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35); transform: translateY(-1px); }
+/* Cards: rounded, borderless, soft shadow — matches the app's cards and the
+   hierarchy nodes. Shadow lifts a little on hover for affordance. */
+.board-card { cursor: grab; user-select: none; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); transition: box-shadow 0.15s ease, transform 0.15s ease; }
+.board-card:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); transform: translateY(-1px); }
 .board-card:active { cursor: grabbing; }
 .wt-board-col-hover { outline: 2px dashed rgba(100, 160, 255, 0.65) !important; outline-offset: -3px; }
 .board-col { transition: outline 0.1s ease; }
@@ -400,9 +402,9 @@ async def board_page():
 
         with (
             ui.card()
-            .classes("board-card w-full rounded shadow-sm")
-            .style("padding: 0.4rem 0.6rem;")
-            .props("flat bordered draggable=true")
+            .classes("board-card w-full rounded-md")
+            .style("padding: 0.5rem 0.65rem;")
+            .props("flat draggable=true")
         ) as card:
             card.on("dragstart", lambda e, r=row: _handle_dragstart(r))
             card.on("dragend", lambda e: _handle_dragend())
@@ -499,11 +501,11 @@ async def board_page():
                     .style(BOARD_COLUMN_STYLE)
                     .props("flat")
                 ) as col_el:
-                    # Column header — same label size and divider as time_tracking's
-                    # entity_card_header (time_tracking_customer_name / divider_row).
+                    # Column header — consistent with the app's card headers
+                    # (semibold white title + subtle count, then a themed divider).
                     with ui.row().classes("items-center gap-2 w-full").style("padding: 0.1rem 0.2rem 0.3rem;"):
-                        ui.label(col_name).classes("text-lg flex-1")
-                        ui.badge(str(len(cards))).props("color=grey-7 rounded")
+                        ui.label(col_name).classes("text-base font-semibold text-white flex-1 truncate")
+                        ui.badge(str(len(cards))).props("color=grey-8 rounded").classes("text-xs")
 
                     ui.separator().classes(helpers.UI_STYLES.get_layout_classes("divider_row"))
 
