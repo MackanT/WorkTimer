@@ -23,11 +23,22 @@ _TYPE_CLASS = {"Epic": "epic", "Feature": "feature", "User Story": "story"}
 # Legend colours mirror the classDefs in build_mermaid().
 LEGEND = (("Epic", "#6d28d9"), ("Feature", "#1d4ed8"), ("User Story", "#0f766e"))
 
-# Passed to ui.mermaid: render at natural size and use a light edge colour so the
-# arrows are visible on the dark card (default lineColor is near-invisible).
+# Passed to ui.mermaid:
+#  - useMaxWidth:false -> render at natural (readable) size in the scroll viewport
+#  - lineColor -> light edges, visible on the dark card
+#  - htmlLabels:false -> render node text as native SVG <text> instead of HTML in
+#    a <foreignObject>. foreignObject labels blank out unpredictably depending on
+#    node position (worse under the CSS `zoom` we apply), which left some boxes
+#    empty even though their label text was fine. SVG text renders reliably.
 MERMAID_CONFIG = {
+    "htmlLabels": False,
     "themeVariables": {"lineColor": "#94a3b8", "fontSize": "14px"},
-    "flowchart": {"useMaxWidth": False, "nodeSpacing": 45, "rankSpacing": 55},
+    "flowchart": {
+        "useMaxWidth": False,
+        "htmlLabels": False,
+        "nodeSpacing": 45,
+        "rankSpacing": 55,
+    },
 }
 
 # "[ref:… | kst:… pnr:…]" tags on work items are metadata noise AND break the
