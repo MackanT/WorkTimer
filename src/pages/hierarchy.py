@@ -257,6 +257,7 @@ async def hierarchy_page():
     """
     core = await AppCore.get_or_initialize()
     DO = core.devops_engine
+    muted = core.theme.get("muted")  # theme muted-text token
 
     customer_names: list[str] = []
     if DO is not None and DO.df is not None:
@@ -290,8 +291,8 @@ async def hierarchy_page():
             with ui.column().classes("items-center justify-center w-full").style(
                 "padding: 4rem;"
             ):
-                ui.icon("account_tree", size="xl").classes("text-grey-6")
-                ui.label("No DevOps data available.").classes("text-grey-5 mt-2")
+                ui.icon("account_tree", size="xl").classes(f"text-{muted}")
+                ui.label("No DevOps data available.").classes(f"text-{muted} mt-2")
             return
 
         code = build_mermaid(
@@ -305,10 +306,10 @@ async def hierarchy_page():
             with ui.column().classes("items-center justify-center w-full").style(
                 "padding: 4rem;"
             ):
-                ui.icon("inbox", size="xl").classes("text-grey-6")
+                ui.icon("inbox", size="xl").classes(f"text-{muted}")
                 ui.label(
                     f"No work items to show for {state['customer']}."
-                ).classes("text-grey-5 mt-2")
+                ).classes(f"text-{muted} mt-2")
             return
 
         # Natural-size graph (useMaxWidth:false) inside the scroll viewport, with

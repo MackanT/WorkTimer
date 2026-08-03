@@ -32,6 +32,7 @@ async def board_page():
     """DevOps Board — Kanban view of work items from local cache."""
     core = await AppCore.get_or_initialize()
     DO = core.devops_engine
+    muted = core.theme.get("muted")  # theme muted-text token
 
     # Inject once per client — SPA re-visits would stack duplicate <style> blocks.
     if not app.storage.client.get("board_css_injected"):
@@ -324,9 +325,9 @@ async def board_page():
                     "padding: 0.6rem 0.8rem; flex-shrink: 0;"
                 ):
                     ui.icon("add_circle", size="16px").classes("text-primary shrink-0")
-                    ui.label("New Work Item").classes("text-grey-5 text-xs uppercase tracking-wide shrink-0")
-                    ui.label("·").classes("text-grey-5 text-xs shrink-0")
-                    type_label = ui.label(filter_state.get("type", "User Story")).classes("text-grey-5 text-xs shrink-0")
+                    ui.label("New Work Item").classes(f"text-{muted} text-xs uppercase tracking-wide shrink-0")
+                    ui.label("·").classes(f"text-{muted} text-xs shrink-0")
+                    type_label = ui.label(filter_state.get("type", "User Story")).classes(f"text-{muted} text-xs shrink-0")
                     customer_label = ui.label(filter_state.get("customer", "")).classes("text-sm font-semibold flex-1").style(
                         "overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
                     )
@@ -420,23 +421,23 @@ async def board_page():
                     ui.icon("circle", size="12px").classes(f"text-{p_color} shrink-0").tooltip(
                         f"Priority: {p_label}"
                     )
-                ui.label(f"#{item_id}").classes("text-xs text-grey-5 shrink-0")
+                ui.label(f"#{item_id}").classes(f"text-xs text-{muted} shrink-0")
                 ui.space()
                 # Show a "Done" chip only when the item is in the done sub-state
                 if board_column_done:
-                    ui.badge("✓ Done").props("color=green-7 rounded").classes("text-xs shrink-0")
+                    ui.badge("✓ Done").props("color=positive rounded").classes("text-xs shrink-0")
 
             ui.label(title).classes("text-sm").style(
                 "word-break:break-word; white-space:normal; line-height:1.3; margin-top:2px;"
             )
             if parent_label:
                 with ui.row().classes("items-center gap-1").style("margin-top:3px;"):
-                    ui.icon("account_tree", size="12px").classes("text-grey-5 shrink-0")
-                    ui.label(parent_label).classes("text-xs text-grey-5").style(
+                    ui.icon("account_tree", size="12px").classes(f"text-{muted} shrink-0")
+                    ui.label(parent_label).classes(f"text-xs text-{muted}").style(
                         "overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:200px;"
                     )
             if assigned:
-                ui.label(f"👤 {assigned}").classes("text-xs text-grey-5").style("margin-top:3px;")
+                ui.label(f"👤 {assigned}").classes(f"text-xs text-{muted}").style("margin-top:3px;")
 
     parent_label_cache: dict[int, str] = {}
 
@@ -480,17 +481,17 @@ async def board_page():
 
         if not cust:
             with ui.column().classes("items-center justify-center w-full").style("padding: 4rem;"):
-                ui.icon("view_kanban", size="xl").classes("text-grey-6")
-                ui.label("No customers with DevOps data available.").classes("text-grey-5 mt-2")
+                ui.icon("view_kanban", size="xl").classes(f"text-{muted}")
+                ui.label("No customers with DevOps data available.").classes(f"text-{muted} mt-2")
             return
 
         data = _board_data()
         if not data:
             with ui.column().classes("items-center justify-center w-full").style("padding: 4rem;"):
-                ui.icon("inbox", size="xl").classes("text-grey-6")
+                ui.icon("inbox", size="xl").classes(f"text-{muted}")
                 ui.label(
                     f"No active {filter_state['type']} items for {cust}."
-                ).classes("text-grey-5 mt-2")
+                ).classes(f"text-{muted} mt-2")
             return
 
         with ui.row().classes("gap-3 items-start flex-nowrap").style(COLUMNS_ROW_STYLE):
@@ -538,15 +539,15 @@ async def board_page():
             "overflow-y: auto; padding: 0.75rem;"
         ):
             with ui.row().classes("items-center gap-2 w-full"):
-                ui.icon("done_all", size="18px").classes("text-green-5 shrink-0")
+                ui.icon("done_all", size="18px").classes("text-positive shrink-0")
                 ui.label("Recently Completed").classes("text-sm font-semibold flex-1")
                 ui.button(icon="close", on_click=dlg.close).props("flat dense round color=grey-6")
             ui.label(f"Showing the {DONE_COLUMN_LIMIT} most recently changed items").classes(
-                "text-xs text-grey-5 mb-1"
+                "text-xs text-" + muted + " mb-1"
             )
             ui.separator().classes("opacity-20 mb-2")
             if not items:
-                ui.label("No completed items yet.").classes("text-grey-5 text-sm")
+                ui.label("No completed items yet.").classes(f"text-{muted} text-sm")
             else:
                 with ui.column().classes("w-full").style("gap: 0.45rem;"):
                     for idx, row in enumerate(items):
@@ -571,9 +572,9 @@ async def board_page():
             .props("flat")
         ) as zone:
             ui.icon("done_all", size="22px").classes(
-                "text-green-5" if target_col else "text-grey-7"
+                "text-positive" if target_col else f"text-{muted}"
             )
-            ui.label("Done").classes("text-xs font-semibold text-grey-4")
+            ui.label("Done").classes(f"text-xs font-semibold text-{muted}")
             ui.badge(str(total)).props(
                 f"color={'green-7' if target_col else 'grey-7'} rounded"
             )
