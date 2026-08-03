@@ -392,12 +392,17 @@ async def render_devops_form(
             ui.label("Comments").classes(
                 helpers.UI_STYLES.get_layout_classes("muted_text_xs") + " mt-2"
             )
-            comments_box = ui.column().classes("w-full gap-2")
+
+            # comments_box is created below the input; a holder lets the closures
+            # above reference it before it exists.
+            _refs: dict = {}
 
             async def _reload_comments(_e=None):
-                await _load_comments_into(core, widgets, comments_box)
+                box = _refs.get("box")
+                if box is not None:
+                    await _load_comments_into(core, widgets, box)
 
-            # Add-comment row (reuses the same save_comment() the timer uses).
+            # Add-comment row — on top, above the thread.
             with ui.row().classes("w-full items-end gap-2 mt-1"):
                 new_comment = (
                     ui.textarea(placeholder="Add a comment…")
@@ -432,6 +437,9 @@ async def render_devops_form(
                 ui.button(icon="send", on_click=_post_comment).props(
                     "dense color=primary"
                 ).tooltip("Add comment")
+
+            # Thread — newest first (see get_work_item_comments).
+            _refs["box"] = ui.column().classes("w-full gap-2 mt-1")
 
             work_item_widget = widgets.get("work_item")
             if work_item_widget:

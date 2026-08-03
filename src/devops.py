@@ -349,8 +349,8 @@ class DevOpsClient:
                 }
                 for c in raw
             ]
-            # Azure returns newest first; show oldest first like a thread.
-            comments.reverse()
+            # Newest first (ISO dates sort lexically).
+            comments.sort(key=lambda c: c["date"], reverse=True)
             self.log.info(f"Loaded {len(comments)} comments for work item {work_item_id}")
             return (True, comments)
         except Exception as e:

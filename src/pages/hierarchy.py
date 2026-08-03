@@ -169,10 +169,11 @@ def build_mermaid(
 
     header = [
         f"flowchart {direction}",
-        "classDef epic fill:#6d28d9,stroke:#a78bfa,color:#fff;",
-        "classDef feature fill:#1d4ed8,stroke:#60a5fa,color:#fff;",
-        "classDef story fill:#0f766e,stroke:#2dd4bf,color:#fff;",
-        "classDef done fill:#334155,stroke:#64748b,color:#cbd5e1;",
+        # Borderless (stroke matches fill); nodes use the round-edge shape below.
+        "classDef epic fill:#6d28d9,stroke:#6d28d9,color:#fff;",
+        "classDef feature fill:#1d4ed8,stroke:#1d4ed8,color:#fff;",
+        "classDef story fill:#0f766e,stroke:#0f766e,color:#fff;",
+        "classDef done fill:#334155,stroke:#334155,color:#cbd5e1;",
     ]
 
     node_lines = []
@@ -187,7 +188,8 @@ def build_mermaid(
             done, total = progress.get(wid, (0, 0))
             if total:
                 label += f"  {done} of {total} done"
-        node_lines.append(f'n{wid}["{label}"]')
+        # Round-edge shape n("..") — softer, matches the app's rounded cards.
+        node_lines.append(f'n{wid}("{label}")')
         # Done items grey out; everything else is coloured by type.
         state = str(r.get("state") or "")
         cls = "done" if state in _DONE_STATES else _TYPE_CLASS.get(item_type)
@@ -484,7 +486,13 @@ async def hierarchy_page():
     # window flag; it reads the work-item id from the Mermaid node's element id.
     if not app.storage.client.get("hier_css_injected"):
         app.storage.client["hier_css_injected"] = True
-        ui.add_head_html("<style>.wt-hier-graph .node { cursor: pointer; }</style>")
+        ui.add_head_html(
+            "<style>"
+            ".wt-hier-graph .node { cursor: pointer; }"
+            # Soft drop shadow on the node shapes for a card-like depth.
+            ".wt-hier-graph .node rect { filter: drop-shadow(0 1px 3px rgba(0,0,0,0.35)); }"
+            "</style>"
+        )
     ui.run_javascript(
         """
         if (!window._wtHierClick) {
