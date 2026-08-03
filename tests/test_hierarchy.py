@@ -7,6 +7,7 @@ from src.pages.hierarchy import (
     _descendants,
     _sanitize_label,
     build_mermaid,
+    default_focus_id,
     focus_options,
 )
 
@@ -143,6 +144,25 @@ def test_focus_on_feature_shows_feature_and_below():
     code = build_mermaid(_two_epic_tree(), "A", focus_id=2)
     assert "n2[" in code and "n3[" in code
     assert "n1[" not in code and "n10[" not in code
+
+
+def test_default_focus_small_tree_is_whole():
+    # 5 nodes, well under the threshold -> open whole (None).
+    assert default_focus_id(_two_epic_tree(), "A", threshold=60) is None
+
+
+def test_default_focus_large_tree_picks_first_epic():
+    rows = [
+        {"customer_name": "A", "type": "Epic", "id": 1, "title": "E1", "state": "Active", "parent_id": None},
+        {"customer_name": "A", "type": "Epic", "id": 2, "title": "E2", "state": "Active", "parent_id": None},
+    ]
+    # pad with many user stories so the tree exceeds the threshold
+    rows += [
+        {"customer_name": "A", "type": "User Story", "id": 100 + i, "title": f"US{i}",
+         "state": "Active", "parent_id": 1}
+        for i in range(10)
+    ]
+    assert default_focus_id(_df(rows), "A", threshold=5) == 1  # first (lowest-id) Epic
 
 
 def test_focus_options_lists_epics_and_features_only():

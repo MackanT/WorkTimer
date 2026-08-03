@@ -141,6 +141,23 @@ def build_mermaid(
     return "\n".join(lines)
 
 
+def default_focus_id(
+    df: pd.DataFrame, customer: str, include_closed: bool = False, threshold: int = 60
+) -> int | None:
+    """For a large tree, open focused on the first Epic instead of the whole
+    scatter of every node. Small trees (<= threshold nodes) open whole (None).
+    """
+    if df is None or df.empty or not customer:
+        return None
+    sub = _filtered(df, customer, include_closed)
+    if len(sub) <= threshold:
+        return None
+    epics = sub[sub["type"] == "Epic"].sort_values("id")
+    if epics.empty:
+        return None
+    return int(epics.iloc[0]["id"])
+
+
 def focus_options(df: pd.DataFrame, customer: str, include_closed: bool = False) -> dict:
     """Options for the Focus selector: {value: label}, Epics then Features.
 
@@ -181,6 +198,12 @@ async def hierarchy_page():
         "zoom": 1.0,
         "direction": "TD",
     }
+    # Large trees would otherwise open as an unreadable 170-node scatter — start
+    # focused on the first Epic (a tight, complete subtree).
+    if DO is not None and DO.df is not None and state["customer"]:
+        state["focus_id"] = default_focus_id(
+            DO.df, state["customer"], state["show_closed"]
+        )
 
     def _apply_zoom():
         # CSS `zoom` scales the graph AND its layout box, so the scroll viewport
@@ -231,8 +254,12 @@ async def hierarchy_page():
             if (DO is not None and DO.df is not None and state["customer"])
             else {"": "Whole tree"}
         )
+        value = "" if state["focus_id"] is None else str(state["focus_id"])
+        if value not in opts:  # focused item no longer available (e.g. closed)
+            value = ""
+            state["focus_id"] = None
         sel = (
-            ui.select(opts, value="", label="Focus", with_input=True)
+            ui.select(opts, value=value, label="Focus", with_input=True)
             .props("dense outlined")
             .classes("w-64 shrink-0")
         )
@@ -262,7 +289,12 @@ async def hierarchy_page():
 
                 def _on_customer_change(e):
                     state["customer"] = e.value
-                    state["focus_id"] = None  # focus options are per-customer
+                    # Re-apply the large-tree default focus for the new customer.
+                    state["focus_id"] = (
+                        default_focus_id(DO.df, e.value, state["show_closed"])
+                        if (DO is not None and DO.df is not None)
+                        else None
+                    )
                     render_focus_select.refresh()
                     render_graph.refresh()
 
@@ -276,7 +308,8 @@ async def hierarchy_page():
 
             def _on_show_closed(e):
                 state["show_closed"] = e.value
-                state["focus_id"] = None
+                # Keep the current focus (render_focus_select drops it if it's
+                # no longer an available option).
                 render_focus_select.refresh()
                 render_graph.refresh()
 
