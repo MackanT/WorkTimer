@@ -8,6 +8,9 @@ A modern web-based time tracking application with built-in task management and A
 
 ## Changelog
 ### 5.0.3 (2026-xx-xx)
+- **Features**
+  - ad delete option for tasks (delete button in the task update panel, with confirmation)
+  - ad auto re-initialize devops when a customer's pat token / org url is added or changed (no app restart needed)
 - **Major changes**
   - fx run all azure devops api-calls in worker threads - ui no longer freezes during syncs, board dialogs or form saves
   - rf remove dead scaffolding code (broken services, unused engines, events and devops methods)

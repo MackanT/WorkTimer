@@ -130,6 +130,22 @@ def test_insert_task_returns_three_tuple(db):
     assert isinstance(task, dict) and task["title"] == "Test task"
 
 
+def test_delete_task_removes_it(db):
+    _, _, task = db.insert_task(title="ToDelete")
+    tid = task["task_id"]
+    ok, _msg = db.delete_task(tid)
+    assert ok is True
+    remaining = db.fetch_query(
+        "select count(*) c from tasks where task_id = ?", (tid,)
+    )
+    assert int(remaining.iloc[0]["c"]) == 0
+
+
+def test_delete_missing_task_reports_failure(db):
+    ok, _msg = db.delete_task(999999)
+    assert ok is False
+
+
 # ── Backdated bonus uses the entry date, not today (§7.6) ────────────────────
 
 

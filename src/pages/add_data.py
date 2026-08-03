@@ -151,11 +151,18 @@ async def render_entity_form(
     dynamic_widgets = []
     parent_map = {}
 
-    async def on_submit():  ## TODO somewhere here detect if DevOps was updated and trigger re-init if so (could also be done via event bus) core.force_devops_reinit()
+    async def on_submit():
         required_fields = [f["name"] for f in fields if not f.get("optional", False)]
         if not helpers.check_input(widgets, required_fields):
             return
         kwargs = {name: widget.value for name, widget in widgets.items()}
+        # Snapshot before the values get cleared below — used to decide whether
+        # this customer change touched DevOps credentials (see re-init at the end).
+        devops_touched = entity_type == "customer" and (
+            operation in ("disable", "reenable")
+            or bool(kwargs.get("pat_token"))
+            or bool(kwargs.get("org_url"))
+        )
         try:
             await core.query_engine.function_db(action["function"], **kwargs)
             msg_1, msg_2 = helpers.print_success(
@@ -185,6 +192,16 @@ async def render_entity_form(
                                 f"Error refreshing {entity_type}.{op}: {e}"
                             )
             core.event_bus.emit("ui_refresh_requested")
+
+            # A customer's DevOps credentials (or active state) changed — rebuild
+            # the DevOps engine so the board/work-item forms pick it up without an
+            # app restart. force_devops_reinit() bypasses the retry cooldown and
+            # re-inits in the background.
+            if devops_touched:
+                core.logger.info(
+                    f"Customer DevOps config changed ({operation}) — re-initializing DevOps"
+                )
+                core.force_devops_reinit()
         except Exception as e:
             core.logger.error(f"Error in {operation} {entity_type}: {e}")
             ui.notify(f"Error: {e}", type="negative")

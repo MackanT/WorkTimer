@@ -1022,8 +1022,9 @@ async def render_add_form(core: AppCore, refresh_callback):
 
 
 async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
-    """Render the Update Task form"""
+    """Render the Update Task form (also hosts Delete for the selected task)."""
     update_button = None
+    delete_button = None
 
     with entity_card_shell(constrain_width=False):
         with entity_card_header():
@@ -1033,6 +1034,11 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
                 ui.label("Update Task").classes("text-h6")
                 ui.space()
                 update_button = ui.button(icon="save").props("color=primary disabled")
+                delete_button = (
+                    ui.button(icon="delete")
+                    .props("color=negative flat disabled")
+                    .tooltip("Delete the selected task")
+                )
 
         with entity_card_content():
 
@@ -1160,5 +1166,50 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
                     core.logger.error(f"Error updating task: {e}")
                     ui.notify(f"Error: {e}", type="negative")
 
+            async def handle_delete():
+                selector = form_widgets.get(main_param)
+                if not selector or not selector.value:
+                    ui.notify("Please select a task", type="warning")
+                    return
+                task_id = extract_task_id(selector.value)
+                if not task_id:
+                    return
+
+                # Confirm — deleting a task removes it permanently.
+                with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
+                    ui.label(f"Delete '{selector.value}'?").classes(
+                        "text-sm font-semibold"
+                    )
+                    ui.label("This permanently removes the task.").classes(
+                        UI_STYLES.get_layout_classes("muted_text_xs")
+                    )
+                    with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                        ui.button(
+                            "Cancel", on_click=lambda: confirm_dlg.submit(False)
+                        ).props("flat")
+                        ui.button(
+                            "Delete", on_click=lambda: confirm_dlg.submit(True)
+                        ).props("color=negative")
+                if not await confirm_dlg:
+                    return
+
+                try:
+                    success, msg = await core.query_engine.function_db(
+                        "delete_task", task_id
+                    )
+                    if success:
+                        ui.notify("Task deleted", type="positive")
+                        if inspect.iscoroutinefunction(refresh_callback):
+                            await refresh_callback()
+                        else:
+                            refresh_callback()
+                    else:
+                        ui.notify(msg or "Failed to delete task", type="negative")
+                except Exception as e:
+                    core.logger.error(f"Error deleting task: {e}")
+                    ui.notify(f"Error: {e}", type="negative")
+
             update_button.on("click", handle_update)
             update_button.props(remove="disabled")
+            delete_button.on("click", handle_delete)
+            delete_button.props(remove="disabled")
