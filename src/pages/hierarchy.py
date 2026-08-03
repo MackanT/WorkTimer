@@ -362,10 +362,14 @@ async def hierarchy_page():
     if not app.storage.client.get("hier_click_registered"):
         app.storage.client["hier_click_registered"] = True
 
-        def _dispatch(e, cid=client.id):
-            handler = _hier_click_targets.get(cid)
+        async def _dispatch(e, target=client):
+            handler = _hier_click_targets.get(target.id)
             if handler:
-                asyncio.create_task(handler(int(e.args)))
+                # The event arrives with no UI slot on the stack, so creating the
+                # dialog would fail — enter the client context first (same pattern
+                # the EventBus uses for cross-thread UI).
+                with target:
+                    await handler(int(e.args))
 
         ui.on("hier_node_click", _dispatch)
         client.on_disconnect(

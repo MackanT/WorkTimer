@@ -385,8 +385,8 @@ async def render_devops_form(
         else:
             load_fn = devops_handlers_setup.setup_update_tab_handlers(widgets)
 
-        # Comments panel (update only) — the work item's discussion thread, read
-        # only. Shown in the board dialog and the hierarchy dialog alike.
+        # Comments panel (update only) — the work item's discussion thread.
+        # Shown in the board dialog and the hierarchy dialog alike.
         if operation == "update":
             ui.separator().classes("mt-3")
             ui.label("Comments").classes(
@@ -396,6 +396,42 @@ async def render_devops_form(
 
             async def _reload_comments(_e=None):
                 await _load_comments_into(core, widgets, comments_box)
+
+            # Add-comment row (reuses the same save_comment() the timer uses).
+            with ui.row().classes("w-full items-end gap-2 mt-1"):
+                new_comment = (
+                    ui.textarea(placeholder="Add a comment…")
+                    .props("outlined dense autogrow")
+                    .classes("flex-1")
+                )
+
+                async def _post_comment():
+                    text = (new_comment.value or "").strip()
+                    if not text:
+                        return
+                    wid_widget = widgets.get("work_item")
+                    cust_widget = widgets.get("customer_name")
+                    work_item_id = helpers.extract_devops_id(wid_widget.value) if wid_widget else None
+                    customer = cust_widget.value if cust_widget else None
+                    manager = getattr(core.devops_engine, "manager", None)
+                    if not (work_item_id and customer and manager):
+                        return
+                    ok, msg = await asyncio.to_thread(
+                        manager.save_comment,
+                        customer_name=customer,
+                        comment=text,
+                        git_id=int(work_item_id),
+                    )
+                    if ok:
+                        new_comment.value = ""
+                        ui.notify("Comment added", type="positive")
+                        await _reload_comments()
+                    else:
+                        ui.notify(f"Failed to add comment: {msg}", type="negative")
+
+                ui.button(icon="send", on_click=_post_comment).props(
+                    "dense color=primary"
+                ).tooltip("Add comment")
 
             work_item_widget = widgets.get("work_item")
             if work_item_widget:
