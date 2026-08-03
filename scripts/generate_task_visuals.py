@@ -170,18 +170,16 @@ def main():
         print("Error: Please run this script from the project root directory")
         return 1
 
-    # Database path
-    db_path = "worktimer.db"  # Default database name
+    # Database path — same resolution as the app: DB_NAME from .env, under data/
+    # (the old code read a config_settings.yml that no longer exists and then
+    # scanned a nonexistent worktimer.db in the repo root).
+    try:
+        from dotenv import load_dotenv
 
-    # Check for settings to get actual DB name
-    settings_path = "config/config_settings.yml"
-    if os.path.exists(settings_path):
-        try:
-            with open(settings_path, "r", encoding="utf-8") as f:
-                settings = yaml.safe_load(f)
-                db_path = settings.get("db_name", db_path)
-        except Exception:
-            pass
+        load_dotenv()
+    except ImportError:
+        pass
+    db_path = os.path.join("data", os.getenv("DB_NAME", "worktimer.db"))
 
     print(f"Scanning database: {db_path}")
 

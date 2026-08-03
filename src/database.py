@@ -8,14 +8,15 @@ from datetime import datetime, timedelta
 
 
 class Database:
-    db = None
     _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
     _QUERY_EDITABLE_TABLES = {"time", "customers", "projects"}
 
     def __init__(self, db_file: str, log_engine):
         self.conn = sqlite3.connect(db_file, check_same_thread=False)
+        # Each browser tab currently opens its own connection — wait for locks
+        # instead of failing instantly with "database is locked".
+        self.conn.execute("PRAGMA busy_timeout = 5000")
         self._conn_lock = threading.RLock()
-        Database.db = self
         self.log_engine = log_engine
 
     def _validate_identifier(self, identifier: str, label: str = "identifier") -> str:
@@ -65,67 +66,12 @@ class Database:
                 """)
                 self.log_engine.info("Table 'time' created successfully.")
 
-                ## Trigger for Time Table
-                self.execute_query("""
-                create trigger if not exists trigger_time_after_update
-                after update on time
-                for each row
-                begin
-                    update time
-                    set
-                        total_time = (julianday(new.end_time) - julianday(new.start_time)) * 24,
-                        cost = new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24),
-                        user_bonus = new.bonus * new.wage * ((julianday(new.end_time) - julianday(new.start_time)) * 24)
-                    where time_id = new.time_id;
-                end;
-                """)
-                self.log_engine.info(
-                    "Trigger 'trigger_time_after_update' created successfully."
-                )
-
-                # Single trigger for project_name after INSERT or UPDATE of project_id
-                self.execute_query("""
-                create trigger if not exists trigger_time_insert_row
-                after insert on time
-                for each row
-                begin
-                    update time
-                    set 
-                         project_name = (
-                            select project_name from projects where project_id = new.project_id
-                         )
-                        ,customer_name = (
-                            select customer_name from customers where customer_id = new.customer_id
-                        )
-                        ,wage = (
-                            select wage from customers where customer_id = new.customer_id
-                        )
-                        ,bonus = ifnull((
-                            select bonus_percent from bonus
-                                where current_date between start_date and ifnull(end_date, '2099-12-31')
-                        ), 0)
-                    where time_id = new.time_id;
-                end;
-                """)
-                self.execute_query("""
-                create trigger if not exists trigger_time_update_row
-                after update of project_id on time
-                for each row
-                begin
-                    update time
-                    set 
-                         project_name = (
-                            select project_name from projects where project_id = new.project_id
-                         )
-                        ,customer_name = (
-                            select customer_name from customers where customer_id = new.customer_id
-                         )
-                    where time_id = new.time_id;
-                end;
-                """)
-                self.log_engine.info(
-                    "Triggers for customer_name, project_name, wage and bonus created successfully."
-                )
+                ## Triggers for Time Table — single source of truth is
+                ## get_expected_schema(), so the DDL here can never drift from
+                ## what validate_and_migrate_schema() checks against.
+                for trigger_sql in self.get_expected_schema()["triggers"].values():
+                    self.execute_query(dedent(trigger_sql))
+                self.log_engine.info("Time triggers created successfully.")
 
             ## Customers Table
             if not self._table_exists("customers"):
@@ -199,6 +145,23 @@ class Database:
                     self.log_engine.info(
                         "Found blank Dates table, successfully populated it."
                     )
+                else:
+                    # Extend the horizon when it gets close — time entries after the
+                    # last date row silently vanish from weekly/monthly reports
+                    # (inner join on dates), so keep at least a year of headroom.
+                    max_date_df = self.fetch_query("select max(date) as max_date from dates")
+                    max_date = max_date_df.iloc[0]["max_date"]
+                    horizon = datetime.now() + timedelta(days=365)
+                    if max_date and datetime.strptime(max_date, "%Y-%m-%d") < horizon:
+                        next_day = datetime.strptime(max_date, "%Y-%m-%d") + timedelta(days=1)
+                        new_end = horizon + timedelta(days=4 * 365)
+                        self._add_dates(
+                            s_date=next_day.strftime("%Y-%m-%d"),
+                            e_date=new_end.strftime("%Y-%m-%d"),
+                        )
+                        self.log_engine.info(
+                            f"Extended Dates table from {max_date} to {new_end:%Y-%m-%d}."
+                        )
 
             ## Query Snippets table
             if not self._table_exists("queries"):
@@ -225,6 +188,8 @@ class Database:
                     )
 
             ## DevOps Table
+            ## (missing columns on existing DBs are handled by the schema
+            ## auto-migration below — the old inline "TEMP" migration is gone)
             if not self._table_exists("devops"):
                 self.execute_query("""
                 create table if not exists devops (
@@ -242,28 +207,6 @@ class Database:
                 )
                 """)
                 self.log_engine.info("Table 'devops' created successfully.")
-            else: ## TEMP Solution for now
-                # Migrate: add any missing columns introduced in later versions
-                existing_cols = [
-                    row[1]
-                    for row in self.conn.execute("PRAGMA table_info(devops)").fetchall()
-                ]
-                new_cols = [
-                    ("board_column", "TEXT"),
-                    ("board_column_done", "INTEGER"),
-                    ("assigned_to", "TEXT"),
-                    ("changed_date", "TEXT"),
-                    ("priority", "INTEGER"),
-                ]
-                for col_name, col_type in new_cols:
-                    if col_name not in existing_cols:
-                        self.conn.execute(
-                            f"ALTER TABLE devops ADD COLUMN {col_name} {col_type}"
-                        )
-                        self.log_engine.info(
-                            f"Migrated 'devops' table: added '{col_name}' column."
-                        )
-                self.conn.commit()
 
             ## Tasks table
             if not self._table_exists("tasks"):
@@ -296,21 +239,24 @@ class Database:
                     updated_at timestamp default current_timestamp,
                     completed_at timestamp,
                     created_by text,
-                    updated_by text,
-                    
-                    -- Foreign Keys
-                    foreign key (customer_name) references customers(customer_name),
-                    foreign key (project_name) references projects(project_name),
-                    foreign key (parent_task_id) references tasks(task_id)
+                    updated_by text
                 )
                 """)
+                # Note: no foreign keys — the old ones referenced non-unique
+                # columns (customer_name/project_name), which SQLite rejects
+                # with "foreign key mismatch" the moment PRAGMA foreign_keys=ON.
                 self.log_engine.info("Table 'tasks' created successfully.")
 
-        except Exception as e:
-            self.log_engine.error(f"Error initializing database: {e}")
-        finally:
+            # Auto-migrate existing databases: add columns introduced in later
+            # versions and (re)create missing or outdated triggers. Single
+            # source of truth is get_expected_schema().
+            self.validate_and_migrate_schema(auto_migrate=True)
+
             self.conn.commit()
             self.log_engine.info("Database loaded without errors!")
+        except Exception as e:
+            self.conn.commit()
+            self.log_engine.error(f"Error initializing database: {e}")
 
     def _table_exists(self, table_name: str) -> bool:
         """Return True if the given table exists in the database."""
@@ -563,19 +509,20 @@ class Database:
         start_iso = start_dt.strftime("%Y-%m-%d %H:%M:%S")
         end_iso = end_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-        cursor = self.conn.cursor()
-        # Step 1: INSERT — trigger fills customer_name, project_name, wage, bonus
-        cursor.execute(
-            "insert into time (customer_id, project_id, date_key, start_time, git_id, comment) values (?, ?, ?, ?, ?, ?)",
-            (customer_id, project_id, date_key, start_iso, git_id or 0, comment),
-        )
-        time_id = cursor.lastrowid
-        # Step 2: UPDATE end_time — trigger fills total_time, cost, user_bonus
-        cursor.execute(
-            "update time set end_time = ? where time_id = ?",
-            (end_iso, time_id),
-        )
-        self.conn.commit()
+        with self._conn_lock:
+            cursor = self.conn.cursor()
+            # Step 1: INSERT — trigger fills customer_name, project_name, wage, bonus
+            cursor.execute(
+                "insert into time (customer_id, project_id, date_key, start_time, git_id, comment) values (?, ?, ?, ?, ?, ?)",
+                (customer_id, project_id, date_key, start_iso, git_id or 0, comment),
+            )
+            time_id = cursor.lastrowid
+            # Step 2: UPDATE end_time — trigger fills total_time, cost, user_bonus
+            cursor.execute(
+                "update time set end_time = ? where time_id = ?",
+                (end_iso, time_id),
+            )
+            self.conn.commit()
 
         customer_name = self.get_customer_name(customer_id)
         project_name = self.get_project_name(project_id)
@@ -703,16 +650,20 @@ class Database:
         org_url: str = None,
         pat_token: str = None,
     ):
+        # None means "leave unchanged" — the old unconditional SET wiped
+        # org_url/pat_token whenever a caller omitted them. Pass "" to clear.
+        set_clauses = ["customer_name = ?"]
+        params = [new_customer_name]
+        if org_url is not None:
+            set_clauses.append("org_url = ?")
+            params.append(org_url)
+        if pat_token is not None:
+            set_clauses.append("pat_token = ?")
+            params.append(pat_token)
+        params.append(customer_name)
         self.execute_query(
-            """
-            update customers
-            set
-                customer_name = ?,
-                org_url = ?,
-                pat_token = ?
-            where customer_name = ?
-        """,
-            (new_customer_name, org_url, pat_token, customer_name),
+            f"update customers set {', '.join(set_clauses)} where customer_name = ?",
+            tuple(params),
         )
 
         self.execute_query(
@@ -808,17 +759,23 @@ class Database:
         new_project_name: str,
         new_git_id: int = None,
     ):
+        # None means "leave git_id unchanged" (pass 0 to clear) — the old
+        # unconditional SET wiped it whenever a caller omitted the argument.
+        set_clauses = ["project_name = ?"]
+        params = [new_project_name]
+        if new_git_id is not None:
+            set_clauses.append("git_id = ?")
+            params.append(new_git_id)
+        params.extend([project_name, customer_name])
         self.execute_query(
-            """
+            f"""
             update projects
-            set
-                project_name = ?,
-                git_id = ?
+            set {", ".join(set_clauses)}
             where project_name = ? and customer_id = (
                 select customer_id from customers where customer_name = ? and is_current = 1
             )
         """,
-            (new_project_name, new_git_id, project_name, customer_name),
+            tuple(params),
         )
 
         self.execute_query(
@@ -902,31 +859,32 @@ class Database:
         """Insert a new task into the database"""
         try:
             # Insert task and get the new task_id
-            cursor = self.conn.cursor()
-            cursor.execute(
-                """
-                insert into tasks (
-                    title, description, status, priority, assigned_to,
-                    customer_name, project_name, due_date, estimated_hours,
-                    tags, created_by, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
-                """,
-                (
-                    title,
-                    description,
-                    status,
-                    priority,
-                    assigned_to,
-                    customer_name,
-                    project_name,
-                    due_date,
-                    estimated_hours,
-                    tags,
-                    created_by,
-                ),
-            )
-            task_id = cursor.lastrowid
-            self.conn.commit()
+            with self._conn_lock:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    """
+                    insert into tasks (
+                        title, description, status, priority, assigned_to,
+                        customer_name, project_name, due_date, estimated_hours,
+                        tags, created_by, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+                    """,
+                    (
+                        title,
+                        description,
+                        status,
+                        priority,
+                        assigned_to,
+                        customer_name,
+                        project_name,
+                        due_date,
+                        estimated_hours,
+                        tags,
+                        created_by,
+                    ),
+                )
+                task_id = cursor.lastrowid
+                self.conn.commit()
 
             # Get the complete created task data
             task_data = self.fetch_query(
@@ -1155,40 +1113,33 @@ class Database:
             )
             return
 
-        if mode == "replace":
-            self.log_engine.info(f"Replacing devops table with {len(df)} records")
-            df.to_sql("devops", self.conn, if_exists="replace", index=False)
-        elif mode == "append":
-            self.log_engine.info(f"Appending {len(df)} new devops records")
-            df.to_sql("devops", self.conn, if_exists="append", index=False)
-        elif mode == "merge":
-            self.log_engine.info(f"Merging {len(df)} devops records")
-            cursor = self.conn.cursor()
-            for _, row in df.iterrows():
-                cursor.execute(
+        with self._conn_lock:
+            if mode == "replace":
+                self.log_engine.info(f"Replacing devops table with {len(df)} records")
+                df.to_sql("devops", self.conn, if_exists="replace", index=False)
+            elif mode == "append":
+                self.log_engine.info(f"Appending {len(df)} new devops records")
+                df.to_sql("devops", self.conn, if_exists="append", index=False)
+            elif mode == "merge":
+                self.log_engine.info(f"Merging {len(df)} devops records")
+                self.conn.cursor().executemany(
                     "delete from devops where customer_name = ? and id = ?",
-                    (row["customer_name"], row["id"]),
+                    [(row["customer_name"], row["id"]) for _, row in df.iterrows()],
                 )
-            # Append the new/updated records
-            df.to_sql("devops", self.conn, if_exists="append", index=False)
+                # Append the new/updated records
+                df.to_sql("devops", self.conn, if_exists="append", index=False)
 
-        self.conn.commit()
+            self.conn.commit()
 
-    def update_devops_board_column(self, work_item_id: int, board_column: str):
-        """Update the cached board_column for a single work item.
-
-        Called after a successful drag-and-drop move so the local cache stays
-        in sync without waiting for the next full/incremental DevOps sync.
-        """
-        self.update_devops_item_fields(work_item_id, {"board_column": board_column, "board_column_done": 0})
-
-    def update_devops_item_fields(self, work_item_id: int, fields: dict):
+    def update_devops_item_fields(self, work_item_id: int, fields: dict, customer_name: str = None):
         """Update specific fields for a cached devops work item (write-through cache).
 
         Called immediately after a successful API update so the local cache
         reflects the new state without waiting for the next sync.
 
         Only columns in the allowed set are written to prevent SQL injection.
+        Pass customer_name whenever available — work item IDs are only unique
+        per organization, so an unscoped update can hit another customer's row.
         """
         if not fields:
             return
@@ -1197,12 +1148,17 @@ class Database:
         if not safe_fields:
             return
         set_clauses = ", ".join(f"{col} = ?" for col in safe_fields)
+        where_clause = "id = ?"
         values = list(safe_fields.values()) + [work_item_id]
-        self.conn.execute(
-            f"UPDATE devops SET {set_clauses} WHERE id = ?",
-            values,
-        )
-        self.conn.commit()
+        if customer_name:
+            where_clause += " AND customer_name = ?"
+            values.append(customer_name)
+        with self._conn_lock:
+            self.conn.execute(
+                f"UPDATE devops SET {set_clauses} WHERE {where_clause}",
+                values,
+            )
+            self.conn.commit()
         self.log_engine.info(
             f"Write-through cache update for work item {work_item_id}: {list(safe_fields.keys())}"
         )
@@ -1462,7 +1418,7 @@ class Database:
                     for each row
                     begin
                         update time
-                        set 
+                        set
                              project_name = (
                                 select project_name from projects where project_id = new.project_id
                              )
@@ -1474,7 +1430,7 @@ class Database:
                             )
                             ,bonus = ifnull((
                                 select bonus_percent from bonus
-                                    where current_date between start_date and ifnull(end_date, '2099-12-31')
+                                    where date(new.start_time) between start_date and ifnull(end_date, '2099-12-31')
                             ), 0)
                         where time_id = new.time_id;
                     end;
@@ -1516,6 +1472,7 @@ class Database:
         results = {
             "missing_columns": [],
             "missing_triggers": [],
+            "outdated_triggers": [],
             "applied_migrations": [],
             "errors": [],
         }
@@ -1587,17 +1544,29 @@ class Database:
                                 self.log_engine.error(error_msg)
                                 results["errors"].append(error_msg)
 
-            # Validate triggers
-            cursor.execute("select name from sqlite_master where type='trigger'")
-            existing_triggers = {row[0] for row in cursor.fetchall()}
+            # Validate triggers — creates missing ones and recreates outdated
+            # ones (compared by whitespace/case-normalized SQL), so trigger
+            # fixes in get_expected_schema() reach existing databases too.
+            cursor.execute("select name, sql from sqlite_master where type='trigger'")
+            existing_triggers = {row[0]: row[1] or "" for row in cursor.fetchall()}
+
+            def _norm_sql(sql: str) -> str:
+                # sqlite_master stores the statement with normalized keyword
+                # casing, WITHOUT "if not exists", and without the trailing
+                # semicolon — normalize both sides the same way.
+                normalized = " ".join(sql.lower().split()).rstrip(";")
+                return normalized.replace(
+                    "create trigger if not exists ", "create trigger "
+                )
 
             for trigger_name, trigger_sql in expected_triggers.items():
+                expected_exec = dedent(trigger_sql)
                 if trigger_name not in existing_triggers:
                     results["missing_triggers"].append(trigger_name)
 
                     if auto_migrate:
                         try:
-                            self.execute_query(dedent(trigger_sql))
+                            self.execute_query(expected_exec)
                             self.log_engine.info(f"Created trigger '{trigger_name}'")
                             results["applied_migrations"].append(
                                 {"trigger": trigger_name, "action": "created"}
@@ -1608,13 +1577,32 @@ class Database:
                             )
                             self.log_engine.error(error_msg)
                             results["errors"].append(error_msg)
+                elif _norm_sql(existing_triggers[trigger_name]) != _norm_sql(expected_exec):
+                    results["outdated_triggers"].append(trigger_name)
+
+                    if auto_migrate:
+                        try:
+                            self.execute_query(f"drop trigger if exists {trigger_name}")
+                            self.execute_query(expected_exec)
+                            self.log_engine.info(f"Recreated outdated trigger '{trigger_name}'")
+                            results["applied_migrations"].append(
+                                {"trigger": trigger_name, "action": "recreated"}
+                            )
+                        except Exception as e:
+                            error_msg = (
+                                f"Failed to recreate trigger '{trigger_name}': {e}"
+                            )
+                            self.log_engine.error(error_msg)
+                            results["errors"].append(error_msg)
 
             if auto_migrate:
                 self.conn.commit()
 
             # Log summary
-            total_issues = len(results["missing_columns"]) + len(
-                results["missing_triggers"]
+            total_issues = (
+                len(results["missing_columns"])
+                + len(results["missing_triggers"])
+                + len(results["outdated_triggers"])
             )
             if total_issues > 0:
                 if auto_migrate:

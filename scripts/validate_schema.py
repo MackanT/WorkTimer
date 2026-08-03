@@ -15,6 +15,7 @@ Usage:
     python scripts/validate_schema.py --db path/to/database.db --migrate
 """
 
+import os
 import sys
 import argparse
 import logging
@@ -25,6 +26,13 @@ src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
 from database import Database
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
 
 
 class SimpleLogger:
@@ -61,8 +69,8 @@ def main():
     parser.add_argument(
         "--db",
         type=str,
-        default="data/worktimer.db",
-        help="Path to database file (default: data/worktimer.db)",
+        default=os.path.join("data", os.getenv("DB_NAME", "worktimer.db")),
+        help="Path to database file (default: data/<DB_NAME from .env>)",
     )
     parser.add_argument(
         "--migrate",
@@ -127,18 +135,27 @@ def main():
                     f"({missing['type']}, default={missing['default']})"
                 )
 
-    if results["missing_triggers"]:
+    if results["missing_triggers"] or results.get("outdated_triggers"):
         if args.migrate:
             print("\nTRIGGER MIGRATIONS APPLIED:")
             for migration in results["applied_migrations"]:
                 if "trigger" in migration:
-                    print(f"  ✓ created: {migration['trigger']}")
+                    print(f"  ✓ {migration['action']}: {migration['trigger']}")
         else:
-            print("\nMISSING TRIGGERS (dry run - not applied):")
-            for trigger in results["missing_triggers"]:
-                print(f"  • {trigger}")
+            if results["missing_triggers"]:
+                print("\nMISSING TRIGGERS (dry run - not applied):")
+                for trigger in results["missing_triggers"]:
+                    print(f"  • {trigger}")
+            if results.get("outdated_triggers"):
+                print("\nOUTDATED TRIGGERS (dry run - not recreated):")
+                for trigger in results["outdated_triggers"]:
+                    print(f"  • {trigger}")
 
-    if not results["missing_columns"] and not results["missing_triggers"]:
+    if (
+        not results["missing_columns"]
+        and not results["missing_triggers"]
+        and not results.get("outdated_triggers")
+    ):
         print("✓ Schema validation passed - database is up to date!")
     elif not args.migrate:
         print("\nRun with --migrate to apply these changes")
@@ -147,7 +164,11 @@ def main():
     print("=" * 70)
 
     # Summary
-    total_issues = len(results["missing_columns"]) + len(results["missing_triggers"])
+    total_issues = (
+        len(results["missing_columns"])
+        + len(results["missing_triggers"])
+        + len(results.get("outdated_triggers", []))
+    )
     if results["errors"]:
         print(f"Status: FAILED with {len(results['errors'])} errors")
         return 1
