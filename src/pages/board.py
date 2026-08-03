@@ -14,7 +14,7 @@ from ..core.app import AppCore
 from .. import helpers
 from ..ui.elements import toolbar
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
-from ..ui.devops_forms import render_devops_form
+from ..ui.devops_forms import open_work_item_dialog, render_devops_form
 
 
 _BOARD_CSS = """<style>
@@ -286,123 +286,14 @@ async def board_page():
 
     # ── click-to-edit dialog (full update form) ──────────────────────────────────
     async def _on_card_click(row: dict):
-        """Open the full DevOps update form in a dialog."""
-        item_id = int(row.get("id", 0))
-        item_type = str(row.get("type", "User Story"))
-        title = str(row.get("title", ""))
-        customer = str(row.get("customer_name", ""))
-        priority_val = row.get("priority")
-        display_name = f"{item_type}: {item_id} - {title}"
+        """Open the full DevOps update dialog for the clicked card."""
+        async def _after():
+            await _reload_board_data(show_notify=False)
 
-        update_cfg = (
-            core.ui_config
-            .get("board_devops_forms", {})
-            .get("update", {})
+        await open_work_item_dialog(
+            core, row, on_success=_after,
+            priority_colors=PRIORITY_COLORS, priority_labels=PRIORITY_LABELS,
         )
-
-        with ui.dialog().props("maximized") as dlg:
-            with (
-                ui.card()
-                .style(DIALOG_CARD_STYLE)
-                .props("flat bordered")
-            ):
-                form_actions: dict = {"submit": None}
-
-                dirty_state: dict = {"is_dirty": False, "programmatic": True}
-
-                def _mark_dirty(_e=None):
-                    if not dirty_state["programmatic"]:
-                        dirty_state["is_dirty"] = True
-
-                def _confirm_discard_or_close():
-                    if not dirty_state["is_dirty"]:
-                        dlg.close()
-                        return
-                    with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
-                        ui.label("Discard unsaved changes?").classes("text-sm font-semibold")
-                        ui.label("Your edits in this work item will be lost.").classes("text-xs text-grey-5")
-                        with ui.row().classes("w-full justify-end gap-2 mt-2"):
-                            ui.button("Keep editing", on_click=confirm_dlg.close).props("flat")
-                            def _discard():
-                                confirm_dlg.close()
-                                dlg.close()
-                            ui.button("Discard", on_click=_discard).props("color=negative")
-                    confirm_dlg.open()
-
-                async def _submit_from_header():
-                    submit_fn = form_actions.get("submit")
-                    if submit_fn:
-                        await submit_fn()
-
-                # ── Item header: shows which item we’re editing ────────────────
-                p_color = PRIORITY_COLORS.get(priority_val, "grey-4")
-                p_label = PRIORITY_LABELS.get(priority_val, "")
-                with ui.row().classes("items-center gap-2 no-wrap w-full").style(
-                    "padding: 0.6rem 0.8rem; flex-shrink: 0;"
-                ):
-                    if priority_val:
-                        ui.icon("circle", size="12px").classes(
-                            f"text-{p_color} shrink-0"
-                        ).tooltip(f"Priority: {p_label}")
-                    ui.label(f"#{item_id}").classes("text-grey-5 text-xs shrink-0")
-                    ui.label("·").classes("text-grey-5 text-xs shrink-0")
-                    ui.label(item_type).classes("text-grey-5 text-xs shrink-0")
-                    ui.label(title).classes("text-sm font-semibold flex-1").style(
-                        "overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-                    )
-                    ui.badge(customer).props("color=primary outline rounded").classes("text-xs shrink-0")
-                    ui.space()
-                    ui.button("Update", icon="save", on_click=_submit_from_header).props("dense color=primary")
-                    ui.button("Cancel", icon="close", on_click=_confirm_discard_or_close).props("flat dense color=grey-6")
-                ui.separator()
-
-                # Show lightweight skeleton while form/options/description are hydrating.
-                loading_box = ui.column().classes("w-full gap-2").style("padding: 0.75rem;")
-                with loading_box:
-                    ui.skeleton("text", width="35%")
-                    ui.skeleton("rect", width="100%", height="52px")
-                    ui.skeleton("rect", width="100%", height="52px")
-                    ui.skeleton("rect", width="100%", height="52px")
-                    ui.skeleton("rect", width="100%", height="220px")
-
-                # Open first so the user sees immediate feedback, then hydrate the form.
-                dlg.open()
-                await asyncio.sleep(0)
-
-                async def _on_update_success():
-                    dlg.close()
-                    await _reload_board_data(show_notify=False)
-
-                result = await render_devops_form(
-                    core, "update", update_cfg,
-                    on_success=_on_update_success,
-                    hidden_field_names={"customer_name", "work_item", "current_column", "board_column"},
-                    show_internal_header=False,
-                )
-
-                _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
-                form_actions["submit"] = submit_fn
-
-                if widgets:
-                    if "customer_name" in widgets:
-                        widgets["customer_name"].widget.value = customer
-                        widgets["customer_name"].widget.update()
-                    if "work_item" in widgets:
-                        await widgets["work_item"].refresh()
-                        widgets["work_item"].widget.value = display_name
-                        widgets["work_item"].widget.update()
-                    if load_fn:
-                        await load_fn(None)
-
-                    # Start tracking user edits after programmatic prefill is complete.
-                    dirty_state["programmatic"] = False
-                    watch_fields = ["state", "assigned_to", "priority", "description_editor"]
-                    for field_name in watch_fields:
-                        w = widgets.get(field_name)
-                        if w:
-                            w.on_value_change(_mark_dirty)
-
-                loading_box.clear()
 
     # ── add-item dialog (full add form) ───────────────────────────────────────
     async def _open_add_dialog():

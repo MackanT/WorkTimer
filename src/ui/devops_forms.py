@@ -15,6 +15,151 @@ from ..ui.dynamic_widgets import WIDGET_CLASSES
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
 
 
+_DIALOG_CARD_STYLE = (
+    "margin: 2rem auto; width: calc(100% - 4rem); max-width: 980px;"
+    "max-height: calc(100vh - 4rem); overflow-y: auto;"
+)
+_PRIORITY_COLORS = {1: "red-5", 2: "orange-4", 3: "blue-4", 4: "grey-4"}
+_PRIORITY_LABELS = {1: "Critical", 2: "High", 3: "Medium", 4: "Low"}
+
+
+async def open_work_item_dialog(
+    core,
+    row: dict,
+    on_success=None,
+    priority_colors: dict | None = None,
+    priority_labels: dict | None = None,
+):
+    """Open the full DevOps work-item update dialog for a single item.
+
+    Shared by the board (card click) and the hierarchy (node click). Shows the
+    editable fields, the description and the comments thread, plus an
+    "Open in DevOps" link. `on_success` (async, optional) runs after a save.
+    """
+    priority_colors = priority_colors or _PRIORITY_COLORS
+    priority_labels = priority_labels or _PRIORITY_LABELS
+
+    item_id = int(row.get("id", 0))
+    item_type = str(row.get("type", "User Story"))
+    title = str(row.get("title", ""))
+    customer = str(row.get("customer_name", ""))
+    priority_val = row.get("priority")
+    display_name = f"{item_type}: {item_id} - {title}"
+    update_cfg = core.ui_config.get("board_devops_forms", {}).get("update", {})
+
+    def _open_in_devops():
+        manager = getattr(core.devops_engine, "manager", None)
+        url = manager.get_work_item_url(customer, item_id) if manager else None
+        if url:
+            ui.navigate.to(url, new_tab=True)
+        else:
+            ui.notify("Could not build the Azure DevOps URL", type="warning")
+
+    with ui.dialog().props("maximized") as dlg:
+        with ui.card().style(_DIALOG_CARD_STYLE).props("flat bordered"):
+            form_actions: dict = {"submit": None}
+            dirty_state: dict = {"is_dirty": False, "programmatic": True}
+
+            def _mark_dirty(_e=None):
+                if not dirty_state["programmatic"]:
+                    dirty_state["is_dirty"] = True
+
+            def _confirm_discard_or_close():
+                if not dirty_state["is_dirty"]:
+                    dlg.close()
+                    return
+                with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
+                    ui.label("Discard unsaved changes?").classes("text-sm font-semibold")
+                    ui.label("Your edits in this work item will be lost.").classes(
+                        "text-xs text-grey-5"
+                    )
+                    with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                        ui.button("Keep editing", on_click=confirm_dlg.close).props("flat")
+
+                        def _discard():
+                            confirm_dlg.close()
+                            dlg.close()
+
+                        ui.button("Discard", on_click=_discard).props("color=negative")
+                confirm_dlg.open()
+
+            async def _submit_from_header():
+                submit_fn = form_actions.get("submit")
+                if submit_fn:
+                    await submit_fn()
+
+            # ── header ────────────────────────────────────────────────────────
+            p_color = priority_colors.get(priority_val, "grey-4")
+            p_label = priority_labels.get(priority_val, "")
+            with ui.row().classes("items-center gap-2 no-wrap w-full").style(
+                "padding: 0.6rem 0.8rem; flex-shrink: 0;"
+            ):
+                if priority_val:
+                    ui.icon("circle", size="12px").classes(
+                        f"text-{p_color} shrink-0"
+                    ).tooltip(f"Priority: {p_label}")
+                ui.label(f"#{item_id}").classes("text-grey-5 text-xs shrink-0")
+                ui.label("·").classes("text-grey-5 text-xs shrink-0")
+                ui.label(item_type).classes("text-grey-5 text-xs shrink-0")
+                ui.label(title).classes("text-sm font-semibold flex-1").style(
+                    "overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                )
+                ui.badge(customer).props("color=primary outline rounded").classes("text-xs shrink-0")
+                ui.space()
+                ui.button(icon="open_in_new", on_click=_open_in_devops).props(
+                    "flat dense color=primary"
+                ).tooltip("Open in Azure DevOps")
+                ui.button("Update", icon="save", on_click=_submit_from_header).props("dense color=primary")
+                ui.button("Cancel", icon="close", on_click=_confirm_discard_or_close).props(
+                    "flat dense color=grey-6"
+                )
+            ui.separator()
+
+            loading_box = ui.column().classes("w-full gap-2").style("padding: 0.75rem;")
+            with loading_box:
+                ui.skeleton("text", width="35%")
+                for _ in range(3):
+                    ui.skeleton("rect", width="100%", height="52px")
+                ui.skeleton("rect", width="100%", height="220px")
+
+            dlg.open()
+            await asyncio.sleep(0)
+
+            async def _on_update_success():
+                dlg.close()
+                if on_success:
+                    await on_success()
+
+            result = await render_devops_form(
+                core, "update", update_cfg,
+                on_success=_on_update_success,
+                hidden_field_names={"customer_name", "work_item", "current_column", "board_column"},
+                show_internal_header=False,
+            )
+
+            _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
+            form_actions["submit"] = submit_fn
+
+            if widgets:
+                if "customer_name" in widgets:
+                    widgets["customer_name"].widget.value = customer
+                    widgets["customer_name"].widget.update()
+                if "work_item" in widgets:
+                    await widgets["work_item"].refresh()
+                    widgets["work_item"].widget.value = display_name
+                    widgets["work_item"].widget.update()
+                if load_fn:
+                    await load_fn(None)
+
+                dirty_state["programmatic"] = False
+                for field_name in ("state", "assigned_to", "priority", "description_editor"):
+                    w = widgets.get(field_name)
+                    if w:
+                        w.on_value_change(_mark_dirty)
+
+            loading_box.clear()
+
+
 def _render_comment(comment: dict) -> None:
     """Render one Azure DevOps comment (author/date header + body)."""
     with ui.card().props("flat bordered").classes("w-full"):

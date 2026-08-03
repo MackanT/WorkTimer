@@ -7,15 +7,22 @@ renders at natural size in a scrollable viewport) and a Focus selector to drill
 into a single Epic or Feature's subtree.
 """
 
+import asyncio
 import re
 from collections import deque
 
 import pandas as pd
-from nicegui import ui
+from nicegui import app, ui
 
 from ..core.app import AppCore
 from ..helpers import UI_STYLES
+from ..ui.devops_forms import open_work_item_dialog
 from ..ui.elements import page_card, toolbar
+
+# Per-client node-click handler, keyed by client id. A module dict (not
+# app.storage.client, which copies) so the JS-emitted click routes to the
+# current page render; cleaned up on disconnect.
+_hier_click_targets: dict = {}
 
 _TERMINAL_STATES = {"Closed", "Removed"}
 _TYPE_CLASS = {"Epic": "epic", "Feature": "feature", "User Story": "story"}
@@ -281,6 +288,39 @@ async def hierarchy_page():
 
         sel.on_value_change(_on_focus)
 
+    # ── node click → work-item dialog ─────────────────────────────────────────
+    async def _open_item_dialog(item_id: int):
+        if DO is None or DO.df is None:
+            return
+        match = DO.df[
+            (DO.df["id"] == item_id) & (DO.df["customer_name"] == state["customer"])
+        ]
+        if match.empty:
+            return
+        row = match.iloc[0].to_dict()
+
+        async def _after():
+            await DO.load_df()
+            render_focus_select.refresh()
+            render_graph.refresh()
+
+        await open_work_item_dialog(core, row, on_success=_after)
+
+    client = ui.context.client
+    _hier_click_targets[client.id] = _open_item_dialog
+    if not app.storage.client.get("hier_click_registered"):
+        app.storage.client["hier_click_registered"] = True
+
+        def _dispatch(e, cid=client.id):
+            handler = _hier_click_targets.get(cid)
+            if handler:
+                asyncio.create_task(handler(int(e.args)))
+
+        ui.on("hier_node_click", _dispatch)
+        client.on_disconnect(
+            lambda cid=client.id: _hier_click_targets.pop(cid, None)
+        )
+
     # ── toolbar ──────────────────────────────────────────────────────────────
     with toolbar(core.theme):
         with ui.row().classes("items-center gap-3 w-full flex-nowrap"):
@@ -383,3 +423,24 @@ async def hierarchy_page():
             "flex: 1; min-height: 0; overflow: auto;"
         ):
             render_graph()
+
+    # Make nodes look clickable, and forward node clicks to Python. The listener
+    # is delegated on document (survives graph re-renders) and idempotent via a
+    # window flag; it reads the work-item id from the Mermaid node's element id.
+    if not app.storage.client.get("hier_css_injected"):
+        app.storage.client["hier_css_injected"] = True
+        ui.add_head_html("<style>.wt-hier-graph .node { cursor: pointer; }</style>")
+    ui.run_javascript(
+        """
+        if (!window._wtHierClick) {
+            window._wtHierClick = true;
+            document.addEventListener('click', function (e) {
+                if (!e.target.closest('.wt-hier-graph')) return;
+                var node = e.target.closest('.node');
+                if (!node) return;
+                var m = (node.id || '').match(/n(\\d+)/);
+                if (m) emitEvent('hier_node_click', parseInt(m[1], 10));
+            }, true);
+        }
+        """
+    )
