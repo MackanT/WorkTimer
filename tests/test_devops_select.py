@@ -5,7 +5,7 @@ import logging
 import pandas as pd
 
 from src.globals import DevOpsEngine
-from src.ui.dynamic_widgets import _devops_id_from_value
+from src.ui.dynamic_widgets import _coerce_git_id, _devops_id_from_value
 
 LABEL_MAP = {"User Story: 1234 - Fix login": 1234, "Bug: 55 - Crash": 55}
 
@@ -71,3 +71,15 @@ def test_options_empty_when_no_devops_data():
     eng = _engine_with(None)
     assert eng.get_work_item_options("Acme") == []
     assert eng.get_work_item_options() == {}
+
+
+def test_coerce_git_id_tolerates_float_columns():
+    # The query-edit prefill bug: a git_id from a float column arrives as 1234.0.
+    assert _coerce_git_id(1234.0) == 1234
+    assert _coerce_git_id("1234.0") == 1234
+    assert _coerce_git_id(1234) == 1234
+    assert _coerce_git_id(float("nan")) is None
+    assert _coerce_git_id(None) is None
+    assert _coerce_git_id("") is None
+    assert _coerce_git_id("nope") is None
+

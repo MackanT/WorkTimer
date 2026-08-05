@@ -753,6 +753,18 @@ class DynamicMarkdown(DynamicWidget):
 _DEVOPS_LABEL_ID_RE = re.compile(r":\s*(\d+)\s*-")
 
 
+def _coerce_git_id(val):
+    """Convert a git-id value (int, float, numpy scalar, or numeric string) to a
+    plain int, or None. Tolerates '1234.0' — a git_id column with any NULLs is
+    read back from pandas as float, so row values arrive as e.g. 1234.0."""
+    if val in (None, ""):
+        return None
+    try:
+        return int(float(val))
+    except (TypeError, ValueError):
+        return None
+
+
 def _devops_id_from_value(raw, label_to_id: dict):
     """Resolve a DevOps select value to a numeric git id (or None).
 
@@ -794,15 +806,10 @@ class DynamicDevOpsSelect(DynamicWidget):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # The base __init__ set self.widget.value to the raw initial git id (a
-        # number). Capture it so the matching work-item label can be selected
-        # once options load, then kick that initial load.
-        raw = self.widget.value
-        if raw not in (None, ""):
-            try:
-                self._desired_id = int(str(raw).strip())
-            except (TypeError, ValueError):
-                self._desired_id = None
+        # The base __init__ set self.widget.value to the raw initial git id.
+        # Capture it (tolerating float columns like 1234.0) so the matching
+        # work-item label can be selected once options load, then kick that load.
+        self._desired_id = _coerce_git_id(self.widget.value)
         asyncio.create_task(self.refresh())
 
     def _apply_selection(self):
@@ -841,8 +848,7 @@ class DynamicDevOpsSelect(DynamicWidget):
         self.widget.options = list(mapping.keys())
 
         if has_current:
-            cur = data.get("current")
-            self._desired_id = int(cur) if cur not in (None, "", 0) else None
+            self._desired_id = _coerce_git_id(data.get("current"))
         self._apply_selection()
 
     @property
@@ -851,10 +857,7 @@ class DynamicDevOpsSelect(DynamicWidget):
 
     @value.setter
     def value(self, val):
-        try:
-            self._desired_id = int(val) if val not in (None, "") else None
-        except (TypeError, ValueError):
-            self._desired_id = None
+        self._desired_id = _coerce_git_id(val)
         self._apply_selection()
 
 
