@@ -808,9 +808,11 @@ class DynamicDevOpsSelect(DynamicWidget):
         super().__init__(*args, **kwargs)
         # The base __init__ set self.widget.value to the raw initial git id.
         # Capture it (tolerating float columns like 1234.0) so the matching
-        # work-item label can be selected once options load, then kick that load.
+        # work-item label is selected once options load. Options are loaded on
+        # parent change (add/update forms) or by an explicit refresh() call
+        # (query-edit, which has no parent field) — not via a fire-and-forget
+        # task here, which didn't reliably run during dialog construction.
         self._desired_id = _coerce_git_id(self.widget.value)
-        asyncio.create_task(self.refresh())
 
     def _apply_selection(self):
         """Show the label matching _desired_id, else fall back to the raw id."""

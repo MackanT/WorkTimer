@@ -14,7 +14,7 @@ from ..globals import SaveData
 from .. import helpers
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 from ..ui.elements import toolbar, toolbar_group, page_card, entity_card_header
-from ..ui.dynamic_widgets import WIDGET_CLASSES
+from ..ui.dynamic_widgets import WIDGET_CLASSES, DynamicDevOpsSelect
 
 
 async def query_editor_page():
@@ -458,6 +458,13 @@ async def query_editor_page():
                         widgets[field_name] = dw
                         parent_map[field_name] = dw
                         dynamic_widgets.append(dw)
+
+        # The Git-ID picker has no parent field here (the customer is fixed by
+        # the row), so nothing triggers its option load. Do it explicitly and
+        # awaited — that both fills the dropdown and preselects the row's value.
+        for dw in dynamic_widgets:
+            if isinstance(dw, DynamicDevOpsSelect):
+                await dw.refresh()
 
         popup.open()
 
