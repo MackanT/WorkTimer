@@ -130,3 +130,10 @@ def test_coerce_git_id_tolerates_float_columns():
     assert _coerce_git_id("") is None
     assert _coerce_git_id("nope") is None
 
+
+def test_coerce_git_id_zero_is_no_work_item():
+    # git_id 0 == "no work item" -> blank field, in every representation.
+    assert _coerce_git_id(0) is None
+    assert _coerce_git_id(0.0) is None
+    assert _coerce_git_id("0") is None
+

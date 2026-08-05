@@ -756,11 +756,12 @@ _DEVOPS_LABEL_ID_RE = re.compile(r":\s*(\d+)\s*-")
 def _coerce_git_id(val):
     """Convert a git-id value (int, float, numpy scalar, or numeric string) to a
     plain int, or None. Tolerates '1234.0' — a git_id column with any NULLs is
-    read back from pandas as float, so row values arrive as e.g. 1234.0."""
+    read back from pandas as float, so row values arrive as e.g. 1234.0. A git id
+    of 0 means "no work item", so it maps to None (blank field)."""
     if val in (None, ""):
         return None
     try:
-        return int(float(val))
+        return int(float(val)) or None
     except (TypeError, ValueError):
         return None
 
@@ -859,10 +860,6 @@ class DynamicDevOpsSelect(DynamicWidget):
 
         if has_current:
             self._desired_id = _coerce_git_id(data.get("current"))
-        logger.info(
-            "[devops_id] refresh name=%s parent_val=%r desired_id=%r options=%d",
-            self.name, parent_val, self._desired_id, len(mapping),
-        )
         self._apply_selection()
 
     @property
