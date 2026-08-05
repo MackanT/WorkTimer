@@ -44,6 +44,7 @@ A modern web-based time tracking application with built-in task management and A
   - ad live theme apply on save + correct reload hint (ctrl+r, f5 is reserved for query editor)
   - ad board/time pages now auto-refresh after devops syncs and data edits (wired up existing events)
   - fx pin python 3.11 via .python-version + declare missing direct deps in pyproject (dotenv, pyyaml, requests, pygments)
+  - rf time-tracker midnight day-view rollover now uses the shared, unit-tested next-occurrence helper (verified timing; the refresh logic was already correct)
   - rf share one db connection across all browser tabs (was one connection + schema init per tab)
   - ad schema auto-migration on startup - adds missing columns and recreates missing/outdated triggers from one source of truth (replaces the temp devops migration)
   - fx backdated manual time entries now get the bonus rate valid on the entry date (was: today's rate)

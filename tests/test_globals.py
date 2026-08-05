@@ -27,3 +27,9 @@ def test_seconds_until_next_rolls_to_tomorrow_when_passed():
 def test_seconds_until_next_exactly_on_hour_rolls_forward():
     now = datetime.datetime(2026, 8, 3, 2, 0)
     assert _seconds_until_next(2, now) == 24 * 3600
+
+
+def test_seconds_until_next_midnight():
+    # Midnight = hour 0 — used by the time-tracker's midnight date-rollover timer.
+    assert _seconds_until_next(0, datetime.datetime(2026, 8, 3, 14, 30)) == 9.5 * 3600
+    assert _seconds_until_next(0, datetime.datetime(2026, 8, 3, 23, 59)) == 60

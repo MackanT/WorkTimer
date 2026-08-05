@@ -16,6 +16,7 @@ from typing import Callable, Dict, Optional
 from dataclasses import dataclass, field
 
 from ..core import AppCore
+from ..globals import _seconds_until_next
 from ..helpers import UI_STYLES, extract_devops_id
 from .. import helpers
 
@@ -207,12 +208,9 @@ async def time_tracking_page():
         """Background timer - triggers full refresh at midnight for 'Day' view."""
         try:
             while True:
-                now = datetime.now()
-                tomorrow = (now + timedelta(days=1)).replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                )
-                seconds_until_midnight = (tomorrow - now).total_seconds()
-                await asyncio.sleep(seconds_until_midnight)
+                # Sleep until the next midnight (hour 0) — same tested helper the
+                # DevOps 2 AM scheduler uses.
+                await asyncio.sleep(_seconds_until_next(0))
 
                 if not core._client_alive:
                     return
