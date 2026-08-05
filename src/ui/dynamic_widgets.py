@@ -815,7 +815,10 @@ class DynamicDevOpsSelect(DynamicWidget):
         self._desired_id = _coerce_git_id(self.widget.value)
 
     def _apply_selection(self):
-        """Show the label matching _desired_id, else fall back to the raw id."""
+        """Select the label matching _desired_id. If the current work item isn't
+        in the option set (closed/done item, or DevOps offline), add a synthetic
+        "#<id>" option and select THAT — a value not present in the select's
+        options renders blank, so the option must exist for it to show."""
         if self._desired_id is None:
             self.widget.value = None
             self.widget.update()
@@ -825,8 +828,10 @@ class DynamicDevOpsSelect(DynamicWidget):
                 self.widget.value = label
                 self.widget.update()
                 return
-        # No matching work item (DevOps off, closed item, …): show the raw id.
-        self.widget.value = str(self._desired_id)
+        fallback = f"#{self._desired_id}"
+        self._label_to_id[fallback] = self._desired_id
+        self.widget.options = list(self._label_to_id.keys())
+        self.widget.value = fallback
         self.widget.update()
 
     async def _refresh_impl(self, parent_val):
@@ -851,6 +856,10 @@ class DynamicDevOpsSelect(DynamicWidget):
 
         if has_current:
             self._desired_id = _coerce_git_id(data.get("current"))
+        logger.info(
+            "[devops_id] refresh name=%s parent_val=%r desired_id=%r options=%d",
+            self.name, parent_val, self._desired_id, len(mapping),
+        )
         self._apply_selection()
 
     @property

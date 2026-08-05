@@ -5,7 +5,31 @@ import logging
 import pandas as pd
 
 from src.globals import DevOpsEngine
-from src.ui.dynamic_widgets import _coerce_git_id, _devops_id_from_value
+from src.ui.dynamic_widgets import (
+    DynamicDevOpsSelect,
+    _coerce_git_id,
+    _devops_id_from_value,
+)
+
+
+class _FakeSelect:
+    """Stand-in for ui.select so _apply_selection can be tested without a UI."""
+
+    def __init__(self):
+        self.options = []
+        self.value = None
+
+    def update(self):
+        pass
+
+
+def _bare_widget(label_to_id, desired_id):
+    """A DynamicDevOpsSelect with its UI bypassed, for logic-only tests."""
+    w = DynamicDevOpsSelect.__new__(DynamicDevOpsSelect)
+    w.widget = _FakeSelect()
+    w._label_to_id = dict(label_to_id)
+    w._desired_id = desired_id
+    return w
 
 LABEL_MAP = {"User Story: 1234 - Fix login": 1234, "Bug: 55 - Crash": 55}
 
@@ -71,6 +95,29 @@ def test_options_empty_when_no_devops_data():
     eng = _engine_with(None)
     assert eng.get_work_item_options("Acme") == []
     assert eng.get_work_item_options() == {}
+
+
+def test_apply_selection_picks_matching_label():
+    w = _bare_widget({"US: 5 - X": 5, "Bug: 1234 - Y": 1234}, desired_id=1234)
+    w._apply_selection()
+    assert w.widget.value == "Bug: 1234 - Y"
+
+
+def test_apply_selection_shows_current_even_when_not_in_options():
+    # The query-edit "blank" bug: current id isn't in the active option set.
+    w = _bare_widget({"US: 5 - X": 5}, desired_id=1234)
+    w._apply_selection()
+    # Value must be one of the options, or Quasar renders it blank.
+    assert w.widget.value == "#1234"
+    assert "#1234" in w.widget.options
+    # And it resolves back to the numeric id on save.
+    assert _devops_id_from_value(w.widget.value, w._label_to_id) == 1234
+
+
+def test_apply_selection_blank_when_no_desired_id():
+    w = _bare_widget({"US: 5 - X": 5}, desired_id=None)
+    w._apply_selection()
+    assert w.widget.value is None
 
 
 def test_coerce_git_id_tolerates_float_columns():
