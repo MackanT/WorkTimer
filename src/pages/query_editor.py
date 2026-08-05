@@ -483,7 +483,7 @@ async def query_editor_page():
 
     def render_query_window() -> None:
         with page_card(scrollable=False):
-            with ui.row().classes("w-full justify-between items-center"):
+            with ui.row().classes("w-full justify-between items-center shrink-0"):
                 ui.button(
                     "Execute Query (F5)",
                     icon="play_arrow",
@@ -499,35 +499,49 @@ async def query_editor_page():
                         )
                     )
 
-            editor = ui.codemirror(
-                app.storage.user.get("query_editor_query", ""), language="SQLite", theme="dracula"
-            ).classes("h-48 w-full")
-            editor.bind_value(app.storage.user, "query_editor_query")
+            # Draggable horizontal split: editor on top, results below. Drag the
+            # bar to trade vertical space between writing a query and reading its
+            # output. The position is remembered per user.
+            split_val = app.storage.user.get("query_editor_split", 35)
+            with (
+                ui.splitter(horizontal=True, value=split_val)
+                .classes("w-full")
+                .style("flex: 1; min-height: 0;")
+            ) as splitter:
+                splitter.bind_value(app.storage.user, "query_editor_split")
+                with splitter.before:
+                    editor = ui.codemirror(
+                        app.storage.user.get("query_editor_query", ""),
+                        language="SQLite",
+                        theme="dracula",
+                    ).classes("w-full h-full")
+                    editor.bind_value(app.storage.user, "query_editor_query")
 
-            grid_box = (
-                ui.aggrid(
-                    {
-                        "columnDefs": [{"field": ""}],
-                        "rowData": [],
-                        "defaultColDef": {
-                            "editable": False,
-                            "sortable": True,
-                            "filter": True,
-                            "resizable": True,
-                        },
-                        "rowSelection": "multiple",
-                        "suppressRowClickSelection": False,
-                        "enableCellTextSelection": True,
-                        "copyHeadersToClipboard": True,
-                        "enableRangeSelection": True,
-                        "enableClipboard": True,
-                        "suppressCopyRowsToClipboard": True,
-                    },
-                    theme="alpine-dark",
-                )
-                .classes("flex-1 w-full")
-                .on("cellClicked", on_cell_clicked)
-            )
+                with splitter.after:
+                    grid_box = (
+                        ui.aggrid(
+                            {
+                                "columnDefs": [{"field": ""}],
+                                "rowData": [],
+                                "defaultColDef": {
+                                    "editable": False,
+                                    "sortable": True,
+                                    "filter": True,
+                                    "resizable": True,
+                                },
+                                "rowSelection": "multiple",
+                                "suppressRowClickSelection": False,
+                                "enableCellTextSelection": True,
+                                "copyHeadersToClipboard": True,
+                                "enableRangeSelection": True,
+                                "enableClipboard": True,
+                                "suppressCopyRowsToClipboard": True,
+                            },
+                            theme="alpine-dark",
+                        )
+                        .classes("w-full h-full")
+                        .on("cellClicked", on_cell_clicked)
+                    )
 
             def on_edit_mode_change():
                 is_edit = edit_mode_enabled.value
