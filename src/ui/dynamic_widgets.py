@@ -805,14 +805,17 @@ class DynamicDevOpsSelect(DynamicWidget):
         )
 
     def __init__(self, *args, **kwargs):
+        # Capture the initial git id from the ARGUMENT, not from the widget: a
+        # ui.select with an empty options list silently drops any value not in
+        # its options, so self.widget.value would already read back None here.
+        # (tolerating float columns like 1234.0). Options are loaded on parent
+        # change (add/update forms) or by an explicit refresh() call (query-edit,
+        # which has no parent field), at which point _apply_selection selects it.
+        initial = kwargs.get("initial_value")
+        if initial is None:
+            initial = (kwargs.get("field_config") or {}).get("default")
         super().__init__(*args, **kwargs)
-        # The base __init__ set self.widget.value to the raw initial git id.
-        # Capture it (tolerating float columns like 1234.0) so the matching
-        # work-item label is selected once options load. Options are loaded on
-        # parent change (add/update forms) or by an explicit refresh() call
-        # (query-edit, which has no parent field) — not via a fire-and-forget
-        # task here, which didn't reliably run during dialog construction.
-        self._desired_id = _coerce_git_id(self.widget.value)
+        self._desired_id = _coerce_git_id(initial)
 
     def _apply_selection(self):
         """Select the label matching _desired_id. If the current work item isn't
