@@ -428,9 +428,10 @@ add_data_page:
           optional: False
         - name: "git_id"
           label: "Git ID"
-          type: number
-          step: 1
-          min: 0
+          type: devops_id
+          options: []
+          options_source: devops_ids
+          parent: customer_name
           optional: True
       action:
         function: "insert_project"

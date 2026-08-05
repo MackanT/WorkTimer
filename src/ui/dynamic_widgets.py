@@ -8,6 +8,7 @@ Base class handles parent-child relationships, data fetching, and common operati
 from abc import ABC, abstractmethod
 import asyncio
 import logging
+import re
 from nicegui import ui
 from typing import Callable, Optional, Any, Dict
 from datetime import date
@@ -749,6 +750,102 @@ class DynamicMarkdown(DynamicWidget):
             self.widget.update()
 
 
+_DEVOPS_LABEL_ID_RE = re.compile(r":\s*(\d+)\s*-")
+
+
+def _devops_id_from_value(raw, label_to_id: dict):
+    """Resolve a DevOps select value to a numeric git id (or None).
+
+    `raw` is either a work-item label the user picked (mapped via label_to_id),
+    a raw id typed straight in ("1234"), or a whole "Type: 1234 - Title" label
+    typed by hand. Anything unparseable yields None, so the field clears rather
+    than storing garbage.
+    """
+    if raw in (None, ""):
+        return None
+    if raw in label_to_id:
+        return label_to_id[raw]
+    s = str(raw).strip()
+    if s.isdigit():
+        return int(s)
+    match = _DEVOPS_LABEL_ID_RE.search(s)
+    return int(match.group(1)) if match else None
+
+
+class DynamicDevOpsSelect(DynamicWidget):
+    """Searchable dropdown of DevOps work items whose value is the numeric git id.
+
+    Options are the work items for the relevant customer, fetched via the page's
+    data_fetcher (which returns a list of {"label", "id"}). Picking an item
+    stores its id. Degrades gracefully: the input accepts a hand-typed id, so it
+    still works when DevOps is offline or the item isn't in the active set. When
+    editing an existing value, the matching work item is preselected once the
+    options load; if none matches, the raw id is shown instead.
+    """
+
+    def _create_widget(self):
+        self._label_to_id: dict = {}
+        self._desired_id = None  # id to (re)select once options arrive
+        return (
+            ui.select([], label=self.label, with_input=True, **self.widget_kwargs)
+            .props('outlined new-value-mode="add-unique"')
+            .classes("w-full")
+        )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # The base __init__ set self.widget.value to the raw initial git id (a
+        # number). Capture it so the matching work-item label can be selected
+        # once options load, then kick that initial load.
+        raw = self.widget.value
+        if raw not in (None, ""):
+            try:
+                self._desired_id = int(str(raw).strip())
+            except (TypeError, ValueError):
+                self._desired_id = None
+        asyncio.create_task(self.refresh())
+
+    def _apply_selection(self):
+        """Show the label matching _desired_id, else fall back to the raw id."""
+        if self._desired_id is None:
+            self.widget.value = None
+            self.widget.update()
+            return
+        for label, gid in self._label_to_id.items():
+            if gid == self._desired_id:
+                self.widget.value = label
+                self.widget.update()
+                return
+        # No matching work item (DevOps off, closed item, …): show the raw id.
+        self.widget.value = str(self._desired_id)
+        self.widget.update()
+
+    async def _refresh_impl(self, parent_val):
+        options = await self.data_fetcher(self.options_source, parent_val)
+        mapping: dict = {}
+        if isinstance(options, list):
+            for opt in options:
+                if isinstance(opt, dict) and "label" in opt and "id" in opt:
+                    mapping[str(opt["label"])] = int(opt["id"])
+                elif isinstance(opt, (list, tuple)) and len(opt) == 2:
+                    mapping[str(opt[0])] = int(opt[1])
+        self._label_to_id = mapping
+        self.widget.options = list(mapping.keys())
+        self._apply_selection()
+
+    @property
+    def value(self):
+        return _devops_id_from_value(self.widget.value, self._label_to_id)
+
+    @value.setter
+    def value(self, val):
+        try:
+            self._desired_id = int(val) if val not in (None, "") else None
+        except (TypeError, ValueError):
+            self._desired_id = None
+        self._apply_selection()
+
+
 # Widget type registry - maps field types to widget classes
 WIDGET_CLASSES = {
     "select": DynamicDropDown,
@@ -756,6 +853,7 @@ WIDGET_CLASSES = {
     "text": DynamicTextArea,  # multi-line, matching the legacy make_input_row behavior
     "textarea": DynamicTextArea,
     "number": DynamicNumber,
+    "devops_id": DynamicDevOpsSelect,
     "date": DynamicDateInput,
     "datetime": DynamicDateTime,
     "switch": DynamicSwitch,

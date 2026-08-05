@@ -292,6 +292,26 @@ async def render_entity_form(
     return refresh_all_widgets
 
 
+def _devops_ids_by_customer(core: AppCore) -> dict:
+    """Map customer_name -> [{"label": display_name, "id": git_id}, …] for the
+    Git-ID picker, using the same active-work-item filter as the timer dialog.
+    Returns {} when DevOps isn't connected, so the picker falls back to manual
+    id entry.
+    """
+    result: dict = {}
+    eng = getattr(core, "devops_engine", None)
+    if eng is None or getattr(eng, "df", None) is None or eng.df.empty:
+        return result
+    active = eng.df[eng.df["state"].isin(["Active", "New"])]
+    for _, row in active.iterrows():
+        if pd.isna(row.get("id")) or pd.isna(row.get("display_name")):
+            continue
+        result.setdefault(row["customer_name"], []).append(
+            {"label": str(row["display_name"]), "id": int(row["id"])}
+        )
+    return result
+
+
 async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) -> dict:
     """Prepare data sources for entity forms"""
     QE = core.query_engine
@@ -346,6 +366,10 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
             data_sources["customer_data"] = (
                 df["customer_name"].tolist() if not df.empty else []
             )
+
+            # DevOps work items per customer, for the Git-ID picker. Empty when
+            # DevOps isn't connected — the picker then degrades to manual entry.
+            data_sources["devops_ids"] = _devops_ids_by_customer(core)
 
             if operation in ["update", "disable"]:
                 # Get active projects grouped by customer (for parent-dependent dropdown)
