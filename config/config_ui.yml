@@ -463,11 +463,9 @@ add_data_page:
           optional: False
         - name: "new_git_id"
           label: "New Git ID"
-          type: number
-          step: 1
-          min: 0
+          type: devops_id
           options: []
-          options_source: new_git_id
+          options_source: devops_ids
           parent: project_name
           optional: True
       action:
@@ -586,10 +584,9 @@ query:
         optional: true
       - name: git_id
         label: Git ID
-        type: number
-        step: 1
+        type: devops_id
         options: []
-        options_source: git_id
+        options_source: devops_ids
         optional: true
     action:
       function: update_data_from_query
@@ -621,10 +618,9 @@ query:
     fields:
       - name: git_id
         label: Git ID
-        type: number
-        step: 1
+        type: devops_id
         options: []
-        options_source: git_id
+        options_source: devops_ids
         optional: true
     action:
       function: update_data_from_query

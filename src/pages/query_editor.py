@@ -326,6 +326,15 @@ async def query_editor_page():
             )
             data_sources["project_names"] = projects["project_name"].tolist()
 
+        # Git-ID picker options come from the row's customer (there's no customer
+        # field in these forms — the customer is fixed by the row being edited).
+        if table_name in ("time", "projects"):
+            cust = table_row.get("customer_name")
+            eng = core.devops_engine
+            data_sources["devops_ids"] = (
+                eng.get_work_item_options(cust) if (eng is not None and cust) else []
+            )
+
         # Deep-copy: these dicts come from the process-wide config singleton —
         # writing row defaults into them would leak into other dialogs/clients.
         fields = copy.deepcopy(config_query["query"][table_name]["fields"])

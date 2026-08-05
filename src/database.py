@@ -1905,26 +1905,30 @@ class Database:
         if table_name == "time":
             return self.fetch_query(
                 """
-                select 
-                     customer_id
-                    ,project_id
-                    ,project_name
-                    ,start_time
-                    ,end_time
-                    ,comment
-                    ,git_id
-                from time
-                where time_id = ?
+                select
+                     t.customer_id
+                    ,t.project_id
+                    ,t.project_name
+                    ,t.start_time
+                    ,t.end_time
+                    ,t.comment
+                    ,t.git_id
+                    ,c.customer_name
+                from time t
+                join customers c on t.customer_id = c.customer_id
+                where t.time_id = ?
             """,
                 (pk,),
             )
         elif table_name == "projects":
             return self.fetch_query(
                 """
-                select 
-                    git_id
-                from projects
-                where project_id = ?
+                select
+                     p.git_id
+                    ,c.customer_name
+                from projects p
+                join customers c on p.customer_id = c.customer_id
+                where p.project_id = ?
             """,
                 (pk,),
             )

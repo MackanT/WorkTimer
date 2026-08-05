@@ -821,7 +821,15 @@ class DynamicDevOpsSelect(DynamicWidget):
         self.widget.update()
 
     async def _refresh_impl(self, parent_val):
-        options = await self.data_fetcher(self.options_source, parent_val)
+        data = await self.data_fetcher(self.options_source, parent_val)
+        # Two response shapes:
+        #   list -> options only (parent supplies the customer; value unchanged)
+        #   {"items": [...], "current": id} -> options AND the value to select
+        #       (Update-Project: parent is the project, so the current git id
+        #       travels with its work-item options)
+        has_current = isinstance(data, dict) and "items" in data
+        options = data["items"] if has_current else data
+
         mapping: dict = {}
         if isinstance(options, list):
             for opt in options:
@@ -831,6 +839,10 @@ class DynamicDevOpsSelect(DynamicWidget):
                     mapping[str(opt[0])] = int(opt[1])
         self._label_to_id = mapping
         self.widget.options = list(mapping.keys())
+
+        if has_current:
+            cur = data.get("current")
+            self._desired_id = int(cur) if cur not in (None, "", 0) else None
         self._apply_selection()
 
     @property

@@ -293,23 +293,10 @@ async def render_entity_form(
 
 
 def _devops_ids_by_customer(core: AppCore) -> dict:
-    """Map customer_name -> [{"label": display_name, "id": git_id}, …] for the
-    Git-ID picker, using the same active-work-item filter as the timer dialog.
-    Returns {} when DevOps isn't connected, so the picker falls back to manual
-    id entry.
-    """
-    result: dict = {}
+    """{customer_name: [{"label", "id"}, …]} for the Git-ID picker; {} when
+    DevOps isn't connected (the picker then falls back to manual id entry)."""
     eng = getattr(core, "devops_engine", None)
-    if eng is None or getattr(eng, "df", None) is None or eng.df.empty:
-        return result
-    active = eng.df[eng.df["state"].isin(["Active", "New"])]
-    for _, row in active.iterrows():
-        if pd.isna(row.get("id")) or pd.isna(row.get("display_name")):
-            continue
-        result.setdefault(row["customer_name"], []).append(
-            {"label": str(row["display_name"]), "id": int(row["id"])}
-        )
-    return result
+    return eng.get_work_item_options() if eng is not None else {}
 
 
 async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) -> dict:
@@ -393,20 +380,27 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 if operation == "update":
                     # Get project details per project for auto-population
                     full_df = await QE.query_db(
-                        """SELECT p.project_name, p.git_id
+                        """SELECT p.project_name, p.git_id, c.customer_name
                            FROM projects p
+                           JOIN customers c ON p.customer_id = c.customer_id
                            WHERE p.is_current = 1"""
                     )
+                    devops_by_cust = _devops_ids_by_customer(core)
                     data_sources["new_project_name"] = {}
-                    data_sources["new_git_id"] = {}
+                    # Project-keyed Git-ID picker data: each project carries its
+                    # customer's work-item options AND the project's current git
+                    # id, since the field's parent is the project (see
+                    # DynamicDevOpsSelect's dict response handling).
+                    data_sources["devops_ids"] = {}
                     for _, row in full_df.iterrows():
                         pname = row["project_name"]
                         # Plain strings/numbers so widget refresh sets correct values
                         data_sources["new_project_name"][pname] = pname
                         git_val = row["git_id"]
-                        data_sources["new_git_id"][pname] = (
-                            int(git_val) if pd.notna(git_val) else 0
-                        )
+                        data_sources["devops_ids"][pname] = {
+                            "items": devops_by_cust.get(row["customer_name"], []),
+                            "current": int(git_val) if pd.notna(git_val) else None,
+                        }
 
             elif operation == "reenable":
                 # Disabled projects grouped by customer (excluding any now-active ones)

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import asyncio
 import logging
 import datetime
+import pandas as pd
 
 
 # Process-wide Database instances keyed by file name. Every browser tab gets
@@ -134,6 +135,35 @@ class DevOpsEngine:
             True if customer has active DevOps connection
         """
         return bool(self.manager and customer_name in self.manager.clients)
+
+    def get_work_item_options(self, customer_name: str | None = None):
+        """Active DevOps work items for the Git-ID picker.
+
+        With ``customer_name``, returns a flat list of ``{"label", "id"}`` for
+        that customer. Without it, returns ``{customer_name: [...]}`` for every
+        customer. Empty (list/dict respectively) when DevOps data isn't loaded,
+        so callers degrade to manual id entry. Uses the same Active/New filter
+        as the timer dialog's work-item selector.
+        """
+        if self.df is None or self.df.empty:
+            return [] if customer_name is not None else {}
+        active = self.df[self.df["state"].isin(["Active", "New"])]
+        if customer_name is not None:
+            active = active[active["customer_name"] == customer_name]
+
+        def _row_option(row):
+            if pd.isna(row.get("id")) or pd.isna(row.get("display_name")):
+                return None
+            return {"label": str(row["display_name"]), "id": int(row["id"])}
+
+        if customer_name is not None:
+            return [opt for _, r in active.iterrows() if (opt := _row_option(r))]
+        result: dict = {}
+        for _, r in active.iterrows():
+            opt = _row_option(r)
+            if opt:
+                result.setdefault(r["customer_name"], []).append(opt)
+        return result
 
     async def initialize(self):
         """Initialize DevOps connections and data (without starting scheduled tasks)."""

@@ -9,7 +9,7 @@ A modern web-based time tracking application with built-in task management and A
 ## Changelog
 ### 5.0.3 (2026-xx-xx)
 - **Features**
-  - ad DevOps work-item picker for a project's Git ID in the Add Data view — a searchable dropdown of the customer's active work items (pick one instead of typing a raw id); falls back to manual id entry when DevOps is offline. New `devops_id` dynamic-widget type.
+  - ad DevOps work-item picker for Git ID everywhere it's edited — Add Data "Add project" & "Update project", and the query-editor row-edit for `time` and `projects` rows. A searchable dropdown of the relevant customer's active work items (pick one instead of typing a raw id); falls back to manual entry when DevOps is offline. New `devops_id` dynamic-widget type + `DevOpsEngine.get_work_item_options`.
   - ad draggable divider in the query editor to resize the query input vs. the results grid (position remembered per user)
   - ad work-item comments to the devops dialog (board card click + hierarchy node click) - view existing comments and post new ones - plus an "open in azure devops" link
   - ad interactive hierarchy - click a node to view/edit its fields, description and comments in a dialog
