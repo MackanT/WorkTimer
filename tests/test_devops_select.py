@@ -1,5 +1,6 @@
 """Tests for the Git-ID picker: value resolution + the engine option source."""
 
+import asyncio
 import logging
 
 import pandas as pd
@@ -7,6 +8,7 @@ import pandas as pd
 from src.globals import DevOpsEngine
 from src.ui.dynamic_widgets import (
     DynamicDevOpsSelect,
+    DynamicDropDown,
     _coerce_git_id,
     _devops_id_from_value,
 )
@@ -136,4 +138,39 @@ def test_coerce_git_id_zero_is_no_work_item():
     assert _coerce_git_id(0) is None
     assert _coerce_git_id(0.0) is None
     assert _coerce_git_id("0") is None
+
+
+def _bare_dropdown(options_source, default_source, fetcher):
+    w = DynamicDropDown.__new__(DynamicDropDown)
+    w.widget = _FakeSelect()
+    w.data_fetcher = fetcher
+    w.options_source = options_source
+    w.field_config = {"default_source": default_source}
+    w._stringify_numeric_values = False
+    return w
+
+
+def test_dropdown_default_source_dict_does_not_crash():
+    # The multi-project crash: with no parent selected, both sources return the
+    # whole {customer: ...} map. A dict default must be ignored, not hashed.
+    async def fetch(source, parent_val=None):
+        if source == "devops_projects":
+            return {"CustA": ["P1", "P2"]}  # whole map (no parent)
+        return {"CustA": "P1"}
+
+    w = _bare_dropdown("devops_projects", "devops_project_current", fetch)
+    asyncio.run(w._refresh_impl(None))  # must not raise
+    assert w.widget.value is None
+
+
+def test_dropdown_default_source_preselects_current_with_parent():
+    async def fetch(source, parent_val=None):
+        if source == "devops_projects":
+            return ["P1", "P2"] if parent_val else {"CustA": ["P1", "P2"]}
+        return "P1" if parent_val else {"CustA": "P1"}
+
+    w = _bare_dropdown("devops_projects", "devops_project_current", fetch)
+    asyncio.run(w._refresh_impl("CustA"))
+    assert set(w.widget.options) == {"P1", "P2"}
+    assert w.widget.value == "P1"
 

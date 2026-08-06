@@ -235,17 +235,20 @@ class DynamicDropDown(DynamicWidget):
         default_source = self.field_config.get("default_source")
         if default_source and not self.widget.value:
             default_val = await self.data_fetcher(default_source, parent_val)
-            coerced_default = self._coerce_value_for_select(default_val)
-            normalized_options = self.widget.options
-            option_values = (
-                set(normalized_options.keys())
-                if isinstance(normalized_options, dict)
-                else set(normalized_options)
-            ) if isinstance(normalized_options, (list, dict)) else set()
-            if default_val and (
-                not option_values or coerced_default in option_values
-            ):
-                self.widget.value = coerced_default
+            # A dict/list here means the source hasn't resolved to a single value
+            # (e.g. no parent selected yet, so the whole parent-keyed map comes
+            # back) — it's not a usable default and a dict is unhashable for the
+            # membership test below.
+            if default_val and not isinstance(default_val, (dict, list)):
+                coerced_default = self._coerce_value_for_select(default_val)
+                normalized_options = self.widget.options
+                option_values = (
+                    set(normalized_options.keys())
+                    if isinstance(normalized_options, dict)
+                    else set(normalized_options)
+                ) if isinstance(normalized_options, (list, dict)) else set()
+                if not option_values or coerced_default in option_values:
+                    self.widget.value = coerced_default
 
         self.widget.update()
 
