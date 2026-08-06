@@ -11,14 +11,100 @@ DevOps sync buttons live in the toolbar.
 """
 
 from pathlib import Path
+from datetime import datetime
 import asyncio
+import os
 import re
 import shutil
+import tempfile
 import yaml
 from nicegui import ui
 from ..core.app import AppCore
 from ..ui.elements import toolbar, toolbar_group, page_card
 from ..helpers import UI_STYLES
+
+
+def _prune_backups(backups_dir: Path, keep: int = 10) -> None:
+    """Keep only the newest `keep` worktimer_*.db backups; delete the rest."""
+    files = sorted(
+        backups_dir.glob("worktimer_*.db"),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+    for old in files[keep:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
+def open_backup_dialog(core) -> None:
+    """Database backup dialog: back up to the local backups/ folder (auto-synced
+    via OneDrive) or download a copy. Uses SQLite's online backup, safe live."""
+    backups_dir = Path(core.settings.db_path).resolve().parent.parent / "backups"
+    muted = UI_STYLES.get_layout_classes("muted_text")
+
+    with ui.dialog() as dlg, ui.card().style("min-width: 460px; max-width: 92vw;"):
+        ui.label("Database backup").classes("text-lg font-semibold")
+        ui.label(
+            "Consistent copies, safe while the app runs. Saved to a backups/ "
+            "folder next to the database; the newest 10 are kept."
+        ).classes("text-sm " + muted)
+
+        list_col = ui.column().classes("w-full gap-0 mt-2 max-h-60 overflow-auto")
+
+        def _refresh():
+            list_col.clear()
+            files = (
+                sorted(backups_dir.glob("worktimer_*.db"), reverse=True)
+                if backups_dir.exists()
+                else []
+            )
+            with list_col:
+                if not files:
+                    ui.label("No backups yet.").classes("text-sm " + muted)
+                for f in files[:10]:
+                    kb = f.stat().st_size / 1024
+                    ui.label(f"{f.name}  ·  {kb:,.0f} KB").classes("text-xs " + muted)
+
+        async def _backup_now():
+            try:
+                backups_dir.mkdir(parents=True, exist_ok=True)
+                dest = backups_dir / f"worktimer_{datetime.now():%Y-%m-%d_%H%M%S}.db"
+                await asyncio.to_thread(core.query_engine.db.backup_to, str(dest))
+                _prune_backups(backups_dir, keep=10)
+                ui.notify(f"Backup saved: backups/{dest.name}", type="positive")
+                _refresh()
+            except Exception as ex:
+                core.logger.error(f"Backup failed: {ex}")
+                ui.notify(f"Backup failed: {ex}", type="negative")
+
+        async def _download():
+            tmp = None
+            try:
+                fd, tmp = tempfile.mkstemp(suffix=".db")
+                os.close(fd)
+                await asyncio.to_thread(core.query_engine.db.backup_to, tmp)
+                data = Path(tmp).read_bytes()
+                ui.download(data, f"worktimer_backup_{datetime.now():%Y-%m-%d_%H%M}.db")
+            except Exception as ex:
+                core.logger.error(f"Export failed: {ex}")
+                ui.notify(f"Export failed: {ex}", type="negative")
+            finally:
+                if tmp and os.path.exists(tmp):
+                    os.remove(tmp)
+
+        with ui.row().classes("w-full justify-end gap-2 mt-3"):
+            ui.button("Close", on_click=dlg.close).props("flat")
+            ui.button("Download", icon="download", on_click=_download).props(
+                "outline color=primary no-caps"
+            ).tooltip("Save a copy via your browser's download")
+            ui.button("Backup now", icon="save", on_click=_backup_now).props(
+                "color=primary no-caps"
+            ).tooltip("Save a copy to the backups/ folder next to the database")
+
+        _refresh()
+    dlg.open()
 
 # ── Quasar colour palette offered in dropdowns ──────────────────────────────
 QUASAR_COLORS = [
@@ -785,6 +871,13 @@ async def settings_page():
             ui.label("Settings").classes(UI_STYLES.get_layout_classes("page_title"))
 
         ui.element("div").classes("flex-1")
+
+        with toolbar_group(core.theme, divider_after=True):
+            ui.button(
+                "Backup", icon="backup", on_click=lambda: open_backup_dialog(core)
+            ).props("flat dense no-caps color=primary").tooltip(
+                "Back up the database (local folder or download)"
+            )
 
         with toolbar_group(core.theme, divider_after=False):
             if _eng is None:

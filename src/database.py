@@ -1,4 +1,5 @@
 import sqlite3
+import os
 import threading
 import re
 from textwrap import dedent
@@ -37,6 +38,21 @@ class Database:
         with self._conn_lock:
             rows = self.conn.execute(f'PRAGMA table_info("{safe_table}")').fetchall()
         return {row[1] for row in rows}
+
+    def backup_to(self, dest_path: str) -> str:
+        """Write a consistent copy of the database to dest_path using SQLite's
+        online backup API. Safe to run while the app is live (unlike a raw file
+        copy, which can capture a half-written DB). Returns dest_path."""
+        dest_dir = os.path.dirname(dest_path)
+        if dest_dir:
+            os.makedirs(dest_dir, exist_ok=True)
+        with self._conn_lock:
+            dest = sqlite3.connect(dest_path)
+            try:
+                self.conn.backup(dest)
+            finally:
+                dest.close()
+        return dest_path
 
     def initialize_db(self):
         """Initialize the database by creating necessary tables, triggers, and populating seed data."""
