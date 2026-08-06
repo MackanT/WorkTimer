@@ -10,6 +10,29 @@ import base64
 import json
 
 
+def _clean_project(val):
+    """Normalise a stored devops_project value to a non-empty str, or None.
+    Guards against pandas NaN and the string sentinels used elsewhere."""
+    if val is None:
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip()
+    return s if s and s.lower() not in ("none", "null", "nan") else None
+
+
+def _choose_project(configured, available):
+    """Pick which project a client uses: the configured one if it exists in the
+    org, else the first available (today's default), else None."""
+    configured = _clean_project(configured)
+    if configured and configured in available:
+        return configured
+    return available[0] if available else None
+
+
 class DevOpsManager:
     def __init__(self, df, log):
         self.clients = {}
@@ -20,7 +43,12 @@ class DevOpsManager:
             ].lower() in ("", "none", "null"):
                 continue
             org_url = f"https://dev.azure.com/{row['org_url']}"
-            client = DevOpsClient(row["pat_token"], org_url, self.log)
+            client = DevOpsClient(
+                row["pat_token"],
+                org_url,
+                self.log,
+                project_name=row.get("devops_project"),
+            )
             try:
                 client.connect()
                 self.clients[row["customer_name"]] = client
@@ -43,6 +71,13 @@ class DevOpsManager:
         if not client:
             self.log.warning(f"No DevOps connection for {customer_name}")
         return client
+
+    def get_available_projects(self):
+        """{customer_name: [project names in their org]} for connected clients."""
+        return {
+            name: list(client.available_projects)
+            for name, client in self.clients.items()
+        }
 
     def save_comment(self, customer_name, comment, git_id):
         client = self._get_client(customer_name)
@@ -198,11 +233,17 @@ class DevOpsManager:
 
 
 class DevOpsClient:
-    def __init__(self, personal_access_token, organization_url, log):
+    def __init__(
+        self, personal_access_token, organization_url, log, project_name=None
+    ):
         self.personal_access_token = personal_access_token
         self.organization_url = organization_url
         self.log = log
         self.connection = None
+        # User-selected project for this customer (None = auto: first project).
+        self.configured_project = _clean_project(project_name)
+        # All project names in the org, cached at connect() for the picker.
+        self.available_projects = []
 
     def connect(self):
         # Create a connection to the Azure DevOps organization
@@ -216,10 +257,19 @@ class DevOpsClient:
             # Attempt a simple call to ensure connection is valid
             core_client = self.connection.clients.get_core_client()
 
-            project_list = core_client.get_projects(top=1)  # This is a list now
-            if not project_list:
+            # List all projects (also validates the connection) so the user can
+            # pick which one this customer uses; default to the first.
+            projects = list(core_client.get_projects())
+            if not projects:
                 raise Exception("No projects found in the Azure DevOps organization.")
-            self.project_name = project_list[0].name  # Get the first project's name
+            self.available_projects = [p.name for p in projects]
+            chosen = _choose_project(self.configured_project, self.available_projects)
+            if self.configured_project and chosen != self.configured_project:
+                self.log.warning(
+                    f"Configured DevOps project '{self.configured_project}' not found "
+                    f"in {self.organization_url}; using '{chosen}'"
+                )
+            self.project_name = chosen
 
         except Exception as e:
             msg = str(e).lower()

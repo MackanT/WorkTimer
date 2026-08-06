@@ -162,6 +162,7 @@ async def render_entity_form(
             operation in ("disable", "reenable")
             or bool(kwargs.get("pat_token"))
             or bool(kwargs.get("org_url"))
+            or bool(kwargs.get("devops_project"))
         )
         try:
             await core.query_engine.function_db(action["function"], **kwargs)
@@ -318,16 +319,26 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 if operation == "update":
                     # For update, we need current values per customer
                     full_df = await QE.query_db(
-                        "SELECT customer_name, org_url, pat_token FROM customers WHERE is_current = 1"
+                        "SELECT customer_name, org_url, pat_token, devops_project FROM customers WHERE is_current = 1"
                     )
                     data_sources["org_url"] = {}
                     data_sources["pat_token"] = {}
                     data_sources["new_customer_name"] = {}
+                    # Current project per customer (preselects the picker).
+                    data_sources["devops_project_current"] = {}
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
                         data_sources["org_url"][cname] = row["org_url"] or ""
                         data_sources["pat_token"][cname] = row["pat_token"] or ""
                         data_sources["new_customer_name"][cname] = cname
+                        data_sources["devops_project_current"][cname] = (
+                            row["devops_project"] or ""
+                        )
+                    # Available projects per customer, from the live connections.
+                    eng = getattr(core, "devops_engine", None)
+                    data_sources["devops_projects"] = (
+                        eng.get_available_projects() if eng is not None else {}
+                    )
 
             elif operation == "reenable":
                 # Get customers that are disabled and have no active entry

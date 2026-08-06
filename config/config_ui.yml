@@ -368,6 +368,14 @@ add_data_page:
           options_source: pat_token
           optional: true
           parent: customer_name
+        - name: "devops_project"
+          label: "DevOps Project"
+          type: select
+          options: []
+          options_source: devops_projects
+          default_source: devops_project_current
+          parent: customer_name
+          optional: true
       action:
         function: "update_customer"
         main_action: "Customer"

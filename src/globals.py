@@ -136,6 +136,11 @@ class DevOpsEngine:
         """
         return bool(self.manager and customer_name in self.manager.clients)
 
+    def get_available_projects(self) -> dict:
+        """{customer_name: [project names in their org]} for connected customers,
+        or {} when no manager. Feeds the customer form's project picker."""
+        return self.manager.get_available_projects() if self.manager else {}
+
     def get_work_item_options(self, customer_name: str | None = None):
         """Active DevOps work items for the Git-ID picker.
 
@@ -195,7 +200,7 @@ class DevOpsEngine:
 
     async def setup_manager(self):
         df = await self.query_engine.query_db(
-            "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and pat_token != '' and org_url is not null and org_url != '' and is_current = 1"
+            "select distinct customer_name, pat_token, org_url, devops_project from customers where pat_token is not null and pat_token != '' and org_url is not null and org_url != '' and is_current = 1"
         )
         # DevOpsManager.__init__ connects to every org (network I/O) — keep it
         # off the event loop so the UI stays responsive during startup.

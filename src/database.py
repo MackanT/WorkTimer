@@ -83,6 +83,7 @@ class Database:
                     wage real,
                     pat_token text,
                     org_url text,
+                    devops_project text,
                     valid_from datetime,
                     valid_to datetime,
                     is_current integer,
@@ -564,6 +565,7 @@ class Database:
         org_url: str = None,
         pat_token: str = None,
         valid_from: str = None,
+        devops_project: str = None,
     ):
         now = datetime.now()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -600,8 +602,8 @@ class Database:
         # Insert new customer row
         self.execute_query(
             """
-            insert into customers (customer_name, start_date, wage, pat_token, org_url, valid_from, valid_to, is_current, inserted_at)
-            values (?, ?, ?, ?, ?, ?, ?, 1, ?)
+            insert into customers (customer_name, start_date, wage, pat_token, org_url, devops_project, valid_from, valid_to, is_current, inserted_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """,
             (
                 customer_name,
@@ -609,6 +611,7 @@ class Database:
                 wage,
                 pat_token,
                 org_url,
+                devops_project or None,
                 valid_from,
                 None,
                 now_str,
@@ -649,6 +652,7 @@ class Database:
         new_customer_name: str,
         org_url: str = None,
         pat_token: str = None,
+        devops_project: str = None,
     ):
         # None means "leave unchanged" — the old unconditional SET wiped
         # org_url/pat_token whenever a caller omitted them. Pass "" to clear.
@@ -660,6 +664,10 @@ class Database:
         if pat_token is not None:
             set_clauses.append("pat_token = ?")
             params.append(pat_token)
+        if devops_project is not None:
+            # "" clears it (fall back to the org's first project).
+            set_clauses.append("devops_project = ?")
+            params.append(devops_project or None)
         params.append(customer_name)
         self.execute_query(
             f"update customers set {', '.join(set_clauses)} where customer_name = ?",
@@ -1304,6 +1312,7 @@ class Database:
                     ("wage", "REAL", None, None),
                     ("pat_token", "TEXT", None, None),
                     ("org_url", "TEXT", None, None),
+                    ("devops_project", "TEXT", None, None),
                     ("valid_from", "DATETIME", None, None),
                     ("valid_to", "DATETIME", None, None),
                     ("is_current", "INTEGER", None, None),
