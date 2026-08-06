@@ -9,6 +9,7 @@ A modern web-based time tracking application with built-in task management and A
 ## Changelog
 ### 5.0.3 (2026-xx-xx)
 - **Features**
+  - ad markdown-table builder: a "Table" button on every markdown editor (DevOps descriptions, notepad) opens a grid dialog — set rows/columns, fill cells, pick per-column alignment, see a live preview, and insert a correctly-formatted GFM table. Core `build_markdown_table` is unit-tested (alignment, pipe/newline escaping, ragged rows).
   - ad multi-project support per customer: a `devops_project` column (auto-migrated) lets a customer target a specific project in an org that has several, instead of always the alphabetically-first. The customer "Update" form gains a Project dropdown populated from the org's live project list (preselecting the current choice); connect() falls back to the first project, so existing customers are untouched. Changing it re-inits the DevOps engine.
   - ad DevOps work-item picker for Git ID everywhere it's edited — Add Data "Add project" & "Update project", and the query-editor row-edit for `time` and `projects` rows. A searchable dropdown of the relevant customer's active work items (pick one instead of typing a raw id); falls back to manual entry when DevOps is offline. New `devops_id` dynamic-widget type + `DevOpsEngine.get_work_item_options`.
   - ad draggable divider in the query editor to resize the query input vs. the results grid (position remembered per user)

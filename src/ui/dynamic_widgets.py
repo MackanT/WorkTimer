@@ -17,6 +17,41 @@ from datetime import date
 logger = logging.getLogger(__name__)
 
 
+_MD_ALIGN_SEP = {"center": ":--:", "right": "---:"}
+
+
+def build_markdown_table(headers, rows, aligns=None):
+    """Build a GitHub-flavored markdown table.
+
+    headers: list of column header strings.
+    rows: list of rows, each a list of cell values (ragged rows are padded,
+        extra cells are dropped to match the header count).
+    aligns: optional per-column alignment ('left' | 'center' | 'right');
+        anything else (or missing) is treated as left.
+    Returns "" when there are no columns. Pipes and newlines inside cells are
+    escaped/flattened so they can't break the table.
+    """
+    ncols = len(headers)
+    if ncols == 0:
+        return ""
+
+    def _cell(value):
+        text = "" if value is None else str(value)
+        return text.replace("|", "\\|").replace("\r", " ").replace("\n", " ").strip()
+
+    aligns = [
+        (aligns[i] if aligns and i < len(aligns) else "left") for i in range(ncols)
+    ]
+    lines = [
+        "| " + " | ".join(_cell(h) for h in headers) + " |",
+        "| " + " | ".join(_MD_ALIGN_SEP.get(a, ":---") for a in aligns) + " |",
+    ]
+    for row in rows:
+        cells = [_cell(row[i]) if i < len(row) else "" for i in range(ncols)]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
 class DynamicWidget(ABC):
     """
     Abstract base class for all dynamic widgets.
@@ -655,6 +690,15 @@ class DynamicEditorWithPreview(DynamicWidget):
 
         with self._container:
             with ui.column().classes("flex-1"):
+                if language == "markdown":
+                    with ui.row().classes("w-full items-center gap-2 mb-1"):
+                        ui.button(
+                            "Table",
+                            icon="table_chart",
+                            on_click=self._open_table_dialog,
+                        ).props("flat dense no-caps size=sm").tooltip(
+                            "Insert a markdown table"
+                        )
                 self._editor = (
                     ui.codemirror(
                         default_val,
@@ -698,6 +742,112 @@ class DynamicEditorWithPreview(DynamicWidget):
                 self._editor.on_value_change(update_preview)
 
         return self._container
+
+    def _open_table_dialog(self):
+        """Grid-based markdown-table builder. Fills cells in a small grid (with
+        optional per-column alignment), previews the result live, and appends the
+        generated table to the editor."""
+        from .. import helpers
+
+        editor = self._editor
+        state = {"ncols": 3, "nrows": 2}
+        headers: dict = {}
+        aligns: dict = {}
+        body: dict = {}
+
+        def _markdown() -> str:
+            nc, nr = state["ncols"], state["nrows"]
+            head = [headers.get(c, "") for c in range(nc)]
+            algn = [aligns.get(c, "left") for c in range(nc)]
+            rows = [[body.get((r, c), "") for c in range(nc)] for r in range(nr)]
+            return build_markdown_table(head, rows, algn)
+
+        with ui.dialog() as dlg, ui.card().style(
+            "min-width: 600px; max-width: 92vw;"
+        ):
+            ui.label("Insert table").classes("text-lg font-semibold")
+
+            def _set_dim(key: str, value, lo: int, hi: int):
+                try:
+                    state[key] = max(lo, min(int(value), hi))
+                except (TypeError, ValueError):
+                    return
+                grid.refresh()
+                preview.refresh()
+
+            with ui.row().classes("items-center gap-4"):
+                ui.number(
+                    "Columns", value=state["ncols"], min=1, max=8, step=1,
+                    on_change=lambda e: _set_dim("ncols", e.value, 1, 8),
+                ).props("dense outlined").style("width: 110px;")
+                ui.number(
+                    "Rows", value=state["nrows"], min=1, max=20, step=1,
+                    on_change=lambda e: _set_dim("nrows", e.value, 1, 20),
+                ).props("dense outlined").style("width: 110px;")
+
+            @ui.refreshable
+            def grid():
+                nc = state["ncols"]
+                for c in range(nc):
+                    headers.setdefault(c, f"Column {c + 1}")
+                    aligns.setdefault(c, "left")
+                col_css = f"grid-template-columns: repeat({nc}, 1fr); gap: 0.4rem;"
+                with ui.element("div").classes("w-full").style(
+                    f"display: grid; {col_css}"
+                ):
+                    # Header inputs
+                    for c in range(nc):
+                        ui.input(value=headers.get(c, "")).props(
+                            "dense outlined"
+                        ).classes("w-full font-semibold").on_value_change(
+                            lambda e, c=c: (headers.__setitem__(c, e.value), preview.refresh())
+                        )
+                    # Per-column alignment
+                    for c in range(nc):
+                        ui.toggle(
+                            {"left": "L", "center": "C", "right": "R"},
+                            value=aligns.get(c, "left"),
+                        ).props("dense no-caps unelevated").on_value_change(
+                            lambda e, c=c: (aligns.__setitem__(c, e.value), preview.refresh())
+                        )
+                    # Body cells
+                    for r in range(state["nrows"]):
+                        for c in range(nc):
+                            ui.input(value=body.get((r, c), "")).props(
+                                "dense outlined"
+                            ).classes("w-full").on_value_change(
+                                lambda e, r=r, c=c: (body.__setitem__((r, c), e.value), preview.refresh())
+                            )
+
+            grid()
+
+            ui.label("Preview").classes(
+                "text-sm mt-2 " + helpers.UI_STYLES.get_layout_classes("muted_text")
+            )
+
+            @ui.refreshable
+            def preview():
+                ui.markdown(_markdown())
+
+            preview()
+
+            with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+
+                def _insert():
+                    md = _markdown()
+                    current = editor.value or ""
+                    editor.value = (
+                        current + ("\n\n" if current.strip() else "") + md + "\n"
+                    )
+                    editor.update()
+                    dlg.close()
+
+                ui.button("Insert", icon="check", on_click=_insert).props(
+                    "color=primary"
+                )
+
+        dlg.open()
 
     async def _refresh_impl(self, parent_val):
         """Refresh editor content based on parent"""
