@@ -7,6 +7,7 @@ Base class handles parent-child relationships, data fetching, and common operati
 
 from abc import ABC, abstractmethod
 import asyncio
+import json
 import logging
 import re
 from nicegui import ui
@@ -50,6 +51,448 @@ def build_markdown_table(headers, rows, aligns=None):
         cells = [_cell(row[i]) if i < len(row) else "" for i in range(ncols)]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
+
+
+_MD_SEP_CELL_RE = re.compile(r"^:?-+:?$")
+
+
+def _split_md_row(line):
+    """Split a `| a | b |` markdown row into trimmed cells (handles \\| escapes)."""
+    line = line.strip()
+    if line.startswith("|"):
+        line = line[1:]
+    if line.endswith("|"):
+        line = line[:-1]
+    return [c.replace("\\|", "|").strip() for c in re.split(r"(?<!\\)\|", line)]
+
+
+def parse_markdown_table(text):
+    """Parse a GFM markdown table into (headers, rows, aligns), or None when the
+    text isn't a recognizable table (a header row followed by a `---` separator
+    row). Rows are padded/truncated to the header column count."""
+    lines = [ln for ln in (raw.strip() for raw in str(text).splitlines()) if ln]
+    if len(lines) < 2:
+        return None
+    sep_cells = _split_md_row(lines[1])
+    if not sep_cells or not all(_MD_SEP_CELL_RE.match(c) for c in sep_cells):
+        return None
+
+    headers = _split_md_row(lines[0])
+    ncols = len(headers)
+
+    def _align(cell):
+        left, right = cell.startswith(":"), cell.endswith(":")
+        if left and right:
+            return "center"
+        if right:
+            return "right"
+        return "left"
+
+    aligns = [_align(sep_cells[i]) if i < len(sep_cells) else "left" for i in range(ncols)]
+    rows = []
+    for ln in lines[2:]:
+        cells = _split_md_row(ln)
+        rows.append([cells[i] if i < len(cells) else "" for i in range(ncols)])
+    return headers, rows, aligns
+
+
+def _table_preview_html(headers, rows, aligns):
+    """Render an HTML table with per-column text-align, so the dialog preview
+    visibly reflects the chosen alignment (ui.markdown doesn't show it clearly)."""
+    ncols = len(headers)
+    aligns = [(aligns[i] if i < len(aligns) else "left") for i in range(ncols)]
+
+    def _esc(value):
+        return (
+            str("" if value is None else value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    cell_css = "border:1px solid #64748b; padding:4px 10px;"
+    head = "".join(
+        f'<th style="text-align:{aligns[i]}; {cell_css} background:#334155; color:#e2e8f0;">'
+        f"{_esc(headers[i])}</th>"
+        for i in range(ncols)
+    )
+    rows_html = ""
+    for row in rows:
+        tds = "".join(
+            f'<td style="text-align:{aligns[i]}; {cell_css}">'
+            f'{_esc(row[i]) if i < len(row) else ""}</td>'
+            for i in range(ncols)
+        )
+        rows_html += f"<tr>{tds}</tr>"
+    return (
+        '<table style="border-collapse:collapse; font-size:0.85rem;">'
+        f"<thead><tr>{head}</tr></thead><tbody>{rows_html}</tbody></table>"
+    )
+
+
+# ── Reusable markdown editing helpers (used by the editor-with-preview widget
+#    and the notepad, both of which wrap a ui.codemirror) ─────────────────────
+
+
+def _cm_run(editor, body: str):
+    """Run a JS snippet against `editor`'s CodeMirror view. `v` is the
+    EditorView; a programmatic dispatch syncs back to the server value."""
+    ui.run_javascript(
+        f"const c = getElement({editor.id});"
+        f"if (c && c.editor) {{ const v = c.editor; {body} v.focus(); }}"
+    )
+
+
+def md_wrap(editor, before: str, after: str):
+    """Wrap the selection with markers; with no selection, place the cursor
+    between them ready to type."""
+    b, a = json.dumps(before), json.dumps(after)
+    _cm_run(
+        editor,
+        f"""
+        const r = v.state.selection.main;
+        const sel = v.state.sliceDoc(r.from, r.to);
+        const before = {b}, after = {a};
+        v.dispatch({{
+            changes: {{from: r.from, to: r.to, insert: before + sel + after}},
+            selection: sel
+                ? {{anchor: r.from + before.length, head: r.from + before.length + sel.length}}
+                : {{anchor: r.from + before.length}},
+        }});
+        """,
+    )
+
+
+def md_prefix(editor, prefix: str):
+    """Add `prefix` to the start of every selected line, or remove it if already
+    present (toggle)."""
+    p = json.dumps(prefix)
+    _cm_run(
+        editor,
+        f"""
+        const prefix = {p};
+        const r = v.state.selection.main;
+        const first = v.state.doc.lineAt(r.from).number;
+        const last = v.state.doc.lineAt(r.to).number;
+        const changes = [];
+        for (let n = first; n <= last; n++) {{
+            const line = v.state.doc.line(n);
+            if (line.text.startsWith(prefix)) {{
+                changes.push({{from: line.from, to: line.from + prefix.length, insert: ''}});
+            }} else {{
+                changes.push({{from: line.from, insert: prefix}});
+            }}
+        }}
+        v.dispatch({{changes}});
+        """,
+    )
+
+
+def md_numbered(editor):
+    """Number every selected line (1., 2., …); toggle off if already numbered."""
+    _cm_run(
+        editor,
+        """
+        const r = v.state.selection.main;
+        const first = v.state.doc.lineAt(r.from).number;
+        const last = v.state.doc.lineAt(r.to).number;
+        const re = /^\\d+\\.\\s/;
+        const changes = [];
+        let i = 1;
+        for (let n = first; n <= last; n++) {
+            const line = v.state.doc.line(n);
+            const m = line.text.match(re);
+            if (m) {
+                changes.push({from: line.from, to: line.from + m[0].length, insert: ''});
+            } else {
+                changes.push({from: line.from, insert: (i++) + '. '});
+            }
+        }
+        v.dispatch({changes});
+        """,
+    )
+
+
+def md_link(editor):
+    """Insert [text](url) around the selection, selecting `url` to type."""
+    _cm_run(
+        editor,
+        """
+        const r = v.state.selection.main;
+        const sel = v.state.sliceDoc(r.from, r.to);
+        const text = sel || 'text';
+        const insert = '[' + text + '](url)';
+        const urlStart = r.from + text.length + 3;
+        v.dispatch({
+            changes: {from: r.from, to: r.to, insert: insert},
+            selection: {anchor: urlStart, head: urlStart + 3},
+        });
+        """,
+    )
+
+
+def md_insert(editor, text):
+    """Insert `text` at the editor's cursor (replacing any selection)."""
+    _cm_run(editor, f"v.dispatch(v.state.replaceSelection({json.dumps(text)}));")
+
+
+def _render_image_button(editor, uploader):
+    """A toolbar image button that opens the file picker directly (no dialog).
+    A hidden ui.upload does the transfer; the button clicks its file input
+    client-side, which preserves the user gesture the picker requires."""
+
+    async def _on_upload(e):
+        try:
+            content = e.content.read()
+            url = await uploader(e.name, content)
+        except Exception as ex:
+            logger.exception(f"Image upload failed: {ex}")
+            url = None
+        if url:
+            md_insert(editor, f"![{e.name}]({url})\n")
+            ui.notify("Image inserted", type="positive")
+        else:
+            ui.notify("Image upload failed", type="negative")
+
+    up = (
+        ui.upload(on_upload=_on_upload, auto_upload=True)
+        .props('accept="image/*"')
+        .classes("hidden")
+    )
+    btn = ui.button(icon="image").props("flat dense size=sm")
+    btn.tooltip("Insert image")
+    btn.on(
+        "click",
+        js_handler=f'() => getHtmlElement({up.id}).querySelector("input").click()',
+    )
+
+
+def render_markdown_toolbar(editor, image_uploader=None):
+    """A row of markdown formatting buttons operating on `editor` (a
+    ui.codemirror). Each transforms the current selection (wrap for inline marks,
+    prefix lines for block marks) so the syntax is discoverable. Reused by the
+    editor-with-preview widget and the notepad. When `image_uploader` is given
+    (an async `(name, bytes) -> url` callable), an Insert-image button appears."""
+
+    def _btn(icon: str, tip: str, handler):
+        ui.button(icon=icon, on_click=handler).props("flat dense size=sm").tooltip(tip)
+
+    def _sep():
+        ui.element("div").classes("h-5 w-px bg-gray-500 mx-1 opacity-50")
+
+    with ui.row().classes("w-full items-center gap-1 mb-1 flex-wrap"):
+        _btn("format_bold", "Bold", lambda: md_wrap(editor, "**", "**"))
+        _btn("format_italic", "Italic", lambda: md_wrap(editor, "*", "*"))
+        _btn("code", "Inline code", lambda: md_wrap(editor, "`", "`"))
+        _sep()
+        _btn("format_list_bulleted", "Bullet list", lambda: md_prefix(editor, "- "))
+        _btn("format_list_numbered", "Numbered list", lambda: md_numbered(editor))
+        _btn("checklist", "Task checkbox", lambda: md_prefix(editor, "- [ ] "))
+        _sep()
+        _btn("title", "Heading", lambda: md_prefix(editor, "## "))
+        _btn("format_quote", "Quote", lambda: md_prefix(editor, "> "))
+        _btn("data_object", "Code block", lambda: md_wrap(editor, "```\n", "\n```"))
+        _sep()
+        _btn("link", "Link", lambda: md_link(editor))
+        if image_uploader is not None:
+            _render_image_button(editor, image_uploader)
+        ui.button(
+            "Table", icon="table_chart", on_click=lambda: open_markdown_table_dialog(editor)
+        ).props("flat dense no-caps size=sm").tooltip("Insert a markdown table")
+
+
+def open_markdown_table_dialog(editor):
+    """Grid-based markdown-table builder. Fills cells in a small grid (with
+    optional per-column alignment), previews the result live, and appends the
+    generated table to the editor."""
+    from .. import helpers
+
+    state = {"ncols": 3, "nrows": 2}
+    headers: dict = {}
+    aligns: dict = {}
+    body: dict = {}
+    dim_inputs: dict = {}
+
+    def _headers_list():
+        return [headers.get(c, "") for c in range(state["ncols"])]
+
+    def _aligns_list():
+        return [aligns.get(c, "left") for c in range(state["ncols"])]
+
+    def _rows_list():
+        return [
+            [body.get((r, c), "") for c in range(state["ncols"])]
+            for r in range(state["nrows"])
+        ]
+
+    def _markdown() -> str:
+        return build_markdown_table(_headers_list(), _rows_list(), _aligns_list())
+
+    with ui.dialog() as dlg, ui.card().style(
+        "min-width: 620px; max-width: 92vw;"
+    ):
+        ui.label("Insert table").classes("text-lg font-semibold")
+
+        def _set_dim(key: str, value, lo: int, hi: int):
+            try:
+                state[key] = max(lo, min(int(value), hi))
+            except (TypeError, ValueError):
+                return
+            grid.refresh()
+            preview.refresh()
+
+        # Paste an existing table to edit it.
+        with ui.expansion("Paste a table to edit", icon="content_paste").classes(
+            "w-full"
+        ):
+            paste_box = (
+                ui.textarea(placeholder="Paste a markdown table here…")
+                .props("outlined autogrow")
+                .classes("w-full")
+            )
+
+            def _load():
+                parsed = parse_markdown_table(paste_box.value or "")
+                if not parsed:
+                    ui.notify(
+                        "Couldn't recognize a markdown table", type="warning"
+                    )
+                    return
+                h, rows, algn = parsed
+                headers.clear()
+                aligns.clear()
+                body.clear()
+                state["ncols"] = max(1, min(len(h), 8))
+                state["nrows"] = max(1, min(len(rows), 30)) if rows else 1
+                for c in range(state["ncols"]):
+                    headers[c] = h[c] if c < len(h) else ""
+                    aligns[c] = algn[c] if c < len(algn) else "left"
+                for r in range(state["nrows"]):
+                    for c in range(state["ncols"]):
+                        body[(r, c)] = (
+                            rows[r][c]
+                            if r < len(rows) and c < len(rows[r])
+                            else ""
+                        )
+                if "cols" in dim_inputs:
+                    dim_inputs["cols"].value = state["ncols"]
+                if "rows" in dim_inputs:
+                    dim_inputs["rows"].value = state["nrows"]
+                grid.refresh()
+                preview.refresh()
+
+            ui.button("Load into grid", icon="download", on_click=_load).props(
+                "flat dense no-caps"
+            )
+
+        with ui.row().classes("items-center gap-4"):
+            dim_inputs["cols"] = (
+                ui.number(
+                    "Columns", value=state["ncols"], min=1, max=8, step=1,
+                    on_change=lambda e: _set_dim("ncols", e.value, 1, 8),
+                )
+                .props("dense outlined")
+                .style("width: 110px;")
+            )
+            dim_inputs["rows"] = (
+                ui.number(
+                    "Rows", value=state["nrows"], min=1, max=30, step=1,
+                    on_change=lambda e: _set_dim("nrows", e.value, 1, 30),
+                )
+                .props("dense outlined")
+                .style("width: 110px;")
+            )
+
+        @ui.refreshable
+        def grid():
+            nc = state["ncols"]
+            for c in range(nc):
+                headers.setdefault(c, f"Column {c + 1}")
+                aligns.setdefault(c, "left")
+            col_css = f"grid-template-columns: repeat({nc}, 1fr); gap: 0.4rem;"
+            with ui.element("div").classes("w-full").style(
+                f"display: grid; {col_css}"
+            ):
+                # Header inputs
+                for c in range(nc):
+                    ui.input(value=headers.get(c, "")).props(
+                        "dense outlined"
+                    ).classes("w-full font-semibold").on_value_change(
+                        lambda e, c=c: (headers.__setitem__(c, e.value), preview.refresh())
+                    )
+                # Per-column alignment
+                for c in range(nc):
+                    ui.toggle(
+                        {"left": "L", "center": "C", "right": "R"},
+                        value=aligns.get(c, "left"),
+                    ).props("dense no-caps unelevated").on_value_change(
+                        lambda e, c=c: (aligns.__setitem__(c, e.value), preview.refresh())
+                    )
+                # Body cells
+                for r in range(state["nrows"]):
+                    for c in range(nc):
+                        ui.input(value=body.get((r, c), "")).props(
+                            "dense outlined"
+                        ).classes("w-full").on_value_change(
+                            lambda e, r=r, c=c: (body.__setitem__((r, c), e.value), preview.refresh())
+                        )
+
+        grid()
+
+        ui.label("Preview").classes(
+            "text-sm mt-2 " + helpers.UI_STYLES.get_layout_classes("muted_text")
+        )
+
+        @ui.refreshable
+        def preview():
+            # HTML table (not ui.markdown) so per-column alignment is visible.
+            ui.html(
+                _table_preview_html(_headers_list(), _rows_list(), _aligns_list())
+            )
+
+        preview()
+
+        with ui.row().classes("w-full justify-end gap-2 mt-2"):
+            ui.button("Cancel", on_click=dlg.close).props("flat")
+
+            def _copy():
+                ui.clipboard.write(_markdown())
+                ui.notify(
+                    "Table copied — paste it where you want (Ctrl/⌘+V)",
+                    type="positive",
+                )
+                dlg.close()
+
+            ui.button("Copy", icon="content_copy", on_click=_copy).props(
+                "flat no-caps"
+            )
+
+            def _insert():
+                # Insert at the editor's cursor via the CodeMirror view. A
+                # programmatic dispatch fires the change listener, so the
+                # server-side .value stays in sync. Ensures the table starts
+                # on its own line.
+                payload = json.dumps(_markdown())
+                ui.run_javascript(
+                    f"""
+                    const c = getElement({editor.id});
+                    if (c && c.editor) {{
+                        const v = c.editor;
+                        const pos = v.state.selection.main.from;
+                        const before = pos > 0 ? v.state.doc.sliceString(pos - 1, pos) : '\\n';
+                        const prefix = (pos === 0 || before === '\\n') ? '' : '\\n\\n';
+                        v.dispatch(v.state.replaceSelection(prefix + {payload} + '\\n'));
+                        v.focus();
+                    }}
+                    """
+                )
+                dlg.close()
+
+            ui.button(
+                "Insert at cursor", icon="check", on_click=_insert
+            ).props("color=primary no-caps")
+
+    dlg.open()
 
 
 class DynamicWidget(ABC):
@@ -690,15 +1133,7 @@ class DynamicEditorWithPreview(DynamicWidget):
 
         with self._container:
             with ui.column().classes("flex-1"):
-                if language == "markdown":
-                    with ui.row().classes("w-full items-center gap-2 mb-1"):
-                        ui.button(
-                            "Table",
-                            icon="table_chart",
-                            on_click=self._open_table_dialog,
-                        ).props("flat dense no-caps size=sm").tooltip(
-                            "Insert a markdown table"
-                        )
+                toolbar_holder = ui.element("div").classes("w-full")
                 self._editor = (
                     ui.codemirror(
                         default_val,
@@ -709,6 +1144,9 @@ class DynamicEditorWithPreview(DynamicWidget):
                     .classes("w-full")
                     .style("height: 400px; max-height: 400px; overflow: auto;")
                 )
+                if language == "markdown":
+                    with toolbar_holder:
+                        render_markdown_toolbar(self._editor)
 
                 if templates:
                     self._editor._template_info = {
@@ -742,112 +1180,6 @@ class DynamicEditorWithPreview(DynamicWidget):
                 self._editor.on_value_change(update_preview)
 
         return self._container
-
-    def _open_table_dialog(self):
-        """Grid-based markdown-table builder. Fills cells in a small grid (with
-        optional per-column alignment), previews the result live, and appends the
-        generated table to the editor."""
-        from .. import helpers
-
-        editor = self._editor
-        state = {"ncols": 3, "nrows": 2}
-        headers: dict = {}
-        aligns: dict = {}
-        body: dict = {}
-
-        def _markdown() -> str:
-            nc, nr = state["ncols"], state["nrows"]
-            head = [headers.get(c, "") for c in range(nc)]
-            algn = [aligns.get(c, "left") for c in range(nc)]
-            rows = [[body.get((r, c), "") for c in range(nc)] for r in range(nr)]
-            return build_markdown_table(head, rows, algn)
-
-        with ui.dialog() as dlg, ui.card().style(
-            "min-width: 600px; max-width: 92vw;"
-        ):
-            ui.label("Insert table").classes("text-lg font-semibold")
-
-            def _set_dim(key: str, value, lo: int, hi: int):
-                try:
-                    state[key] = max(lo, min(int(value), hi))
-                except (TypeError, ValueError):
-                    return
-                grid.refresh()
-                preview.refresh()
-
-            with ui.row().classes("items-center gap-4"):
-                ui.number(
-                    "Columns", value=state["ncols"], min=1, max=8, step=1,
-                    on_change=lambda e: _set_dim("ncols", e.value, 1, 8),
-                ).props("dense outlined").style("width: 110px;")
-                ui.number(
-                    "Rows", value=state["nrows"], min=1, max=20, step=1,
-                    on_change=lambda e: _set_dim("nrows", e.value, 1, 20),
-                ).props("dense outlined").style("width: 110px;")
-
-            @ui.refreshable
-            def grid():
-                nc = state["ncols"]
-                for c in range(nc):
-                    headers.setdefault(c, f"Column {c + 1}")
-                    aligns.setdefault(c, "left")
-                col_css = f"grid-template-columns: repeat({nc}, 1fr); gap: 0.4rem;"
-                with ui.element("div").classes("w-full").style(
-                    f"display: grid; {col_css}"
-                ):
-                    # Header inputs
-                    for c in range(nc):
-                        ui.input(value=headers.get(c, "")).props(
-                            "dense outlined"
-                        ).classes("w-full font-semibold").on_value_change(
-                            lambda e, c=c: (headers.__setitem__(c, e.value), preview.refresh())
-                        )
-                    # Per-column alignment
-                    for c in range(nc):
-                        ui.toggle(
-                            {"left": "L", "center": "C", "right": "R"},
-                            value=aligns.get(c, "left"),
-                        ).props("dense no-caps unelevated").on_value_change(
-                            lambda e, c=c: (aligns.__setitem__(c, e.value), preview.refresh())
-                        )
-                    # Body cells
-                    for r in range(state["nrows"]):
-                        for c in range(nc):
-                            ui.input(value=body.get((r, c), "")).props(
-                                "dense outlined"
-                            ).classes("w-full").on_value_change(
-                                lambda e, r=r, c=c: (body.__setitem__((r, c), e.value), preview.refresh())
-                            )
-
-            grid()
-
-            ui.label("Preview").classes(
-                "text-sm mt-2 " + helpers.UI_STYLES.get_layout_classes("muted_text")
-            )
-
-            @ui.refreshable
-            def preview():
-                ui.markdown(_markdown())
-
-            preview()
-
-            with ui.row().classes("w-full justify-end gap-2 mt-2"):
-                ui.button("Cancel", on_click=dlg.close).props("flat")
-
-                def _insert():
-                    md = _markdown()
-                    current = editor.value or ""
-                    editor.value = (
-                        current + ("\n\n" if current.strip() else "") + md + "\n"
-                    )
-                    editor.update()
-                    dlg.close()
-
-                ui.button("Insert", icon="check", on_click=_insert).props(
-                    "color=primary"
-                )
-
-        dlg.open()
 
     async def _refresh_impl(self, parent_val):
         """Refresh editor content based on parent"""

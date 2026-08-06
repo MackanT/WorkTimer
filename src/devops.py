@@ -79,6 +79,12 @@ class DevOpsManager:
             for name, client in self.clients.items()
         }
 
+    def upload_attachment(self, customer_name, file_name, content):
+        """Upload bytes as a DevOps attachment for a customer's project; returns
+        the attachment URL or None."""
+        client = self._get_client(customer_name)
+        return client.upload_attachment(file_name, content) if client else None
+
     def save_comment(self, customer_name, comment, git_id):
         client = self._get_client(customer_name)
         if not client:
@@ -289,6 +295,21 @@ class DevOpsClient:
             self.log.error("Connection not established. Call connect() first.")
             raise Exception("Connection not established. Call connect() first.")
         return self.connection.clients.get_work_item_tracking_client()
+
+    def upload_attachment(self, file_name, content):
+        """Upload `content` (bytes) as a project attachment and return its URL,
+        which can be embedded in a work-item description (e.g. ![](url)). Returns
+        None on failure."""
+        try:
+            ref = self.wit_client.create_attachment(
+                upload_stream=content,
+                project=self.project_name,
+                file_name=file_name,
+            )
+            return ref.url
+        except Exception as e:
+            self.log.error(f"Failed to upload attachment '{file_name}': {e}")
+            return None
 
     def add_comment_to_work_item(self, work_item_id, comment_text):
         comment_text = comment_text.replace("\n", "<br>")  # Fix for new lines

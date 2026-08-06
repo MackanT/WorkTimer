@@ -22,6 +22,7 @@ from nicegui import ui, app
 
 from ..core.app import AppCore
 from ..ui.elements import toolbar, page_card, toolbar_divider
+from ..ui.dynamic_widgets import render_markdown_toolbar
 from ..helpers import render_and_sanitize_markdown, UI_STYLES
 
 
@@ -604,7 +605,10 @@ async def notepad_page():
     def _render_edit_mode(note: dict):
         with ui.row().classes("w-full gap-0").style("height: 100%;"):
             # Left: editor
-            with ui.column().classes("flex-1 h-full border-r dark:border-gray-700"):
+            with ui.column().classes(
+                "flex-1 h-full border-r dark:border-gray-700"
+            ).style("min-height: 0;"):
+                toolbar_holder = ui.element("div").classes("w-full shrink-0")
                 editor = (
                     ui.codemirror(
                         note["content"],
@@ -612,9 +616,25 @@ async def notepad_page():
                         theme="dracula",
                         line_wrapping=True,
                     )
-                    .classes("w-full h-full")
-                    .style("height: 100%;")
+                    .classes("w-full flex-1 min-h-0")
                 )
+                # Formatting toolbar above the editor (same one the DevOps
+                # description editor uses). The Insert-image button saves into
+                # the note's assets folder (same store as paste-to-upload).
+                async def _upload_note_image(name, content):
+                    note = active_note()
+                    if not note:
+                        return None
+                    stem = Path(note["filename"]).stem
+                    assets = get_notes_dir() / f"{stem}_assets"
+                    assets.mkdir(parents=True, exist_ok=True)
+                    ext = Path(name).suffix or ".png"
+                    fn = f"img_{int(time.time() * 1000)}{ext}"
+                    (assets / fn).write_bytes(content)
+                    return f"/notes_assets/{stem}_assets/{fn}"
+
+                with toolbar_holder:
+                    render_markdown_toolbar(editor, image_uploader=_upload_note_image)
 
                 editor_id = editor.id
                 state["active_editor"] = editor_id

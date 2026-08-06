@@ -141,6 +141,15 @@ class DevOpsEngine:
         or {} when no manager. Feeds the customer form's project picker."""
         return self.manager.get_available_projects() if self.manager else {}
 
+    def upload_attachment(self, customer_name, file_name, content):
+        """Upload bytes as a DevOps attachment for a customer; returns the URL or
+        None. Used to embed pasted/inserted images in work-item descriptions."""
+        return (
+            self.manager.upload_attachment(customer_name, file_name, content)
+            if self.manager
+            else None
+        )
+
     def get_work_item_options(self, customer_name: str | None = None):
         """Active DevOps work items for the Git-ID picker.
 
