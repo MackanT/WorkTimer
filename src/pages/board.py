@@ -12,9 +12,10 @@ import math
 from nicegui import ui, app
 from ..core.app import AppCore
 from .. import helpers
-from ..ui.elements import segmented_chips, toolbar, toolbar_group
+from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
 from ..ui.devops_forms import open_work_item_dialog, render_devops_form
+from .hierarchy import create_hierarchy_view
 
 
 _BOARD_CSS = """<style>
@@ -75,7 +76,16 @@ async def board_page():
     if DO is not None and DO.df is not None:
         customer_names = sorted(DO.df["customer_name"].dropna().unique().tolist())
     if customer_names:
-        filter_state["customer"] = customer_names[0]
+        _saved_cust = app.storage.user.get("devops_customer")
+        filter_state["customer"] = (
+            _saved_cust if _saved_cust in customer_names else customer_names[0]
+        )
+
+    # Board and Hierarchy are two lenses on the same work-item data, toggled in
+    # the toolbar. The hierarchy is embedded here (its own page was retired); it
+    # reads the shared customer selection.
+    view_state = {"view": app.storage.user.get("devops_view", "board")}
+    hier = create_hierarchy_view(core, lambda: filter_state["customer"])
 
     # Seed known_cols from the ADO column cache (pre-loaded at startup).
     # Without this, the first render derives order from df insertion order which is arbitrary.
@@ -618,6 +628,51 @@ async def board_page():
             show_notify=True, notify_msg="Board refreshed from local cache"
         )
 
+    # ── view toggle (Board / Hierarchy) ────────────────────────────────────────
+    def _on_view_change(value):
+        if value == view_state["view"]:
+            return
+        view_state["view"] = value
+        app.storage.user["devops_view"] = value
+        if value == "hierarchy":
+            hier.set_customer(filter_state["customer"])
+        render_view_toggle.refresh()
+        render_view_controls.refresh()
+        render_view_actions.refresh()
+        _apply_view()
+
+    @ui.refreshable
+    def render_view_toggle():
+        segmented_chips(
+            core.theme,
+            [("board", "Board"), ("hierarchy", "Hierarchy")],
+            view_state["view"],
+            _on_view_change,
+        )
+
+    @ui.refreshable
+    def render_view_controls():
+        if view_state["view"] == "board":
+            with toolbar_group(core.theme, "Type", divider_after=False):
+                render_type_chips()
+        else:
+            hier.render_controls()
+
+    @ui.refreshable
+    def render_view_actions():
+        if view_state["view"] == "board":
+            ui.button(icon="refresh", on_click=_on_refresh).props(
+                "flat dense color=white"
+            ).tooltip("Reload from local DB (no API call)")
+            ui.button(icon="add", on_click=_open_add_dialog).props(
+                "flat dense color=white"
+            ).tooltip("Add new DevOps work item")
+        else:
+            hier.render_zoom_controls()
+            ui.button(icon="refresh", on_click=hier.refresh).props(
+                "flat dense color=white"
+            ).tooltip("Reload from local cache")
+
     with toolbar(core.theme):
         with toolbar_group(core.theme, divider_after=True):
             ui.icon("view_kanban", size="md").classes(f"text-{core.theme.get('accent')}")
@@ -638,25 +693,24 @@ async def board_page():
 
                 async def _on_customer_change(e):
                     filter_state["customer"] = e.value
+                    app.storage.user["devops_customer"] = e.value
                     render_board.refresh()
                     render_done_zone.refresh()
+                    hier.set_customer(e.value)
 
                 cust_tabs.on_value_change(_on_customer_change)
         elif customer_names:
             with toolbar_group(core.theme, "Customer", divider_after=True):
                 ui.label(customer_names[0]).classes("text-white text-sm shrink-0")
 
-        with toolbar_group(core.theme, "Type", divider_after=False):
-            render_type_chips()
+        with toolbar_group(core.theme, "View", divider_after=True):
+            render_view_toggle()
+
+        render_view_controls()
 
         ui.space()
 
-        ui.button(icon="refresh", on_click=_on_refresh).props(
-            "flat dense color=white"
-        ).tooltip("Reload from local DB (no API call)")
-        ui.button(icon="add", on_click=_open_add_dialog).props(
-            "flat dense color=white"
-        ).tooltip("Add new DevOps work item")
+        render_view_actions()
 
     # Reload the board when a DevOps sync completes elsewhere (settings page
     # emits "devops_refreshed" after manual incremental/full syncs).
@@ -671,11 +725,16 @@ async def board_page():
     # No single big wrapping card here — like time_tracking's entity_card_shell
     # cards or add_data's forms, each column (and the Done zone) is its own
     # ui.card sitting directly on the page background.
-    with (
+    # Board content lives in one container, the embedded Hierarchy in another.
+    # The view toggle shows one and hides the other (both are position:fixed via
+    # wt-page-content, so they occupy the same area). Hierarchy renders lazily on
+    # first switch.
+    board_container = (
         ui.row()
         .classes("wt-page-content w-full flex-nowrap items-stretch")
         .style("box-sizing: border-box; padding: 0.5rem 1rem; gap: 0.5rem;")
-    ):
+    )
+    with board_container:
         with ui.element("div").classes("overflow-x-auto overflow-y-auto flex-1 min-w-0"):
             # Full width lets columns (flex-grow, see BOARD_COLUMN_STYLE) fill the
             # available space when there are few of them; flex-nowrap + overflow-x-auto
@@ -687,3 +746,25 @@ async def board_page():
         # Outside the scrollable area so it stays visible regardless of horizontal
         # scroll position — a permanent target for dragging items to Done.
         render_done_zone()
+
+    hier_container = (
+        ui.card()
+        .props("flat")
+        .classes("wt-page-content mx-4 my-2 rounded-md flex flex-col hidden")
+        .style("width: calc(100% - 2rem); box-sizing: border-box; overflow-y: hidden;")
+    )
+    _hier_rendered = {"done": False}
+
+    def _apply_view():
+        if view_state["view"] == "board":
+            board_container.classes(remove="hidden")
+            hier_container.classes(add="hidden")
+        else:
+            board_container.classes(add="hidden")
+            hier_container.classes(remove="hidden")
+            if not _hier_rendered["done"]:
+                _hier_rendered["done"] = True
+                with hier_container:
+                    hier.render_content()
+
+    _apply_view()

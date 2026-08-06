@@ -3,7 +3,6 @@
 from .time_tracking import time_tracking_page
 from .add_data import add_data_page
 from .board import board_page
-from .hierarchy import hierarchy_page
 from .query_editor import query_editor_page
 from .log import log_page
 from .info import info_page
@@ -17,7 +16,6 @@ __all__ = [
     "time_tracking_page",
     "add_data_page",
     "board_page",
-    "hierarchy_page",
     "query_editor_page",
     "tasks_page",
     "notepad_page",

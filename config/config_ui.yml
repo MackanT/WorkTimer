@@ -19,12 +19,6 @@ navigation:
     path: /board
     key: board
     enabled: true
-  hierarchy:
-    label: Hierarchy
-    icon: account_tree
-    path: /hierarchy
-    key: hierarchy
-    enabled: true
   query_editor:
     label: Query Editor
     icon: code

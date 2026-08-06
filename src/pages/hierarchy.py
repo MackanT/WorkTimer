@@ -10,6 +10,7 @@ into a single Epic or Feature's subtree.
 import asyncio
 import re
 from collections import deque
+from types import SimpleNamespace
 
 import pandas as pd
 from nicegui import app, ui
@@ -250,36 +251,26 @@ def focus_options(df: pd.DataFrame, customer: str, include_closed: bool = False)
     return opts
 
 
-async def hierarchy_page():
-    """DevOps hierarchy — Mermaid tree of the selected customer's work items.
-
-    Note: No @ui.page decorator — accessed via SPA sub_pages in root.py.
-    """
-    core = await AppCore.get_or_initialize()
+def create_hierarchy_view(core, get_customer):
+    """Embeddable Hierarchy view (Mermaid tree + its toolbar controls) for the
+    Board page's view toggle. `get_customer` returns the currently-selected
+    customer (shared with the board). Returns a controller exposing
+    render_controls(), render_zoom_controls(), render_content(), set_customer()
+    and refresh()."""
     DO = core.devops_engine
-    muted = core.theme.get("muted")  # theme muted-text token
-
-    customer_names: list[str] = []
-    if DO is not None and DO.df is not None:
-        customer_names = sorted(DO.df["customer_name"].dropna().unique().tolist())
+    muted = core.theme.get("muted")
 
     state = {
-        "customer": customer_names[0] if customer_names else None,
+        "customer": get_customer(),
         "show_closed": False,
         "focus_id": None,
         "zoom": 1.0,
         "direction": "TD",
     }
-    # Large trees would otherwise open as an unreadable 170-node scatter — start
-    # focused on the first Epic (a tight, complete subtree).
     if DO is not None and DO.df is not None and state["customer"]:
-        state["focus_id"] = default_focus_id(
-            DO.df, state["customer"], state["show_closed"]
-        )
+        state["focus_id"] = default_focus_id(DO.df, state["customer"], state["show_closed"])
 
     def _apply_zoom():
-        # CSS `zoom` scales the graph AND its layout box, so the scroll viewport
-        # adapts (works in Chromium/Edge; Firefox 126+).
         ui.run_javascript(
             f"document.querySelectorAll('.wt-hier-graph')"
             f".forEach(e => e.style.zoom = {state['zoom']});"
@@ -312,8 +303,6 @@ async def hierarchy_page():
                 ).classes(f"text-{muted} mt-2")
             return
 
-        # Natural-size graph (useMaxWidth:false) inside the scroll viewport, with
-        # the current zoom applied. inline-block so the box sizes to the SVG.
         with ui.element("div").classes("wt-hier-graph").style(
             f"zoom: {state['zoom']}; display: inline-block;"
         ):
@@ -327,7 +316,7 @@ async def hierarchy_page():
             else {"": "Whole tree"}
         )
         value = "" if state["focus_id"] is None else str(state["focus_id"])
-        if value not in opts:  # focused item no longer available (e.g. closed)
+        if value not in opts:
             value = ""
             state["focus_id"] = None
         sel = (
@@ -342,7 +331,6 @@ async def hierarchy_page():
 
         sel.on_value_change(_on_focus)
 
-    # ── node click → work-item dialog ─────────────────────────────────────────
     async def _open_item_dialog(item_id: int):
         if DO is None or DO.df is None:
             return
@@ -368,9 +356,6 @@ async def hierarchy_page():
         async def _dispatch(e, target=client):
             handler = _hier_click_targets.get(target.id)
             if handler:
-                # The event arrives with no UI slot on the stack, so creating the
-                # dialog would fail — enter the client context first (same pattern
-                # the EventBus uses for cross-thread UI).
                 with target:
                     await handler(int(e.args))
 
@@ -379,7 +364,6 @@ async def hierarchy_page():
             lambda cid=client.id: _hier_click_targets.pop(cid, None)
         )
 
-    # ── toolbar ──────────────────────────────────────────────────────────────
     def _on_direction(value):
         state["direction"] = value
         render_direction_chips.refresh()
@@ -396,8 +380,6 @@ async def hierarchy_page():
 
     def _on_show_closed(e):
         state["show_closed"] = e.value
-        # Keep the current focus (render_focus_select drops it if it's no longer
-        # an available option).
         render_focus_select.refresh()
         render_graph.refresh()
 
@@ -405,59 +387,48 @@ async def hierarchy_page():
         state["zoom"] = 1.0 if mult is None else max(0.2, min(5.0, state["zoom"] * mult))
         _apply_zoom()
 
-    async def _on_refresh():
+    async def _refresh():
         if DO is not None:
             await DO.load_df()
         render_focus_select.refresh()
         render_graph.refresh()
 
-    with toolbar(core.theme):
-        with toolbar_group(core.theme, divider_after=True):
-            ui.icon("account_tree", size="md").classes(f"text-{core.theme.get('accent')}")
-            ui.label("Hierarchy").classes(UI_STYLES.get_layout_classes("page_title"))
+    def _ensure_client_js():
+        if not app.storage.client.get("hier_css_injected"):
+            app.storage.client["hier_css_injected"] = True
+            ui.add_head_html(
+                "<style>"
+                ".wt-hier-graph .node { cursor: pointer; }"
+                ".wt-hier-graph .node rect { filter: drop-shadow(0 1px 3px rgba(0,0,0,0.35)); }"
+                "</style>"
+            )
+        ui.run_javascript(
+            """
+            if (!window._wtHierClick) {
+                window._wtHierClick = true;
+                document.addEventListener('click', function (e) {
+                    if (!e.target.closest('.wt-hier-graph')) return;
+                    var node = e.target.closest('.node');
+                    if (!node) return;
+                    var m = (node.id || '').match(/n(\\d+)/);
+                    if (m) emitEvent('hier_node_click', parseInt(m[1], 10));
+                }, true);
+            }
+            """
+        )
 
-        if len(customer_names) > 1:
-            with toolbar_group(core.theme, "Customer", divider_after=True):
-                with (
-                    ui.tabs(value=state["customer"])
-                    .props(
-                        f'horizontal dense active-color="{core.theme.get("accent")}" '
-                        f'indicator-color="{core.theme.get("accent")}"'
-                    )
-                    .classes(UI_STYLES.get_layout_classes("tab_label"))
-                ) as cust_tabs:
-                    for c in customer_names:
-                        ui.tab(c, label=c)
-
-                def _on_customer_change(e):
-                    state["customer"] = e.value
-                    # Re-apply the large-tree default focus for the new customer.
-                    state["focus_id"] = (
-                        default_focus_id(DO.df, e.value, state["show_closed"])
-                        if (DO is not None and DO.df is not None)
-                        else None
-                    )
-                    render_focus_select.refresh()
-                    render_graph.refresh()
-
-                cust_tabs.on_value_change(_on_customer_change)
-        elif customer_names:
-            with toolbar_group(core.theme, "Customer", divider_after=True):
-                ui.label(customer_names[0]).classes("text-white text-sm shrink-0")
-
+    # -- exposed renderers --
+    def render_controls():
         with toolbar_group(core.theme, "Focus", divider_after=True):
             render_focus_select()
-
         with toolbar_group(core.theme, "Layout", divider_after=True):
             render_direction_chips()
-
         with toolbar_group(core.theme, "Closed", divider_after=False):
-            ui.switch(value=False, on_change=_on_show_closed).props("dense").tooltip(
-                "Show closed / removed items"
-            )
+            ui.switch(value=state["show_closed"], on_change=_on_show_closed).props(
+                "dense"
+            ).tooltip("Show closed / removed items")
 
-        ui.space()
-
+    def render_zoom_controls():
         with ui.row().classes("items-center gap-0 shrink-0"):
             ui.button(icon="zoom_out", on_click=lambda: _zoom(0.8)).props(
                 "flat dense color=white"
@@ -469,12 +440,7 @@ async def hierarchy_page():
                 "flat dense color=white"
             ).tooltip("Zoom in")
 
-        ui.button(icon="refresh", on_click=_on_refresh).props(
-            "flat dense color=white"
-        ).tooltip("Reload from local cache")
-
-    # ── legend + scrollable graph viewport ───────────────────────────────────
-    with page_card(scrollable=False):
+    def render_content():
         with ui.row().classes("items-center gap-4 px-1 pb-1 shrink-0"):
             for lbl, color in LEGEND:
                 with ui.row().classes("items-center gap-1"):
@@ -484,35 +450,27 @@ async def hierarchy_page():
                     ui.label(lbl).classes(
                         "text-xs " + UI_STYLES.get_layout_classes("muted_text")
                     )
-
         with ui.element("div").classes("w-full").style(
             "flex: 1; min-height: 0; overflow: auto;"
         ):
             render_graph()
+        _ensure_client_js()
 
-    # Make nodes look clickable, and forward node clicks to Python. The listener
-    # is delegated on document (survives graph re-renders) and idempotent via a
-    # window flag; it reads the work-item id from the Mermaid node's element id.
-    if not app.storage.client.get("hier_css_injected"):
-        app.storage.client["hier_css_injected"] = True
-        ui.add_head_html(
-            "<style>"
-            ".wt-hier-graph .node { cursor: pointer; }"
-            # Soft drop shadow on the node shapes for a card-like depth.
-            ".wt-hier-graph .node rect { filter: drop-shadow(0 1px 3px rgba(0,0,0,0.35)); }"
-            "</style>"
+    def set_customer(customer):
+        state["customer"] = customer
+        state["focus_id"] = (
+            default_focus_id(DO.df, customer, state["show_closed"])
+            if (DO is not None and DO.df is not None and customer)
+            else None
         )
-    ui.run_javascript(
-        """
-        if (!window._wtHierClick) {
-            window._wtHierClick = true;
-            document.addEventListener('click', function (e) {
-                if (!e.target.closest('.wt-hier-graph')) return;
-                var node = e.target.closest('.node');
-                if (!node) return;
-                var m = (node.id || '').match(/n(\\d+)/);
-                if (m) emitEvent('hier_node_click', parseInt(m[1], 10));
-            }, true);
-        }
-        """
+        render_focus_select.refresh()
+        render_graph.refresh()
+
+    return SimpleNamespace(
+        render_controls=render_controls,
+        render_zoom_controls=render_zoom_controls,
+        render_content=render_content,
+        set_customer=set_customer,
+        refresh=_refresh,
+        apply_zoom=_apply_zoom,
     )
