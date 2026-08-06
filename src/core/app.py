@@ -26,6 +26,13 @@ _global_devops_initialized: bool = False
 _global_devops_init_lock: Optional[asyncio.Lock] = None
 
 
+def get_global_devops_engine():
+    """Return the process-wide DevOps engine (or None) without needing a client
+    context. Safe to call from plain HTTP endpoints, where AppCore's
+    client-scoped lookup would fail with an empty slot stack."""
+    return _global_devops_engine
+
+
 class AppCore:
     """
     Per-client application core.

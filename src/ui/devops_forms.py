@@ -8,11 +8,56 @@ board can own the full DevOps workflow.
 import asyncio
 import copy
 
-from nicegui import ui
+from nicegui import ui, app
+from fastapi import UploadFile, File, Request, Response
 
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
+
+
+@app.post("/upload_devops_image")
+async def upload_devops_image(request: Request, file: UploadFile = File(...)):
+    """Upload a pasted/picked image as a DevOps attachment for a customer and
+    return {path: url} so it can be embedded in a work-item description."""
+    # Use the process-wide engine directly: this is a plain HTTP endpoint with no
+    # NiceGUI client context, so AppCore.get_or_initialize() would fail.
+    from ..core.app import get_global_devops_engine
+
+    form = await request.form()
+    customer = form.get("customer")
+    if not customer:
+        return {"error": "Missing customer"}
+    engine = get_global_devops_engine()
+    if engine is None:
+        return {"error": "No DevOps connection"}
+    content = await file.read()
+    url = await asyncio.to_thread(
+        engine.upload_attachment, customer, file.filename or "paste.png", content
+    )
+    return {"path": url} if url else {"error": "Upload failed"}
+
+
+@app.get("/devops_attachment")
+async def devops_attachment(url: str):
+    """Proxy a DevOps work-item attachment with the matching customer's PAT, so
+    images embedded in a description render in the WorkTimer preview (the browser
+    can't authenticate to dev.azure.com directly)."""
+    from ..core.app import get_global_devops_engine
+
+    engine = get_global_devops_engine()
+    manager = getattr(engine, "manager", None) if engine else None
+    if manager is None:
+        return Response(status_code=404)
+    result = await asyncio.to_thread(manager.fetch_attachment, url)
+    if not result:
+        return Response(status_code=404)
+    content, content_type = result
+    return Response(
+        content=content,
+        media_type=content_type or "application/octet-stream",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 _DIALOG_CARD_STYLE = (
@@ -156,6 +201,22 @@ async def open_work_item_dialog(
                     w = widgets.get(field_name)
                     if w:
                         w.on_value_change(_mark_dirty)
+
+                # Images: upload to DevOps as attachments (button + paste), now
+                # that we know the customer for this work item.
+                desc = widgets.get("description_editor")
+                if desc is not None and customer and hasattr(desc, "enable_image_upload"):
+
+                    async def _devops_image_uploader(name, content, _cust=customer):
+                        return await asyncio.to_thread(
+                            core.devops_engine.upload_attachment, _cust, name, content
+                        )
+
+                    desc.enable_image_upload(
+                        _devops_image_uploader,
+                        paste_endpoint="/upload_devops_image",
+                        paste_fields={"customer": customer},
+                    )
 
             loading_box.clear()
 

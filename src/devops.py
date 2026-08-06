@@ -4,6 +4,7 @@ from azure.devops.v7_1.work_item_tracking.models import CommentCreate
 from azure.devops.v7_1.work.models import TeamContext
 from azure.devops.exceptions import AzureDevOpsServiceError
 import pandas as pd
+import io
 import re
 import requests
 import base64
@@ -84,6 +85,27 @@ class DevOpsManager:
         the attachment URL or None."""
         client = self._get_client(customer_name)
         return client.upload_attachment(file_name, content) if client else None
+
+    def fetch_attachment(self, url):
+        """Fetch a DevOps attachment's bytes using the matching customer's PAT,
+        for proxying images into the WorkTimer preview. Returns
+        (content, content_type) or None. Only fetches work-item attachment URLs
+        that belong to a connected org (SSRF guard)."""
+        if "/_apis/wit/attachments/" not in url:
+            return None
+        for client in self.clients.values():
+            if not url.startswith(client.organization_url):
+                continue
+            try:
+                resp = requests.get(
+                    url, auth=("", client.personal_access_token), timeout=20
+                )
+                if resp.ok:
+                    ctype = resp.headers.get("Content-Type", "application/octet-stream")
+                    return resp.content, ctype
+            except Exception as e:
+                self.log.error(f"Attachment fetch failed ({client.organization_url}): {e}")
+        return None
 
     def save_comment(self, customer_name, comment, git_id):
         client = self._get_client(customer_name)
@@ -301,8 +323,10 @@ class DevOpsClient:
         which can be embedded in a work-item description (e.g. ![](url)). Returns
         None on failure."""
         try:
+            # create_attachment streams via data.read(), so it needs a file-like
+            # object — wrap the raw bytes in BytesIO.
             ref = self.wit_client.create_attachment(
-                upload_stream=content,
+                upload_stream=io.BytesIO(content),
                 project=self.project_name,
                 file_name=file_name,
             )

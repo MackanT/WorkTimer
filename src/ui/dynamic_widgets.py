@@ -280,7 +280,7 @@ def render_markdown_toolbar(editor, image_uploader=None):
     def _sep():
         ui.element("div").classes("h-5 w-px bg-gray-500 mx-1 opacity-50")
 
-    with ui.row().classes("w-full items-center gap-1 mb-1 flex-wrap"):
+    with ui.row().classes("w-full items-center gap-1 mb-1 flex-wrap") as toolbar_row:
         _btn("format_bold", "Bold", lambda: md_wrap(editor, "**", "**"))
         _btn("format_italic", "Italic", lambda: md_wrap(editor, "*", "*"))
         _btn("code", "Inline code", lambda: md_wrap(editor, "`", "`"))
@@ -299,6 +299,50 @@ def render_markdown_toolbar(editor, image_uploader=None):
         ui.button(
             "Table", icon="table_chart", on_click=lambda: open_markdown_table_dialog(editor)
         ).props("flat dense no-caps size=sm").tooltip("Insert a markdown table")
+
+    return toolbar_row
+
+
+def inject_image_paste(editor, endpoint, extra_fields=None):
+    """Attach a paste handler to `editor`'s CodeMirror that uploads pasted images
+    to `endpoint` (POST, multipart) with `extra_fields` and inserts them at the
+    cursor. Retries briefly until the CodeMirror view is mounted."""
+    fields_js = "".join(
+        f"fd.append({json.dumps(k)}, {json.dumps(v)});" for k, v in (extra_fields or {}).items()
+    )
+    ui.run_javascript(
+        f"""
+        let _tries = 0;
+        (function attach() {{
+            const c = getElement({editor.id});
+            if (!c || !c.editor) {{ if (_tries++ < 25) setTimeout(attach, 200); return; }}
+            const view = c.editor;
+            const dom = view.dom;
+            if (dom._imagePasteEnabled) return;
+            dom._imagePasteEnabled = true;
+            dom.addEventListener('paste', async (event) => {{
+                const items = event.clipboardData && event.clipboardData.items;
+                if (!items) return;
+                for (const item of items) {{
+                    if (!item.type.startsWith('image/')) continue;
+                    event.preventDefault();
+                    const blob = item.getAsFile();
+                    const fd = new FormData();
+                    fd.append('file', blob, 'paste.png');
+                    {fields_js}
+                    try {{
+                        const resp = await fetch({json.dumps(endpoint)}, {{method: 'POST', body: fd}});
+                        if (!resp.ok) return;
+                        const data = await resp.json();
+                        if (!data.path) return;
+                        view.dispatch(view.state.replaceSelection('![image](' + data.path + ')\\n'));
+                        view.focus();
+                    }} catch (err) {{ console.error('Image paste upload failed', err); }}
+                }}
+            }});
+        }})();
+        """
+    )
 
 
 def open_markdown_table_dialog(editor):
@@ -1144,9 +1188,10 @@ class DynamicEditorWithPreview(DynamicWidget):
                     .classes("w-full")
                     .style("height: 400px; max-height: 400px; overflow: auto;")
                 )
+                self._toolbar_row = None
                 if language == "markdown":
                     with toolbar_holder:
-                        render_markdown_toolbar(self._editor)
+                        self._toolbar_row = render_markdown_toolbar(self._editor)
 
                 if templates:
                     self._editor._template_info = {
@@ -1180,6 +1225,17 @@ class DynamicEditorWithPreview(DynamicWidget):
                 self._editor.on_value_change(update_preview)
 
         return self._container
+
+    def enable_image_upload(self, uploader, paste_endpoint=None, paste_fields=None):
+        """Add an Insert-image button to the (already-rendered) toolbar and, if a
+        paste endpoint is given, attach paste-to-upload. Called after the form is
+        built, once the customer/context needed for uploads is known."""
+        row = getattr(self, "_toolbar_row", None)
+        if row is not None:
+            with row:
+                _render_image_button(self._editor, uploader)
+        if paste_endpoint:
+            inject_image_paste(self._editor, paste_endpoint, paste_fields or {})
 
     async def _refresh_impl(self, parent_val):
         """Refresh editor content based on parent"""

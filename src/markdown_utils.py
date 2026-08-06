@@ -9,6 +9,7 @@ config `render_function:` lookups resolve through helpers).
 
 import html as _html
 import re
+from urllib.parse import quote as _urlquote
 
 import bleach as _bleach
 import markdown as _markdown
@@ -171,6 +172,19 @@ def render_and_sanitize_markdown(text: str) -> str:
         return f'{tag[: -len(closing)]} id="notepad-cb-{idx}"{closing}'
 
     cleaned_html = re.sub(r'<input\b[^>]*\btype="checkbox"[^>]*>', _stamp_cbidx, cleaned_html)
+
+    # DevOps work-item attachments (dev.azure.com/.../_apis/wit/attachments/…)
+    # need a PAT the browser doesn't have, so route <img> srcs through our
+    # authenticated proxy for the preview only. The stored markdown keeps the
+    # real DevOps URL, so it still renders inside Azure DevOps.
+    def _proxy_devops_attachment(m: re.Match) -> str:
+        return m.group(1) + "/devops_attachment?url=" + _urlquote(m.group(2), safe="") + m.group(3)
+
+    cleaned_html = re.sub(
+        r'(<img\b[^>]*\bsrc=")(https://[^"]*/_apis/wit/attachments/[^"]*)(")',
+        _proxy_devops_attachment,
+        cleaned_html,
+    )
 
     # Return with dark mode styling (scoped under .wt-md, see MARKDOWN_DARK_MODE_CSS)
     return f"""
