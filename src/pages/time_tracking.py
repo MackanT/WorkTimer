@@ -164,6 +164,21 @@ async def time_tracking_page():
     core = await AppCore.get_or_initialize()
     setup_debug_keyboard_handlers(core)
 
+    # Per-customer indicator colours (a dot next to each customer card's name).
+    cust_colors: dict = {}
+    try:
+        _cdf = await core.query_engine.query_db(
+            "SELECT customer_name, color FROM customers WHERE is_current = 1"
+        )
+        if not _cdf.empty:
+            cust_colors = {
+                r["customer_name"]: r["color"]
+                for _, r in _cdf.iterrows()
+                if r["color"]
+            }
+    except Exception:
+        cust_colors = {}
+
     # ========================================================================
     # Page State - ALL data stored here, UI renders from this
     # ========================================================================
@@ -948,6 +963,12 @@ async def time_tracking_page():
                                     ),
                                 )
 
+                        if cust_colors.get(customer_name):
+                            ui.element("div").style(
+                                f"width:10px; height:10px; border-radius:50%;"
+                                f" flex:0 0 auto; margin-right:0.15rem;"
+                                f" background:{cust_colors[customer_name]};"
+                            )
                         ui.label(str(customer_name)).classes(
                             UI_STYLES.get_widget_style("time_tracking_customer_name")[
                                 "classes"

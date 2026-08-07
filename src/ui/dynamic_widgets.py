@@ -1413,6 +1413,28 @@ class DynamicDevOpsSelect(DynamicWidget):
         self._apply_selection()
 
 
+class DynamicColor(DynamicWidget):
+    """Hex colour picker with a swatch; refreshes from parent like DynamicInput."""
+
+    def _create_widget(self):
+        return ui.color_input(label=self.label, **self.widget_kwargs).props(
+            "dense outlined"
+        )
+
+    async def _refresh_impl(self, parent_val):
+        if not parent_val:
+            self.widget.value = ""
+            return
+        new_value = await self.data_fetcher(self.options_source, parent_val)
+        if isinstance(new_value, dict) and parent_val in new_value:
+            self.widget.value = new_value[parent_val] or ""
+        elif isinstance(new_value, str):
+            self.widget.value = new_value
+        else:
+            self.widget.value = ""
+        self.widget.update()
+
+
 # Widget type registry - maps field types to widget classes
 WIDGET_CLASSES = {
     "select": DynamicDropDown,
@@ -1420,6 +1442,7 @@ WIDGET_CLASSES = {
     "text": DynamicTextArea,  # multi-line, matching the legacy make_input_row behavior
     "textarea": DynamicTextArea,
     "number": DynamicNumber,
+    "color": DynamicColor,
     "devops_id": DynamicDevOpsSelect,
     "date": DynamicDateInput,
     "datetime": DynamicDateTime,

@@ -81,6 +81,19 @@ async def board_page():
             _saved_cust if _saved_cust in customer_names else customer_names[0]
         )
 
+    # Per-customer indicator colours (shown as a dot on the customer tabs).
+    cust_colors: dict = {}
+    if customer_names:
+        _cdf = await core.query_engine.query_db(
+            "SELECT customer_name, color FROM customers WHERE is_current = 1"
+        )
+        if not _cdf.empty:
+            cust_colors = {
+                r["customer_name"]: r["color"]
+                for _, r in _cdf.iterrows()
+                if r["color"]
+            }
+
     # Board and Hierarchy are two lenses on the same work-item data, toggled in
     # the toolbar. The hierarchy is embedded here (its own page was retired); it
     # reads the shared customer selection.
@@ -411,10 +424,15 @@ async def board_page():
         except (TypeError, ValueError):
             parent_label = ""
 
+        # Tint each card's left edge with the customer's indicator colour.
+        _ccolor = cust_colors.get(str(row.get("customer_name") or ""))
+        _card_style = "padding: 0.5rem 0.65rem;"
+        if _ccolor:
+            _card_style += f" border-left: 3px solid {_ccolor};"
         with (
             ui.card()
             .classes("board-card w-full rounded-md")
-            .style("padding: 0.5rem 0.65rem;")
+            .style(_card_style)
             .props("flat draggable=true")
         ) as card:
             card.on("dragstart", lambda e, r=row: _handle_dragstart(r))
@@ -689,7 +707,14 @@ async def board_page():
                     .classes(helpers.UI_STYLES.get_layout_classes("tab_label"))
                 ) as cust_tabs:
                     for c in customer_names:
-                        ui.tab(c, label=c)
+                        with ui.tab(c, label=""):
+                            with ui.row().classes("items-center gap-1.5 no-wrap"):
+                                if cust_colors.get(c):
+                                    ui.element("div").style(
+                                        f"width:9px; height:9px; border-radius:50%;"
+                                        f" flex:0 0 auto; background:{cust_colors[c]};"
+                                    )
+                                ui.label(c)
 
                 async def _on_customer_change(e):
                     filter_state["customer"] = e.value

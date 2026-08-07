@@ -100,6 +100,9 @@ class Database:
                     pat_token text,
                     org_url text,
                     devops_project text,
+                    expected_work_pct real,
+                    billing_round_minutes integer,
+                    color text,
                     valid_from datetime,
                     valid_to datetime,
                     is_current integer,
@@ -582,6 +585,9 @@ class Database:
         pat_token: str = None,
         valid_from: str = None,
         devops_project: str = None,
+        expected_work_pct: float = None,
+        billing_round_minutes: int = None,
+        color: str = None,
     ):
         now = datetime.now()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -618,8 +624,8 @@ class Database:
         # Insert new customer row
         self.execute_query(
             """
-            insert into customers (customer_name, start_date, wage, pat_token, org_url, devops_project, valid_from, valid_to, is_current, inserted_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            insert into customers (customer_name, start_date, wage, pat_token, org_url, devops_project, expected_work_pct, billing_round_minutes, color, valid_from, valid_to, is_current, inserted_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """,
             (
                 customer_name,
@@ -628,6 +634,9 @@ class Database:
                 pat_token,
                 org_url,
                 devops_project or None,
+                expected_work_pct,
+                billing_round_minutes,
+                color or None,
                 valid_from,
                 None,
                 now_str,
@@ -669,6 +678,9 @@ class Database:
         org_url: str = None,
         pat_token: str = None,
         devops_project: str = None,
+        expected_work_pct: float = None,
+        billing_round_minutes: int = None,
+        color: str = None,
     ):
         # None means "leave unchanged" — the old unconditional SET wiped
         # org_url/pat_token whenever a caller omitted them. Pass "" to clear.
@@ -684,6 +696,16 @@ class Database:
             # "" clears it (fall back to the org's first project).
             set_clauses.append("devops_project = ?")
             params.append(devops_project or None)
+        if expected_work_pct is not None:
+            set_clauses.append("expected_work_pct = ?")
+            params.append(expected_work_pct)
+        if billing_round_minutes is not None:
+            # 0 / "" → NULL (no per-customer override; use the global setting).
+            set_clauses.append("billing_round_minutes = ?")
+            params.append(billing_round_minutes or None)
+        if color is not None:
+            set_clauses.append("color = ?")
+            params.append(color or None)
         params.append(customer_name)
         self.execute_query(
             f"update customers set {', '.join(set_clauses)} where customer_name = ?",
@@ -1329,6 +1351,9 @@ class Database:
                     ("pat_token", "TEXT", None, None),
                     ("org_url", "TEXT", None, None),
                     ("devops_project", "TEXT", None, None),
+                    ("expected_work_pct", "REAL", None, None),
+                    ("billing_round_minutes", "INTEGER", None, None),
+                    ("color", "TEXT", None, None),
                     ("valid_from", "DATETIME", None, None),
                     ("valid_to", "DATETIME", None, None),
                     ("is_current", "INTEGER", None, None),
@@ -1960,9 +1985,12 @@ class Database:
         elif table_name == "customers":
             return self.fetch_query(
                 """
-                select 
+                select
                      pat_token
                     ,org_url
+                    ,expected_work_pct
+                    ,billing_round_minutes
+                    ,color
                 from customers
                 where customer_id = ?
             """,

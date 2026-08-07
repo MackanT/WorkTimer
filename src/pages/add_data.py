@@ -319,13 +319,18 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 if operation == "update":
                     # For update, we need current values per customer
                     full_df = await QE.query_db(
-                        "SELECT customer_name, org_url, pat_token, devops_project FROM customers WHERE is_current = 1"
+                        "SELECT customer_name, org_url, pat_token, devops_project, "
+                        "expected_work_pct, billing_round_minutes, color "
+                        "FROM customers WHERE is_current = 1"
                     )
                     data_sources["org_url"] = {}
                     data_sources["pat_token"] = {}
                     data_sources["new_customer_name"] = {}
                     # Current project per customer (preselects the picker).
                     data_sources["devops_project_current"] = {}
+                    data_sources["expected_work_pct"] = {}
+                    data_sources["billing_round_minutes"] = {}
+                    data_sources["color"] = {}
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
                         data_sources["org_url"][cname] = row["org_url"] or ""
@@ -334,6 +339,15 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                         data_sources["devops_project_current"][cname] = (
                             row["devops_project"] or ""
                         )
+                        data_sources["expected_work_pct"][cname] = (
+                            float(row["expected_work_pct"])
+                            if pd.notna(row["expected_work_pct"]) else 0
+                        )
+                        data_sources["billing_round_minutes"][cname] = (
+                            int(row["billing_round_minutes"])
+                            if pd.notna(row["billing_round_minutes"]) else 0
+                        )
+                        data_sources["color"][cname] = row["color"] or ""
                     # Available projects per customer, from the live connections.
                     eng = getattr(core, "devops_engine", None)
                     data_sources["devops_projects"] = (

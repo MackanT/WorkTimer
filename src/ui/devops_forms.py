@@ -89,6 +89,18 @@ async def open_work_item_dialog(
     title = str(row.get("title", ""))
     customer = str(row.get("customer_name", ""))
     priority_val = row.get("priority")
+
+    # Customer indicator colour (fills the header badge when set).
+    cust_color = None
+    try:
+        _cc = await core.query_engine.query_db(
+            "SELECT color FROM customers WHERE customer_name = ? AND is_current = 1 LIMIT 1",
+            params=(customer,),
+        )
+        if not _cc.empty and _cc.iloc[0]["color"]:
+            cust_color = str(_cc.iloc[0]["color"])
+    except Exception:
+        cust_color = None
     display_name = f"{item_type}: {item_id} - {title}"
     update_cfg = core.ui_config.get("board_devops_forms", {}).get("update", {})
 
@@ -149,7 +161,11 @@ async def open_work_item_dialog(
                 ui.label(title).classes("text-sm font-semibold flex-1").style(
                     "overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
                 )
-                ui.badge(customer).props("color=primary outline rounded").classes("text-xs shrink-0")
+                _cust_badge = ui.badge(customer).props("rounded").classes("text-xs shrink-0")
+                if cust_color:
+                    _cust_badge.style(f"background:{cust_color}; color:#fff;")
+                else:
+                    _cust_badge.props("color=primary outline")
                 ui.space()
                 ui.button(icon="open_in_new", on_click=_open_in_devops).props(
                     "flat dense color=primary"
