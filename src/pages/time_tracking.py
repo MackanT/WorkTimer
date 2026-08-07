@@ -338,6 +338,11 @@ async def time_tracking_page():
     def render_toolbar():
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
+            with toolbar_group(core.theme, divider_after=True):
+                ui.icon("schedule", size="md").classes(f"text-{core.theme.get('accent')}")
+                ui.label("Time Tracker").classes(
+                    UI_STYLES.get_layout_classes("page_title")
+                )
             with toolbar_group(core.theme, "Time Span", divider_after=True):
                 selected_time = (
                     ui.radio(TIME_OPTIONS, value="Day")

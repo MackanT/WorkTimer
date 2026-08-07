@@ -21,15 +21,6 @@ from ..helpers import UI_STYLES
 from ..ui.elements import toolbar, toolbar_group, page_card, segmented_chips
 
 _PERIODS = ["Day", "Week", "Month", "Year", "Custom"]
-_ROUND_CHOICES = {
-    0: "No rounding",
-    5: "5 min",
-    6: "6 min",
-    10: "10 min",
-    15: "15 min",
-    30: "30 min",
-    60: "60 min",
-}
 
 # Chart palette — single accent for single-series marks; text/grid stay in
 # muted ink (never the series colour), grid recessive. Reads on the dark surface.
@@ -648,9 +639,9 @@ async def reports_page():
         sel = [c for c in (e.value or []) if c in names]
         state["customers"] = sel
         app.storage.user["report_customers"] = sel
-        # A single selection adopts that customer's billing-rounding default.
+        # A single selection adopts that customer's billing-rounding default
+        # (applied to the billable tiles; there is no manual override control).
         state["round"] = _customer_round(sel)
-        render_round_select.refresh()
         cust_select.props(f'display-value="{_cust_display()}"')
         cust_select.update()
         await _load()
@@ -659,19 +650,6 @@ async def reports_page():
         state["period"] = value
         render_period_controls.refresh()
         await _load()
-
-    async def _on_round(e):
-        state["round"] = int(e.value or 0)
-        await _load()
-
-    @ui.refreshable
-    def render_round_select():
-        ui.select(_ROUND_CHOICES, value=state["round"], on_change=_on_round).props(
-            "dense outlined"
-        ).classes("w-36 shrink-0").tooltip(
-            "Billing rounding — defaults to the customer's setting; affects the "
-            "billable tiles / CSV, not the charts"
-        )
 
     @ui.refreshable
     def render_period_controls():
@@ -726,11 +704,8 @@ async def reports_page():
                 "Your selection is remembered."
             )
 
-        with toolbar_group(core.theme, "Period", divider_after=True):
+        with toolbar_group(core.theme, "Period", divider_after=False):
             render_period_controls()
-
-        with toolbar_group(core.theme, "Round", divider_after=False):
-            render_round_select()
 
         ui.space()
 

@@ -7,7 +7,7 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 
 from nicegui import ui
 from ..core.app import AppCore
-from ..ui.elements import toolbar
+from ..ui.elements import toolbar, toolbar_group
 from ..helpers import UI_STYLES
 from pathlib import Path
 
@@ -31,6 +31,9 @@ async def info_page():
         """Render control panel - stable across data refreshes."""
 
         with toolbar(core.theme):
+            with toolbar_group(core.theme, divider_after=True):
+                ui.icon("info", size="md").classes(f"text-{core.theme.get('accent')}")
+                ui.label("Info").classes(UI_STYLES.get_layout_classes("page_title"))
             with (
                 ui.tabs(value="info")
                 .props(

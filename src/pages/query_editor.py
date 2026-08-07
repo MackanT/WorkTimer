@@ -480,6 +480,11 @@ async def query_editor_page():
     def render_toolbar() -> tuple[ui.row, ui.row]:
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
+            with toolbar_group(core.theme, divider_after=True):
+                ui.icon("code", size="md").classes(f"text-{core.theme.get('accent')}")
+                ui.label("Query").classes(
+                    helpers.UI_STYLES.get_layout_classes("page_title")
+                )
             with toolbar_group(core.theme, "Preset", divider_after=True):
                 preset_queries = ui.row().classes("gap-2 flex-wrap")
             with toolbar_group(core.theme, "Custom", divider_after=False):

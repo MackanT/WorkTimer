@@ -18,6 +18,7 @@ from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
 from ..ui.elements import (
     toolbar,
+    toolbar_group,
     entity_card_shell,
     entity_card_header,
     entity_card_content,
@@ -46,6 +47,11 @@ async def add_data_page():
     def render_toolbar():
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
+            with toolbar_group(core.theme, divider_after=True):
+                ui.icon("input", size="md").classes(f"text-{core.theme.get('accent')}")
+                ui.label("Data Input").classes(
+                    helpers.UI_STYLES.get_layout_classes("page_title")
+                )
             with (
                 ui.tabs(value="customer")
                 .props(
