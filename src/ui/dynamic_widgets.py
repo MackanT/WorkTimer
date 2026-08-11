@@ -6,13 +6,537 @@ Base class handles parent-child relationships, data fetching, and common operati
 """
 
 from abc import ABC, abstractmethod
+import asyncio
+import json
 import logging
+import re
 from nicegui import ui
 from typing import Callable, Optional, Any, Dict
 from datetime import date
 
 
 logger = logging.getLogger(__name__)
+
+
+_MD_ALIGN_SEP = {"center": ":--:", "right": "---:"}
+
+
+def build_markdown_table(headers, rows, aligns=None):
+    """Build a GitHub-flavored markdown table.
+
+    headers: list of column header strings.
+    rows: list of rows, each a list of cell values (ragged rows are padded,
+        extra cells are dropped to match the header count).
+    aligns: optional per-column alignment ('left' | 'center' | 'right');
+        anything else (or missing) is treated as left.
+    Returns "" when there are no columns. Pipes and newlines inside cells are
+    escaped/flattened so they can't break the table.
+    """
+    ncols = len(headers)
+    if ncols == 0:
+        return ""
+
+    def _cell(value):
+        text = "" if value is None else str(value)
+        return text.replace("|", "\\|").replace("\r", " ").replace("\n", " ").strip()
+
+    aligns = [
+        (aligns[i] if aligns and i < len(aligns) else "left") for i in range(ncols)
+    ]
+    lines = [
+        "| " + " | ".join(_cell(h) for h in headers) + " |",
+        "| " + " | ".join(_MD_ALIGN_SEP.get(a, ":---") for a in aligns) + " |",
+    ]
+    for row in rows:
+        cells = [_cell(row[i]) if i < len(row) else "" for i in range(ncols)]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+_MD_SEP_CELL_RE = re.compile(r"^:?-+:?$")
+
+
+def _split_md_row(line):
+    """Split a `| a | b |` markdown row into trimmed cells (handles \\| escapes)."""
+    line = line.strip()
+    if line.startswith("|"):
+        line = line[1:]
+    if line.endswith("|"):
+        line = line[:-1]
+    return [c.replace("\\|", "|").strip() for c in re.split(r"(?<!\\)\|", line)]
+
+
+def parse_markdown_table(text):
+    """Parse a GFM markdown table into (headers, rows, aligns), or None when the
+    text isn't a recognizable table (a header row followed by a `---` separator
+    row). Rows are padded/truncated to the header column count."""
+    lines = [ln for ln in (raw.strip() for raw in str(text).splitlines()) if ln]
+    if len(lines) < 2:
+        return None
+    sep_cells = _split_md_row(lines[1])
+    if not sep_cells or not all(_MD_SEP_CELL_RE.match(c) for c in sep_cells):
+        return None
+
+    headers = _split_md_row(lines[0])
+    ncols = len(headers)
+
+    def _align(cell):
+        left, right = cell.startswith(":"), cell.endswith(":")
+        if left and right:
+            return "center"
+        if right:
+            return "right"
+        return "left"
+
+    aligns = [_align(sep_cells[i]) if i < len(sep_cells) else "left" for i in range(ncols)]
+    rows = []
+    for ln in lines[2:]:
+        cells = _split_md_row(ln)
+        rows.append([cells[i] if i < len(cells) else "" for i in range(ncols)])
+    return headers, rows, aligns
+
+
+def _table_preview_html(headers, rows, aligns):
+    """Render an HTML table with per-column text-align, so the dialog preview
+    visibly reflects the chosen alignment (ui.markdown doesn't show it clearly)."""
+    ncols = len(headers)
+    aligns = [(aligns[i] if i < len(aligns) else "left") for i in range(ncols)]
+
+    def _esc(value):
+        return (
+            str("" if value is None else value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    cell_css = "border:1px solid #64748b; padding:4px 10px;"
+    head = "".join(
+        f'<th style="text-align:{aligns[i]}; {cell_css} background:#334155; color:#e2e8f0;">'
+        f"{_esc(headers[i])}</th>"
+        for i in range(ncols)
+    )
+    rows_html = ""
+    for row in rows:
+        tds = "".join(
+            f'<td style="text-align:{aligns[i]}; {cell_css}">'
+            f'{_esc(row[i]) if i < len(row) else ""}</td>'
+            for i in range(ncols)
+        )
+        rows_html += f"<tr>{tds}</tr>"
+    return (
+        '<table style="border-collapse:collapse; font-size:0.85rem;">'
+        f"<thead><tr>{head}</tr></thead><tbody>{rows_html}</tbody></table>"
+    )
+
+
+# ── Reusable markdown editing helpers (used by the editor-with-preview widget
+#    and the notepad, both of which wrap a ui.codemirror) ─────────────────────
+
+
+def _cm_run(editor, body: str):
+    """Run a JS snippet against `editor`'s CodeMirror view. `v` is the
+    EditorView; a programmatic dispatch syncs back to the server value."""
+    ui.run_javascript(
+        f"const c = getElement({editor.id});"
+        f"if (c && c.editor) {{ const v = c.editor; {body} v.focus(); }}"
+    )
+
+
+def md_wrap(editor, before: str, after: str):
+    """Wrap the selection with markers; with no selection, place the cursor
+    between them ready to type."""
+    b, a = json.dumps(before), json.dumps(after)
+    _cm_run(
+        editor,
+        f"""
+        const r = v.state.selection.main;
+        const sel = v.state.sliceDoc(r.from, r.to);
+        const before = {b}, after = {a};
+        v.dispatch({{
+            changes: {{from: r.from, to: r.to, insert: before + sel + after}},
+            selection: sel
+                ? {{anchor: r.from + before.length, head: r.from + before.length + sel.length}}
+                : {{anchor: r.from + before.length}},
+        }});
+        """,
+    )
+
+
+def md_prefix(editor, prefix: str):
+    """Add `prefix` to the start of every selected line, or remove it if already
+    present (toggle)."""
+    p = json.dumps(prefix)
+    _cm_run(
+        editor,
+        f"""
+        const prefix = {p};
+        const r = v.state.selection.main;
+        const first = v.state.doc.lineAt(r.from).number;
+        const last = v.state.doc.lineAt(r.to).number;
+        const changes = [];
+        for (let n = first; n <= last; n++) {{
+            const line = v.state.doc.line(n);
+            if (line.text.startsWith(prefix)) {{
+                changes.push({{from: line.from, to: line.from + prefix.length, insert: ''}});
+            }} else {{
+                changes.push({{from: line.from, insert: prefix}});
+            }}
+        }}
+        v.dispatch({{changes}});
+        """,
+    )
+
+
+def md_numbered(editor):
+    """Number every selected line (1., 2., …); toggle off if already numbered."""
+    _cm_run(
+        editor,
+        """
+        const r = v.state.selection.main;
+        const first = v.state.doc.lineAt(r.from).number;
+        const last = v.state.doc.lineAt(r.to).number;
+        const re = /^\\d+\\.\\s/;
+        const changes = [];
+        let i = 1;
+        for (let n = first; n <= last; n++) {
+            const line = v.state.doc.line(n);
+            const m = line.text.match(re);
+            if (m) {
+                changes.push({from: line.from, to: line.from + m[0].length, insert: ''});
+            } else {
+                changes.push({from: line.from, insert: (i++) + '. '});
+            }
+        }
+        v.dispatch({changes});
+        """,
+    )
+
+
+def md_link(editor):
+    """Insert [text](url) around the selection, selecting `url` to type."""
+    _cm_run(
+        editor,
+        """
+        const r = v.state.selection.main;
+        const sel = v.state.sliceDoc(r.from, r.to);
+        const text = sel || 'text';
+        const insert = '[' + text + '](url)';
+        const urlStart = r.from + text.length + 3;
+        v.dispatch({
+            changes: {from: r.from, to: r.to, insert: insert},
+            selection: {anchor: urlStart, head: urlStart + 3},
+        });
+        """,
+    )
+
+
+def md_insert(editor, text):
+    """Insert `text` at the editor's cursor (replacing any selection)."""
+    _cm_run(editor, f"v.dispatch(v.state.replaceSelection({json.dumps(text)}));")
+
+
+def _render_image_button(editor, uploader):
+    """A toolbar image button that opens the file picker directly (no dialog).
+    A hidden ui.upload does the transfer; the button clicks its file input
+    client-side, which preserves the user gesture the picker requires."""
+
+    async def _on_upload(e):
+        try:
+            content = e.content.read()
+            url = await uploader(e.name, content)
+        except Exception as ex:
+            logger.exception(f"Image upload failed: {ex}")
+            url = None
+        if url:
+            md_insert(editor, f"![{e.name}]({url})\n")
+            ui.notify("Image inserted", type="positive")
+        else:
+            ui.notify("Image upload failed", type="negative")
+
+    up = (
+        ui.upload(on_upload=_on_upload, auto_upload=True)
+        .props('accept="image/*"')
+        .classes("hidden")
+    )
+    btn = ui.button(icon="image").props("flat dense size=sm")
+    btn.tooltip("Insert image")
+    btn.on(
+        "click",
+        js_handler=f'() => getHtmlElement({up.id}).querySelector("input").click()',
+    )
+
+
+def render_markdown_toolbar(editor, image_uploader=None):
+    """A row of markdown formatting buttons operating on `editor` (a
+    ui.codemirror). Each transforms the current selection (wrap for inline marks,
+    prefix lines for block marks) so the syntax is discoverable. Reused by the
+    editor-with-preview widget and the notepad. When `image_uploader` is given
+    (an async `(name, bytes) -> url` callable), an Insert-image button appears."""
+
+    def _btn(icon: str, tip: str, handler):
+        ui.button(icon=icon, on_click=handler).props("flat dense size=sm").tooltip(tip)
+
+    def _sep():
+        ui.element("div").classes("h-5 w-px bg-gray-500 mx-1 opacity-50")
+
+    with ui.row().classes("w-full items-center gap-1 mb-1 flex-wrap") as toolbar_row:
+        _btn("format_bold", "Bold", lambda: md_wrap(editor, "**", "**"))
+        _btn("format_italic", "Italic", lambda: md_wrap(editor, "*", "*"))
+        _btn("code", "Inline code", lambda: md_wrap(editor, "`", "`"))
+        _sep()
+        _btn("format_list_bulleted", "Bullet list", lambda: md_prefix(editor, "- "))
+        _btn("format_list_numbered", "Numbered list", lambda: md_numbered(editor))
+        _btn("checklist", "Task checkbox", lambda: md_prefix(editor, "- [ ] "))
+        _sep()
+        _btn("title", "Heading", lambda: md_prefix(editor, "## "))
+        _btn("format_quote", "Quote", lambda: md_prefix(editor, "> "))
+        _btn("data_object", "Code block", lambda: md_wrap(editor, "```\n", "\n```"))
+        _sep()
+        _btn("link", "Link", lambda: md_link(editor))
+        if image_uploader is not None:
+            _render_image_button(editor, image_uploader)
+        ui.button(
+            "Table", icon="table_chart", on_click=lambda: open_markdown_table_dialog(editor)
+        ).props("flat dense no-caps size=sm").tooltip("Insert a markdown table")
+
+    return toolbar_row
+
+
+def inject_image_paste(editor, endpoint, extra_fields=None):
+    """Attach a paste handler to `editor`'s CodeMirror that uploads pasted images
+    to `endpoint` (POST, multipart) with `extra_fields` and inserts them at the
+    cursor. Retries briefly until the CodeMirror view is mounted."""
+    fields_js = "".join(
+        f"fd.append({json.dumps(k)}, {json.dumps(v)});" for k, v in (extra_fields or {}).items()
+    )
+    ui.run_javascript(
+        f"""
+        let _tries = 0;
+        (function attach() {{
+            const c = getElement({editor.id});
+            if (!c || !c.editor) {{ if (_tries++ < 25) setTimeout(attach, 200); return; }}
+            const view = c.editor;
+            const dom = view.dom;
+            if (dom._imagePasteEnabled) return;
+            dom._imagePasteEnabled = true;
+            dom.addEventListener('paste', async (event) => {{
+                const items = event.clipboardData && event.clipboardData.items;
+                if (!items) return;
+                for (const item of items) {{
+                    if (!item.type.startsWith('image/')) continue;
+                    event.preventDefault();
+                    const blob = item.getAsFile();
+                    const fd = new FormData();
+                    fd.append('file', blob, 'paste.png');
+                    {fields_js}
+                    try {{
+                        const resp = await fetch({json.dumps(endpoint)}, {{method: 'POST', body: fd}});
+                        if (!resp.ok) return;
+                        const data = await resp.json();
+                        if (!data.path) return;
+                        view.dispatch(view.state.replaceSelection('![image](' + data.path + ')\\n'));
+                        view.focus();
+                    }} catch (err) {{ console.error('Image paste upload failed', err); }}
+                }}
+            }});
+        }})();
+        """
+    )
+
+
+def open_markdown_table_dialog(editor):
+    """Grid-based markdown-table builder. Fills cells in a small grid (with
+    optional per-column alignment), previews the result live, and appends the
+    generated table to the editor."""
+    from .. import helpers
+
+    state = {"ncols": 3, "nrows": 2}
+    headers: dict = {}
+    aligns: dict = {}
+    body: dict = {}
+    dim_inputs: dict = {}
+
+    def _headers_list():
+        return [headers.get(c, "") for c in range(state["ncols"])]
+
+    def _aligns_list():
+        return [aligns.get(c, "left") for c in range(state["ncols"])]
+
+    def _rows_list():
+        return [
+            [body.get((r, c), "") for c in range(state["ncols"])]
+            for r in range(state["nrows"])
+        ]
+
+    def _markdown() -> str:
+        return build_markdown_table(_headers_list(), _rows_list(), _aligns_list())
+
+    with ui.dialog() as dlg, ui.card().style(
+        "min-width: 620px; max-width: 92vw;"
+    ):
+        ui.label("Insert table").classes("text-lg font-semibold")
+
+        def _set_dim(key: str, value, lo: int, hi: int):
+            try:
+                state[key] = max(lo, min(int(value), hi))
+            except (TypeError, ValueError):
+                return
+            grid.refresh()
+            preview.refresh()
+
+        # Paste an existing table to edit it.
+        with ui.expansion("Paste a table to edit", icon="content_paste").classes(
+            "w-full"
+        ):
+            paste_box = (
+                ui.textarea(placeholder="Paste a markdown table here…")
+                .props("outlined autogrow")
+                .classes("w-full")
+            )
+
+            def _load():
+                parsed = parse_markdown_table(paste_box.value or "")
+                if not parsed:
+                    ui.notify(
+                        "Couldn't recognize a markdown table", type="warning"
+                    )
+                    return
+                h, rows, algn = parsed
+                headers.clear()
+                aligns.clear()
+                body.clear()
+                state["ncols"] = max(1, min(len(h), 8))
+                state["nrows"] = max(1, min(len(rows), 30)) if rows else 1
+                for c in range(state["ncols"]):
+                    headers[c] = h[c] if c < len(h) else ""
+                    aligns[c] = algn[c] if c < len(algn) else "left"
+                for r in range(state["nrows"]):
+                    for c in range(state["ncols"]):
+                        body[(r, c)] = (
+                            rows[r][c]
+                            if r < len(rows) and c < len(rows[r])
+                            else ""
+                        )
+                if "cols" in dim_inputs:
+                    dim_inputs["cols"].value = state["ncols"]
+                if "rows" in dim_inputs:
+                    dim_inputs["rows"].value = state["nrows"]
+                grid.refresh()
+                preview.refresh()
+
+            ui.button("Load into grid", icon="download", on_click=_load).props(
+                "flat dense no-caps"
+            )
+
+        with ui.row().classes("items-center gap-4"):
+            dim_inputs["cols"] = (
+                ui.number(
+                    "Columns", value=state["ncols"], min=1, max=8, step=1,
+                    on_change=lambda e: _set_dim("ncols", e.value, 1, 8),
+                )
+                .props("dense outlined")
+                .style("width: 110px;")
+            )
+            dim_inputs["rows"] = (
+                ui.number(
+                    "Rows", value=state["nrows"], min=1, max=30, step=1,
+                    on_change=lambda e: _set_dim("nrows", e.value, 1, 30),
+                )
+                .props("dense outlined")
+                .style("width: 110px;")
+            )
+
+        @ui.refreshable
+        def grid():
+            nc = state["ncols"]
+            for c in range(nc):
+                headers.setdefault(c, f"Column {c + 1}")
+                aligns.setdefault(c, "left")
+            col_css = f"grid-template-columns: repeat({nc}, 1fr); gap: 0.4rem;"
+            with ui.element("div").classes("w-full").style(
+                f"display: grid; {col_css}"
+            ):
+                # Header inputs
+                for c in range(nc):
+                    ui.input(value=headers.get(c, "")).props(
+                        "dense outlined"
+                    ).classes("w-full font-semibold").on_value_change(
+                        lambda e, c=c: (headers.__setitem__(c, e.value), preview.refresh())
+                    )
+                # Per-column alignment
+                for c in range(nc):
+                    ui.toggle(
+                        {"left": "L", "center": "C", "right": "R"},
+                        value=aligns.get(c, "left"),
+                    ).props("dense no-caps unelevated").on_value_change(
+                        lambda e, c=c: (aligns.__setitem__(c, e.value), preview.refresh())
+                    )
+                # Body cells
+                for r in range(state["nrows"]):
+                    for c in range(nc):
+                        ui.input(value=body.get((r, c), "")).props(
+                            "dense outlined"
+                        ).classes("w-full").on_value_change(
+                            lambda e, r=r, c=c: (body.__setitem__((r, c), e.value), preview.refresh())
+                        )
+
+        grid()
+
+        ui.label("Preview").classes(
+            "text-sm mt-2 " + helpers.UI_STYLES.get_layout_classes("muted_text")
+        )
+
+        @ui.refreshable
+        def preview():
+            # HTML table (not ui.markdown) so per-column alignment is visible.
+            ui.html(
+                _table_preview_html(_headers_list(), _rows_list(), _aligns_list())
+            )
+
+        preview()
+
+        with ui.row().classes("w-full justify-end gap-2 mt-2"):
+            ui.button("Cancel", on_click=dlg.close).props("flat")
+
+            def _copy():
+                ui.clipboard.write(_markdown())
+                ui.notify(
+                    "Table copied — paste it where you want (Ctrl/⌘+V)",
+                    type="positive",
+                )
+                dlg.close()
+
+            ui.button("Copy", icon="content_copy", on_click=_copy).props(
+                "flat no-caps"
+            )
+
+            def _insert():
+                # Insert at the editor's cursor via the CodeMirror view. A
+                # programmatic dispatch fires the change listener, so the
+                # server-side .value stays in sync. Ensures the table starts
+                # on its own line.
+                payload = json.dumps(_markdown())
+                ui.run_javascript(
+                    f"""
+                    const c = getElement({editor.id});
+                    if (c && c.editor) {{
+                        const v = c.editor;
+                        const pos = v.state.selection.main.from;
+                        const before = pos > 0 ? v.state.doc.sliceString(pos - 1, pos) : '\\n';
+                        const prefix = (pos === 0 || before === '\\n') ? '' : '\\n\\n';
+                        v.dispatch(v.state.replaceSelection(prefix + {payload} + '\\n'));
+                        v.focus();
+                    }}
+                    """
+                )
+                dlg.close()
+
+            ui.button(
+                "Insert at cursor", icon="check", on_click=_insert
+            ).props("color=primary no-caps")
+
+    dlg.open()
 
 
 class DynamicWidget(ABC):
@@ -92,8 +616,6 @@ class DynamicWidget(ABC):
 
     def _on_parent_change(self):
         """Called when parent value changes"""
-        import asyncio
-
         asyncio.create_task(self.refresh())
 
     async def refresh(self):
@@ -235,17 +757,20 @@ class DynamicDropDown(DynamicWidget):
         default_source = self.field_config.get("default_source")
         if default_source and not self.widget.value:
             default_val = await self.data_fetcher(default_source, parent_val)
-            coerced_default = self._coerce_value_for_select(default_val)
-            normalized_options = self.widget.options
-            option_values = (
-                set(normalized_options.keys())
-                if isinstance(normalized_options, dict)
-                else set(normalized_options)
-            ) if isinstance(normalized_options, (list, dict)) else set()
-            if default_val and (
-                not option_values or coerced_default in option_values
-            ):
-                self.widget.value = coerced_default
+            # A dict/list here means the source hasn't resolved to a single value
+            # (e.g. no parent selected yet, so the whole parent-keyed map comes
+            # back) — it's not a usable default and a dict is unhashable for the
+            # membership test below.
+            if default_val and not isinstance(default_val, (dict, list)):
+                coerced_default = self._coerce_value_for_select(default_val)
+                normalized_options = self.widget.options
+                option_values = (
+                    set(normalized_options.keys())
+                    if isinstance(normalized_options, dict)
+                    else set(normalized_options)
+                ) if isinstance(normalized_options, (list, dict)) else set()
+                if not option_values or coerced_default in option_values:
+                    self.widget.value = coerced_default
 
         self.widget.update()
 
@@ -330,7 +855,8 @@ class DynamicNumber(DynamicWidget):
 
         if isinstance(new_value, dict) and parent_val in new_value:
             val = new_value[parent_val]
-            self.widget.value = int(val) if val is not None else 0
+            # float, not int — int() silently truncated decimal values (e.g. wages)
+            self.widget.value = float(val) if val is not None else 0
         elif isinstance(new_value, (int, float)):
             self.widget.value = new_value
         else:
@@ -381,6 +907,21 @@ class DynamicDateInput(DynamicWidget):
             self.widget.value = date.today().isoformat()
 
         self.widget.update()
+
+
+class DynamicDateTime(DynamicInput):
+    """Plain-text datetime input (YYYY-MM-DD HH:MM:SS), e.g. time-table editing.
+
+    Deliberately NOT type="datetime-local": DB values are stored/edited in the
+    'YYYY-MM-DD HH:MM:SS' format, which a native datetime-local input rejects.
+    """
+
+    def _create_widget(self):
+        return ui.input(
+            label=self.label,
+            placeholder="YYYY-MM-DD HH:MM:SS",
+            **self.widget_kwargs,
+        ).props("outlined")
 
 
 class DynamicSwitch(DynamicWidget):
@@ -518,8 +1059,6 @@ class DynamicCodeMirror(DynamicWidget):
 
     def _create_widget(self):
         """Create CodeMirror editor"""
-        from datetime import date
-
         language = self.field_config.get("type_language", "markdown")
         templates = self.field_config.get("templates", {})
         default_val = self.field_config.get("default", "")
@@ -638,6 +1177,7 @@ class DynamicEditorWithPreview(DynamicWidget):
 
         with self._container:
             with ui.column().classes("flex-1"):
+                toolbar_holder = ui.element("div").classes("w-full")
                 self._editor = (
                     ui.codemirror(
                         default_val,
@@ -648,6 +1188,10 @@ class DynamicEditorWithPreview(DynamicWidget):
                     .classes("w-full")
                     .style("height: 400px; max-height: 400px; overflow: auto;")
                 )
+                self._toolbar_row = None
+                if language == "markdown":
+                    with toolbar_holder:
+                        self._toolbar_row = render_markdown_toolbar(self._editor)
 
                 if templates:
                     self._editor._template_info = {
@@ -681,6 +1225,17 @@ class DynamicEditorWithPreview(DynamicWidget):
                 self._editor.on_value_change(update_preview)
 
         return self._container
+
+    def enable_image_upload(self, uploader, paste_endpoint=None, paste_fields=None):
+        """Add an Insert-image button to the (already-rendered) toolbar and, if a
+        paste endpoint is given, attach paste-to-upload. Called after the form is
+        built, once the customer/context needed for uploads is known."""
+        row = getattr(self, "_toolbar_row", None)
+        if row is not None:
+            with row:
+                _render_image_button(self._editor, uploader)
+        if paste_endpoint:
+            inject_image_paste(self._editor, paste_endpoint, paste_fields or {})
 
     async def _refresh_impl(self, parent_val):
         """Refresh editor content based on parent"""
@@ -718,21 +1273,6 @@ class DynamicEditorWithPreview(DynamicWidget):
         """Allow widget assignment during initialization"""
         self._container = val
 
-    def on_value_change(self, handler):
-        """Register value change handler on the editor"""
-        if hasattr(self, "_editor"):
-            self._editor.on_value_change(handler)
-
-    @property
-    def widget(self):
-        """Return the editor widget for compatibility with template handling"""
-        return self._editor if hasattr(self, "_editor") else self._container
-
-    @widget.setter
-    def widget(self, val):
-        """Allow widget assignment during initialization"""
-        self._container = val
-
 
 class DynamicMarkdown(DynamicWidget):
     """Markdown preview widget with auto-refresh"""
@@ -751,14 +1291,161 @@ class DynamicMarkdown(DynamicWidget):
             self.widget.update()
 
 
+_DEVOPS_LABEL_ID_RE = re.compile(r":\s*(\d+)\s*-")
+
+
+def _coerce_git_id(val):
+    """Convert a git-id value (int, float, numpy scalar, or numeric string) to a
+    plain int, or None. Tolerates '1234.0' — a git_id column with any NULLs is
+    read back from pandas as float, so row values arrive as e.g. 1234.0. A git id
+    of 0 means "no work item", so it maps to None (blank field)."""
+    if val in (None, ""):
+        return None
+    try:
+        return int(float(val)) or None
+    except (TypeError, ValueError):
+        return None
+
+
+def _devops_id_from_value(raw, label_to_id: dict):
+    """Resolve a DevOps select value to a numeric git id (or None).
+
+    `raw` is either a work-item label the user picked (mapped via label_to_id),
+    a raw id typed straight in ("1234"), or a whole "Type: 1234 - Title" label
+    typed by hand. Anything unparseable yields None, so the field clears rather
+    than storing garbage.
+    """
+    if raw in (None, ""):
+        return None
+    if raw in label_to_id:
+        return label_to_id[raw]
+    s = str(raw).strip()
+    if s.isdigit():
+        return int(s)
+    match = _DEVOPS_LABEL_ID_RE.search(s)
+    return int(match.group(1)) if match else None
+
+
+class DynamicDevOpsSelect(DynamicWidget):
+    """Searchable dropdown of DevOps work items whose value is the numeric git id.
+
+    Options are the work items for the relevant customer, fetched via the page's
+    data_fetcher (which returns a list of {"label", "id"}). Picking an item
+    stores its id. Degrades gracefully: the input accepts a hand-typed id, so it
+    still works when DevOps is offline or the item isn't in the active set. When
+    editing an existing value, the matching work item is preselected once the
+    options load; if none matches, the raw id is shown instead.
+    """
+
+    def _create_widget(self):
+        self._label_to_id: dict = {}
+        self._desired_id = None  # id to (re)select once options arrive
+        return (
+            ui.select([], label=self.label, with_input=True, **self.widget_kwargs)
+            .props('outlined new-value-mode="add-unique"')
+            .classes("w-full")
+        )
+
+    def __init__(self, *args, **kwargs):
+        # Capture the initial git id from the ARGUMENT, not from the widget: a
+        # ui.select with an empty options list silently drops any value not in
+        # its options, so self.widget.value would already read back None here.
+        # (tolerating float columns like 1234.0). Options are loaded on parent
+        # change (add/update forms) or by an explicit refresh() call (query-edit,
+        # which has no parent field), at which point _apply_selection selects it.
+        initial = kwargs.get("initial_value")
+        if initial is None:
+            initial = (kwargs.get("field_config") or {}).get("default")
+        super().__init__(*args, **kwargs)
+        self._desired_id = _coerce_git_id(initial)
+
+    def _apply_selection(self):
+        """Select the label matching _desired_id. If the current work item isn't
+        in the option set (closed/done item, or DevOps offline), add a synthetic
+        "#<id>" option and select THAT — a value not present in the select's
+        options renders blank, so the option must exist for it to show."""
+        if self._desired_id is None:
+            self.widget.value = None
+            self.widget.update()
+            return
+        for label, gid in self._label_to_id.items():
+            if gid == self._desired_id:
+                self.widget.value = label
+                self.widget.update()
+                return
+        fallback = f"#{self._desired_id}"
+        self._label_to_id[fallback] = self._desired_id
+        self.widget.options = list(self._label_to_id.keys())
+        self.widget.value = fallback
+        self.widget.update()
+
+    async def _refresh_impl(self, parent_val):
+        data = await self.data_fetcher(self.options_source, parent_val)
+        # Two response shapes:
+        #   list -> options only (parent supplies the customer; value unchanged)
+        #   {"items": [...], "current": id} -> options AND the value to select
+        #       (Update-Project: parent is the project, so the current git id
+        #       travels with its work-item options)
+        has_current = isinstance(data, dict) and "items" in data
+        options = data["items"] if has_current else data
+
+        mapping: dict = {}
+        if isinstance(options, list):
+            for opt in options:
+                if isinstance(opt, dict) and "label" in opt and "id" in opt:
+                    mapping[str(opt["label"])] = int(opt["id"])
+                elif isinstance(opt, (list, tuple)) and len(opt) == 2:
+                    mapping[str(opt[0])] = int(opt[1])
+        self._label_to_id = mapping
+        self.widget.options = list(mapping.keys())
+
+        if has_current:
+            self._desired_id = _coerce_git_id(data.get("current"))
+        self._apply_selection()
+
+    @property
+    def value(self):
+        return _devops_id_from_value(self.widget.value, self._label_to_id)
+
+    @value.setter
+    def value(self, val):
+        self._desired_id = _coerce_git_id(val)
+        self._apply_selection()
+
+
+class DynamicColor(DynamicWidget):
+    """Hex colour picker with a swatch; refreshes from parent like DynamicInput."""
+
+    def _create_widget(self):
+        return ui.color_input(label=self.label, **self.widget_kwargs).props(
+            "dense outlined"
+        )
+
+    async def _refresh_impl(self, parent_val):
+        if not parent_val:
+            self.widget.value = ""
+            return
+        new_value = await self.data_fetcher(self.options_source, parent_val)
+        if isinstance(new_value, dict) and parent_val in new_value:
+            self.widget.value = new_value[parent_val] or ""
+        elif isinstance(new_value, str):
+            self.widget.value = new_value
+        else:
+            self.widget.value = ""
+        self.widget.update()
+
+
 # Widget type registry - maps field types to widget classes
 WIDGET_CLASSES = {
     "select": DynamicDropDown,
     "input": DynamicInput,
-    "text": DynamicInput,  # Alias
+    "text": DynamicTextArea,  # multi-line, matching the legacy make_input_row behavior
     "textarea": DynamicTextArea,
     "number": DynamicNumber,
+    "color": DynamicColor,
+    "devops_id": DynamicDevOpsSelect,
     "date": DynamicDateInput,
+    "datetime": DynamicDateTime,
     "switch": DynamicSwitch,
     "chip_group": DynamicChipGroup,
     "codemirror": DynamicCodeMirror,

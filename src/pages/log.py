@@ -41,20 +41,7 @@ async def log_page():
             with toolbar_group(core.theme, divider_after=False):
                 filter_select = (
                     ui.select(
-                        options=[
-                            "All",
-                            "AppCore",
-                            "Database",
-                            "DevOps",
-                            # "Main",
-                            "EventBus",
-                            # "Navigation",
-                            # "TimeTracking",
-                            # "QueryEditor",
-                            # "AddData",
-                            # "Tasks",
-                            # "Info",
-                        ],
+                        options=["All", "AppCore", "Database", "DevOps", "EventBus"],
                         value="All",
                         label="Filter by Source",
                     )
@@ -86,47 +73,41 @@ async def log_page():
             )
         )
 
-        # Load historical logs (no filter applied initially)
-        seen = set()
+        def push_history(filter_value: str = "All"):
+            """Render global + client-local log history (deduped, optionally filtered).
 
-        # Global logs (oldest first)
-        try:
-            for item in get_global_recent_logs():
+            Shared by the initial load and the filter handler so both show the
+            same merged set — the old filter re-render dropped local entries.
+            """
+            seen_keys = set()
+            try:
+                merged = list(get_global_recent_logs()) + list(core.log_buffer)
+            except Exception:
+                merged = []
+            for item in merged:
+                if filter_value != "All":
+                    if filter_value.lower() not in str(item.get("logger", "")).lower():
+                        continue
                 key = (
                     item.get("timestamp"),
                     item.get("logger"),
                     item.get("message"),
                 )
-                if key in seen:
+                if key in seen_keys:
                     continue
-                seen.add(key)
-                formatted = f"{item.get('timestamp')} | {item.get('level'):<8} | {item.get('logger'):<9} :: {item.get('message')}"
-                color = log_colors.get(item.get("level"), "white")
+                seen_keys.add(key)
+                formatted = item.get("formatted") or (
+                    f"{item.get('timestamp')} | {item.get('level', 'INFO'):<8} | "
+                    f"{item.get('logger', 'App'):<9} :: {item.get('message', '')}"
+                )
+                color = log_colors.get(item.get("level", "INFO"), "white")
                 try:
                     log_widget.push(formatted, classes=f"text-{color}")
                 except Exception:
                     log_widget.push(formatted)
-        except Exception:
-            pass
 
-        # Per-core buffer (in case some logs were local)
-        try:
-            for log_entry in core.log_buffer:
-                key = (
-                    log_entry.get("timestamp"),
-                    log_entry.get("logger"),
-                    log_entry.get("message"),
-                )
-                if key in seen:
-                    continue
-                seen.add(key)
-                color = log_colors.get(log_entry["level"], "white")
-                try:
-                    log_widget.push(log_entry["formatted"], classes=f"text-{color}")
-                except Exception:
-                    log_widget.push(log_entry["formatted"])
-        except Exception:
-            pass
+        # Load historical logs (no filter applied initially)
+        push_history()
 
         # Register handler for NEW logs (only during this page visit)
         def on_new_log(
@@ -160,7 +141,9 @@ async def log_page():
                 # Widget is dead/destroyed, ignore silently
                 pass
 
-        core.event_bus.register("log_message", on_new_log)
+        # register_unique: SPA navigation re-runs this page function without firing
+        # on_disconnect — a plain register() would stack one handler per visit.
+        core.event_bus.register_unique("log_message", on_new_log, key="log_page")
 
         # Re-apply filter handler when filter changes
         def apply_filter():
@@ -169,36 +152,7 @@ async def log_page():
                 selected_filter["value"] = filter_select.value
 
                 log_widget.clear()
-                seen_filter = set()
-                for log_entry in get_global_recent_logs():
-                    # Apply filter
-                    if selected_filter["value"] != "All":
-                        logger_name = log_entry.get("logger", "")
-                        if (
-                            selected_filter["value"].lower()
-                            not in logger_name.lower()
-                        ):
-                            continue
-
-                    key = (
-                        log_entry.get("timestamp"),
-                        log_entry.get("logger"),
-                        log_entry.get("message"),
-                    )
-                    if key in seen_filter:
-                        continue
-                    seen_filter.add(key)
-
-                    formatted = log_entry.get(
-                        "formatted",
-                        f"{log_entry.get('timestamp')} | {log_entry.get('level', 'INFO'):<8} | {log_entry.get('logger', 'App'):<9} :: {log_entry.get('message', '')}",
-                    )
-
-                    color = log_colors.get(log_entry.get("level", "INFO"), "white")
-                    try:
-                        log_widget.push(formatted, classes=f"text-{color}")
-                    except Exception:
-                        log_widget.push(formatted)
+                push_history(selected_filter["value"])
                 ui.notify(
                     f"Filter applied: {selected_filter['value']}", type="info"
                 )

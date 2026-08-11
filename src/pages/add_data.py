@@ -6,6 +6,7 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 Fully config-driven using config_ui.yml structure.
 """
 
+import copy
 import os
 import sqlite3
 import tempfile
@@ -17,6 +18,7 @@ from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
 from ..ui.elements import (
     toolbar,
+    toolbar_group,
     entity_card_shell,
     entity_card_header,
     entity_card_content,
@@ -45,6 +47,11 @@ async def add_data_page():
     def render_toolbar():
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
+            with toolbar_group(core.theme, divider_after=True):
+                ui.icon("input", size="md").classes(f"text-{core.theme.get('accent')}")
+                ui.label("Data Input").classes(
+                    helpers.UI_STYLES.get_layout_classes("page_title")
+                )
             with (
                 ui.tabs(value="customer")
                 .props(
@@ -138,7 +145,9 @@ async def render_entity_form(
     core: AppCore, entity_type: str, operation: str, form_config: dict
 ):
     """Render a single entity form based on config"""
-    fields = form_config.get("fields", [])
+    # Deep-copy: the config dicts are shared process-wide; assign_dynamic_options
+    # writes options into the field dicts, which must not leak across clients.
+    fields = copy.deepcopy(form_config.get("fields", []))
     action = form_config.get("action", {})
 
     data_sources = await prepare_data_sources(core, entity_type, operation)
@@ -148,11 +157,19 @@ async def render_entity_form(
     dynamic_widgets = []
     parent_map = {}
 
-    async def on_submit():  ## TODO somewhere here detect if DevOps was updated and trigger re-init if so (could also be done via event bus) core.force_devops_reinit()
+    async def on_submit():
         required_fields = [f["name"] for f in fields if not f.get("optional", False)]
         if not helpers.check_input(widgets, required_fields):
             return
         kwargs = {name: widget.value for name, widget in widgets.items()}
+        # Snapshot before the values get cleared below — used to decide whether
+        # this customer change touched DevOps credentials (see re-init at the end).
+        devops_touched = entity_type == "customer" and (
+            operation in ("disable", "reenable")
+            or bool(kwargs.get("pat_token"))
+            or bool(kwargs.get("org_url"))
+            or bool(kwargs.get("devops_project"))
+        )
         try:
             await core.query_engine.function_db(action["function"], **kwargs)
             msg_1, msg_2 = helpers.print_success(
@@ -182,6 +199,16 @@ async def render_entity_form(
                                 f"Error refreshing {entity_type}.{op}: {e}"
                             )
             core.event_bus.emit("ui_refresh_requested")
+
+            # A customer's DevOps credentials (or active state) changed — rebuild
+            # the DevOps engine so the board/work-item forms pick it up without an
+            # app restart. force_devops_reinit() bypasses the retry cooldown and
+            # re-inits in the background.
+            if devops_touched:
+                core.logger.info(
+                    f"Customer DevOps config changed ({operation}) — re-initializing DevOps"
+                )
+                core.force_devops_reinit()
         except Exception as e:
             core.logger.error(f"Error in {operation} {entity_type}: {e}")
             ui.notify(f"Error: {e}", type="negative")
@@ -206,9 +233,17 @@ async def render_entity_form(
         )
 
         with entity_card_content():
+            # Per-cycle cache: without it, every child-widget refresh re-ran all
+            # of prepare_data_sources' queries. refresh_all_widgets() invalidates
+            # it once per cycle so data stays fresh after submits/tab changes.
+            _sources_cache: dict = {"data": None}
 
             async def data_fetcher(source_key, parent_val=None):
-                fresh = await prepare_data_sources(core, entity_type, operation)
+                if _sources_cache["data"] is None:
+                    _sources_cache["data"] = await prepare_data_sources(
+                        core, entity_type, operation
+                    )
+                fresh = _sources_cache["data"]
                 if source_key not in fresh:
                     return [] if parent_val is not None else ""
                 data = fresh[source_key]
@@ -232,12 +267,8 @@ async def render_entity_form(
                     widget_class = WIDGET_CLASSES.get(field_type)
                     if not widget_class:
                         core.logger.warning(
-                            f"Unknown field type '{field_type}', using fallback"
+                            f"Unknown field type '{field_type}' for '{field_name}' — skipping"
                         )
-                        fallback_widgets, _ = helpers.make_input_row(
-                            [field], defer_parent_wiring=True
-                        )
-                        widgets.update(fallback_widgets)
                         continue
 
                     widget_width = helpers.UI_STYLES.get_widget_width(
@@ -259,12 +290,20 @@ async def render_entity_form(
 
     async def refresh_all_widgets():
         try:
+            _sources_cache["data"] = None  # refetch once for this refresh cycle
             for dw in dynamic_widgets:
                 await dw.refresh()
         except Exception as e:
             core.logger.error(f"Error refreshing {entity_type}.{operation} widgets: {e}")
 
     return refresh_all_widgets
+
+
+def _devops_ids_by_customer(core: AppCore) -> dict:
+    """{customer_name: [{"label", "id"}, …]} for the Git-ID picker; {} when
+    DevOps isn't connected (the picker then falls back to manual id entry)."""
+    eng = getattr(core, "devops_engine", None)
+    return eng.get_work_item_options() if eng is not None else {}
 
 
 async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) -> dict:
@@ -286,16 +325,40 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 if operation == "update":
                     # For update, we need current values per customer
                     full_df = await QE.query_db(
-                        "SELECT customer_name, org_url, pat_token FROM customers WHERE is_current = 1"
+                        "SELECT customer_name, org_url, pat_token, devops_project, "
+                        "expected_work_pct, billing_round_minutes, color "
+                        "FROM customers WHERE is_current = 1"
                     )
                     data_sources["org_url"] = {}
                     data_sources["pat_token"] = {}
                     data_sources["new_customer_name"] = {}
+                    # Current project per customer (preselects the picker).
+                    data_sources["devops_project_current"] = {}
+                    data_sources["expected_work_pct"] = {}
+                    data_sources["billing_round_minutes"] = {}
+                    data_sources["color"] = {}
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
                         data_sources["org_url"][cname] = row["org_url"] or ""
                         data_sources["pat_token"][cname] = row["pat_token"] or ""
                         data_sources["new_customer_name"][cname] = cname
+                        data_sources["devops_project_current"][cname] = (
+                            row["devops_project"] or ""
+                        )
+                        data_sources["expected_work_pct"][cname] = (
+                            float(row["expected_work_pct"])
+                            if pd.notna(row["expected_work_pct"]) else 0
+                        )
+                        data_sources["billing_round_minutes"][cname] = (
+                            int(row["billing_round_minutes"])
+                            if pd.notna(row["billing_round_minutes"]) else 0
+                        )
+                        data_sources["color"][cname] = row["color"] or ""
+                    # Available projects per customer, from the live connections.
+                    eng = getattr(core, "devops_engine", None)
+                    data_sources["devops_projects"] = (
+                        eng.get_available_projects() if eng is not None else {}
+                    )
 
             elif operation == "reenable":
                 # Get customers that are disabled and have no active entry
@@ -322,6 +385,10 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 df["customer_name"].tolist() if not df.empty else []
             )
 
+            # DevOps work items per customer, for the Git-ID picker. Empty when
+            # DevOps isn't connected — the picker then degrades to manual entry.
+            data_sources["devops_ids"] = _devops_ids_by_customer(core)
+
             if operation in ["update", "disable"]:
                 # Get active projects grouped by customer (for parent-dependent dropdown)
                 grouped_df = await QE.query_db(
@@ -344,20 +411,27 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 if operation == "update":
                     # Get project details per project for auto-population
                     full_df = await QE.query_db(
-                        """SELECT p.project_name, p.git_id
+                        """SELECT p.project_name, p.git_id, c.customer_name
                            FROM projects p
+                           JOIN customers c ON p.customer_id = c.customer_id
                            WHERE p.is_current = 1"""
                     )
+                    devops_by_cust = _devops_ids_by_customer(core)
                     data_sources["new_project_name"] = {}
-                    data_sources["new_git_id"] = {}
+                    # Project-keyed Git-ID picker data: each project carries its
+                    # customer's work-item options AND the project's current git
+                    # id, since the field's parent is the project (see
+                    # DynamicDevOpsSelect's dict response handling).
+                    data_sources["devops_ids"] = {}
                     for _, row in full_df.iterrows():
                         pname = row["project_name"]
-                        # Plain strings/numbers so _update_input_field sets correct values
+                        # Plain strings/numbers so widget refresh sets correct values
                         data_sources["new_project_name"][pname] = pname
                         git_val = row["git_id"]
-                        data_sources["new_git_id"][pname] = (
-                            int(git_val) if pd.notna(git_val) else 0
-                        )
+                        data_sources["devops_ids"][pname] = {
+                            "items": devops_by_cust.get(row["customer_name"], []),
+                            "current": int(git_val) if pd.notna(git_val) else None,
+                        }
 
             elif operation == "reenable":
                 # Disabled projects grouped by customer (excluding any now-active ones)
@@ -456,6 +530,7 @@ async def render_database_tabs(
 
                 def handle_upload(e: events.UploadEventArguments):
                     ui.notify(f"File uploaded: {e.name}", color="positive")
+                    uploaded_path = None
                     try:
                         with tempfile.NamedTemporaryFile(
                             delete=False, suffix=".db"
@@ -465,10 +540,13 @@ async def render_database_tabs(
 
                         sync_sql = Database.generate_sync_sql(db_name, uploaded_path)
                         db_deltas.set_content(sync_sql)
-                        os.remove(uploaded_path)  # Clean up temp file
                     except Exception as ex:
                         core.logger.error(f"Error comparing databases: {ex}")
                         ui.notify(f"Error: {ex}", type="negative")
+                    finally:
+                        # Clean up temp file even when the comparison fails
+                        if uploaded_path and os.path.exists(uploaded_path):
+                            os.remove(uploaded_path)
 
                 ui.upload(on_upload=handle_upload).props("accept=.db").classes(
                     "q-pa-xs q-ma-xs"
@@ -503,6 +581,9 @@ async def render_database_tabs(
                     nonlocal uploaded_db_path
                     ui.notify(f"Database uploaded: {e.name}", color="positive")
                     try:
+                        # Drop the previous upload's temp file before replacing it
+                        if uploaded_db_path and os.path.exists(uploaded_db_path):
+                            os.remove(uploaded_db_path)
                         with tempfile.NamedTemporaryFile(
                             delete=False, suffix=".db"
                         ) as tmp:

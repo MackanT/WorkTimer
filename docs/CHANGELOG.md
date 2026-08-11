@@ -7,6 +7,69 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
+### 5.0.3 (2026-08-11)
+- **Features**
+  - ad per-customer fields (auto-migrated): **expected work %**, a **billing-rounding** override, and an **indicator colour**. Editable in Add Data (add/update customer) and via the query-editor row dialog; the "Wage" label is now "Hourly rate" (UI only — the `wage` column is unchanged). On Reports, the utilisation target derives from the selected customers' expected % (summed; all customers when none selected) and billing rounding is applied automatically from a single selected customer's setting (or the global default) — no manual toggle. The indicator colour is used throughout: a dot on the board's customer tabs and on time-tracker customer cards, a left-edge tint on board cards, a filled customer badge in the work-item dialog, and — when exactly one customer is selected on Reports — the accent for that customer's trend + cumulative charts. The "Hours by customer", "Hours by project", and "Top work items" bar charts are always coloured per customer (each project / work item resolves to its customer's colour).
+  - ad Reports customer filter is now a **multi-select** (pick any set of customers, or none for all) whose selection is **remembered per user** as the default view.
+  - ad Reports page: a visual time-analytics dashboard (ECharts, no new deps) — stat tiles (hours / amount / entries / active days / % of target) each with a period-over-period ▲▼ delta; a daily hours trend with a rolling-average line; a cumulative-hours line with a utilisation target reference (100% = target hours/day × workdays × target%); and hours-by-project, hours-by-customer, and top-work-items (by git_id) bar charts. Filter by customers (multi-select) + period (Day/Week/Month/Year/Custom). Periods are to-date (Month = MTD vs the previous month's first N days). Hours count still-running timers up to now (coalesce(end_time, now)), not just stopped entries. A **Rounding** control picks the billing-rounding basis — off / per entry / per work item / per project / grand total — plus a **"round up to (min)"** increment input (seeded from a single selected customer's setting, editable, remembered per user). Rounds **up** by default (billing convention; `time_settings.rounding_mode` can switch to nearest/down). Applied to the billable tiles + CSV only; charts and the live Time Tracker always show real tracked hours, and nothing is ever written to the DB (display-only). New `time_settings` config (rounding, currency, target hours/day + %).
+  - rf merged the Hierarchy view into the Board page. The Board toolbar gains a "Board | Hierarchy" toggle; the two views share the selected customer (remembered per user). The standalone Hierarchy page, its `/hierarchy` route, and its nav entry are removed — `hierarchy_page` became an embeddable `create_hierarchy_view()`.
+  - ad database backup (Settings → "Backup" in the toolbar): "Backup now" writes a consistent copy to a `backups/` folder next to the database (keeps the last 10) and "Download" saves one via the browser. Uses SQLite's online-backup API (`Database.backup_to`), safe while the app is running — never a raw file copy.
+  - ad image support in the markdown editors: an Insert-image button (opens the file picker directly — no dialog) and paste-to-upload. Notepad images save into the note's assets folder; DevOps work-item descriptions upload images as DevOps **attachments** (the returned URL is embedded, so it renders in Azure DevOps). New `DevOpsClient/Manager/Engine.upload_attachment` + `/upload_devops_image` endpoint.
+  - ad markdown formatting toolbar on every markdown editor: bold/italic/inline-code (wrap selection), bullet/numbered/task-checkbox lists, heading, quote, code block, and link — each transforms the current selection in the editor (block marks toggle on/off), so the markdown syntax is discoverable without typing it.
+  - ad markdown-table builder: a "Table" button on every markdown editor (DevOps descriptions, notepad) opens a grid dialog — set rows (up to 30) / columns (up to 8), fill cells, pick per-column alignment (shown live in an HTML preview), then either Insert at the editor's cursor (via the CodeMirror view, kept in sync) or Copy to clipboard. Paste an existing table into the dialog to edit it. Core `build_markdown_table` / `parse_markdown_table` are unit-tested (alignment, pipe/newline escaping, ragged rows, build↔parse round-trip).
+  - ad multi-project support per customer: a `devops_project` column (auto-migrated) lets a customer target a specific project in an org that has several, instead of always the alphabetically-first. The customer "Update" form gains a Project dropdown populated from the org's live project list (preselecting the current choice); connect() falls back to the first project, so existing customers are untouched. Changing it re-inits the DevOps engine.
+  - ad DevOps work-item picker for Git ID everywhere it's edited — Add Data "Add project" & "Update project", and the query-editor row-edit for `time` and `projects` rows. A searchable dropdown of the relevant customer's active work items (pick one instead of typing a raw id); falls back to manual entry when DevOps is offline. New `devops_id` dynamic-widget type + `DevOpsEngine.get_work_item_options`.
+  - ad draggable divider in the query editor to resize the query input vs. the results grid (position remembered per user)
+  - ad work-item comments to the devops dialog (board card click + hierarchy node click) - view existing comments and post new ones - plus an "open in azure devops" link
+  - ad interactive hierarchy - click a node to view/edit its fields, description and comments in a dialog
+  - ad informative hierarchy nodes - progress rollups on epics/features ("144 of 154 done") and done items greyed out, with a legend entry
+  - rf hierarchy nodes look nicer - rounded borderless shapes with a soft shadow to match the app's cards
+  - rf board + hierarchy toolbars now use the app's labelled toolbar-group layout (icon + page title, uppercase section labels, dividers) to match the other pages; hierarchy's layout direction is now chip buttons matching the board's type chips (shared segmented_chips component)
+  - rf board cards are now rounded and borderless with a soft shadow (matching the app's cards / hierarchy nodes), and column headers use a consistent semibold title + subtle count
+  - rf route board + hierarchy muted text through the theme's muted token, and "done" indicators through the theme's positive colour, so re-theming propagates (no more hardcoded text-grey-* literals)
+  - rf devops comments - newest first, with the add-comment box above the thread
+  - ad devops hierarchy page - epic/feature/user-story tree rendered as a mermaid graph, per customer, with a "show closed" toggle, zoom controls, a scrollable viewport, a focus selector to drill into a single epic/feature's subtree, a colour legend, a top-down/left-right layout toggle, and visible arrows
+  - fx hierarchy nodes rendering empty for titles with special characters - "[ref:...]" metadata tags are stripped and node labels are now whitelisted to letters/digits/space/.,:- so no mermaid-breaking character (()[]{}<>|"/+%?! etc.) can survive
+  - fx hierarchy large trees opening as an unreadable 170-node scatter - customers with many items now open focused on the first epic (a tight subtree); small trees still open whole, and "Whole tree" stays in the focus dropdown
+  - fx hierarchy nodes rendering as empty boxes despite valid text - mermaid now draws labels as native svg text (htmlLabels:false) instead of html in a foreignObject, which blanked out at certain positions (especially under the zoom transform)
+  - ad delete option for tasks (delete button in the task update panel, with confirmation)
+  - ad auto re-initialize devops when a customer's pat token / org url is added or changed (no app restart needed)
+- **Major changes**
+  - fx run all azure devops api-calls in worker threads - ui no longer freezes during syncs, board dialogs or form saves
+  - rf remove dead scaffolding code (broken services, unused engines, events and devops methods)
+- **Minor improvements**
+  - ad indicator in software to warn/notify user if they are running a older version of the software (compares the local `pyproject.toml` version against `main`'s using a proper semver check — so 5.0.10 > 5.0.2, and a local build ahead of main never shows a false "downgrade")
+  - fx task creation reporting success even when the insert failed
+  - fx settings page crashing when devops is not configured
+  - fx event-handler leaks when re-visiting tasks/log/notepad pages
+  - fx note rename overwriting existing notes with the same title + ad delete confirmation
+  - fx task update form breaking on titles containing quotes (parameterized dynamic queries)
+  - fx daily 2am devops sync waiting an extra day when app started between 00:00-02:00
+  - fx devops cache updates hitting the wrong customer on work-item id collisions
+  - fx markdown preview css leaking styles into the rest of the app
+  - fx "text" form fields rendering single-line (now multiline, affects task description)
+  - fx bind to 127.0.0.1 by default + per-install random storage secret (set HOST in .env for lan access)
+  - ad db busy_timeout + consistent locking (avoids "database is locked" with multiple tabs)
+  - ad auto-extension of dates table horizon (weekly/monthly reports would go blank after 2030)
+  - ad live theme apply on save + correct reload hint (ctrl+r, f5 is reserved for query editor)
+  - ad board/time pages now auto-refresh after devops syncs and data edits (wired up existing events)
+  - fx pin python 3.11 via .python-version + declare missing direct deps in pyproject (dotenv, pyyaml, requests, pygments)
+  - rf time-tracker midnight day-view rollover now uses the shared, unit-tested next-occurrence helper (verified timing; the refresh logic was already correct)
+  - rf share one db connection across all browser tabs (was one connection + schema init per tab)
+  - ad schema auto-migration on startup - adds missing columns and recreates missing/outdated triggers from one source of truth (replaces the temp devops migration)
+  - fx backdated manual time entries now get the bonus rate valid on the entry date (was: today's rate)
+  - fx scripts now read DB_NAME from .env like the app (scanned a nonexistent database before)
+  - ad confirmation dialogs on the settings reset buttons
+  - fx "All-Time" range now starts at the first recorded entry (was hardcoded 2000-01-01)
+  - fx log page filter no longer drops client-local entries
+  - rf misc cleanup - form loads awaited instead of sleeps, cached form data sources, theme re-resolution by content, temp-file cleanup, removed unenforceable task foreign keys
+  - rf remove the legacy form factory (~700 lines) - all forms now render via the dynamic widget system (ad datetime widget type to cover the last gap)
+  - fx restore conditional field visibility in devops forms (source/contact/parent now hide again based on work item type - silently broken since the board rework)
+  - rf split helpers.py into ui_styles.py + markdown_utils.py, mv task card component into tasks page
+  - fx updating a customer/project without passing devops credentials/git-id no longer wipes them
+  - fx notepad checkbox clicks not toggling the markdown (dispatcher state was silently copied by app.storage.client)
+  - ad local regression test suite (66 tests, `uv run pytest`) covering the schema/db, forms, markdown, events and devops logic changed in this release
+  - fx stop uv rebuilding worktimer as a package on every sync (`package = false`) - fixes the intermittent "Access is denied" on the dist-info inside OneDrive
 
 ### 5.0.2 (2026-06-01)
 - **Major changes**

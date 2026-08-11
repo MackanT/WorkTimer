@@ -4,18 +4,34 @@ from azure.devops.v7_1.work_item_tracking.models import CommentCreate
 from azure.devops.v7_1.work.models import TeamContext
 from azure.devops.exceptions import AzureDevOpsServiceError
 import pandas as pd
+import io
 import re
 import requests
 import base64
 import json
 
-DEFAULT_DEVOPS_STATES = {
-    "New",
-    "Active",
-    "Resolved",
-    "Closed",
-    "Removed",
-}  ## TODO - config file
+
+def _clean_project(val):
+    """Normalise a stored devops_project value to a non-empty str, or None.
+    Guards against pandas NaN and the string sentinels used elsewhere."""
+    if val is None:
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip()
+    return s if s and s.lower() not in ("none", "null", "nan") else None
+
+
+def _choose_project(configured, available):
+    """Pick which project a client uses: the configured one if it exists in the
+    org, else the first available (today's default), else None."""
+    configured = _clean_project(configured)
+    if configured and configured in available:
+        return configured
+    return available[0] if available else None
 
 
 class DevOpsManager:
@@ -28,7 +44,12 @@ class DevOpsManager:
             ].lower() in ("", "none", "null"):
                 continue
             org_url = f"https://dev.azure.com/{row['org_url']}"
-            client = DevOpsClient(row["pat_token"], org_url, self.log)
+            client = DevOpsClient(
+                row["pat_token"],
+                org_url,
+                self.log,
+                project_name=row.get("devops_project"),
+            )
             try:
                 client.connect()
                 self.clients[row["customer_name"]] = client
@@ -52,6 +73,40 @@ class DevOpsManager:
             self.log.warning(f"No DevOps connection for {customer_name}")
         return client
 
+    def get_available_projects(self):
+        """{customer_name: [project names in their org]} for connected clients."""
+        return {
+            name: list(client.available_projects)
+            for name, client in self.clients.items()
+        }
+
+    def upload_attachment(self, customer_name, file_name, content):
+        """Upload bytes as a DevOps attachment for a customer's project; returns
+        the attachment URL or None."""
+        client = self._get_client(customer_name)
+        return client.upload_attachment(file_name, content) if client else None
+
+    def fetch_attachment(self, url):
+        """Fetch a DevOps attachment's bytes using the matching customer's PAT,
+        for proxying images into the WorkTimer preview. Returns
+        (content, content_type) or None. Only fetches work-item attachment URLs
+        that belong to a connected org (SSRF guard)."""
+        if "/_apis/wit/attachments/" not in url:
+            return None
+        for client in self.clients.values():
+            if not url.startswith(client.organization_url):
+                continue
+            try:
+                resp = requests.get(
+                    url, auth=("", client.personal_access_token), timeout=20
+                )
+                if resp.ok:
+                    ctype = resp.headers.get("Content-Type", "application/octet-stream")
+                    return resp.content, ctype
+            except Exception as e:
+                self.log.error(f"Attachment fetch failed ({client.organization_url}): {e}")
+        return None
+
     def save_comment(self, customer_name, comment, git_id):
         client = self._get_client(customer_name)
         if not client:
@@ -65,21 +120,28 @@ class DevOpsManager:
         return client.get_workitem_level(level, work_item_id)
 
     def get_description(self, customer_name, work_item_id):
-        """Return the work item's description (System.Description) as plain text.
+        """Return the work item's description plus live scalar fields.
 
-        Returns (True, description) on success or (False, message) on failure.
+        Always returns a 4-tuple: (status, description_or_error, format, live_fields).
         """
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No DevOps connection for {customer_name}", "markdown", {})
         return client.get_work_item_description(work_item_id)
 
-    def set_description(self, customer_name, work_item_id, description, markdown=False):
-        """Set (update) a work item's description. Returns (True, msg) or (False, msg)."""
+    def get_comments(self, customer_name, work_item_id):
+        """Return a work item's comments. (True, [ {author,date,text}, ... ]) or (False, msg)."""
         client = self._get_client(customer_name)
         if not client:
             return (False, f"No DevOps connection for {customer_name}")
-        return client.update_work_item_description(work_item_id, description, markdown)
+        return client.get_work_item_comments(work_item_id)
+
+    def get_work_item_url(self, customer_name, work_item_id):
+        """Return the Azure DevOps web URL for a work item, or None."""
+        client = self._get_client(customer_name)
+        if not client:
+            return None
+        return client.get_work_item_url(work_item_id)
 
     def update_work_item_fields(
         self, customer_name, work_item_id, fields, markdown=False
@@ -89,13 +151,6 @@ class DevOpsManager:
         if not client:
             return (False, f"No DevOps connection for {customer_name}")
         return client.update_work_item_fields(work_item_id, fields, markdown)
-
-    def get_work_item_details(self, customer_name, work_item_id):
-        """Get work item details. Returns (True, details_dict) or (False, error_msg)."""
-        client = self._get_client(customer_name)
-        if not client:
-            return (False, f"No DevOps connection for {customer_name}")
-        return client.get_work_item_details(work_item_id)
 
     def create_user_story(
         self,
@@ -161,24 +216,6 @@ class DevOpsManager:
             if not status or not items:
                 continue
 
-            # Build lookup dicts for hierarchy
-            epics = {
-                item.id: item
-                for item in items
-                if getattr(item, "fields", {}).get("System.WorkItemType") == "Epic"
-            }
-            features = {
-                item.id: item
-                for item in items
-                if getattr(item, "fields", {}).get("System.WorkItemType") == "Feature"
-            }
-            user_stories = {
-                item.id: item
-                for item in items
-                if getattr(item, "fields", {}).get("System.WorkItemType")
-                == "User Story"
-            }
-
             def _assigned_to(fields):
                 af = fields.get("System.AssignedTo")
                 if not af:
@@ -187,82 +224,31 @@ class DevOpsManager:
                     return af.get("displayName", af.get("uniqueName", ""))
                 return str(af)
 
-            # Add all epics
-            for epic in epics.values():
+            # One row per Epic / Feature / User Story — identical shape, only
+            # parent_id differs (Epics are roots).
+            for item in items:
+                fields = getattr(item, "fields", {}) or {}
+                wtype = fields.get("System.WorkItemType")
+                if wtype not in ("Epic", "Feature", "User Story"):
+                    continue
                 rows.append(
                     {
                         "customer_name": customer_name,
-                        "type": "Epic",
-                        "id": epic.id,
-                        "title": epic.fields.get("System.Title"),
-                        "state": epic.fields.get("System.State"),
-                        "parent_id": None,
-                        "board_column": epic.fields.get("System.BoardColumn", ""),
-                        "board_column_done": int(bool(epic.fields.get("System.BoardColumnDone", False))),
-                        "assigned_to": _assigned_to(epic.fields),
-                        "changed_date": epic.fields.get("System.ChangedDate", ""),
-                        "priority": epic.fields.get("Microsoft.VSTS.Common.Priority"),
-                    }
-                )
-
-            # Add all features
-            for feature in features.values():
-                parent_id = feature.fields.get("System.Parent")
-                rows.append(
-                    {
-                        "customer_name": customer_name,
-                        "type": "Feature",
-                        "id": feature.id,
-                        "title": feature.fields.get("System.Title"),
-                        "state": feature.fields.get("System.State"),
-                        "parent_id": parent_id,
-                        "board_column": feature.fields.get("System.BoardColumn", ""),
-                        "board_column_done": int(bool(feature.fields.get("System.BoardColumnDone", False))),
-                        "assigned_to": _assigned_to(feature.fields),
-                        "changed_date": feature.fields.get("System.ChangedDate", ""),
-                        "priority": feature.fields.get("Microsoft.VSTS.Common.Priority"),
-                    }
-                )
-
-            # Add all user stories
-            for us in user_stories.values():
-                parent_id = us.fields.get("System.Parent")
-                rows.append(
-                    {
-                        "customer_name": customer_name,
-                        "type": "User Story",
-                        "id": us.id,
-                        "title": us.fields.get("System.Title"),
-                        "state": us.fields.get("System.State"),
-                        "parent_id": parent_id,
-                        "board_column": us.fields.get("System.BoardColumn", ""),
-                        "board_column_done": int(bool(us.fields.get("System.BoardColumnDone", False))),
-                        "assigned_to": _assigned_to(us.fields),
-                        "changed_date": us.fields.get("System.ChangedDate", ""),
-                        "priority": us.fields.get("Microsoft.VSTS.Common.Priority"),
+                        "type": wtype,
+                        "id": item.id,
+                        "title": fields.get("System.Title"),
+                        "state": fields.get("System.State"),
+                        "parent_id": None if wtype == "Epic" else fields.get("System.Parent"),
+                        "board_column": fields.get("System.BoardColumn", ""),
+                        "board_column_done": int(bool(fields.get("System.BoardColumnDone", False))),
+                        "assigned_to": _assigned_to(fields),
+                        "changed_date": fields.get("System.ChangedDate", ""),
+                        "priority": fields.get("Microsoft.VSTS.Common.Priority"),
                     }
                 )
 
         df = pd.DataFrame(rows)
         return (True, df)
-
-    def get_board_columns(
-        self, customer_name: str, team_name: str, board_name: str = "Stories"
-    ) -> tuple:
-        """Fetch board columns for a given customer/team/board."""
-        client = self._get_client(customer_name)
-        if not client:
-            return (False, f"No DevOps connection for {customer_name}")
-        return client.get_board_columns(team_name, board_name)
-
-    def get_team_for_customer(
-        self, customer_name: str, config_devops: dict
-    ) -> str | None:
-        """Get preferred team name for a customer."""
-        client = self._get_client(customer_name)
-        if not client:
-            return None
-        return client.get_team_for_customer(config_devops, customer_name)
 
     def set_board_column(
         self, customer_name: str, work_item_id: int, column_name: str
@@ -275,11 +261,17 @@ class DevOpsManager:
 
 
 class DevOpsClient:
-    def __init__(self, personal_access_token, organization_url, log):
+    def __init__(
+        self, personal_access_token, organization_url, log, project_name=None
+    ):
         self.personal_access_token = personal_access_token
         self.organization_url = organization_url
         self.log = log
         self.connection = None
+        # User-selected project for this customer (None = auto: first project).
+        self.configured_project = _clean_project(project_name)
+        # All project names in the org, cached at connect() for the picker.
+        self.available_projects = []
 
     def connect(self):
         # Create a connection to the Azure DevOps organization
@@ -293,10 +285,19 @@ class DevOpsClient:
             # Attempt a simple call to ensure connection is valid
             core_client = self.connection.clients.get_core_client()
 
-            project_list = core_client.get_projects(top=1)  # This is a list now
-            if not project_list:
+            # List all projects (also validates the connection) so the user can
+            # pick which one this customer uses; default to the first.
+            projects = list(core_client.get_projects())
+            if not projects:
                 raise Exception("No projects found in the Azure DevOps organization.")
-            self.project_name = project_list[0].name  # Get the first project's name
+            self.available_projects = [p.name for p in projects]
+            chosen = _choose_project(self.configured_project, self.available_projects)
+            if self.configured_project and chosen != self.configured_project:
+                self.log.warning(
+                    f"Configured DevOps project '{self.configured_project}' not found "
+                    f"in {self.organization_url}; using '{chosen}'"
+                )
+            self.project_name = chosen
 
         except Exception as e:
             msg = str(e).lower()
@@ -316,6 +317,23 @@ class DevOpsClient:
             self.log.error("Connection not established. Call connect() first.")
             raise Exception("Connection not established. Call connect() first.")
         return self.connection.clients.get_work_item_tracking_client()
+
+    def upload_attachment(self, file_name, content):
+        """Upload `content` (bytes) as a project attachment and return its URL,
+        which can be embedded in a work-item description (e.g. ![](url)). Returns
+        None on failure."""
+        try:
+            # create_attachment streams via data.read(), so it needs a file-like
+            # object — wrap the raw bytes in BytesIO.
+            ref = self.wit_client.create_attachment(
+                upload_stream=io.BytesIO(content),
+                project=self.project_name,
+                file_name=file_name,
+            )
+            return ref.url
+        except Exception as e:
+            self.log.error(f"Failed to upload attachment '{file_name}': {e}")
+            return None
 
     def add_comment_to_work_item(self, work_item_id, comment_text):
         comment_text = comment_text.replace("\n", "<br>")  # Fix for new lines
@@ -397,6 +415,46 @@ class DevOpsClient:
         except Exception as e:
             self.log.error(f"Error fetching work items: {e}")
             return (False, f"Error fetching work items: {e}")
+
+    def get_work_item_comments(self, work_item_id: int):
+        """Return a work item's comments, oldest first.
+
+        Returns (True, [ {author, date, text}, ... ]) or (False, message).
+        """
+        try:
+            result = self.wit_client.get_comments(
+                project=self.project_name, work_item_id=int(work_item_id)
+            )
+            raw = getattr(result, "comments", None) or []
+
+            def _author(created_by):
+                if isinstance(created_by, dict):
+                    return created_by.get("displayName") or created_by.get("uniqueName") or ""
+                return (
+                    getattr(created_by, "display_name", None)
+                    or getattr(created_by, "unique_name", None)
+                    or ""
+                )
+
+            comments = [
+                {
+                    "author": _author(getattr(c, "created_by", None)),
+                    "date": str(getattr(c, "created_date", "") or ""),
+                    "text": getattr(c, "text", "") or "",
+                }
+                for c in raw
+            ]
+            # Newest first (ISO dates sort lexically).
+            comments.sort(key=lambda c: c["date"], reverse=True)
+            self.log.info(f"Loaded {len(comments)} comments for work item {work_item_id}")
+            return (True, comments)
+        except Exception as e:
+            self.log.error(f"Error fetching comments for {work_item_id}: {e}")
+            return (False, f"Error fetching comments: {e}")
+
+    def get_work_item_url(self, work_item_id: int) -> str:
+        """Build the Azure DevOps web URL for a work item."""
+        return f"{self.organization_url}/{self.project_name}/_workitems/edit/{int(work_item_id)}"
 
     def _create_work_item(
         self,
@@ -522,7 +580,7 @@ class DevOpsClient:
     def get_work_item_description(self, work_item_id: int):
         """Return the System.Description field for a single work item as plain text.
 
-        Returns (True, description) or (False, message).
+        Always returns a 4-tuple: (status, description_or_error, format, live_fields).
         """
         try:
             item = self.wit_client.get_work_item(int(work_item_id), expand="All")
@@ -561,43 +619,7 @@ class DevOpsClient:
             return (True, desc, fmt, live_fields)
         except Exception as e:
             self.log.error(f"Error fetching work item {work_item_id}: {e}")
-            return (False, f"Error fetching work item {work_item_id}: {e}")
-
-    def update_work_item_description(
-        self, work_item_id: int, description: str, markdown: bool = False
-    ):
-        """Update the System.Description field of a work item.
-
-        Returns (True, message) on success; (False, message) on failure.
-        """
-        try:
-            patch_document = [
-                {
-                    "op": "add",
-                    "path": "/fields/System.Description",
-                    "value": description,
-                }
-            ]
-            if markdown:
-                # Mark the Description field as Markdown formatted in Azure DevOps
-                patch_document.append(
-                    {
-                        "op": "add",
-                        "path": "/multilineFieldsFormat/System.Description",
-                        "value": "Markdown",
-                    }
-                )
-            self.wit_client.update_work_item(
-                patch_document, int(work_item_id), project=self.project_name
-            )
-            self.log.info(f"Updated description for work item {work_item_id}")
-            return (True, f"Updated description for work item {work_item_id}")
-        except AzureDevOpsServiceError as e:
-            self.log.error(f"Azure DevOps error occurred: {e}")
-            return (False, f"Azure DevOps error occurred: {e}")
-        except Exception as e:
-            self.log.error(f"Error updating work item {work_item_id}: {e}")
-            return (False, f"Error updating work item {work_item_id}: {e}")
+            return (False, f"Error fetching work item {work_item_id}: {e}", "markdown", {})
 
     def update_work_item_fields(
         self, work_item_id: int, fields: dict, markdown: bool = False
@@ -653,117 +675,6 @@ class DevOpsClient:
         except Exception as e:
             self.log.error(f"Error updating work item {work_item_id}: {e}")
             return (False, f"Error updating work item {work_item_id}: {e}")
-
-    def get_work_item_details(self, work_item_id: int):
-        """Get work item details including state, assigned to, and priority.
-
-        Returns (True, details_dict) on success; (False, error_message) on failure.
-        """
-        try:
-            work_item = self.wit_client.get_work_item(
-                int(work_item_id), project=self.project_name
-            )
-
-            # Extract assigned to field with better handling
-            assigned_to_field = work_item.fields.get("System.AssignedTo")
-            assigned_to = ""
-            if assigned_to_field:
-                if isinstance(assigned_to_field, dict):
-                    # It's a user object with displayName, uniqueName, etc.
-                    assigned_to = assigned_to_field.get(
-                        "displayName", assigned_to_field.get("uniqueName", "")
-                    )
-                elif isinstance(assigned_to_field, str):
-                    # It's just a string
-                    assigned_to = assigned_to_field
-
-            # Extract priority with better handling
-            priority_field = work_item.fields.get("Microsoft.VSTS.Common.Priority")
-            priority = None
-            if priority_field is not None:
-                try:
-                    priority = int(priority_field)
-                except (ValueError, TypeError):
-                    priority = None
-
-            details = {
-                "state": work_item.fields.get("System.State"),
-                "assigned_to": assigned_to,
-                "assigned_to_raw": assigned_to_field,  # Keep raw field for email extraction
-                "priority": priority,
-                "title": work_item.fields.get("System.Title"),
-                "description": work_item.fields.get("System.Description", ""),
-                "board_column": work_item.fields.get("System.BoardColumn", ""),
-            }
-
-            self.log.info(f"Loaded details for work item {work_item_id}")
-            return (True, details)
-
-        except Exception as e:
-            self.log.error(f"Error fetching work item details {work_item_id}: {e}")
-            return (False, f"Error fetching work item details {work_item_id}: {e}")
-
-    def get_board_columns(self, team_name: str, board_name: str = "Stories") -> tuple:
-        """Fetch board columns for a given team and board.
-
-        Returns (True, [column_names]) or (False, error_message).
-        """
-        try:
-            work_client = self.connection.clients.get_work_client()
-            team_context = TeamContext(
-                project=self.project_name,
-                team=team_name,
-            )
-            boards = work_client.get_boards(team_context)
-            board = next((b for b in boards if b.name == board_name), None)
-            if not board:
-                return (False, f"Board '{board_name}' not found for team '{team_name}'")
-
-            board_detail = work_client.get_board(team_context, board.id)
-            column_names = [c.name for c in board_detail.columns]
-            self.log.info(
-                f"Fetched {len(column_names)} columns for {team_name}/{board_name}"
-            )
-            return (True, column_names)
-        except Exception as e:
-            self.log.error(f"Error fetching board columns: {e}")
-            return (False, f"Error fetching board columns: {e}")
-
-    def get_team_for_customer(
-        self, config_devops: dict, customer_name: str
-    ) -> str | None:
-        """Get the preferred team name for a customer from config.
-
-        Falls back to auto-detecting the team with custom board columns.
-        """
-        # Try config first
-        customer_data = config_devops.get("customers", {}).get(customer_name, {})
-        team = customer_data.get("team") or config_devops.get("default", {}).get("team")
-        if team:
-            return team
-
-        # Auto-detect: find team with custom Stories columns
-        try:
-            core_client = self.connection.clients.get_core_client()
-            work_client = self.connection.clients.get_work_client()
-            teams = core_client.get_teams(self.project_name)
-
-            for t in teams:
-                team_context = TeamContext(project=self.project_name, team=t.name)
-                boards = work_client.get_boards(team_context)
-                stories_board = next((b for b in boards if b.name == "Stories"), None)
-                if not stories_board:
-                    continue
-                board_detail = work_client.get_board(team_context, stories_board.id)
-                columns = {c.name for c in board_detail.columns}
-                if columns - DEFAULT_DEVOPS_STATES:
-                    self.log.info(f"Auto-detected team '{t.name}' for {customer_name}")
-                    return t.name
-
-        except Exception as e:
-            self.log.warning(f"Auto-detect team failed: {e}")
-
-        return None
 
     def set_board_column(self, work_item_id: int, column_name: str) -> tuple:
         """Move a work item to a board column via the hidden Kanban.Column field.

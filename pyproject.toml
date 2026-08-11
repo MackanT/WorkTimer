@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "worktimer"
-version = "5.0.2"
+version = "5.0.3"
 authors = [
   { name = "Marcus Toftås", email = "mackan.toftas@live.com" }
 ]
@@ -22,8 +22,12 @@ dependencies = [
     "markdown>=3.4.4",
     "bleach>=6.0.0",
     "markdownify>=1.2.0",
-    "setuptools>=80.10.2",
+    "pygments>=2.15.0",
     "pymdown-extensions>=10.21.2",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "packaging>=21.0",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -34,8 +38,29 @@ classifiers = [
 "Homepage" = "https://github.com/MackanT/WorkTimer"
 "Bug Tracker" = "https://github.com/MackanT/WorkTimer"
 
-[project.scripts]
-worktimer = "src.main:main"
+# NOTE: no [project.scripts] entry point — the previous "src.main:main" pointed
+# at a module that doesn't exist (main.py lives at the repo root and isn't
+# packaged). Run the app from a checkout with `python main.py`.
+
+[tool.uv]
+# Don't build/install worktimer as a package into the venv. It's run from the
+# working tree (`python main.py`, imports `src.*`) and never imported as an
+# installed package — so building it only churned the venv and, inside OneDrive,
+# intermittently failed with "Access is denied" on the dist-info during sync.
+package = false
+
+[dependency-groups]
+# Installed by `uv sync` (the dev group is on by default). Run: `uv run pytest`
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Put the repo root on sys.path so tests can `from src.<module> import ...`
+# (src is an implicit namespace package used the same way main.py imports it).
+pythonpath = ["."]
+addopts = "-q"
 
 [tool.setuptools.packages.find]
 where = ["src"]

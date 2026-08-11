@@ -26,6 +26,7 @@ class NavigationBar:
         self.active_path = None
         self.on_navigate = None
         self._active_timers_row = None
+        self._update_badge = None
 
     def render(self) -> None:
         """
@@ -92,6 +93,11 @@ class NavigationBar:
                         ui.row().classes("items-center gap-1 mr-2 shrink-0")
                     )
 
+                    # Update available badge (empty = hidden, populated by set_update_available)
+                    self._update_badge = (
+                        ui.row().classes("items-center gap-1 mr-2 shrink-0")
+                    )
+
             # Set initial active state based on current path
             current_path = app.storage.client.get("current_path", "/time")
             self.set_active(current_path, self.theme)
@@ -134,6 +140,28 @@ class NavigationBar:
         """Legacy shim — delegates to set_active_timers."""
         self.set_active_timers(tooltip_lines or [] if active else [])
 
+    def set_update_available(self, version: str | None) -> None:
+        """Show or hide the update badge in the nav bar right side.
+
+        Args:
+            version: Latest version string to display, or None/empty to hide.
+        """
+        if self._update_badge is None:
+            return
+        self._update_badge.clear()
+        if not version:
+            return
+        with self._update_badge:
+            ui.icon("upgrade", size="xs").classes("text-amber-400 shrink-0")
+            (
+                ui.label(f"v{version} available")
+                .classes(
+                    "text-xs text-amber-300 border border-amber-600"
+                    " px-2 py-0.5 rounded-full whitespace-nowrap"
+                )
+                .tooltip("Update with: git pull (then restart the app)")
+            )
+
     def set_active(self, path: str, theme: dict):
         """Update the active navigation button"""
         self.active_path = path
@@ -158,13 +186,7 @@ def toolbar_divider(theme):
     ui.element("div").classes(f"h-6 w-px shrink-0 bg-{theme.get('divider')}")
 
 
-# Height constants kept for backward compat (not used for layout calculations).
 TOOLBAR_HEIGHT_PX = 56
-
-# Kept so existing imports don't break — not used for layout anymore.
-NAV_HEIGHT_PX = 50
-PAGE_HEIGHT = "var(--wt-page-h)"   # legacy; prefer the flex model
-INNER_HEIGHT = "var(--wt-inner-h)" # legacy; prefer the flex model
 
 
 @contextmanager
@@ -193,6 +215,29 @@ def toolbar_group(theme, label: str | None = None, divider_after: bool = True):
         yield
     if divider_after:
         toolbar_divider(theme)
+
+
+def segmented_chips(theme, options, active_value, on_select) -> None:
+    """A row of pill buttons in the shared "chip" style (as on the board's type
+    filter): the active option is filled with the accent colour, the rest are
+    outlined.
+
+    Args:
+        theme: the app theme dict.
+        options: list of (value, label) pairs.
+        active_value: the currently-selected value (filled).
+        on_select: callable(value) fired on click (may be async).
+    """
+    chip_style = UI_STYLES.get_widget_style("query_chip")
+    with ui.row().classes("gap-2 items-center shrink-0 no-wrap"):
+        for value, label in options:
+            btn = ui.button(label, on_click=lambda e, v=value: on_select(v))
+            if value == active_value:
+                btn.props(f"unelevated dense no-caps color={theme.get('accent')}")
+            else:
+                btn.props("outline dense no-caps").classes(
+                    chip_style["classes"]
+                ).style(chip_style["style"])
 
 
 @contextmanager

@@ -1,5 +1,6 @@
 *.db
 __pycache__/
+.pytest_cache/
 _Old/*
 *.egg-info/
 
@@ -18,3 +19,5 @@ config/devops_tags.yml
 config/devops_contacts.yml
 config/task_visuals.yml
 config/config_notepad.yml
+
+data/.storage_secret

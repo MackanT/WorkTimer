@@ -10,13 +10,12 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 import re
 
 from nicegui import ui
 
 from ..core.app import AppCore
-from .. import helpers
 from ..helpers import UI_STYLES
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 from ..ui.dynamic_widgets import WIDGET_CLASSES, DynamicDropDown
@@ -87,20 +86,6 @@ class Task:
             completed=bool(row.get("completed", False)),
             created_at=str(row.get("created_at", "")),
         )
-
-    def to_columns_format(self) -> list[dict]:
-        """Convert to columns array format for card rendering."""
-        return [
-            {"label": "Title", "value": self.title},
-            {"label": "Description", "value": self.description},
-            {"label": "Status", "value": self.status},
-            {"label": "Priority", "value": self.priority},
-            {"label": "Assignee", "value": self.assigned_to},
-            {"label": "Customer", "value": self.customer_name},
-            {"label": "Project", "value": self.project_name},
-            {"label": "Due Date", "value": self.due_date or ""},
-            {"label": "Created", "value": self.created_at},
-        ]
 
     def to_dict(self) -> dict:
         """Convert to dictionary for table rendering."""
@@ -182,23 +167,28 @@ async def get_customer_project_data(core: AppCore) -> dict:
 # ============================================================================
 
 
+# Sort options — single source of truth: the toolbar select derives its options
+# from these keys, so the two can't drift apart.
+# NULL due-dates always sort last (CASE ... ASC puts the 1-bucket after the 0-bucket).
+SORT_QUERIES = {
+    "Due Date (Earliest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC, due_date ASC",
+    "Due Date (Latest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC, due_date DESC",
+    "Priority (High to Low)": """ORDER BY CASE priority
+        WHEN 'Critical' THEN 1 WHEN 'High' THEN 2
+        WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END ASC""",
+    "Priority (Low to High)": """ORDER BY CASE priority
+        WHEN 'Critical' THEN 1 WHEN 'High' THEN 2
+        WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END DESC""",
+    "Status": "ORDER BY completed ASC, due_date ASC",
+    "Customer": "ORDER BY customer_name ASC, due_date ASC",
+    "Project": "ORDER BY project_name ASC, due_date ASC",
+    "Created (Newest First)": "ORDER BY created_at DESC",
+    "Created (Oldest First)": "ORDER BY created_at ASC",
+}
+
+
 def get_sort_query(sort_by: str) -> str:
-    sort_queries = {
-        "Due Date (Earliest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END DESC, due_date ASC",
-        "Due Date (Latest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 0 ELSE 1 END DESC, due_date DESC",
-        "Priority (High to Low)": """ORDER BY CASE priority 
-            WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 
-            WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END ASC""",
-        "Priority (Low to High)": """ORDER BY CASE priority 
-            WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 
-            WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END DESC""",
-        "Status": "ORDER BY completed ASC, due_date ASC",
-        "Customer": "ORDER BY customer_name ASC, due_date ASC",
-        "Project": "ORDER BY project_name ASC, due_date ASC",
-        "Created (Newest First)": "ORDER BY created_at DESC",
-        "Created (Oldest First)": "ORDER BY created_at ASC",
-    }
-    return sort_queries.get(sort_by, "ORDER BY due_date ASC")
+    return SORT_QUERIES.get(sort_by, "ORDER BY due_date ASC")
 
 
 async def fetch_tasks(
@@ -262,8 +252,11 @@ def on_task_edit_click(core: AppCore, task: Task, page_state: dict, refresh_call
             with page_state["form_container"]:
                 await render_update_form(core, page_state, refresh_callback)
 
-            # Wait for task selector options to load (via ui.timer in render_update_form)
-            await asyncio.sleep(0.2)
+            # Wait for the selector's option-load tasks to actually finish
+            # (replaces the old fixed asyncio.sleep race).
+            pending = page_state.get("_form_load_tasks") or []
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
 
             # Set task selector value after form is rendered and options loaded
             if page_state.get("task_selector"):
@@ -280,8 +273,7 @@ def on_task_edit_click(core: AppCore, task: Task, page_state: dict, refresh_call
                         if widget and hasattr(widget, "_on_parent_change"):
                             widget._on_parent_change()
 
-                # Emit event for manual dropdown refresh (status/priority)
-                await asyncio.sleep(0.1)  # Small delay for UI to propagate
+                # Trigger the field refresh (reads the selector value set above)
                 core.event_bus.emit("task_selected", task_id=task.task_id)
         except Exception as e:
             core.logger.error(f"Error switching to update view: {e}")
@@ -362,6 +354,152 @@ def on_task_click(core: AppCore, task: Task, page_state: dict):
     asyncio.create_task(_switch_to_view())
 
 
+def create_task_card(
+    task: Task,
+    on_checkbox_click: Callable | None = None,
+    on_edit_click: Callable | None = None,
+    on_card_click: Callable | None = None,
+    config_task_visuals: dict | None = None,
+) -> ui.card:
+    """Render a single task card.
+
+    Moved here from helpers.py and takes the Task dataclass directly — the old
+    version round-tripped typed data through a display-label dict.
+    """
+
+    def handle_checkbox_change(e):
+        if on_checkbox_click:
+            on_checkbox_click(task.task_id, e.value)
+
+    def handle_edit_click():
+        if on_edit_click:
+            on_edit_click(task.task_id)
+
+    def handle_card_click():
+        if on_card_click:
+            on_card_click(task.task_id)
+
+    def _visual_config(entity_type: str, entity_name: str) -> dict:
+        if not config_task_visuals or "visual" not in config_task_visuals:
+            return {}
+        entities = config_task_visuals["visual"].get(entity_type, {})
+        return entities.get(entity_name, entities.get("default", {}))
+
+    # Add completion styling
+    card_classes = "w-full p-3 cursor-pointer rounded-md"
+    card_style = "min-width: 320px; max-width: 400px;"
+
+    if task.completed:
+        card_classes += " opacity-75"
+        card_style += " border-left: 4px solid var(--q-positive);"
+
+    with (
+        ui.card()
+        .props("flat")
+        .classes(card_classes)
+        .style(card_style)
+        .on("click", handle_card_click) as card
+    ):
+        # Top row: checkbox, title, edit-button
+        with ui.row().classes("w-full justify-between items-center mb-2 flex-nowrap"):
+            checkbox = ui.checkbox(
+                value=task.completed, on_change=handle_checkbox_change
+            ).classes("flex-none")
+            checkbox.on("click", js_handler="(e) => e.stopPropagation()")
+
+            # Title in the middle, expandable
+            ui.label(task.title or "Untitled").classes(
+                "flex-grow text-sm font-medium text-white truncate mx-2 min-w-0"
+            )
+
+            edit_button = (
+                ui.button("", icon="edit", on_click=handle_edit_click)
+                .props("flat dense round")
+                .classes("flex-none")
+            )
+            edit_button.on("click", js_handler="(e) => e.stopPropagation()")
+
+        # Second row: customer name, project name
+        if task.customer_name or task.project_name:
+            with ui.row().classes("w-full items-center mb-2 gap-2"):
+                if task.customer_name:
+                    cfg = _visual_config("customers", task.customer_name)
+                    ui.chip(
+                        task.customer_name, icon=cfg.get("icon", "group")
+                    ).props(f"dense color={cfg.get('color', 'blue-grey')}").classes("text-xs")
+
+                if task.project_name:
+                    cfg = _visual_config("projects", task.project_name)
+                    ui.chip(
+                        task.project_name, icon=cfg.get("icon", "folder")
+                    ).props(f"dense color={cfg.get('color', 'indigo')}").classes("text-xs")
+
+        # Third row: Big description box (fixed height for uniform cards)
+        with ui.element().classes("w-full mb-2"):
+            ui.label("Description:").classes(
+                UI_STYLES.get_layout_classes("muted_text_xs") + " mb-1"
+            )
+            with (
+                ui.element()
+                .classes("w-full p-2 bg-slate-800 rounded")
+                .style("height: 100px; overflow-y: auto;")
+            ):
+                if task.description:
+                    ui.label(task.description).classes("text-sm text-white").style(
+                        "word-wrap: break-word; overflow-wrap: break-word; "
+                        "white-space: pre-wrap; line-height: 1.4;"
+                    )
+                else:
+                    ui.label("No description").classes(
+                        "text-sm " + UI_STYLES.get_layout_classes("muted_text") + " italic"
+                    )
+
+        # Fourth row: status, priority, dates in a compact grid
+        with ui.row().classes(
+            "w-full items-center justify-between text-xs "
+            + UI_STYLES.get_layout_classes("muted_text")
+        ):
+            # Left side: Status and Priority
+            with ui.row().classes("items-center gap-2"):
+                if task.status:
+                    status_color = {
+                        "To Do": "blue-grey",
+                        "In Progress": "orange",
+                        "In Review": "purple",
+                        "Blocked": "red",
+                        "On Hold": "yellow",
+                    }.get(task.status, "grey")
+                    ui.chip(task.status).props(f"dense color={status_color}").classes(
+                        "text-xs"
+                    )
+
+                if task.priority:
+                    priority_color = {
+                        "Critical": "red",
+                        "High": "orange",
+                        "Medium": "blue",
+                        "Low": "green",
+                    }.get(task.priority, "grey")
+                    ui.chip(task.priority).props(f"dense color={priority_color}").classes(
+                        "text-xs"
+                    )
+
+            # Right side: Dates
+            with ui.column().classes("items-end"):
+                if task.due_date:
+                    ui.label(f"Due: {task.due_date}").classes(
+                        UI_STYLES.get_layout_classes("muted_text_xs")
+                    )
+                if task.created_at:
+                    # Format created date to be more compact
+                    created_short = task.created_at.split(" ")[0]
+                    ui.label(f"Created: {created_short}").classes(
+                        UI_STYLES.get_layout_classes("muted_text_xs")
+                    )
+
+    return card
+
+
 def render_card_view(
     core: AppCore,
     tasks: list[Task],
@@ -408,10 +546,8 @@ def render_card_view(
                     def make_click_handler(t, c, ps):
                         return lambda _: on_task_click(c, t, ps)
 
-                    helpers.create_task_card(
-                        task_id=str(task.task_id),
-                        columns=task.to_columns_format(),
-                        completed=task.completed,
+                    create_task_card(
+                        task,
                         on_checkbox_click=make_checkbox_handler(task.task_id, core),
                         on_edit_click=make_edit_handler(
                             task, core, page_state, refresh_callback
@@ -649,13 +785,11 @@ async def tasks_page():
     def handle_refresh_event():
         asyncio.create_task(refresh_tasks())
 
-    if page_state.get("_refresh_handler"):
-        core.event_bus.unregister(
-            "tasks_refresh_requested", page_state["_refresh_handler"]
-        )
-
-    page_state["_refresh_handler"] = handle_refresh_event
-    core.event_bus.register("tasks_refresh_requested", handle_refresh_event)
+    # register_unique: SPA navigation re-runs this page function — a plain
+    # register() would stack one handler (and one task fetch) per visit.
+    core.event_bus.register_unique(
+        "tasks_refresh_requested", handle_refresh_event, key="tasks_page"
+    )
 
     # ========================================================================
     # Toolbar Controls
@@ -665,19 +799,8 @@ async def tasks_page():
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
             with toolbar_group(core.theme, "Sort", divider_after=True):
-                sort_options = [
-                    "Due Date (Earliest First)",
-                    "Due Date (Latest First)",
-                    "Priority (High to Low)",
-                    "Priority (Low to High)",
-                    "Status",
-                    "Customer",
-                    "Project",
-                    "Created (Newest First)",
-                    "Created (Oldest First)",
-                ]
                 page_state["sort_select"] = ui.select(
-                    options=sort_options,
+                    options=list(SORT_QUERIES),
                     value="Due Date (Earliest First)",
                     on_change=lambda: refresh_tasks(),
                 ).classes(SORT_SELECT_WIDTH)
@@ -756,8 +879,14 @@ def build_form_widgets(
     data_fetcher,
     page_state: dict = None,
     main_param: str = None,
+    pending_loads: list = None,
 ) -> dict:
-    """Dynamically build form widgets from YAML layout config."""
+    """Dynamically build form widgets from YAML layout config.
+
+    Args:
+        pending_loads: Optional list that receives the async option-load tasks,
+            so callers can await them instead of sleeping and hoping.
+    """
     form_widgets = {}
 
     with ui.column().classes("w-full gap-2"):
@@ -808,6 +937,7 @@ def build_form_widgets(
 
                     # Async load for dynamic options (no predefined options, no parent)
                     options_source = field_config.get("options_source")
+                    load_task = None
                     if options_source == "task_list":
 
                         async def load_task_list(w=widget):
@@ -816,7 +946,7 @@ def build_form_widgets(
                                 w.options = opts
                                 w.widget.update()
 
-                        asyncio.create_task(load_task_list())
+                        load_task = asyncio.create_task(load_task_list())
                     elif options_source and not initial_options and not parent_widget:
 
                         async def load_options(w=widget, src=options_source):
@@ -825,7 +955,10 @@ def build_form_widgets(
                                 w.options = opts
                                 w.widget.update()
 
-                        asyncio.create_task(load_options())
+                        load_task = asyncio.create_task(load_options())
+
+                    if load_task is not None and pending_loads is not None:
+                        pending_loads.append(load_task)
 
     return form_widgets
 
@@ -866,7 +999,9 @@ async def render_add_form(core: AppCore, refresh_callback):
             async def handle_submit():
                 try:
                     values = {name: w.value for name, w in form_widgets.items()}
-                    success = await core.query_engine.function_db(
+                    # insert_task returns (success, message, task_dict) — the tuple
+                    # itself is always truthy, so it must be unpacked before checking.
+                    success, message, _ = await core.query_engine.function_db(
                         "insert_task",
                         **values,
                     )
@@ -877,7 +1012,7 @@ async def render_add_form(core: AppCore, refresh_callback):
                         else:
                             refresh_callback()
                     else:
-                        ui.notify("Failed to create task", type="negative")
+                        ui.notify(message or "Failed to create task", type="negative")
                 except Exception as e:
                     core.logger.error(f"Error creating task: {e}")
                     ui.notify(f"Error: {e}", type="negative")
@@ -887,8 +1022,9 @@ async def render_add_form(core: AppCore, refresh_callback):
 
 
 async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
-    """Render the Update Task form"""
+    """Render the Update Task form (also hosts Delete for the selected task)."""
     update_button = None
+    delete_button = None
 
     with entity_card_shell(constrain_width=False):
         with entity_card_header():
@@ -898,6 +1034,11 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
                 ui.label("Update Task").classes("text-h6")
                 ui.space()
                 update_button = ui.button(icon="save").props("color=primary disabled")
+                delete_button = (
+                    ui.button(icon="delete")
+                    .props("color=negative flat disabled")
+                    .tooltip("Delete the selected task")
+                )
 
         with entity_card_content():
 
@@ -945,12 +1086,17 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
                 "main_param", "task_selector"
             )
 
+            # Track option-load tasks so on_task_edit_click can await them
+            # (instead of the old asyncio.sleep guesswork).
+            page_state["_form_load_tasks"] = form_load_tasks = []
+
             form_widgets = build_form_widgets(
                 rows_layout=rows_layout,
                 field_map=field_map,
                 data_fetcher=task_data_fetcher,
                 page_state=page_state,
                 main_param=main_param,
+                pending_loads=form_load_tasks,
             )
 
             page_state["task_update_child_widgets"] = {
@@ -985,13 +1131,11 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
             def handle_task_selected_event(**kwargs):
                 asyncio.create_task(on_task_change())
 
-            if page_state.get("_task_selected_handler"):
-                core.event_bus.unregister(
-                    "task_selected", page_state["_task_selected_handler"]
-                )
-
-            page_state["_task_selected_handler"] = handle_task_selected_event
-            core.event_bus.register("task_selected", handle_task_selected_event)
+            # register_unique also covers re-renders across SPA navigations,
+            # where page_state itself is recreated and can't track the old handler.
+            core.event_bus.register_unique(
+                "task_selected", handle_task_selected_event, key="task_update_form"
+            )
 
             async def handle_update():
                 selector = form_widgets.get(main_param)
@@ -1022,5 +1166,50 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
                     core.logger.error(f"Error updating task: {e}")
                     ui.notify(f"Error: {e}", type="negative")
 
+            async def handle_delete():
+                selector = form_widgets.get(main_param)
+                if not selector or not selector.value:
+                    ui.notify("Please select a task", type="warning")
+                    return
+                task_id = extract_task_id(selector.value)
+                if not task_id:
+                    return
+
+                # Confirm — deleting a task removes it permanently.
+                with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
+                    ui.label(f"Delete '{selector.value}'?").classes(
+                        "text-sm font-semibold"
+                    )
+                    ui.label("This permanently removes the task.").classes(
+                        UI_STYLES.get_layout_classes("muted_text_xs")
+                    )
+                    with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                        ui.button(
+                            "Cancel", on_click=lambda: confirm_dlg.submit(False)
+                        ).props("flat")
+                        ui.button(
+                            "Delete", on_click=lambda: confirm_dlg.submit(True)
+                        ).props("color=negative")
+                if not await confirm_dlg:
+                    return
+
+                try:
+                    success, msg = await core.query_engine.function_db(
+                        "delete_task", task_id
+                    )
+                    if success:
+                        ui.notify("Task deleted", type="positive")
+                        if inspect.iscoroutinefunction(refresh_callback):
+                            await refresh_callback()
+                        else:
+                            refresh_callback()
+                    else:
+                        ui.notify(msg or "Failed to delete task", type="negative")
+                except Exception as e:
+                    core.logger.error(f"Error deleting task: {e}")
+                    ui.notify(f"Error: {e}", type="negative")
+
             update_button.on("click", handle_update)
             update_button.props(remove="disabled")
+            delete_button.on("click", handle_delete)
+            delete_button.props(remove="disabled")

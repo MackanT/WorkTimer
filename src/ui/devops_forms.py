@@ -5,11 +5,277 @@ This module decouples DevOps add/update UI from add_data page so the
 board can own the full DevOps workflow.
 """
 
-from nicegui import ui
+import asyncio
+import copy
+
+from nicegui import ui, app
+from fastapi import UploadFile, File, Request, Response
 
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
+
+
+@app.post("/upload_devops_image")
+async def upload_devops_image(request: Request, file: UploadFile = File(...)):
+    """Upload a pasted/picked image as a DevOps attachment for a customer and
+    return {path: url} so it can be embedded in a work-item description."""
+    # Use the process-wide engine directly: this is a plain HTTP endpoint with no
+    # NiceGUI client context, so AppCore.get_or_initialize() would fail.
+    from ..core.app import get_global_devops_engine
+
+    form = await request.form()
+    customer = form.get("customer")
+    if not customer:
+        return {"error": "Missing customer"}
+    engine = get_global_devops_engine()
+    if engine is None:
+        return {"error": "No DevOps connection"}
+    content = await file.read()
+    url = await asyncio.to_thread(
+        engine.upload_attachment, customer, file.filename or "paste.png", content
+    )
+    return {"path": url} if url else {"error": "Upload failed"}
+
+
+@app.get("/devops_attachment")
+async def devops_attachment(url: str):
+    """Proxy a DevOps work-item attachment with the matching customer's PAT, so
+    images embedded in a description render in the WorkTimer preview (the browser
+    can't authenticate to dev.azure.com directly)."""
+    from ..core.app import get_global_devops_engine
+
+    engine = get_global_devops_engine()
+    manager = getattr(engine, "manager", None) if engine else None
+    if manager is None:
+        return Response(status_code=404)
+    result = await asyncio.to_thread(manager.fetch_attachment, url)
+    if not result:
+        return Response(status_code=404)
+    content, content_type = result
+    return Response(
+        content=content,
+        media_type=content_type or "application/octet-stream",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+_DIALOG_CARD_STYLE = (
+    "margin: 2rem auto; width: calc(100% - 4rem); max-width: 980px;"
+    "max-height: calc(100vh - 4rem); overflow-y: auto;"
+)
+_PRIORITY_COLORS = {1: "red-5", 2: "orange-4", 3: "blue-4", 4: "grey-4"}
+_PRIORITY_LABELS = {1: "Critical", 2: "High", 3: "Medium", 4: "Low"}
+
+
+async def open_work_item_dialog(
+    core,
+    row: dict,
+    on_success=None,
+    priority_colors: dict | None = None,
+    priority_labels: dict | None = None,
+):
+    """Open the full DevOps work-item update dialog for a single item.
+
+    Shared by the board (card click) and the hierarchy (node click). Shows the
+    editable fields, the description and the comments thread, plus an
+    "Open in DevOps" link. `on_success` (async, optional) runs after a save.
+    """
+    priority_colors = priority_colors or _PRIORITY_COLORS
+    priority_labels = priority_labels or _PRIORITY_LABELS
+
+    item_id = int(row.get("id", 0))
+    item_type = str(row.get("type", "User Story"))
+    title = str(row.get("title", ""))
+    customer = str(row.get("customer_name", ""))
+    priority_val = row.get("priority")
+
+    # Customer indicator colour (fills the header badge when set).
+    cust_color = None
+    try:
+        _cc = await core.query_engine.query_db(
+            "SELECT color FROM customers WHERE customer_name = ? AND is_current = 1 LIMIT 1",
+            params=(customer,),
+        )
+        if not _cc.empty and _cc.iloc[0]["color"]:
+            cust_color = str(_cc.iloc[0]["color"])
+    except Exception:
+        cust_color = None
+    display_name = f"{item_type}: {item_id} - {title}"
+    update_cfg = core.ui_config.get("board_devops_forms", {}).get("update", {})
+
+    def _open_in_devops():
+        manager = getattr(core.devops_engine, "manager", None)
+        url = manager.get_work_item_url(customer, item_id) if manager else None
+        if url:
+            ui.navigate.to(url, new_tab=True)
+        else:
+            ui.notify("Could not build the Azure DevOps URL", type="warning")
+
+    with ui.dialog().props("maximized") as dlg:
+        with ui.card().style(_DIALOG_CARD_STYLE).props("flat bordered"):
+            form_actions: dict = {"submit": None}
+            dirty_state: dict = {"is_dirty": False, "programmatic": True}
+
+            def _mark_dirty(_e=None):
+                if not dirty_state["programmatic"]:
+                    dirty_state["is_dirty"] = True
+
+            def _confirm_discard_or_close():
+                if not dirty_state["is_dirty"]:
+                    dlg.close()
+                    return
+                with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
+                    ui.label("Discard unsaved changes?").classes("text-sm font-semibold")
+                    ui.label("Your edits in this work item will be lost.").classes(
+                        "text-xs text-grey-5"
+                    )
+                    with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                        ui.button("Keep editing", on_click=confirm_dlg.close).props("flat")
+
+                        def _discard():
+                            confirm_dlg.close()
+                            dlg.close()
+
+                        ui.button("Discard", on_click=_discard).props("color=negative")
+                confirm_dlg.open()
+
+            async def _submit_from_header():
+                submit_fn = form_actions.get("submit")
+                if submit_fn:
+                    await submit_fn()
+
+            # ── header ────────────────────────────────────────────────────────
+            p_color = priority_colors.get(priority_val, "grey-4")
+            p_label = priority_labels.get(priority_val, "")
+            with ui.row().classes("items-center gap-2 no-wrap w-full").style(
+                "padding: 0.6rem 0.8rem; flex-shrink: 0;"
+            ):
+                if priority_val:
+                    ui.icon("circle", size="12px").classes(
+                        f"text-{p_color} shrink-0"
+                    ).tooltip(f"Priority: {p_label}")
+                ui.label(f"#{item_id}").classes("text-grey-5 text-xs shrink-0")
+                ui.label("·").classes("text-grey-5 text-xs shrink-0")
+                ui.label(item_type).classes("text-grey-5 text-xs shrink-0")
+                ui.label(title).classes("text-sm font-semibold flex-1").style(
+                    "overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                )
+                _cust_badge = ui.badge(customer).props("rounded").classes("text-xs shrink-0")
+                if cust_color:
+                    _cust_badge.style(f"background:{cust_color}; color:#fff;")
+                else:
+                    _cust_badge.props("color=primary outline")
+                ui.space()
+                ui.button(icon="open_in_new", on_click=_open_in_devops).props(
+                    "flat dense color=primary"
+                ).tooltip("Open in Azure DevOps")
+                ui.button("Update", icon="save", on_click=_submit_from_header).props("dense color=primary")
+                ui.button("Cancel", icon="close", on_click=_confirm_discard_or_close).props(
+                    "flat dense color=grey-6"
+                )
+            ui.separator()
+
+            loading_box = ui.column().classes("w-full gap-2").style("padding: 0.75rem;")
+            with loading_box:
+                ui.skeleton("text", width="35%")
+                for _ in range(3):
+                    ui.skeleton("rect", width="100%", height="52px")
+                ui.skeleton("rect", width="100%", height="220px")
+
+            dlg.open()
+            await asyncio.sleep(0)
+
+            async def _on_update_success():
+                dlg.close()
+                if on_success:
+                    await on_success()
+
+            result = await render_devops_form(
+                core, "update", update_cfg,
+                on_success=_on_update_success,
+                hidden_field_names={"customer_name", "work_item", "current_column", "board_column"},
+                show_internal_header=False,
+            )
+
+            _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
+            form_actions["submit"] = submit_fn
+
+            if widgets:
+                if "customer_name" in widgets:
+                    widgets["customer_name"].widget.value = customer
+                    widgets["customer_name"].widget.update()
+                if "work_item" in widgets:
+                    await widgets["work_item"].refresh()
+                    widgets["work_item"].widget.value = display_name
+                    widgets["work_item"].widget.update()
+                if load_fn:
+                    await load_fn(None)
+
+                dirty_state["programmatic"] = False
+                for field_name in ("state", "assigned_to", "priority", "description_editor"):
+                    w = widgets.get(field_name)
+                    if w:
+                        w.on_value_change(_mark_dirty)
+
+                # Images: upload to DevOps as attachments (button + paste), now
+                # that we know the customer for this work item.
+                desc = widgets.get("description_editor")
+                if desc is not None and customer and hasattr(desc, "enable_image_upload"):
+
+                    async def _devops_image_uploader(name, content, _cust=customer):
+                        return await asyncio.to_thread(
+                            core.devops_engine.upload_attachment, _cust, name, content
+                        )
+
+                    desc.enable_image_upload(
+                        _devops_image_uploader,
+                        paste_endpoint="/upload_devops_image",
+                        paste_fields={"customer": customer},
+                    )
+
+            loading_box.clear()
+
+
+def _render_comment(comment: dict) -> None:
+    """Render one Azure DevOps comment (author/date header + body)."""
+    with ui.card().props("flat bordered").classes("w-full"):
+        ui.label(
+            f"{comment.get('author') or 'Unknown'} · {str(comment.get('date') or '')[:16].replace('T', ' ')}"
+        ).classes("text-xs text-grey-5")
+        text = comment.get("text") or ""
+        # ADO comments are usually HTML; render as sanitized markdown either way.
+        md = helpers.convert_html_to_markdown(text) if "<" in text else text
+        ui.html(helpers.render_and_sanitize_markdown(md)).classes("text-sm w-full")
+
+
+async def _load_comments_into(core, widgets: dict, container) -> None:
+    """Fetch the selected work item's comments and render them into `container`."""
+    wid_widget = widgets.get("work_item")
+    cust_widget = widgets.get("customer_name")
+    container.clear()
+    if not wid_widget or not cust_widget:
+        return
+    work_item_id = helpers.extract_devops_id(wid_widget.value)
+    customer = cust_widget.value
+    if not work_item_id or not customer:
+        return
+    manager = getattr(core.devops_engine, "manager", None)
+    if not manager:
+        return
+
+    with container:
+        ui.label("Loading comments…").classes("text-xs text-grey-5")
+    ok, data = await asyncio.to_thread(manager.get_comments, customer, work_item_id)
+    container.clear()
+    with container:
+        if not ok:
+            ui.label(f"Could not load comments: {data}").classes("text-xs text-negative")
+        elif not data:
+            ui.label("No comments yet.").classes("text-xs text-grey-5")
+        else:
+            for comment in data:
+                _render_comment(comment)
 
 
 async def render_devops_form(
@@ -22,7 +288,9 @@ async def render_devops_form(
     show_internal_header: bool = True,
 ):
     """Render DevOps work item form (shared by add and update)."""
-    fields = form_config.get("fields", [])
+    # Deep-copy: the config dicts are shared process-wide; assign_dynamic_options
+    # writes options into the field dicts, which must not leak across clients.
+    fields = copy.deepcopy(form_config.get("fields", []))
     action = form_config.get("action", {})
 
     data_sources = await prepare_devops_data_sources(core, operation)
@@ -53,7 +321,7 @@ async def render_devops_form(
             devops_handlers = DevOpsWorkItemHandlers(core.devops_engine, core.logger)
             if operation == "add":
                 wid_title = widgets.get("work_item_title")
-                success, message = devops_handlers.add_work_item(widgets)
+                success, message = await devops_handlers.add_work_item(widgets)
                 success_msg = f"Work item created: {wid_title.value if wid_title else ''}"
             else:
                 success, message = await devops_handlers.update_work_item(widgets)
@@ -187,11 +455,81 @@ async def render_devops_form(
                         dynamic_widgets.append(dw)
 
         helpers.setup_template_handling(widgets)
+        _setup_conditional_visibility(widgets, fields_by_name, hidden)
         devops_handlers_setup = DevOpsWorkItemHandlers(core.devops_engine, core.logger)
         if operation == "add":
             load_fn = devops_handlers_setup.setup_add_tab_handlers(widgets)
         else:
             load_fn = devops_handlers_setup.setup_update_tab_handlers(widgets)
+
+        # Comments panel (update only) — the work item's discussion thread.
+        # Shown in the board dialog and the hierarchy dialog alike.
+        if operation == "update":
+            ui.separator().classes("mt-3")
+            ui.label("Comments").classes(
+                helpers.UI_STYLES.get_layout_classes("muted_text_xs") + " mt-2"
+            )
+
+            # comments_box is created below the input; a holder lets the closures
+            # above reference it before it exists.
+            _refs: dict = {}
+
+            async def _reload_comments(_e=None):
+                box = _refs.get("box")
+                if box is not None:
+                    await _load_comments_into(core, widgets, box)
+
+            # Add-comment row — on top, above the thread.
+            with ui.row().classes("w-full items-end gap-2 mt-1"):
+                new_comment = (
+                    ui.textarea(placeholder="Add a comment…")
+                    .props("outlined dense autogrow")
+                    .classes("flex-1")
+                )
+
+                async def _post_comment():
+                    text = (new_comment.value or "").strip()
+                    if not text:
+                        return
+                    wid_widget = widgets.get("work_item")
+                    cust_widget = widgets.get("customer_name")
+                    work_item_id = helpers.extract_devops_id(wid_widget.value) if wid_widget else None
+                    customer = cust_widget.value if cust_widget else None
+                    manager = getattr(core.devops_engine, "manager", None)
+                    if not (work_item_id and customer and manager):
+                        return
+                    ok, msg = await asyncio.to_thread(
+                        manager.save_comment,
+                        customer_name=customer,
+                        comment=text,
+                        git_id=int(work_item_id),
+                    )
+                    if ok:
+                        new_comment.value = ""
+                        ui.notify("Comment added", type="positive")
+                        await _reload_comments()
+                    else:
+                        ui.notify(f"Failed to add comment: {msg}", type="negative")
+
+                ui.button(icon="send", on_click=_post_comment).props(
+                    "dense color=primary"
+                ).tooltip("Add comment")
+
+            # Thread — newest first (see get_work_item_comments).
+            _refs["box"] = ui.column().classes("w-full gap-2 mt-1")
+
+            work_item_widget = widgets.get("work_item")
+            if work_item_widget:
+                work_item_widget.on("update:model-value", _reload_comments)
+
+            # Fold comment-loading into load_fn so callers that prefill the work
+            # item (the board/hierarchy dialogs) load comments too.
+            _inner_load = load_fn
+
+            async def load_fn(_e=None, _base=_inner_load):
+                if _base:
+                    await _base(_e)
+                await _reload_comments(_e)
 
     async def refresh_all_widgets():
         try:
@@ -201,6 +539,49 @@ async def render_devops_form(
             core.logger.error(f"Error refreshing DevOps.{operation} widgets: {e}")
 
     return refresh_all_widgets, widgets, load_fn, on_submit
+
+
+def _setup_conditional_visibility(widgets: dict, fields_by_name: dict, hidden: set) -> None:
+    """Wire `conditional: true` / `visible_when:` field configs to widget visibility.
+
+    Restores a feature the legacy form factory used to provide: e.g. the DevOps
+    add form hides Source/Contact/Parent unless the work item type matches.
+    Bound via on_value_change, which also fires on programmatic value sets
+    (e.g. the board dialog pre-selecting the work item type).
+    """
+    conditional = [
+        (name, cfg.get("visible_when"))
+        for name, cfg in fields_by_name.items()
+        if cfg.get("conditional") and cfg.get("visible_when")
+        and name in widgets and name not in hidden
+    ]
+    if not conditional:
+        return
+
+    def apply_visibility(_e=None):
+        for name, visible_when in conditional:
+            visible = True
+            for cond_field, cond_values in visible_when.items():
+                cond_widget = widgets.get(cond_field)
+                value = cond_widget.value if cond_widget is not None else None
+                if not value:
+                    visible = False
+                    break
+                if isinstance(cond_values, list):
+                    if value not in cond_values:
+                        visible = False
+                        break
+                elif value != cond_values:
+                    visible = False
+                    break
+            widgets[name].widget.set_visibility(visible)
+
+    condition_fields = {cf for _, vw in conditional for cf in vw}
+    for cond_field in condition_fields:
+        if cond_field in widgets:
+            widgets[cond_field].on_value_change(apply_visibility)
+
+    apply_visibility()
 
 
 async def prepare_devops_data_sources(core, operation: str) -> dict:

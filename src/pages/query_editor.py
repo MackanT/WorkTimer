@@ -6,6 +6,7 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 """
 
 import asyncio
+import copy
 from nicegui import ui, app
 from nicegui.events import KeyEventArguments
 from ..core.app import AppCore
@@ -13,7 +14,7 @@ from ..globals import SaveData
 from .. import helpers
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 from ..ui.elements import toolbar, toolbar_group, page_card, entity_card_header
-from ..ui.dynamic_widgets import WIDGET_CLASSES
+from ..ui.dynamic_widgets import WIDGET_CLASSES, DynamicDevOpsSelect
 
 
 async def query_editor_page():
@@ -325,7 +326,18 @@ async def query_editor_page():
             )
             data_sources["project_names"] = projects["project_name"].tolist()
 
-        fields = config_query["query"][table_name]["fields"]
+        # Git-ID picker options come from the row's customer (there's no customer
+        # field in these forms — the customer is fixed by the row being edited).
+        if table_name in ("time", "projects"):
+            cust = table_row.get("customer_name")
+            eng = core.devops_engine
+            data_sources["devops_ids"] = (
+                eng.get_work_item_options(cust) if (eng is not None and cust) else []
+            )
+
+        # Deep-copy: these dicts come from the process-wide config singleton —
+        # writing row defaults into them would leak into other dialogs/clients.
+        fields = copy.deepcopy(config_query["query"][table_name]["fields"])
         action = config_query["query"][table_name]["action"]
 
         for field in fields:
@@ -425,10 +437,9 @@ async def query_editor_page():
 
                         widget_class = WIDGET_CLASSES.get(field_type)
                         if not widget_class:
-                            fallback_widgets, _ = helpers.make_input_row(
-                                [field], defer_parent_wiring=True
+                            LOG.warning(
+                                f"Unknown field type '{field_type}' for '{field_name}' — skipping"
                             )
-                            widgets.update(fallback_widgets)
                             continue
 
                         widget_width = helpers.UI_STYLES.get_widget_width(
@@ -448,6 +459,13 @@ async def query_editor_page():
                         parent_map[field_name] = dw
                         dynamic_widgets.append(dw)
 
+        # The Git-ID picker has no parent field here (the customer is fixed by
+        # the row), so nothing triggers its option load. Do it explicitly and
+        # awaited — that both fills the dropdown and preselects the row's value.
+        for dw in dynamic_widgets:
+            if isinstance(dw, DynamicDevOpsSelect):
+                await dw.refresh()
+
         popup.open()
 
     async def on_cell_clicked(event) -> None:
@@ -462,6 +480,11 @@ async def query_editor_page():
     def render_toolbar() -> tuple[ui.row, ui.row]:
         """Render control panel - stable across data refreshes."""
         with toolbar(core.theme):
+            with toolbar_group(core.theme, divider_after=True):
+                ui.icon("code", size="md").classes(f"text-{core.theme.get('accent')}")
+                ui.label("Query").classes(
+                    helpers.UI_STYLES.get_layout_classes("page_title")
+                )
             with toolbar_group(core.theme, "Preset", divider_after=True):
                 preset_queries = ui.row().classes("gap-2 flex-wrap")
             with toolbar_group(core.theme, "Custom", divider_after=False):
@@ -481,7 +504,7 @@ async def query_editor_page():
 
     def render_query_window() -> None:
         with page_card(scrollable=False):
-            with ui.row().classes("w-full justify-between items-center"):
+            with ui.row().classes("w-full justify-between items-center shrink-0"):
                 ui.button(
                     "Execute Query (F5)",
                     icon="play_arrow",
@@ -497,35 +520,49 @@ async def query_editor_page():
                         )
                     )
 
-            editor = ui.codemirror(
-                app.storage.user.get("query_editor_query", ""), language="SQLite", theme="dracula"
-            ).classes("h-48 w-full")
-            editor.bind_value(app.storage.user, "query_editor_query")
+            # Draggable horizontal split: editor on top, results below. Drag the
+            # bar to trade vertical space between writing a query and reading its
+            # output. The position is remembered per user.
+            split_val = app.storage.user.get("query_editor_split", 35)
+            with (
+                ui.splitter(horizontal=True, value=split_val)
+                .classes("w-full")
+                .style("flex: 1; min-height: 0;")
+            ) as splitter:
+                splitter.bind_value(app.storage.user, "query_editor_split")
+                with splitter.before:
+                    editor = ui.codemirror(
+                        app.storage.user.get("query_editor_query", ""),
+                        language="SQLite",
+                        theme="dracula",
+                    ).classes("w-full h-full")
+                    editor.bind_value(app.storage.user, "query_editor_query")
 
-            grid_box = (
-                ui.aggrid(
-                    {
-                        "columnDefs": [{"field": ""}],
-                        "rowData": [],
-                        "defaultColDef": {
-                            "editable": False,
-                            "sortable": True,
-                            "filter": True,
-                            "resizable": True,
-                        },
-                        "rowSelection": "multiple",
-                        "suppressRowClickSelection": False,
-                        "enableCellTextSelection": True,
-                        "copyHeadersToClipboard": True,
-                        "enableRangeSelection": True,
-                        "enableClipboard": True,
-                        "suppressCopyRowsToClipboard": True,
-                    },
-                    theme="alpine-dark",
-                )
-                .classes("flex-1 w-full")
-                .on("cellClicked", on_cell_clicked)
-            )
+                with splitter.after:
+                    grid_box = (
+                        ui.aggrid(
+                            {
+                                "columnDefs": [{"field": ""}],
+                                "rowData": [],
+                                "defaultColDef": {
+                                    "editable": False,
+                                    "sortable": True,
+                                    "filter": True,
+                                    "resizable": True,
+                                },
+                                "rowSelection": "multiple",
+                                "suppressRowClickSelection": False,
+                                "enableCellTextSelection": True,
+                                "copyHeadersToClipboard": True,
+                                "enableRangeSelection": True,
+                                "enableClipboard": True,
+                                "suppressCopyRowsToClipboard": True,
+                            },
+                            theme="alpine-dark",
+                        )
+                        .classes("w-full h-full")
+                        .on("cellClicked", on_cell_clicked)
+                    )
 
             def on_edit_mode_change():
                 is_edit = edit_mode_enabled.value
@@ -543,44 +580,43 @@ async def query_editor_page():
     preset_queries, custom_queries = render_toolbar()
     edit_mode_enabled, editor, grid_box = render_query_window()
 
-    # Prevent F5 from refreshing the page using JavaScript
+    # Document-level listeners survive SPA navigation — guard with a window flag
+    # so re-visits don't stack duplicates (each Ctrl+C wrote the clipboard N times).
+    # Note: F5 suppression lives in root.py's global script; Ctrl+R is deliberately
+    # NOT blocked so a normal page reload stays possible (settings advises it).
     ui.run_javascript("""
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
-                e.preventDefault();
-            }
-        });
-    """)
+        if (!window._wtQueryEditorJs) {
+            window._wtQueryEditorJs = true;
 
-    ui.run_javascript("""
-        // Prevent text selection on grid when not in edit mode
-        const style = document.createElement('style');
-        style.id = 'ag-no-select';
-        style.textContent = '.ag-root-wrapper * { user-select: none; !important; }';
-        document.head.appendChild(style);
-        
-        document.addEventListener('keydown', function(e) {
-            if (e.ctrlKey && e.key === 'c') {
-                const selectedRows = Array.from(document.querySelectorAll('.ag-row-selected'));
-                if (!selectedRows.length) return;
-                
-                e.preventDefault();  // stop browser default copy
-                e.stopPropagation();
-                
-                selectedRows.sort((a, b) => {
-                    const aTop = parseInt(a.style.transform?.match(/translateY\\((\\d+)px\\)/)?.[1] || 0);
-                    const bTop = parseInt(b.style.transform?.match(/translateY\\((\\d+)px\\)/)?.[1] || 0);
-                    return aTop - bTop;
-                });
-                
-                const lines = selectedRows.map(row => {
-                    const cells = Array.from(row.querySelectorAll('.ag-cell[col-id]'));
-                    return cells.map(cell => cell.textContent.replace(/\\s+/g, ' ').trim()).join('\\t');
-                });
-                
-                navigator.clipboard.writeText(lines.join('\\n'));
-            }
-        }, true);  // true = capture phase, fires before browser default
+            // Prevent text selection on grid when not in edit mode
+            const style = document.createElement('style');
+            style.id = 'ag-no-select';
+            style.textContent = '.ag-root-wrapper * { user-select: none; !important; }';
+            document.head.appendChild(style);
+
+            document.addEventListener('keydown', function(e) {
+                if (e.ctrlKey && e.key === 'c') {
+                    const selectedRows = Array.from(document.querySelectorAll('.ag-row-selected'));
+                    if (!selectedRows.length) return;
+
+                    e.preventDefault();  // stop browser default copy
+                    e.stopPropagation();
+
+                    selectedRows.sort((a, b) => {
+                        const aTop = parseInt(a.style.transform?.match(/translateY\\((\\d+)px\\)/)?.[1] || 0);
+                        const bTop = parseInt(b.style.transform?.match(/translateY\\((\\d+)px\\)/)?.[1] || 0);
+                        return aTop - bTop;
+                    });
+
+                    const lines = selectedRows.map(row => {
+                        const cells = Array.from(row.querySelectorAll('.ag-cell[col-id]'));
+                        return cells.map(cell => cell.textContent.replace(/\\s+/g, ' ').trim()).join('\\t');
+                    });
+
+                    navigator.clipboard.writeText(lines.join('\\n'));
+                }
+            }, true);  // true = capture phase, fires before browser default
+        }
     """)
 
     async def handle_key(e: KeyEventArguments):

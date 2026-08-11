@@ -19,6 +19,12 @@ navigation:
     path: /board
     key: board
     enabled: true
+  reports:
+    label: Reports
+    icon: summarize
+    path: /reports
+    key: reports
+    enabled: true
   query_editor:
     label: Query Editor
     icon: code
@@ -55,6 +61,15 @@ navigation:
     path: /settings
     key: settings
     enabled: true
+
+# Billing / time settings, used by the Reports page. Rounding here affects only
+# reports — never the live Time Tracker.
+time_settings:
+  rounding_minutes: 0      # default billing increment in minutes (0 = off; 6/15/30 common)
+  rounding_mode: up        # up | nearest | down — billing usually rounds up (ceil)
+  currency: ""             # appended to amounts, e.g. "kr"
+  target_hours_per_day: 8  # 100% target = this many hours per workday (Mon–Fri)
+  target_percent: 100      # default utilisation target (%); adjustable on the Reports page
 
 board_devops_forms:
   add:
@@ -308,7 +323,7 @@ add_data_page:
           type: input
           optional: false
         - name: wage
-          label: Wage
+          label: Hourly rate
           type: number
           step: 1
           min: 0
@@ -326,6 +341,22 @@ add_data_page:
         - name: pat_token
           label: DevOps PAT
           type: input
+          optional: true
+        - name: expected_work_pct
+          label: Expected work %
+          type: number
+          step: 5
+          min: 0
+          optional: true
+        - name: billing_round_minutes
+          label: "Billing round (min, 0 = default)"
+          type: number
+          step: 1
+          min: 0
+          optional: true
+        - name: color
+          label: Colour
+          type: color
           optional: true
       action:
         function: "insert_customer"
@@ -362,6 +393,39 @@ add_data_page:
           options_source: pat_token
           optional: true
           parent: customer_name
+        - name: "devops_project"
+          label: "DevOps Project"
+          type: select
+          options: []
+          options_source: devops_projects
+          default_source: devops_project_current
+          parent: customer_name
+          optional: true
+        - name: expected_work_pct
+          label: Expected work %
+          type: number
+          step: 5
+          min: 0
+          options: []
+          options_source: expected_work_pct
+          parent: customer_name
+          optional: true
+        - name: billing_round_minutes
+          label: "Billing round (min, 0 = default)"
+          type: number
+          step: 1
+          min: 0
+          options: []
+          options_source: billing_round_minutes
+          parent: customer_name
+          optional: true
+        - name: color
+          label: Colour
+          type: color
+          options: []
+          options_source: color
+          parent: customer_name
+          optional: true
       action:
         function: "update_customer"
         main_action: "Customer"
@@ -422,9 +486,10 @@ add_data_page:
           optional: False
         - name: "git_id"
           label: "Git ID"
-          type: number
-          step: 1
-          min: 0
+          type: devops_id
+          options: []
+          options_source: devops_ids
+          parent: customer_name
           optional: True
       action:
         function: "insert_project"
@@ -456,11 +521,9 @@ add_data_page:
           optional: False
         - name: "new_git_id"
           label: "New Git ID"
-          type: number
-          step: 1
-          min: 0
+          type: devops_id
           options: []
-          options_source: new_git_id
+          options_source: devops_ids
           parent: project_name
           optional: True
       action:
@@ -579,10 +642,9 @@ query:
         optional: true
       - name: git_id
         label: Git ID
-        type: number
-        step: 1
+        type: devops_id
         options: []
-        options_source: git_id
+        options_source: devops_ids
         optional: true
     action:
       function: update_data_from_query
@@ -604,6 +666,26 @@ query:
         options: []
         options_source: org_url
         optional: true
+      - name: expected_work_pct
+        label: Expected work %
+        type: number
+        step: 5
+        options: []
+        options_source: expected_work_pct
+        optional: true
+      - name: billing_round_minutes
+        label: Billing round (min)
+        type: number
+        step: 1
+        options: []
+        options_source: billing_round_minutes
+        optional: true
+      - name: color
+        label: Colour
+        type: color
+        options: []
+        options_source: color
+        optional: true
     action:
       function: update_data_from_query
       main_action: Updating customers
@@ -614,10 +696,9 @@ query:
     fields:
       - name: git_id
         label: Git ID
-        type: number
-        step: 1
+        type: devops_id
         options: []
-        options_source: git_id
+        options_source: devops_ids
         optional: true
     action:
       function: update_data_from_query

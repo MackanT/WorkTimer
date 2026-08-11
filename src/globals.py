@@ -5,11 +5,28 @@ from dataclasses import dataclass
 import asyncio
 import logging
 import datetime
+import pandas as pd
 
 
-# Module-level flag: only one DevOpsEngine may ever run scheduled refresh tasks.
-# Prevents duplicate tasks when multiple browser tabs reconnect simultaneously.
-_devops_scheduled_started: bool = False
+# Process-wide Database instances keyed by file name. Every browser tab gets
+# its own AppCore/QueryEngine, but they all share ONE SQLite connection per
+# file — per-tab connections only added lock contention, and initialize_db()
+# (incl. schema auto-migration) now runs once per process instead of per tab.
+_shared_databases: dict = {}
+
+
+def _seconds_until_next(hour: int, now: datetime.datetime | None = None) -> float:
+    """Seconds from `now` until the next occurrence of `hour`:00.
+
+    Uses today's occurrence if it hasn't passed yet, otherwise tomorrow's — so
+    a scheduler started at 00:30 fires at 02:00, not ~25 h later. Takes an
+    optional `now` purely so the math is unit-testable.
+    """
+    now = now or datetime.datetime.now()
+    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += datetime.timedelta(days=1)
+    return (target - now).total_seconds()
 
 
 @dataclass
@@ -24,8 +41,11 @@ class SaveData:
 class QueryEngine:
     def __init__(self, file_name: str, log_engine: logging.Logger):
         self.file_name = file_name
-        self.db = Database(file_name, log_engine)
-        self.db.initialize_db()
+        if file_name not in _shared_databases:
+            db = Database(file_name, log_engine)
+            db.initialize_db()
+            _shared_databases[file_name] = db
+        self.db = _shared_databases[file_name]
         self.df = None
         self.log = log_engine
 
@@ -40,16 +60,6 @@ class QueryEngine:
         self.df = await self.function_db("get_query_list")
 
 
-class AddData:
-    def __init__(self, query_engine: QueryEngine, log_engine: logging.Logger):
-        self.df = None
-        self.query_engine = query_engine
-        self.log = log_engine
-
-    async def refresh(self):
-        self.df = await self.query_engine.function_db("get_data_input_list")
-
-
 class DevOpsEngine:
     def __init__(self, query_engine: QueryEngine, log_engine: logging.Logger):
         self.manager = None
@@ -58,16 +68,21 @@ class DevOpsEngine:
         self.log = log_engine
         self._scheduled_tasks = []
         self._scheduled_started = False
+        # Serializes update_devops() so a manual sync (settings page) and the
+        # hourly scheduled sync can't interleave DB writes.
+        self._update_lock = asyncio.Lock()
         self.last_incremental_sync: datetime.datetime | None = None
         self.last_full_sync: datetime.datetime | None = None
 
     async def start_scheduled_updates(self):
-        """Start background tasks for scheduled DevOps updates (called once globally)."""
-        global _devops_scheduled_started
-        if _devops_scheduled_started or self._scheduled_started:
+        """Start background tasks for scheduled DevOps updates.
+
+        The engine itself is a process-wide singleton (see app.py), so the
+        instance flag is sufficient — the old extra module-level flag is gone.
+        """
+        if self._scheduled_started:
             self.log.info("Scheduled DevOps tasks already running — skipping")
             return
-        _devops_scheduled_started = True
         self._scheduled_started = True
         self.log.info("Starting scheduled DevOps update tasks")
 
@@ -87,14 +102,7 @@ class DevOpsEngine:
         async def daily_full_refresh():
             while True:
                 try:
-                    # Calculate seconds until 2 AM
-                    tomorrow = datetime.datetime.now() + datetime.timedelta(days=1)
-                    target = tomorrow.replace(hour=2, minute=0, second=0, microsecond=0)
-                    seconds_until_2am = (
-                        target - datetime.datetime.now()
-                    ).total_seconds()
-
-                    await asyncio.sleep(seconds_until_2am)
+                    await asyncio.sleep(_seconds_until_next(2))
                     self.log.info("Running scheduled daily full refresh")
                     await self.update_devops(incremental=False)
                     # Loop back immediately — next iteration recalculates time until 2 AM
@@ -111,11 +119,9 @@ class DevOpsEngine:
 
     def stop_scheduled_updates(self):
         """Stop all scheduled update tasks."""
-        global _devops_scheduled_started
         for task in self._scheduled_tasks:
             task.cancel()
         self._scheduled_tasks.clear()
-        _devops_scheduled_started = False
         self._scheduled_started = False
 
     def has_customer_connection(self, customer_name: str) -> bool:
@@ -129,6 +135,49 @@ class DevOpsEngine:
             True if customer has active DevOps connection
         """
         return bool(self.manager and customer_name in self.manager.clients)
+
+    def get_available_projects(self) -> dict:
+        """{customer_name: [project names in their org]} for connected customers,
+        or {} when no manager. Feeds the customer form's project picker."""
+        return self.manager.get_available_projects() if self.manager else {}
+
+    def upload_attachment(self, customer_name, file_name, content):
+        """Upload bytes as a DevOps attachment for a customer; returns the URL or
+        None. Used to embed pasted/inserted images in work-item descriptions."""
+        return (
+            self.manager.upload_attachment(customer_name, file_name, content)
+            if self.manager
+            else None
+        )
+
+    def get_work_item_options(self, customer_name: str | None = None):
+        """Active DevOps work items for the Git-ID picker.
+
+        With ``customer_name``, returns a flat list of ``{"label", "id"}`` for
+        that customer. Without it, returns ``{customer_name: [...]}`` for every
+        customer. Empty (list/dict respectively) when DevOps data isn't loaded,
+        so callers degrade to manual id entry. Uses the same Active/New filter
+        as the timer dialog's work-item selector.
+        """
+        if self.df is None or self.df.empty:
+            return [] if customer_name is not None else {}
+        active = self.df[self.df["state"].isin(["Active", "New"])]
+        if customer_name is not None:
+            active = active[active["customer_name"] == customer_name]
+
+        def _row_option(row):
+            if pd.isna(row.get("id")) or pd.isna(row.get("display_name")):
+                return None
+            return {"label": str(row["display_name"]), "id": int(row["id"])}
+
+        if customer_name is not None:
+            return [opt for _, r in active.iterrows() if (opt := _row_option(r))]
+        result: dict = {}
+        for _, r in active.iterrows():
+            opt = _row_option(r)
+            if opt:
+                result.setdefault(r["customer_name"], []).append(opt)
+        return result
 
     async def initialize(self):
         """Initialize DevOps connections and data (without starting scheduled tasks)."""
@@ -160,15 +209,21 @@ class DevOpsEngine:
 
     async def setup_manager(self):
         df = await self.query_engine.query_db(
-            "select distinct customer_name, pat_token, org_url from customers where pat_token is not null and pat_token != '' and org_url is not null and org_url != '' and is_current = 1"
+            "select distinct customer_name, pat_token, org_url, devops_project from customers where pat_token is not null and pat_token != '' and org_url is not null and org_url != '' and is_current = 1"
         )
-        self.manager = DevOpsManager(df, self.log)
+        # DevOpsManager.__init__ connects to every org (network I/O) — keep it
+        # off the event loop so the UI stays responsive during startup.
+        self.manager = await asyncio.to_thread(DevOpsManager, df, self.log)
 
     async def update_devops(self, incremental: bool = False):
         if not self.manager:
             self.log.warning("No DevOps connections available")
             return None
 
+        async with self._update_lock:
+            await self._update_devops_locked(incremental)
+
+    async def _update_devops_locked(self, incremental: bool):
         max_ids = None
         changed_dates = None
         if incremental:
@@ -197,7 +252,10 @@ class DevOpsEngine:
         else:
             self.log.info("Getting latest devops data (full refresh)")
 
-        status, devops_df = self.manager.get_epics_feature_df(
+        # Blocking Azure DevOps API traffic — run in a worker thread so the
+        # scheduled hourly sync doesn't freeze the UI for all clients.
+        status, devops_df = await asyncio.to_thread(
+            self.manager.get_epics_feature_df,
             max_ids=max_ids if incremental else None,
             changed_dates=changed_dates if incremental else None,
         )
@@ -245,61 +303,3 @@ class DevOpsEngine:
             )
             self.log.info(f"DevOps dataframe loaded with {len(self.df)} rows")
 
-    def devops_helper(self, func_name: str, customer_name: str, *args, **kwargs):
-        if not self.manager:
-            self.log.warning("No DevOps connections available")
-            return None
-
-        status = False
-        msg = None
-
-        if func_name == "save_comment":
-            status, msg = self.manager.save_comment(
-                customer_name=customer_name,
-                comment=kwargs.get("comment"),
-                git_id=int(kwargs.get("git_id")),
-            )
-        elif func_name == "get_workitem_level":
-            git_id_raw = kwargs.get("git_id")
-            status, msg = self.manager.get_workitem_level(
-                customer_name=customer_name,
-                work_item_id=int(git_id_raw) if str(git_id_raw).isnumeric() else None,
-                level=kwargs.get("level"),
-            )
-        elif func_name == "create_user_story":
-            status, msg = self.manager.create_user_story(
-                customer_name=customer_name,
-                title=kwargs.get("title"),
-                description=kwargs.get("description"),
-                additional_fields=kwargs.get("additional_fields"),
-                markdown=kwargs.get("markdown", False),
-                parent=kwargs.get("parent"),
-            )
-            # Note: DevOps refresh is handled by on_success_callback in the UI
-        elif func_name == "create_epic":
-            status, msg = self.manager.create_epic(
-                customer_name=customer_name,
-                title=kwargs.get("title"),
-                description=kwargs.get("description"),
-                additional_fields=kwargs.get("additional_fields"),
-                markdown=kwargs.get("markdown", False),
-            )
-            # Note: DevOps refresh is handled by on_success_callback in the UI
-        elif func_name == "create_feature":
-            status, msg = self.manager.create_feature(
-                customer_name=customer_name,
-                title=kwargs.get("title"),
-                description=kwargs.get("description"),
-                additional_fields=kwargs.get("additional_fields"),
-                markdown=kwargs.get("markdown", False),
-                parent=kwargs.get("parent"),
-            )
-            # Note: DevOps refresh is handled by on_success_callback in the UI
-
-        else:
-            self.log.warning(f"Unknown DevOps function: {func_name}")
-            return False, f"Unknown DevOps function: {func_name}"
-
-        if not status:
-            self.log.error(msg)
-        return status, msg

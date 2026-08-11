@@ -35,6 +35,11 @@ class DevOpsWorkItemHandlers:
             asyncio.ensure_future(self._background_work())
 
     async def _background_work(self):
+        # A form can be opened before DevOps init finishes — don't crash the
+        # preload task on a missing manager; app.py re-runs it after init.
+        if not self.DO or not self.DO.manager:
+            DevOpsWorkItemHandlers._preload_started = False
+            return
         await self.preload_cached_board_columns()
 
     async def preload_cached_board_columns(self):
@@ -67,19 +72,20 @@ class DevOpsWorkItemHandlers:
         self.devops_columns_cache[customer_name][board_type] = columns
         return columns, col_status
 
-    async def _write_through_cache(self, work_item_id: int, fields: dict):
+    async def _write_through_cache(self, work_item_id: int, fields: dict, customer_name: str = None):
         """Persist live API field values to the local DB cache and reload the df."""
         try:
             await self.DO.query_engine.function_db(
                 "update_devops_item_fields",
                 work_item_id=work_item_id,
                 fields=fields,
+                customer_name=customer_name,
             )
             await self.DO.load_df()
         except Exception as e:
             self.LOG.warning(f"Write-through cache update failed for {work_item_id}: {e}")
 
-    def add_work_item(self, widgets):
+    async def add_work_item(self, widgets):
         """
         Create a work item (Epic, Feature, or User Story) based on the selected type.
 
@@ -94,6 +100,10 @@ class DevOpsWorkItemHandlers:
         work_item_type = wid["work_item_type"]
         title = wid["work_item_title"]
         description = wid.get("description_editor", "")
+        customer_name = wid["customer_name"]
+
+        if not self.DO or not self.DO.manager:
+            return False, "DevOps manager not available"
 
         # Build additional fields
         additional_fields = {
@@ -103,29 +113,29 @@ class DevOpsWorkItemHandlers:
             "System.AssignedTo": wid.get("assigned_to", ""),
         }
 
-        # Handle parent relationship (only for Features and User Stories)
-        parent_id = None
-        if wid.get("parent_name") and work_item_type in ["Feature", "User Story"]:
-            parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
-
-        # Map work item type to DevOps helper function
-        helper_function_map = {
-            "Epic": "create_epic",
-            "Feature": "create_feature",
-            "User Story": "create_user_story",
-        }
-
-        helper_function = helper_function_map.get(work_item_type, "create_user_story")
-
-        success, message = self.DO.devops_helper(
-            helper_function,
-            customer_name=wid["customer_name"],
+        create_kwargs = dict(
+            customer_name=customer_name,
             title=title,
             description=description,
             additional_fields=additional_fields,
             markdown=True,
-            parent=parent_id,
         )
+
+        # Handle parent relationship (only for Features and User Stories)
+        if work_item_type in ("Feature", "User Story"):
+            parent_id = None
+            if wid.get("parent_name"):
+                parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
+            create_kwargs["parent"] = parent_id
+
+        create_fn = {
+            "Epic": self.DO.manager.create_epic,
+            "Feature": self.DO.manager.create_feature,
+            "User Story": self.DO.manager.create_user_story,
+        }.get(work_item_type, self.DO.manager.create_user_story)
+
+        # API calls are blocking — keep them off the event loop.
+        success, message = await asyncio.to_thread(create_fn, **create_kwargs)
 
         if success:
             board_column = wid.get("board_column")
@@ -134,8 +144,9 @@ class DevOpsWorkItemHandlers:
                 id_match = re.search(r"ID (\d+)", message)
                 if id_match:
                     new_id = int(id_match.group(1))
-                    col_success, col_msg = self.DO.manager.set_board_column(
-                        customer_name=wid["customer_name"],
+                    col_success, col_msg = await asyncio.to_thread(
+                        self.DO.manager.set_board_column,
+                        customer_name=customer_name,
                         work_item_id=new_id,
                         column_name=board_column,
                     )
@@ -153,42 +164,6 @@ class DevOpsWorkItemHandlers:
         else:
             self.LOG.error(message)
         return success, message
-
-    async def update_work_item_description(self, widgets):
-        """
-        Save the updated description back to DevOps.
-
-        Args:
-            widgets: Dictionary of form widgets
-
-        Returns:
-            Tuple of (success: bool, message: str)
-        """
-        c_name = widgets["customer_name"].value
-        work_item_display = widgets["work_item"].value
-        work_item_id = helpers.extract_devops_id(work_item_display)
-        description = widgets["description_editor"].value or ""
-
-        # Determine if it's markdown based on the editor's language
-        is_markdown = (
-            getattr(widgets.get("description_editor"), "language", "markdown")
-            == "markdown"
-        )
-
-        if self.DO and self.DO.manager:
-            status, msg = self.DO.manager.set_description(
-                c_name, work_item_id, description, markdown=is_markdown
-            )
-            if status:
-                self.LOG.info(f"Description updated for work item {work_item_id}")
-                return (
-                    True,
-                    f"Description updated successfully for work item {work_item_id}",
-                )
-            else:
-                self.LOG.error(f"Failed to update description: {msg}")
-                return False, f"Failed to update: {msg}"
-        return False, "DevOps manager not available"
 
     async def update_work_item(self, widgets):
         """
@@ -230,10 +205,11 @@ class DevOpsWorkItemHandlers:
         if not self.DO or not self.DO.manager:
             return (False, "DevOps manager not available")
 
-        # Update regular fields first
+        # Update regular fields first (blocking API — run in a worker thread)
         if fields_to_update:
-            status, msg = self.DO.manager.update_work_item_fields(
-                c_name, work_item_id, fields_to_update, markdown=is_markdown
+            status, msg = await asyncio.to_thread(
+                self.DO.manager.update_work_item_fields,
+                c_name, work_item_id, fields_to_update, markdown=is_markdown,
             )
             if not status:
                 self.LOG.error(f"Failed to update work item fields: {msg}")
@@ -242,7 +218,8 @@ class DevOpsWorkItemHandlers:
         # Move board column separately via REST if specified
         board_column = widgets.get("board_column")
         if board_column and board_column.value:
-            col_success, col_msg = self.DO.manager.set_board_column(
+            col_success, col_msg = await asyncio.to_thread(
+                self.DO.manager.set_board_column,
                 customer_name=c_name,
                 work_item_id=work_item_id,
                 column_name=board_column.value,
@@ -268,6 +245,7 @@ class DevOpsWorkItemHandlers:
                 "update_devops_item_fields",
                 work_item_id=int(work_item_id),
                 fields=db_fields,
+                customer_name=c_name,
             )
             await self.DO.load_df()
 
@@ -304,10 +282,11 @@ class DevOpsWorkItemHandlers:
                     cached_col = str(cached_row.get("board_column", "") or "")
 
             # --- Description + live scalar fields: one API call, free extra data ---
-            desc_result = self.DO.manager.get_description(c_name, work_item_id)
-            desc_status = desc_result[0]
-            description_raw = desc_result[1] if len(desc_result) > 1 else ""
-            live_fields = desc_result[3] if desc_status and len(desc_result) > 3 else {}
+            # Blocking API call — worker thread keeps the dialog responsive.
+            # get_description always returns (status, description, format, live_fields).
+            desc_status, description_raw, _fmt, live_fields = await asyncio.to_thread(
+                self.DO.manager.get_description, c_name, work_item_id
+            )
 
             if desc_status:
                 is_html_content = bool(
@@ -344,7 +323,9 @@ class DevOpsWorkItemHandlers:
                     )
                 if fields_to_cache:
                     asyncio.ensure_future(
-                        self._write_through_cache(int(work_item_id), fields_to_cache)
+                        self._write_through_cache(
+                            int(work_item_id), fields_to_cache, customer_name=c_name
+                        )
                     )
 
             # Populate scalar widgets
@@ -363,9 +344,9 @@ class DevOpsWorkItemHandlers:
                 current_column_widget.widget.props("readonly outlined")
 
             # Board column options from preloaded cache (API only called once at startup)
-            cached_list = self.devops_columns_cache.setdefault(c_name, {}).setdefault(b_type, None)
+            cached_list = self.devops_columns_cache[c_name].get(b_type)
             if cached_list is None:
-                result = self.load_board_columns(c_name, b_type)
+                result = await asyncio.to_thread(self.load_board_columns, c_name, b_type)
                 if result is None:
                     self.LOG.warning(f"Could not load board columns for {c_name}/{b_type}")
                     return
@@ -415,12 +396,10 @@ class DevOpsWorkItemHandlers:
             async def load_columns_for_customer(e=None):
                 c_name = customer_widget.value if customer_widget else None
                 b_type = work_item_widget.value if work_item_widget else None
-                cached_list = self.devops_columns_cache.setdefault(
-                    c_name, {}
-                ).setdefault(b_type, None)
+                cached_list = self.devops_columns_cache[c_name].get(b_type)
 
                 if cached_list is None:
-                    result = self.load_board_columns(c_name, b_type)
+                    result = await asyncio.to_thread(self.load_board_columns, c_name, b_type)
                     if result is None:
                         self.LOG.warning(f"Could not load board columns for {c_name}/{b_type}")
                         return
@@ -501,37 +480,14 @@ class DevOpsWorkItemHandlers:
 
         try:
             if value_type == "assignee":
-                # Special handling for assignee widgets
-                # Try to extract email if value is a dict
+                # Extract email/display name if the API returned a user object.
+                # Combobox widgets accept values outside their options list.
                 if isinstance(value, dict):
-                    assignee_value = value.get(
-                        "uniqueName", value.get("displayName", "")
-                    )
-                else:
-                    assignee_value = value
-
-                # Check if value is in dropdown options
-                widget_options = getattr(widget, "options", [])
-                if assignee_value in widget_options:
-                    widget.set_value(assignee_value)
-                    widget.value = assignee_value
-                else:
-                    # For combobox widgets, we can set custom values
-                    widget.set_value(assignee_value)
-                    widget.value = assignee_value
-
+                    value = value.get("uniqueName", value.get("displayName", ""))
             elif value_type == "int":
-                # Convert to int if needed
-                int_value = int(value) if value is not None else None
-                if int_value is not None:
-                    # Priority/select widgets are normalized to string values.
-                    str_value = str(int_value)
-                    widget.set_value(str_value)
-                    widget.value = str_value
+                # Priority/select widgets are normalized to string values.
+                value = str(int(value))
 
-            else:  # string or default
-                widget.set_value(value)
-                widget.value = value
-
+            widget.set_value(value)
         except Exception as e:
             self.LOG.warning(f"Failed to set widget value (type={value_type}): {e}")

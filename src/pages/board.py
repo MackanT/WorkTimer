@@ -7,19 +7,22 @@ v2 — Live mode:
   The + button opens the full add form in a dialog.
 """
 
-import asyncio  # kept for _handle_drop which is async
+import asyncio
 import math
-from nicegui import ui
+from nicegui import ui, app
 from ..core.app import AppCore
 from .. import helpers
-from ..ui.elements import toolbar
+from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
-from ..ui.devops_forms import render_devops_form
+from ..ui.devops_forms import open_work_item_dialog, render_devops_form
+from .hierarchy import create_hierarchy_view
 
 
 _BOARD_CSS = """<style>
-.board-card { cursor: grab; user-select: none; transition: box-shadow 0.15s ease, transform 0.15s ease; }
-.board-card:hover { box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35); transform: translateY(-1px); }
+/* Cards: rounded, borderless, soft shadow — matches the app's cards and the
+   hierarchy nodes. Shadow lifts a little on hover for affordance. */
+.board-card { cursor: grab; user-select: none; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); transition: box-shadow 0.15s ease, transform 0.15s ease; }
+.board-card:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); transform: translateY(-1px); }
 .board-card:active { cursor: grabbing; }
 .wt-board-col-hover { outline: 2px dashed rgba(100, 160, 255, 0.65) !important; outline-offset: -3px; }
 .board-col { transition: outline 0.1s ease; }
@@ -30,8 +33,12 @@ async def board_page():
     """DevOps Board — Kanban view of work items from local cache."""
     core = await AppCore.get_or_initialize()
     DO = core.devops_engine
+    muted = core.theme.get("muted")  # theme muted-text token
 
-    ui.add_head_html(_BOARD_CSS)
+    # Inject once per client — SPA re-visits would stack duplicate <style> blocks.
+    if not app.storage.client.get("board_css_injected"):
+        app.storage.client["board_css_injected"] = True
+        ui.add_head_html(_BOARD_CSS)
 
     # Shared board inline styles from centralized style config
     DIALOG_CARD_STYLE = helpers.UI_STYLES.get_inline_style("board", "dialog_card") or (
@@ -69,7 +76,29 @@ async def board_page():
     if DO is not None and DO.df is not None:
         customer_names = sorted(DO.df["customer_name"].dropna().unique().tolist())
     if customer_names:
-        filter_state["customer"] = customer_names[0]
+        _saved_cust = app.storage.user.get("devops_customer")
+        filter_state["customer"] = (
+            _saved_cust if _saved_cust in customer_names else customer_names[0]
+        )
+
+    # Per-customer indicator colours (shown as a dot on the customer tabs).
+    cust_colors: dict = {}
+    if customer_names:
+        _cdf = await core.query_engine.query_db(
+            "SELECT customer_name, color FROM customers WHERE is_current = 1"
+        )
+        if not _cdf.empty:
+            cust_colors = {
+                r["customer_name"]: r["color"]
+                for _, r in _cdf.iterrows()
+                if r["color"]
+            }
+
+    # Board and Hierarchy are two lenses on the same work-item data, toggled in
+    # the toolbar. The hierarchy is embedded here (its own page was retired); it
+    # reads the shared customer selection.
+    view_state = {"view": app.storage.user.get("devops_view", "board")}
+    hier = create_hierarchy_view(core, lambda: filter_state["customer"])
 
     # Seed known_cols from the ADO column cache (pre-loaded at startup).
     # Without this, the first render derives order from df insertion order which is arbitrary.
@@ -218,6 +247,7 @@ async def board_page():
             "update_devops_item_fields",
             work_item_id=item_id,
             fields={"board_column": target_col, "board_column_done": 0},
+            customer_name=customer,
         )
 
         if DO.manager:
@@ -241,10 +271,12 @@ async def board_page():
                     timeout=6000,
                 )
 
-        # Optimistic in-memory update, then reload from DB
+        # Optimistic in-memory update, then reload from DB.
+        # Scoped by customer — work item IDs are only unique per organization.
         if DO.df is not None:
-            DO.df.loc[DO.df["id"] == item_id, "board_column"] = target_col
-            DO.df.loc[DO.df["id"] == item_id, "board_column_done"] = 0
+            row_mask = (DO.df["id"] == item_id) & (DO.df["customer_name"] == customer)
+            DO.df.loc[row_mask, "board_column"] = target_col
+            DO.df.loc[row_mask, "board_column_done"] = 0
         await _reload_board_data(show_notify=False)
 
     # ── drag handlers ──────────────────────────────────────────────────────────
@@ -280,123 +312,14 @@ async def board_page():
 
     # ── click-to-edit dialog (full update form) ──────────────────────────────────
     async def _on_card_click(row: dict):
-        """Open the full DevOps update form in a dialog."""
-        item_id = int(row.get("id", 0))
-        item_type = str(row.get("type", "User Story"))
-        title = str(row.get("title", ""))
-        customer = str(row.get("customer_name", ""))
-        priority_val = row.get("priority")
-        display_name = f"{item_type}: {item_id} - {title}"
+        """Open the full DevOps update dialog for the clicked card."""
+        async def _after():
+            await _reload_board_data(show_notify=False)
 
-        update_cfg = (
-            core.ui_config
-            .get("board_devops_forms", {})
-            .get("update", {})
+        await open_work_item_dialog(
+            core, row, on_success=_after,
+            priority_colors=PRIORITY_COLORS, priority_labels=PRIORITY_LABELS,
         )
-
-        with ui.dialog().props("maximized") as dlg:
-            with (
-                ui.card()
-                .style(DIALOG_CARD_STYLE)
-                .props("flat bordered")
-            ):
-                form_actions: dict = {"submit": None}
-
-                dirty_state: dict = {"is_dirty": False, "programmatic": True}
-
-                def _mark_dirty(_e=None):
-                    if not dirty_state["programmatic"]:
-                        dirty_state["is_dirty"] = True
-
-                def _confirm_discard_or_close():
-                    if not dirty_state["is_dirty"]:
-                        dlg.close()
-                        return
-                    with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
-                        ui.label("Discard unsaved changes?").classes("text-sm font-semibold")
-                        ui.label("Your edits in this work item will be lost.").classes("text-xs text-grey-5")
-                        with ui.row().classes("w-full justify-end gap-2 mt-2"):
-                            ui.button("Keep editing", on_click=confirm_dlg.close).props("flat")
-                            def _discard():
-                                confirm_dlg.close()
-                                dlg.close()
-                            ui.button("Discard", on_click=_discard).props("color=negative")
-                    confirm_dlg.open()
-
-                async def _submit_from_header():
-                    submit_fn = form_actions.get("submit")
-                    if submit_fn:
-                        await submit_fn()
-
-                # ── Item header: shows which item we’re editing ────────────────
-                p_color = PRIORITY_COLORS.get(priority_val, "grey-4")
-                p_label = PRIORITY_LABELS.get(priority_val, "")
-                with ui.row().classes("items-center gap-2 no-wrap w-full").style(
-                    "padding: 0.6rem 0.8rem; flex-shrink: 0;"
-                ):
-                    if priority_val:
-                        ui.icon("circle", size="12px").classes(
-                            f"text-{p_color} shrink-0"
-                        ).tooltip(f"Priority: {p_label}")
-                    ui.label(f"#{item_id}").classes("text-grey-5 text-xs shrink-0")
-                    ui.label("·").classes("text-grey-5 text-xs shrink-0")
-                    ui.label(item_type).classes("text-grey-5 text-xs shrink-0")
-                    ui.label(title).classes("text-sm font-semibold flex-1").style(
-                        "overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-                    )
-                    ui.badge(customer).props("color=primary outline rounded").classes("text-xs shrink-0")
-                    ui.space()
-                    ui.button("Update", icon="save", on_click=_submit_from_header).props("dense color=primary")
-                    ui.button("Cancel", icon="close", on_click=_confirm_discard_or_close).props("flat dense color=grey-6")
-                ui.separator()
-
-                # Show lightweight skeleton while form/options/description are hydrating.
-                loading_box = ui.column().classes("w-full gap-2").style("padding: 0.75rem;")
-                with loading_box:
-                    ui.skeleton("text", width="35%")
-                    ui.skeleton("rect", width="100%", height="52px")
-                    ui.skeleton("rect", width="100%", height="52px")
-                    ui.skeleton("rect", width="100%", height="52px")
-                    ui.skeleton("rect", width="100%", height="220px")
-
-                # Open first so the user sees immediate feedback, then hydrate the form.
-                dlg.open()
-                await asyncio.sleep(0)
-
-                async def _on_update_success():
-                    dlg.close()
-                    await _reload_board_data(show_notify=False)
-
-                result = await render_devops_form(
-                    core, "update", update_cfg,
-                    on_success=_on_update_success,
-                    hidden_field_names={"customer_name", "work_item", "current_column", "board_column"},
-                    show_internal_header=False,
-                )
-
-                _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
-                form_actions["submit"] = submit_fn
-
-                if widgets:
-                    if "customer_name" in widgets:
-                        widgets["customer_name"].widget.value = customer
-                        widgets["customer_name"].widget.update()
-                    if "work_item" in widgets:
-                        await widgets["work_item"].refresh()
-                        widgets["work_item"].widget.value = display_name
-                        widgets["work_item"].widget.update()
-                    if load_fn:
-                        await load_fn(None)
-
-                    # Start tracking user edits after programmatic prefill is complete.
-                    dirty_state["programmatic"] = False
-                    watch_fields = ["state", "assigned_to", "priority", "description_editor"]
-                    for field_name in watch_fields:
-                        w = widgets.get(field_name)
-                        if w:
-                            w.on_value_change(_mark_dirty)
-
-                loading_box.clear()
 
     # ── add-item dialog (full add form) ───────────────────────────────────────
     async def _open_add_dialog():
@@ -425,9 +348,9 @@ async def board_page():
                     "padding: 0.6rem 0.8rem; flex-shrink: 0;"
                 ):
                     ui.icon("add_circle", size="16px").classes("text-primary shrink-0")
-                    ui.label("New Work Item").classes("text-grey-5 text-xs uppercase tracking-wide shrink-0")
-                    ui.label("·").classes("text-grey-5 text-xs shrink-0")
-                    type_label = ui.label(filter_state.get("type", "User Story")).classes("text-grey-5 text-xs shrink-0")
+                    ui.label("New Work Item").classes(f"text-{muted} text-xs uppercase tracking-wide shrink-0")
+                    ui.label("·").classes(f"text-{muted} text-xs shrink-0")
+                    type_label = ui.label(filter_state.get("type", "User Story")).classes(f"text-{muted} text-xs shrink-0")
                     customer_label = ui.label(filter_state.get("customer", "")).classes("text-sm font-semibold flex-1").style(
                         "overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
                     )
@@ -501,11 +424,16 @@ async def board_page():
         except (TypeError, ValueError):
             parent_label = ""
 
+        # Tint each card's left edge with the customer's indicator colour.
+        _ccolor = cust_colors.get(str(row.get("customer_name") or ""))
+        _card_style = "padding: 0.5rem 0.65rem;"
+        if _ccolor:
+            _card_style += f" border-left: 3px solid {_ccolor};"
         with (
             ui.card()
-            .classes("board-card w-full rounded shadow-sm")
-            .style("padding: 0.4rem 0.6rem;")
-            .props("flat bordered draggable=true")
+            .classes("board-card w-full rounded-md")
+            .style(_card_style)
+            .props("flat draggable=true")
         ) as card:
             card.on("dragstart", lambda e, r=row: _handle_dragstart(r))
             card.on("dragend", lambda e: _handle_dragend())
@@ -521,23 +449,23 @@ async def board_page():
                     ui.icon("circle", size="12px").classes(f"text-{p_color} shrink-0").tooltip(
                         f"Priority: {p_label}"
                     )
-                ui.label(f"#{item_id}").classes("text-xs text-grey-5 shrink-0")
+                ui.label(f"#{item_id}").classes(f"text-xs text-{muted} shrink-0")
                 ui.space()
                 # Show a "Done" chip only when the item is in the done sub-state
                 if board_column_done:
-                    ui.badge("✓ Done").props("color=green-7 rounded").classes("text-xs shrink-0")
+                    ui.badge("✓ Done").props("color=positive rounded").classes("text-xs shrink-0")
 
             ui.label(title).classes("text-sm").style(
                 "word-break:break-word; white-space:normal; line-height:1.3; margin-top:2px;"
             )
             if parent_label:
                 with ui.row().classes("items-center gap-1").style("margin-top:3px;"):
-                    ui.icon("account_tree", size="12px").classes("text-grey-5 shrink-0")
-                    ui.label(parent_label).classes("text-xs text-grey-5").style(
+                    ui.icon("account_tree", size="12px").classes(f"text-{muted} shrink-0")
+                    ui.label(parent_label).classes(f"text-xs text-{muted}").style(
                         "overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:200px;"
                     )
             if assigned:
-                ui.label(f"👤 {assigned}").classes("text-xs text-grey-5").style("margin-top:3px;")
+                ui.label(f"👤 {assigned}").classes(f"text-xs text-{muted}").style("margin-top:3px;")
 
     parent_label_cache: dict[int, str] = {}
 
@@ -581,17 +509,17 @@ async def board_page():
 
         if not cust:
             with ui.column().classes("items-center justify-center w-full").style("padding: 4rem;"):
-                ui.icon("view_kanban", size="xl").classes("text-grey-6")
-                ui.label("No customers with DevOps data available.").classes("text-grey-5 mt-2")
+                ui.icon("view_kanban", size="xl").classes(f"text-{muted}")
+                ui.label("No customers with DevOps data available.").classes(f"text-{muted} mt-2")
             return
 
         data = _board_data()
         if not data:
             with ui.column().classes("items-center justify-center w-full").style("padding: 4rem;"):
-                ui.icon("inbox", size="xl").classes("text-grey-6")
+                ui.icon("inbox", size="xl").classes(f"text-{muted}")
                 ui.label(
                     f"No active {filter_state['type']} items for {cust}."
-                ).classes("text-grey-5 mt-2")
+                ).classes(f"text-{muted} mt-2")
             return
 
         with ui.row().classes("gap-3 items-start flex-nowrap").style(COLUMNS_ROW_STYLE):
@@ -602,11 +530,11 @@ async def board_page():
                     .style(BOARD_COLUMN_STYLE)
                     .props("flat")
                 ) as col_el:
-                    # Column header — same label size and divider as time_tracking's
-                    # entity_card_header (time_tracking_customer_name / divider_row).
+                    # Column header — consistent with the app's card headers
+                    # (semibold white title + subtle count, then a themed divider).
                     with ui.row().classes("items-center gap-2 w-full").style("padding: 0.1rem 0.2rem 0.3rem;"):
-                        ui.label(col_name).classes("text-lg flex-1")
-                        ui.badge(str(len(cards))).props("color=grey-7 rounded")
+                        ui.label(col_name).classes("text-base font-semibold text-white flex-1 truncate")
+                        ui.badge(str(len(cards))).props("color=grey-8 rounded").classes("text-xs")
 
                     ui.separator().classes(helpers.UI_STYLES.get_layout_classes("divider_row"))
 
@@ -622,9 +550,13 @@ async def board_page():
 
                     col_el.on("drop", _make_drop_handler(col_name, col_el))
 
-                    # Cards
-                    with ui.column().classes("gap-2 w-full"):
-                        for card_row in cards:
+                    # Cards, with a faint hairline between them for separation.
+                    with ui.column().classes("w-full").style("gap: 0.45rem;"):
+                        for idx, card_row in enumerate(cards):
+                            if idx:
+                                ui.element("div").classes("w-full").style(
+                                    "border-top: 1px solid rgba(255, 255, 255, 0.08);"
+                                )
                             _render_card(card_row)
 
     # ── Done drop-zone (persistent, outside the scrollable column area) ────────
@@ -635,18 +567,22 @@ async def board_page():
             "overflow-y: auto; padding: 0.75rem;"
         ):
             with ui.row().classes("items-center gap-2 w-full"):
-                ui.icon("done_all", size="18px").classes("text-green-5 shrink-0")
+                ui.icon("done_all", size="18px").classes("text-positive shrink-0")
                 ui.label("Recently Completed").classes("text-sm font-semibold flex-1")
                 ui.button(icon="close", on_click=dlg.close).props("flat dense round color=grey-6")
             ui.label(f"Showing the {DONE_COLUMN_LIMIT} most recently changed items").classes(
-                "text-xs text-grey-5 mb-1"
+                "text-xs text-" + muted + " mb-1"
             )
             ui.separator().classes("opacity-20 mb-2")
             if not items:
-                ui.label("No completed items yet.").classes("text-grey-5 text-sm")
+                ui.label("No completed items yet.").classes(f"text-{muted} text-sm")
             else:
-                with ui.column().classes("gap-2 w-full"):
-                    for row in items:
+                with ui.column().classes("w-full").style("gap: 0.45rem;"):
+                    for idx, row in enumerate(items):
+                        if idx:
+                            ui.element("div").classes("w-full").style(
+                                "border-top: 1px solid rgba(255, 255, 255, 0.08);"
+                            )
                         _render_card(row)
         dlg.open()
 
@@ -664,9 +600,9 @@ async def board_page():
             .props("flat")
         ) as zone:
             ui.icon("done_all", size="22px").classes(
-                "text-green-5" if target_col else "text-grey-7"
+                "text-positive" if target_col else f"text-{muted}"
             )
-            ui.label("Done").classes("text-xs font-semibold text-grey-4")
+            ui.label("Done").classes(f"text-xs font-semibold text-{muted}")
             ui.badge(str(total)).props(
                 f"color={'green-7' if target_col else 'grey-7'} rounded"
             )
@@ -690,85 +626,140 @@ async def board_page():
                 zone.tooltip("No Done column found for this board")
 
     # ── toolbar ────────────────────────────────────────────────────────────────
-    with toolbar(core.theme):
-        with ui.row().classes("items-center gap-3 w-full flex-nowrap"):
-            ui.label("Board").classes("text-white font-bold shrink-0")
+    async def _on_type_chip_click(t: str):
+        filter_state["type"] = t
+        render_board.refresh()
+        render_done_zone.refresh()
+        render_type_chips.refresh()
 
-            # Customer tabs (if multiple)
-            if len(customer_names) > 1:
+    @ui.refreshable
+    def render_type_chips():
+        segmented_chips(
+            core.theme,
+            [(t, t) for t in ("User Story", "Feature", "Epic")],
+            filter_state["type"],
+            _on_type_chip_click,
+        )
+
+    async def _on_refresh():
+        await _reload_board_data(
+            show_notify=True, notify_msg="Board refreshed from local cache"
+        )
+
+    # ── view toggle (Board / Hierarchy) ────────────────────────────────────────
+    def _on_view_change(value):
+        if value == view_state["view"]:
+            return
+        view_state["view"] = value
+        app.storage.user["devops_view"] = value
+        if value == "hierarchy":
+            hier.set_customer(filter_state["customer"])
+        render_view_toggle.refresh()
+        render_view_controls.refresh()
+        render_view_actions.refresh()
+        _apply_view()
+
+    @ui.refreshable
+    def render_view_toggle():
+        segmented_chips(
+            core.theme,
+            [("board", "Board"), ("hierarchy", "Hierarchy")],
+            view_state["view"],
+            _on_view_change,
+        )
+
+    @ui.refreshable
+    def render_view_controls():
+        if view_state["view"] == "board":
+            with toolbar_group(core.theme, "Type", divider_after=False):
+                render_type_chips()
+        else:
+            hier.render_controls()
+
+    @ui.refreshable
+    def render_view_actions():
+        if view_state["view"] == "board":
+            ui.button(icon="refresh", on_click=_on_refresh).props(
+                "flat dense color=white"
+            ).tooltip("Reload from local DB (no API call)")
+            ui.button(icon="add", on_click=_open_add_dialog).props(
+                "flat dense color=white"
+            ).tooltip("Add new DevOps work item")
+        else:
+            hier.render_zoom_controls()
+            ui.button(icon="refresh", on_click=hier.refresh).props(
+                "flat dense color=white"
+            ).tooltip("Reload from local cache")
+
+    with toolbar(core.theme):
+        with toolbar_group(core.theme, divider_after=True):
+            ui.icon("view_kanban", size="md").classes(f"text-{core.theme.get('accent')}")
+            ui.label("Board").classes(helpers.UI_STYLES.get_layout_classes("page_title"))
+
+        if len(customer_names) > 1:
+            with toolbar_group(core.theme, "Customer", divider_after=True):
                 with (
                     ui.tabs(value=filter_state["customer"])
                     .props(
-                        f"horizontal dense "
-                        f'active-color="{core.theme.get("accent")}" '
+                        f'horizontal dense active-color="{core.theme.get("accent")}" '
                         f'indicator-color="{core.theme.get("accent")}"'
                     )
                     .classes(helpers.UI_STYLES.get_layout_classes("tab_label"))
                 ) as cust_tabs:
                     for c in customer_names:
-                        ui.tab(c, label=c)
+                        with ui.tab(c, label=""):
+                            with ui.row().classes("items-center gap-1.5 no-wrap"):
+                                if cust_colors.get(c):
+                                    ui.element("div").style(
+                                        f"width:9px; height:9px; border-radius:50%;"
+                                        f" flex:0 0 auto; background:{cust_colors[c]};"
+                                    )
+                                ui.label(c)
 
                 async def _on_customer_change(e):
                     filter_state["customer"] = e.value
+                    app.storage.user["devops_customer"] = e.value
                     render_board.refresh()
                     render_done_zone.refresh()
+                    hier.set_customer(e.value)
 
                 cust_tabs.on_value_change(_on_customer_change)
-            elif customer_names:
+        elif customer_names:
+            with toolbar_group(core.theme, "Customer", divider_after=True):
                 ui.label(customer_names[0]).classes("text-white text-sm shrink-0")
 
-            ui.space()
+        with toolbar_group(core.theme, "View", divider_after=True):
+            render_view_toggle()
 
-            # Item type chips — styled to match the saved-query chips on the
-            # query_editor page (helpers.UI_STYLES "query_chip"), with the active
-            # type filled in the theme accent color instead of outlined.
-            async def _on_type_chip_click(t: str):
-                filter_state["type"] = t
-                render_board.refresh()
-                render_done_zone.refresh()
-                render_type_chips.refresh()
+        render_view_controls()
 
-            @ui.refreshable
-            def render_type_chips():
-                chip_style = helpers.UI_STYLES.get_widget_style("query_chip")
-                with ui.row().classes("gap-2 items-center shrink-0 no-wrap"):
-                    for t in ("User Story", "Feature", "Epic"):
-                        btn = ui.button(
-                            t, on_click=lambda e, tt=t: _on_type_chip_click(tt)
-                        )
-                        if t == filter_state["type"]:
-                            btn.props(f"unelevated dense no-caps color={core.theme.get('accent')}")
-                        else:
-                            btn.props("outline dense no-caps").classes(
-                                chip_style["classes"]
-                            ).style(chip_style["style"])
+        ui.space()
 
-            render_type_chips()
+        render_view_actions()
 
-            # Refresh from local cache (no API)
-            async def _on_refresh():
-                await _reload_board_data(
-                    show_notify=True,
-                    notify_msg="Board refreshed from local cache",
-                )
+    # Reload the board when a DevOps sync completes elsewhere (settings page
+    # emits "devops_refreshed" after manual incremental/full syncs).
+    def _on_devops_refreshed(**_):
+        asyncio.create_task(_reload_board_data(show_notify=False))
 
-            ui.button(icon="refresh", on_click=_on_refresh).props(
-                "flat dense color=white"
-            ).tooltip("Reload from local DB (no API call)")
-
-            ui.button(icon="add", on_click=_open_add_dialog).props(
-                "flat dense color=white"
-            ).tooltip("Add new DevOps work item")
+    core.event_bus.register_unique(
+        "devops_refreshed", _on_devops_refreshed, key="board_page"
+    )
 
     # ── board area: scrollable columns + persistent Done drop-zone ─────────────
     # No single big wrapping card here — like time_tracking's entity_card_shell
     # cards or add_data's forms, each column (and the Done zone) is its own
     # ui.card sitting directly on the page background.
-    with (
+    # Board content lives in one container, the embedded Hierarchy in another.
+    # The view toggle shows one and hides the other (both are position:fixed via
+    # wt-page-content, so they occupy the same area). Hierarchy renders lazily on
+    # first switch.
+    board_container = (
         ui.row()
         .classes("wt-page-content w-full flex-nowrap items-stretch")
         .style("box-sizing: border-box; padding: 0.5rem 1rem; gap: 0.5rem;")
-    ):
+    )
+    with board_container:
         with ui.element("div").classes("overflow-x-auto overflow-y-auto flex-1 min-w-0"):
             # Full width lets columns (flex-grow, see BOARD_COLUMN_STYLE) fill the
             # available space when there are few of them; flex-nowrap + overflow-x-auto
@@ -780,3 +771,25 @@ async def board_page():
         # Outside the scrollable area so it stays visible regardless of horizontal
         # scroll position — a permanent target for dragging items to Done.
         render_done_zone()
+
+    hier_container = (
+        ui.card()
+        .props("flat")
+        .classes("wt-page-content mx-4 my-2 rounded-md flex flex-col hidden")
+        .style("width: calc(100% - 2rem); box-sizing: border-box; overflow-y: hidden;")
+    )
+    _hier_rendered = {"done": False}
+
+    def _apply_view():
+        if view_state["view"] == "board":
+            board_container.classes(remove="hidden")
+            hier_container.classes(add="hidden")
+        else:
+            board_container.classes(add="hidden")
+            hier_container.classes(remove="hidden")
+            if not _hier_rendered["done"]:
+                _hier_rendered["done"] = True
+                with hier_container:
+                    hier.render_content()
+
+    _apply_view()
