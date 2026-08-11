@@ -25,6 +25,23 @@ _CHECK_INTERVAL = timedelta(hours=24)
 _process_cache: dict | None = None
 
 
+def _is_newer(latest: str, current: str) -> bool:
+    """True only when `latest` is a strictly higher version than `current`.
+
+    Uses packaging.version for proper semver ordering (so 5.0.10 > 5.0.2 and a
+    local build ahead of main never flags a "downgrade"). Falls back to a plain
+    string inequality if a version can't be parsed. Returns False when the
+    current version is unknown (can't compare) or the two are equal.
+    """
+    if not latest or latest == current or current == "unknown":
+        return False
+    try:
+        from packaging.version import parse as _parse
+        return _parse(latest) > _parse(current)
+    except Exception:
+        return latest != current
+
+
 def _current_version() -> str:
     """Read version from the local pyproject.toml (always available from source)."""
     try:
@@ -65,7 +82,7 @@ async def check_for_update(force: bool = False) -> dict:
                     latest = app.storage.general.get("update_latest_version", current)
                     # Recompute available against the actual current version (guards
                     # against stale cache from a previous bad version read)
-                    available = latest != current
+                    available = _is_newer(latest, current)
                     _process_cache = {
                         "available": available,
                         "latest": latest,
@@ -79,7 +96,7 @@ async def check_for_update(force: bool = False) -> dict:
     try:
         loop = asyncio.get_event_loop()
         latest = await loop.run_in_executor(None, _fetch_latest_blocking)
-        available = latest != current
+        available = _is_newer(latest, current)
 
         app.storage.general["update_last_check"] = datetime.now().isoformat()
         app.storage.general["update_latest_version"] = latest

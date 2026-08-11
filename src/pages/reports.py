@@ -22,6 +22,16 @@ from ..ui.elements import toolbar, toolbar_group, page_card, segmented_chips
 
 _PERIODS = ["Day", "Week", "Month", "Year", "Custom"]
 
+# Billing-rounding basis for the report's billable tiles + CSV (display-only,
+# never written to the DB). The increment comes from the customer/global setting.
+_ROUND_BASES = {
+    "off": "No rounding",
+    "entry": "Per entry",
+    "work_item": "Per work item",
+    "project": "Per project",
+    "total": "Grand total",
+}
+
 # Chart palette — single accent for single-series marks; text/grid stay in
 # muted ink (never the series colour), grid recessive. Reads on the dark surface.
 _ACCENT = "#38bdf8"
@@ -340,7 +350,7 @@ async def reports_page():
 
     tset = core.ui_config.get("time_settings", {})
     default_round = int(tset.get("rounding_minutes", 0) or 0)
-    mode = tset.get("rounding_mode", "nearest")
+    mode = tset.get("rounding_mode", "up")  # billing convention: round up
     currency = tset.get("currency", "")
     hours_per_day = float(tset.get("target_hours_per_day", 8) or 8)
     default_target = float(tset.get("target_percent", 100) or 100)
@@ -398,11 +408,19 @@ async def reports_page():
 
     _saved = app.storage.user.get("report_customers")
     _init_custs = [c for c in _saved if c in names] if isinstance(_saved, list) else []
+    _saved_basis = app.storage.user.get("report_round_basis")
+    _init_basis = _saved_basis if _saved_basis in _ROUND_BASES else "off"
+    _saved_min = app.storage.user.get("report_round_minutes")
+    _init_round = (
+        int(_saved_min) if isinstance(_saved_min, (int, float))
+        else _customer_round(_init_custs)
+    )
     _month = helpers.get_range_for("Month")
     state = {
         "customers": _init_custs,
         "period": "Month",
-        "round": _customer_round(_init_custs),
+        "round": _init_round,
+        "round_basis": _init_basis,
         "custom_start": _month.split(" - ")[0],
         "custom_end": _month.split(" - ")[1],
         "range": ("", ""),
@@ -417,6 +435,34 @@ async def reports_page():
         "top_items": ([], []),
         "top_items_colors": [],
     }
+
+    async def _billable_hours(raw_h, basis, inc, cust_sql, cust_params):
+        """Billable hours for the tiles/CSV under the chosen rounding basis.
+
+        Rounding is display-only (never written to the DB). 'off' / no increment
+        returns raw hours; 'total' rounds the sum; 'project' / 'work_item' round
+        each group's subtotal then sum (untagged time is one 'no work item'
+        group); 'entry' rounds every row (inflates with many start/stops).
+        """
+        if not inc or basis == "off":
+            return raw_h
+        if basis == "total":
+            return round_hours(raw_h, inc, mode)
+        if basis == "entry":
+            rows = await QE.query_db(
+                f"SELECT {_DUR} AS h FROM time WHERE {cust_sql} AND {_DUR} > 0",
+                params=cust_params,
+            )
+        else:
+            grp = "project_name" if basis == "project" else "COALESCE(git_id, -1)"
+            rows = await QE.query_db(
+                f"""SELECT SUM({_DUR}) AS h FROM time WHERE {cust_sql}
+                    GROUP BY {grp} HAVING SUM({_DUR}) > 0""",
+                params=cust_params,
+            )
+        if rows.empty:
+            return 0.0
+        return sum(round_hours(float(v), inc, mode) for v in rows["h"])
 
     async def _load():
         start, end, ps, pe = _period_bounds(
@@ -460,7 +506,9 @@ async def reports_page():
         # Blended billable rate from completed entries (running timers have no
         # cost yet); applied to the live hours for an estimated amount.
         rate = (raw_c / completed_h) if completed_h else 0.0
-        billed_h = round_hours(raw_h, state["round"], mode)
+        billed_h = await _billable_hours(
+            raw_h, state["round_basis"], state["round"], cust_sql, cust_params
+        )
         state["tiles"] = {
             "hours": billed_h,
             "amount": billed_h * rate,
@@ -639,9 +687,11 @@ async def reports_page():
         sel = [c for c in (e.value or []) if c in names]
         state["customers"] = sel
         app.storage.user["report_customers"] = sel
-        # A single selection adopts that customer's billing-rounding default
-        # (applied to the billable tiles; there is no manual override control).
+        # A single selection seeds the rounding increment from that customer's
+        # setting (the "to nearest (min)" input can still override it).
         state["round"] = _customer_round(sel)
+        app.storage.user["report_round_minutes"] = state["round"]
+        render_round_input.refresh()
         cust_select.props(f'display-value="{_cust_display()}"')
         cust_select.update()
         await _load()
@@ -650,6 +700,26 @@ async def reports_page():
         state["period"] = value
         render_period_controls.refresh()
         await _load()
+
+    async def _on_round_basis(e):
+        state["round_basis"] = e.value or "off"
+        app.storage.user["report_round_basis"] = state["round_basis"]
+        await _load()
+
+    async def _on_round_minutes(e):
+        state["round"] = int(e.value or 0)
+        app.storage.user["report_round_minutes"] = state["round"]
+        await _load()
+
+    @ui.refreshable
+    def render_round_input():
+        ui.number(
+            value=state["round"], min=0, step=5, on_change=_on_round_minutes,
+            label="round up to (min)",
+        ).props("dense outlined").classes("w-32 shrink-0").tooltip(
+            f"Round up to the next N minutes (0 = off; mode: {mode}). Seeded from a "
+            "single selected customer's setting; edit to override."
+        )
 
     @ui.refreshable
     def render_period_controls():
@@ -708,6 +778,15 @@ async def reports_page():
             render_period_controls()
 
         ui.space()
+
+        with toolbar_group(core.theme, "Rounding", divider_after=True):
+            ui.select(
+                _ROUND_BASES, value=state["round_basis"], on_change=_on_round_basis,
+            ).props("dense outlined").classes("w-36 shrink-0").tooltip(
+                "Billing-rounding basis for the billable tiles + CSV only (charts "
+                "stay raw); nothing is written to the database."
+            )
+            render_round_input()
 
         ui.button("CSV", icon="download", on_click=_export_csv).props(
             "flat dense no-caps color=white"

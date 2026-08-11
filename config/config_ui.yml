@@ -66,7 +66,7 @@ navigation:
 # reports — never the live Time Tracker.
 time_settings:
   rounding_minutes: 0      # default billing increment in minutes (0 = off; 6/15/30 common)
-  rounding_mode: nearest   # nearest | up | down
+  rounding_mode: up        # up | nearest | down — billing usually rounds up (ceil)
   currency: ""             # appended to amounts, e.g. "kr"
   target_hours_per_day: 8  # 100% target = this many hours per workday (Mon–Fri)
   target_percent: 100      # default utilisation target (%); adjustable on the Reports page
