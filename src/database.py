@@ -433,7 +433,7 @@ class Database:
 
     def insert_time_row(
         self, customer_id: int, project_id: int, git_id: int = None,
-        comment: str = None, new_project_id: int = None,
+        comment: str = None, new_project_id: int = None, end_time: str = None,
     ):
         dt = datetime.now()
         now = dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -473,6 +473,13 @@ class Database:
             # Update the latest row with blank end_time
             last_row_id = int(rows.iloc[0]["time_id"])
 
+            # Custom stop time (backdate a forgotten timer); defaults to now.
+            # The after-update trigger recomputes total_time/cost from it.
+            end_val = (
+                self._parse_datetime(end_time).strftime("%Y-%m-%d %H:%M:%S")
+                if end_time else now
+            )
+
             # Optionally re-assign the entry to a different project of the same
             # customer (e.g. logged on "generic", meant "specific task"). The
             # denormalized project_name must move too — reports group by it; the
@@ -494,7 +501,7 @@ class Database:
                         project_name = ?
                     where time_id = ?
                 """,
-                    (now, comment, git_id, target_pid,
+                    (end_val, comment, git_id, target_pid,
                      self.get_project_name(target_pid), last_row_id),
                 )
             else:
@@ -507,7 +514,7 @@ class Database:
                         git_id = ?
                     where time_id = ?
                 """,
-                    (now, comment, git_id, last_row_id),
+                    (end_val, comment, git_id, last_row_id),
                 )
             customer_name = self.get_customer_name(customer_id)
             project_name = self.get_project_name(

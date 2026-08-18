@@ -455,21 +455,97 @@ async def time_tracking_page():
         if int(project_id) not in proj_options:
             proj_options[int(project_id)] = p_name
 
+        # Start time of the running row, to default/validate the stop time.
+        running = await core.query_engine.query_db(
+            "select start_time from time where customer_id = ? and project_id = ? "
+            "and end_time is null order by time_id desc limit 1",
+            params=(customer_id, project_id),
+        )
+        start_str = str(running.iloc[0]["start_time"]) if not running.empty else None
+        now_dt = datetime.now()
+        dt_local_fmt = "%Y-%m-%dT%H:%M"
+        db_fmt = "%Y-%m-%d %H:%M:%S"
+
         _stop_card.clear()
         with _stop_card:
-            # Title
-            ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
+            _proj_shown = {"v": False}
+
+            def _toggle_proj():
+                _proj_shown["v"] = not _proj_shown["v"]
+                project_select.set_visibility(_proj_shown["v"])
+
+            def _on_proj_change(e):
+                nm = (
+                    proj_options.get(int(e.value), p_name)
+                    if e.value is not None else p_name
+                )
+                title_label.set_text(f"{nm} - {c_name}")
+
+            # Title + a subtle "change project" affordance — re-assigning is an
+            # occasional action, so the selector stays hidden until asked for.
+            with ui.row().classes("w-full items-center gap-1 no-wrap"):
+                title_label = ui.label(f"{p_name} - {c_name}").classes("text-h6")
+                ui.space()
+                ui.button(icon="drive_file_move", on_click=_toggle_proj).props(
+                    "flat dense round size=sm"
+                ).tooltip("Log under a different project")
 
             # Project — re-assignable; defaults to the one the timer ran on.
             project_select = (
-                ui.select(proj_options, value=int(project_id), label="Project")
-                .props("dense outlined")
-                .classes("w-full")
-                .tooltip(
-                    "Log this entry under a different project if you started "
-                    "on the wrong one"
+                ui.select(
+                    proj_options, value=int(project_id), label="Project",
+                    on_change=_on_proj_change,
                 )
+                .props("dense outlined")
+                .classes("w-64 self-end")
             )
+            project_select.set_visibility(False)
+
+            # Stop time — defaults to the moment Save is pressed; reveal to
+            # backdate a forgotten timer. Kept subtle (occasional action).
+            _end_shown = {"v": False}
+
+            def _update_end_hint():
+                if _end_shown["v"]:
+                    end_hint.set_text(
+                        "Stop: " + str(end_input.value or "").replace("T", " ")
+                    )
+                else:
+                    end_hint.set_text("Stop: now")
+
+            def _toggle_end():
+                _end_shown["v"] = not _end_shown["v"]
+                if _end_shown["v"]:
+                    end_input.value = datetime.now().strftime(dt_local_fmt)
+                end_input.set_visibility(_end_shown["v"])
+                _update_end_hint()
+
+            with ui.row().classes("w-full items-center gap-1 no-wrap"):
+                end_hint = ui.label("Stop: now").classes(
+                    f"text-caption text-{core.theme.get('muted')}"
+                )
+                ui.space()
+                ui.button(icon="schedule", on_click=_toggle_end).props(
+                    "flat dense round size=sm"
+                ).tooltip("Set a custom stop time (defaults to when you save)")
+
+            end_input = (
+                ui.input(
+                    label="Stop time",
+                    value=now_dt.strftime(dt_local_fmt),
+                    on_change=lambda e: _update_end_hint(),
+                )
+                .props('type="datetime-local" dense outlined')
+                .classes("w-64 self-end")
+                .tooltip("When the timer actually stopped")
+            )
+            if start_str:
+                try:
+                    _min = datetime.strptime(start_str, db_fmt).strftime(dt_local_fmt)
+                    end_input.props(f'min="{_min}"')
+                except ValueError:
+                    pass
+            end_input.set_visibility(False)
 
             # DevOps ID selector (if available)
             id_input = None
@@ -499,15 +575,36 @@ async def time_tracking_page():
                     if project_select.value is not None else project_id
                 )
 
+                # Default (field hidden) → None, so the DB stamps the stop time at
+                # the moment of saving. A manual value is used only when revealed.
+                if _end_shown["v"]:
+                    end_val = end_input.value or datetime.now().strftime(dt_local_fmt)
+                    if start_str:
+                        try:
+                            if (
+                                datetime.strptime(end_val, dt_local_fmt)
+                                < datetime.strptime(start_str, db_fmt)
+                            ):
+                                ui.notify(
+                                    "Stop time can't be before the timer's start",
+                                    type="warning",
+                                )
+                                return
+                        except ValueError:
+                            pass
+                else:
+                    end_val = None
+
                 core.logger.debug(
                     f"Time entry save: git_id={git_id_val}, devops={store_to_devops}, "
-                    f"customer={customer_id}, project={project_id} → {new_project_id}",
+                    f"customer={customer_id}, project={project_id} → {new_project_id}, "
+                    f"end={end_val}",
                 )
 
                 if on_save_callback:
                     await on_save_callback(
                         git_id_val, comment_input.value, store_to_devops,
-                        new_project_id,
+                        new_project_id, end_val,
                     )
 
                 _stop_dialog.close()
@@ -554,7 +651,9 @@ async def time_tracking_page():
         # Unchecked - show dialog for saving comment/DevOps
         checkbox = event.sender
 
-        async def handle_save(git_id_val, comment, store_to_devops, new_project_id=None):
+        async def handle_save(
+            git_id_val, comment, store_to_devops, new_project_id=None, end_time=None
+        ):
             """Save time entry with comment and optionally to DevOps."""
             try:
                 await core.query_engine.function_db(
@@ -564,6 +663,7 @@ async def time_tracking_page():
                     git_id=git_id_val,
                     comment=comment,
                     new_project_id=new_project_id,
+                    end_time=end_time,
                 )
                 await on_timer_stopped(customer_id_int, project_id_int)
 

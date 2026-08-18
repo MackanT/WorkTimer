@@ -58,3 +58,14 @@ def test_stop_timer_without_move_keeps_project(tmp_path, null_logger):
     pid, pname = _one(path, "select project_id, project_name from time")
     assert pid == gen
     assert pname == "generic"
+
+
+def test_stop_timer_with_custom_end_time(tmp_path, null_logger):
+    path, db, cid, gen, spe = _setup(tmp_path, null_logger)
+    db.insert_timer_start_row(cid, gen, "2026-01-05T08:00")   # started 08:00
+    db.insert_time_row(cid, gen, end_time="2026-01-05T09:30")  # stopped 09:30
+
+    total, end_time = _one(path, "select total_time, end_time from time")
+    assert end_time is not None
+    assert abs(float(total) - 1.5) < 1e-6  # 1h30m billed, not "now - start"
+
