@@ -432,7 +432,8 @@ class Database:
         pd.DataFrame(rows).to_sql("queries", self.conn, if_exists="append", index=False)
 
     def insert_time_row(
-        self, customer_id: int, project_id: int, git_id: int = None, comment: str = None
+        self, customer_id: int, project_id: int, git_id: int = None,
+        comment: str = None, new_project_id: int = None,
     ):
         dt = datetime.now()
         now = dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -472,21 +473,49 @@ class Database:
             # Update the latest row with blank end_time
             last_row_id = int(rows.iloc[0]["time_id"])
 
-            self.execute_query(
-                """
-                update time
-                set
-                    end_time = ?,
-                    comment = ?,
-                    git_id = ?
-                where time_id = ?
-            """,
-                (now, comment, git_id, last_row_id),
+            # Optionally re-assign the entry to a different project of the same
+            # customer (e.g. logged on "generic", meant "specific task"). The
+            # denormalized project_name must move too — reports group by it; the
+            # after-update trigger recomputes total_time/cost, wage is unchanged.
+            moving = (
+                new_project_id is not None
+                and int(new_project_id) != int(project_id)
             )
+            if moving:
+                target_pid = int(new_project_id)
+                self.execute_query(
+                    """
+                    update time
+                    set
+                        end_time = ?,
+                        comment = ?,
+                        git_id = ?,
+                        project_id = ?,
+                        project_name = ?
+                    where time_id = ?
+                """,
+                    (now, comment, git_id, target_pid,
+                     self.get_project_name(target_pid), last_row_id),
+                )
+            else:
+                self.execute_query(
+                    """
+                    update time
+                    set
+                        end_time = ?,
+                        comment = ?,
+                        git_id = ?
+                    where time_id = ?
+                """,
+                    (now, comment, git_id, last_row_id),
+                )
             customer_name = self.get_customer_name(customer_id)
-            project_name = self.get_project_name(project_id)
+            project_name = self.get_project_name(
+                new_project_id if moving else project_id
+            )
             self.log_engine.info(
-                f"Ending timer for customer: {customer_name} - project: {project_name}",
+                f"Ending timer for customer: {customer_name} - project: {project_name}"
+                + (" (re-assigned project)" if moving else ""),
             )
 
     def insert_timer_start_row(

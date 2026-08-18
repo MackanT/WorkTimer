@@ -9,6 +9,7 @@ A modern web-based time tracking application with built-in task management and A
 ## Changelog
 ### 5.0.4 (2026-xx-xx)
 - **Features**
+  - ad re-assign a time entry's project when stopping a timer — the stop dialog now has a Project dropdown (the customer's projects; defaults to the one the timer ran on), so an entry started on the wrong project (e.g. "generic" → "specific task") can be moved on save without a trip to the query editor. Moves the denormalized `project_name` too so reports stay correct; `total_time`/`cost` are recomputed and unchanged (same customer/wage).
   - ad search box on the DevOps Board — filter the current board (selected customer + type) by a case-insensitive substring across each card's title, assignee, state, board column, #id, and its **ancestor chain** (parent → … → epic, by id + title, so searching a parent's key/name surfaces its children). Debounced, clearable. An **"Incl. done"** toggle (remembered per user) also searches Done/closed items, surfacing matches in their columns while a search is active (it won't flood the board otherwise). Note: descriptions aren't in the local cache so they aren't searched.
 
 ### 5.0.3 (2026-08-11)

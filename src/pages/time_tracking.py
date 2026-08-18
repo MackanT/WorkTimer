@@ -441,10 +441,35 @@ async def time_tracking_page():
         # Check DevOps connection using engine method
         has_devops = core.devops_engine.has_customer_connection(c_name) if core.devops_engine else False
 
+        # This customer's projects, so the entry can be re-assigned on stop
+        # (e.g. started on "generic", meant "specific task").
+        proj_df = await core.query_engine.query_db(
+            "select project_id, project_name from projects "
+            "where customer_id = ? and is_current = 1 order by project_name",
+            params=(customer_id,),
+        )
+        proj_options = {
+            int(r["project_id"]): str(r["project_name"])
+            for _, r in proj_df.iterrows()
+        }
+        if int(project_id) not in proj_options:
+            proj_options[int(project_id)] = p_name
+
         _stop_card.clear()
         with _stop_card:
             # Title
             ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
+
+            # Project — re-assignable; defaults to the one the timer ran on.
+            project_select = (
+                ui.select(proj_options, value=int(project_id), label="Project")
+                .props("dense outlined")
+                .classes("w-full")
+                .tooltip(
+                    "Log this entry under a different project if you started "
+                    "on the wrong one"
+                )
+            )
 
             # DevOps ID selector (if available)
             id_input = None
@@ -469,14 +494,20 @@ async def time_tracking_page():
                     git_id_val = extract_devops_id(id_input.value)
                     store_to_devops = id_checkbox.value if id_checkbox else False
 
+                new_project_id = (
+                    int(project_select.value)
+                    if project_select.value is not None else project_id
+                )
+
                 core.logger.debug(
                     f"Time entry save: git_id={git_id_val}, devops={store_to_devops}, "
-                    f"customer={customer_id}, project={project_id}",
+                    f"customer={customer_id}, project={project_id} → {new_project_id}",
                 )
 
                 if on_save_callback:
                     await on_save_callback(
-                        git_id_val, comment_input.value, store_to_devops
+                        git_id_val, comment_input.value, store_to_devops,
+                        new_project_id,
                     )
 
                 _stop_dialog.close()
@@ -523,7 +554,7 @@ async def time_tracking_page():
         # Unchecked - show dialog for saving comment/DevOps
         checkbox = event.sender
 
-        async def handle_save(git_id_val, comment, store_to_devops):
+        async def handle_save(git_id_val, comment, store_to_devops, new_project_id=None):
             """Save time entry with comment and optionally to DevOps."""
             try:
                 await core.query_engine.function_db(
@@ -532,6 +563,7 @@ async def time_tracking_page():
                     project_id_int,
                     git_id=git_id_val,
                     comment=comment,
+                    new_project_id=new_project_id,
                 )
                 await on_timer_stopped(customer_id_int, project_id_int)
 
