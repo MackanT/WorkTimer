@@ -68,7 +68,12 @@ async def board_page():
 
     # ── per-client mutable state (captured by all inner closures) ──────────────
     drag_state: dict = {"card": None}
-    filter_state: dict = {"customer": None, "type": "User Story"}
+    filter_state: dict = {
+        "customer": None,
+        "type": "User Story",
+        "search": "",
+        "include_done": bool(app.storage.user.get("board_include_done", False)),
+    }
     known_cols: dict = {}  # (customer, type) -> ordered list; never shrinks
     ui_state: dict = {"loading": False}
 
@@ -181,16 +186,68 @@ async def board_page():
         if cust:
             base_mask &= DO.df["customer_name"] == cust
 
+        # Free-text search across each card's visible fields (title, assignee,
+        # state, board column, and #id) — case-insensitive substring match.
+        # Descriptions aren't in the df, so they're not searched.
+        query = (filter_state.get("search") or "").strip().lower()
+        if query:
+            cols = [
+                c for c in ("title", "assigned_to", "state", "board_column")
+                if c in DO.df.columns
+            ]
+            haystack = DO.df[cols].fillna("").astype(str).agg(" ".join, axis=1)
+            if "id" in DO.df.columns:
+                haystack = haystack + " #" + DO.df["id"].astype(str)
+            # Fold in each card's ancestor chain (parent → … → epic) as id + title,
+            # so searching a parent's key/name surfaces its children.
+            if {"id", "parent_id"}.issubset(DO.df.columns):
+                id_to_title = {
+                    int(i): str(t)
+                    for i, t in zip(DO.df["id"], DO.df["title"].fillna(""))
+                }
+                id_to_parent = {
+                    int(i): p for i, p in zip(DO.df["id"], DO.df["parent_id"])
+                }
+
+                def _ancestor_text(pid):
+                    parts, seen = [], set()
+                    while pid is not None and not (
+                        isinstance(pid, float) and math.isnan(pid)
+                    ):
+                        try:
+                            ip = int(pid)
+                        except (TypeError, ValueError):
+                            break
+                        if ip in seen:  # guard against any cycle
+                            break
+                        seen.add(ip)
+                        parts.append(f"#{ip} {id_to_title.get(ip, '')}")
+                        pid = id_to_parent.get(ip)
+                    return " ".join(parts)
+
+                haystack = haystack + " " + DO.df["parent_id"].map(_ancestor_text)
+            base_mask &= haystack.str.lower().str.contains(query, regex=False, na=False)
+
         ordered_cols_all = _column_order(cust, wtype)
         done_cols = {c for c in ordered_cols_all if _col_norm(c) in DONE_TOKENS}
-        ordered_cols = [c for c in ordered_cols_all if c not in done_cols]
-        data: dict[str, list[dict]] = {c: [] for c in ordered_cols}
 
-        active_mask = base_mask & (~DO.df["state"].isin(TERMINAL_STATES))
-        for _, row in DO.df[active_mask].iterrows():
+        # "Include done" surfaces Done/closed items too, but only alongside an
+        # active search — so it never floods the board with every closed item.
+        show_done = bool(filter_state.get("include_done")) and bool(query)
+        if show_done:
+            ordered_cols = list(ordered_cols_all)   # keep the Done column(s) visible
+            row_mask = base_mask                     # include terminal-state items
+            skip_cols: set = set()
+        else:
+            ordered_cols = [c for c in ordered_cols_all if c not in done_cols]
+            row_mask = base_mask & (~DO.df["state"].isin(TERMINAL_STATES))
+            skip_cols = done_cols
+
+        data: dict[str, list[dict]] = {c: [] for c in ordered_cols}
+        for _, row in DO.df[row_mask].iterrows():
             raw_col = str(row.get("board_column") or "")
             col = _canonical_column_name(raw_col, ordered_cols_all)
-            if col in done_cols:
+            if col in skip_cols:
                 continue  # surfaced via the Done drop-zone instead
             data.setdefault(col, []).append(row.to_dict())
 
@@ -641,6 +698,15 @@ async def board_page():
             _on_type_chip_click,
         )
 
+    def _on_search(e):
+        filter_state["search"] = (e.value or "").strip()
+        render_board.refresh()
+
+    def _on_include_done(e):
+        filter_state["include_done"] = bool(e.value)
+        app.storage.user["board_include_done"] = filter_state["include_done"]
+        render_board.refresh()
+
     async def _on_refresh():
         await _reload_board_data(
             show_notify=True, notify_msg="Board refreshed from local cache"
@@ -671,8 +737,26 @@ async def board_page():
     @ui.refreshable
     def render_view_controls():
         if view_state["view"] == "board":
-            with toolbar_group(core.theme, "Type", divider_after=False):
+            with toolbar_group(core.theme, "Type", divider_after=True):
                 render_type_chips()
+            with toolbar_group(core.theme, "Search", divider_after=False):
+                search_input = ui.input(
+                    placeholder="title, #id, assignee, parent…",
+                    value=filter_state.get("search", ""),
+                    on_change=_on_search,
+                ).props("dense outlined clearable debounce=250").classes(
+                    "w-60 shrink-0"
+                )
+                with search_input.add_slot("prepend"):
+                    ui.icon("search").classes("text-sm")
+                ui.switch(
+                    "Incl. done",
+                    value=filter_state.get("include_done", False),
+                    on_change=_on_include_done,
+                ).props("dense").classes("shrink-0").tooltip(
+                    "Also search Done / closed items (shown in their columns while "
+                    "a search is active)"
+                )
         else:
             hier.render_controls()
 

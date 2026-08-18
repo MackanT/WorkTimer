@@ -7,6 +7,10 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
+### 5.0.4 (2026-xx-xx)
+- **Features**
+  - ad search box on the DevOps Board — filter the current board (selected customer + type) by a case-insensitive substring across each card's title, assignee, state, board column, #id, and its **ancestor chain** (parent → … → epic, by id + title, so searching a parent's key/name surfaces its children). Debounced, clearable. An **"Incl. done"** toggle (remembered per user) also searches Done/closed items, surfacing matches in their columns while a search is active (it won't flood the board otherwise). Note: descriptions aren't in the local cache so they aren't searched.
+
 ### 5.0.3 (2026-08-11)
 - **Features**
   - ad per-customer fields (auto-migrated): **expected work %**, a **billing-rounding** override, and an **indicator colour**. Editable in Add Data (add/update customer) and via the query-editor row dialog; the "Wage" label is now "Hourly rate" (UI only — the `wage` column is unchanged). On Reports, the utilisation target derives from the selected customers' expected % (summed; all customers when none selected) and billing rounding is applied automatically from a single selected customer's setting (or the global default) — no manual toggle. The indicator colour is used throughout: a dot on the board's customer tabs and on time-tracker customer cards, a left-edge tint on board cards, a filled customer badge in the work-item dialog, and — when exactly one customer is selected on Reports — the accent for that customer's trend + cumulative charts. The "Hours by customer", "Hours by project", and "Top work items" bar charts are always coloured per customer (each project / work item resolves to its customer's colour).
