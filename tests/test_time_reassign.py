@@ -69,3 +69,30 @@ def test_stop_timer_with_custom_end_time(tmp_path, null_logger):
     assert end_time is not None
     assert abs(float(total) - 1.5) < 1e-6  # 1h30m billed, not "now - start"
 
+
+def test_update_time_entry_edits_times_and_comment(tmp_path, null_logger):
+    path, db, cid, gen, spe = _setup(tmp_path, null_logger)
+    db.insert_timer_start_row(cid, gen, "2026-01-05T08:00")
+    db.insert_time_row(cid, gen, comment="orig")  # stop
+    tid = _one(path, "select time_id from time")[0]
+
+    db.update_time_entry(
+        tid, start_time="2026-01-05T08:00", end_time="2026-01-05T10:00",
+        comment="fixed",
+    )
+    total, comment = _one(
+        path, "select total_time, comment from time where time_id=?", (tid,)
+    )
+    assert abs(float(total) - 2.0) < 1e-6  # trigger recomputed from new times
+    assert comment == "fixed"
+
+
+def test_delete_time_entry_removes_row(tmp_path, null_logger):
+    path, db, cid, gen, spe = _setup(tmp_path, null_logger)
+    db.insert_timer_start_row(cid, gen, "2026-01-05T08:00")
+    db.insert_time_row(cid, gen)  # stop
+    tid = _one(path, "select time_id from time")[0]
+
+    db.delete_time_entry(tid)
+    assert _one(path, "select count(*) from time")[0] == 0
+

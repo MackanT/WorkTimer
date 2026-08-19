@@ -875,6 +875,143 @@ async def time_tracking_page():
 
         _manual_start_dialog.open()
 
+    async def show_manage_entries_dialog(customer_id: int, project_id: int):
+        """List completed time entries for a project (in the current date range)
+        with inline edit (start/end/comment) and delete."""
+        start_date, end_date = helpers.parse_date_range(date_input.value)
+        if not (start_date and end_date):
+            today = datetime.now().strftime("%Y%m%d")
+            start_date = end_date = today
+
+        info = await core.query_engine.query_db(
+            "select c.customer_name, p.project_name from customers c "
+            "join projects p on p.customer_id = c.customer_id "
+            "where c.customer_id = ? and p.project_id = ?",
+            params=(customer_id, project_id),
+        )
+        c_name = info.iloc[0]["customer_name"] if not info.empty else "Unknown"
+        p_name = info.iloc[0]["project_name"] if not info.empty else "Unknown"
+        dt_fmt = "%Y-%m-%dT%H:%M"
+        editing = {"id": None}
+
+        async def _reload_list():
+            rows = await core.query_engine.query_db(
+                """
+                select time_id, start_time, end_time, total_time, comment
+                from time
+                where customer_id = ? and project_id = ? and end_time is not null
+                  and date_key between ? and ?
+                order by start_time desc
+                """,
+                params=(customer_id, project_id, int(start_date), int(end_date)),
+            )
+            list_box.clear()
+            with list_box:
+                if rows.empty:
+                    ui.label("No completed entries in this range.").classes(
+                        f"text-sm text-{core.theme.get('muted')}"
+                    )
+                    return
+                for _, r in rows.iterrows():
+                    _render_row(r)
+
+        async def _save_edit(tid, s_val, e_val, c_val):
+            try:
+                if datetime.strptime(e_val, dt_fmt) < datetime.strptime(s_val, dt_fmt):
+                    ui.notify("End can't be before start", type="warning")
+                    return
+            except ValueError:
+                pass
+            await core.query_engine.function_db(
+                "update_time_entry", tid,
+                start_time=s_val, end_time=e_val, comment=c_val or None,
+            )
+            editing["id"] = None
+            await _reload_list()
+            await update_time_tracker()
+            core.event_bus.notify("Entry updated", type_="positive")
+
+        async def _delete(tid):
+            await core.query_engine.function_db("delete_time_entry", tid)
+            await _reload_list()
+            await update_time_tracker()
+            core.event_bus.notify("Entry deleted", type_="warning")
+
+        def _render_row(r):
+            tid = int(r["time_id"])
+            start = str(r["start_time"] or "")
+            end = str(r["end_time"] or "")
+            dur = float(r["total_time"] or 0)
+            comment = str(r["comment"] or "")
+            hairline = "border-bottom:1px solid rgba(255,255,255,0.08); padding:0.35rem 0;"
+
+            if editing["id"] == tid:
+                with ui.column().classes("w-full gap-1").style(hairline):
+                    with ui.row().classes("w-full gap-2 no-wrap"):
+                        s_in = ui.input(value=start.replace(" ", "T")[:16]).props(
+                            'type="datetime-local" dense outlined'
+                        ).classes("flex-1")
+                        e_in = ui.input(value=end.replace(" ", "T")[:16]).props(
+                            'type="datetime-local" dense outlined'
+                        ).classes("flex-1")
+                    c_in = ui.textarea(value=comment, placeholder="Comment").props(
+                        "dense outlined autogrow"
+                    ).classes("w-full")
+                    with ui.row().classes("w-full justify-end gap-1"):
+                        async def _save(_t=tid, _s=s_in, _e=e_in, _c=c_in):
+                            await _save_edit(_t, _s.value, _e.value, _c.value)
+
+                        def _cancel():
+                            editing["id"] = None
+                            asyncio.create_task(_reload_list())
+
+                        ui.button("Save", on_click=_save).props(
+                            "dense color=primary size=sm"
+                        )
+                        ui.button("Cancel", on_click=_cancel).props("flat dense size=sm")
+                return
+
+            with ui.row().classes("w-full items-center gap-2 no-wrap").style(hairline):
+                ui.label(f"{start[5:16]} → {end[11:16]}  ·  {dur:.2f}h").classes(
+                    "text-sm whitespace-nowrap"
+                )
+                if comment:
+                    ui.label(comment).classes(
+                        f"text-xs text-{core.theme.get('muted')} flex-1"
+                    ).style("overflow:hidden;text-overflow:ellipsis;white-space:nowrap;")
+                else:
+                    ui.space()
+
+                def _start_edit(_t=tid):
+                    editing["id"] = _t
+                    asyncio.create_task(_reload_list())
+
+                async def _del(_t=tid):
+                    await _delete(_t)
+
+                ui.button(icon="edit", on_click=lambda e, f=_start_edit: f()).props(
+                    "flat dense size=sm"
+                ).tooltip("Edit")
+                ui.button(icon="delete", on_click=lambda e, f=_del: f()).props(
+                    "flat dense size=sm color=negative"
+                ).tooltip("Delete")
+
+        _manage_card.clear()
+        with _manage_card:
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.label(f"{p_name} - {c_name}").classes("text-h6 flex-1")
+                ui.button(icon="close", on_click=_manage_dialog.close).props(
+                    "flat dense round"
+                )
+            ui.label("Edit or delete entries in the selected date range").classes(
+                f"text-caption text-{core.theme.get('muted')} -mt-2 mb-1"
+            )
+            list_box = ui.column().classes("w-full").style(
+                "max-height:60vh; overflow-y:auto;"
+            )
+        await _reload_list()
+        _manage_dialog.open()
+
     # ========================================================================
     # Data Functions
     # ========================================================================
@@ -1037,8 +1174,11 @@ async def time_tracking_page():
                         await show_manual_time_entry_dialog(cid, pid)
                     async def _open_manual_start(cid=int(project["customer_id"]), pid=int(project["project_id"])):
                         await show_manual_start_dialog(cid, pid)
+                    async def _open_manage(cid=int(project["customer_id"]), pid=int(project["project_id"])):
+                        await show_manage_entries_dialog(cid, pid)
                     ui.menu_item("Add time entry", on_click=_open_manual).props("icon=add_circle")
                     ui.menu_item("Start from past time", on_click=_open_manual_start).props("icon=history")
+                    ui.menu_item("Manage entries", on_click=_open_manage).props("icon=edit_note")
 
         async def make_customer_card(
             customer_id, customer_name, group, customer_index=None, total_customers=None
@@ -1255,6 +1395,9 @@ async def time_tracking_page():
 
     with ui.dialog().props("persistent") as _stop_dialog:
         _stop_card = ui.card().classes(UI_STYLES.get_widget_width("extra_wide"))
+
+    with ui.dialog().props("persistent") as _manage_dialog:
+        _manage_card = ui.card().classes(UI_STYLES.get_widget_width("extra_wide"))
 
     core._setup_page_timers(
         "time_tracking", value_refresh_timer, midnight_refresh_timer

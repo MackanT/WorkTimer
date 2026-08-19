@@ -9,10 +9,13 @@ A modern web-based time tracking application with built-in task management and A
 ## Changelog
 ### 5.0.4 (2026-xx-xx)
 - **Features**
+  - ad manage individual time entries from the Time Tracker — right-click a project row → "Manage entries" lists the completed entries in the selected date range with inline edit (start / end / comment) and delete, so fixing a wrong time or removing a stray entry no longer needs the query editor. Edits recompute `total_time`/`cost` via the update trigger; new `update_time_entry` / `delete_time_entry` DB helpers (keyed by `time_id`).
   - fx image insert (Insert-image button + paste-to-upload) is now available when **creating** a DevOps work item, not only when updating one — closes the gap in the board's add dialog. Since the customer is chosen in the add form (and can change), the upload target resolves at upload time and the paste handler's customer stays in sync as the selection changes.
   - ad re-assign a time entry's project when stopping a timer — the stop dialog now has a Project dropdown (the customer's projects; defaults to the one the timer ran on), so an entry started on the wrong project (e.g. "generic" → "specific task") can be moved on save without a trip to the query editor. Moves the denormalized `project_name` too so reports stay correct; `total_time`/`cost` are recomputed and unchanged (same customer/wage).
   - ad stop a timer at a past time — the stop dialog shows "Stop: now" with a small clock button that reveals a custom stop-time picker, so a forgotten running timer can be backdated instead of over-billing. Left untouched, the stop time is stamped when Save is pressed (not when the dialog opened); a manual value is rejected if it precedes the timer's start, and `total_time`/`cost` recompute from the chosen end. The symmetric counterpart to the existing "Start from past time".
   - ad search box on the DevOps Board — filter the current board (selected customer + type) by a case-insensitive substring across each card's title, assignee, state, board column, #id, and its **ancestor chain** (parent → … → epic, by id + title, so searching a parent's key/name surfaces its children). Debounced, clearable. An **"Incl. done"** toggle (remembered per user) also searches Done/closed items, surfacing matches in their columns while a search is active (it won't flood the board otherwise). Note: descriptions aren't in the local cache so they aren't searched.
+- **Minor improvements**
+  - rf Notepad's toolbar now wraps its title in the shared toolbar-group, so the page icon + title spacing matches every other page (it was sitting a full gap width apart).
 
 ### 5.0.3 (2026-08-11)
 - **Features**

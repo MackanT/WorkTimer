@@ -610,6 +610,41 @@ class Database:
             f"Deleted latest time entry for customer: {customer_name} - project: {project_name}",
         )
 
+    def update_time_entry(
+        self, time_id: int, start_time: str = None, end_time: str = None,
+        comment: str = None, git_id: int = None,
+    ) -> None:
+        """Edit a specific time entry by time_id — only the provided fields. The
+        after-update trigger recomputes total_time/cost from the new times."""
+        sets, params = [], []
+        if start_time is not None:
+            start_dt = self._parse_datetime(start_time)
+            sets.append("start_time = ?")
+            params.append(start_dt.strftime("%Y-%m-%d %H:%M:%S"))
+            sets.append("date_key = ?")
+            params.append(int(start_dt.strftime("%Y%m%d")))
+        if end_time is not None:
+            sets.append("end_time = ?")
+            params.append(self._parse_datetime(end_time).strftime("%Y-%m-%d %H:%M:%S"))
+        if comment is not None:
+            sets.append("comment = ?")
+            params.append(comment or None)
+        if git_id is not None:
+            sets.append("git_id = ?")
+            params.append(int(git_id) or None)
+        if not sets:
+            return
+        params.append(int(time_id))
+        self.execute_query(
+            f"update time set {', '.join(sets)} where time_id = ?", tuple(params)
+        )
+        self.log_engine.info(f"Updated time entry {time_id}")
+
+    def delete_time_entry(self, time_id: int) -> None:
+        """Delete a specific time entry by time_id."""
+        self.execute_query("delete from time where time_id = ?", (int(time_id),))
+        self.log_engine.info(f"Deleted time entry {time_id}")
+
     ### Customer Table Operations ###
 
     def insert_customer(
