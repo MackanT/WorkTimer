@@ -457,6 +457,41 @@ async def board_page():
                     if load_fn:
                         await load_fn()
 
+                    # Image insert (button + paste) on the Description editor —
+                    # parity with the update dialog. Here the customer is chosen
+                    # in the form and can change, so resolve it at upload time and
+                    # keep the paste target in sync when it changes.
+                    desc = widgets.get("description_editor")
+                    cust_w = widgets.get("customer_name")
+                    if (
+                        desc is not None and cust_w is not None
+                        and hasattr(desc, "enable_image_upload")
+                        and core.devops_engine is not None
+                    ):
+                        async def _add_image_uploader(name, content):
+                            cust_now = cust_w.widget.value
+                            if not cust_now:
+                                ui.notify("Pick a customer first", type="warning")
+                                return None
+                            return await asyncio.to_thread(
+                                core.devops_engine.upload_attachment,
+                                cust_now, name, content,
+                            )
+
+                        desc.enable_image_upload(
+                            _add_image_uploader,
+                            paste_endpoint="/upload_devops_image",
+                            paste_fields={"customer": cust_w.widget.value or ""},
+                        )
+
+                        def _sync_paste_customer(_e=None):
+                            desc.update_paste_fields(
+                                "/upload_devops_image",
+                                {"customer": cust_w.widget.value or ""},
+                            )
+
+                        cust_w.on_value_change(_sync_paste_customer)
+
         dlg.open()
 
     # ── card renderer ──────────────────────────────────────────────────────────
