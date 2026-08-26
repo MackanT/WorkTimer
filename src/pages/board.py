@@ -15,6 +15,7 @@ from .. import helpers
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
 from ..ui.devops_forms import open_work_item_dialog, render_devops_form
+from ..trackers.base import DEFAULT_TYPE_HIERARCHY
 from .hierarchy import create_hierarchy_view
 
 
@@ -66,11 +67,19 @@ async def board_page():
     DONE_COLUMN_LIMIT = int(_bsettings.get("done_column_limit", 10))
     DONE_TOKENS = {"done", "closed", "resolved", "completed"}
 
+    def _work_item_types(cust: str | None = None) -> tuple:
+        """This board's work-item types, leaf-first (chips/tab order) — from the
+        customer's tracker provider rather than hard-coded levels."""
+        levels = (
+            DO.type_hierarchy(cust) if DO is not None else DEFAULT_TYPE_HIERARCHY
+        )
+        return tuple(reversed(levels))
+
     # ── per-client mutable state (captured by all inner closures) ──────────────
     drag_state: dict = {"card": None}
     filter_state: dict = {
         "customer": None,
-        "type": "User Story",
+        "type": _work_item_types()[0],
         "search": "",
         "include_done": bool(app.storage.user.get("board_include_done", False)),
     }
@@ -108,7 +117,7 @@ async def board_page():
     # Seed known_cols from the ADO column cache (pre-loaded at startup).
     # Without this, the first render derives order from df insertion order which is arbitrary.
     for _cn in customer_names:
-        for _wt in ("User Story", "Feature", "Epic"):
+        for _wt in _work_item_types(_cn):
             _c = DevOpsWorkItemHandlers.devops_columns_cache.get(_cn, {}).get(_wt)
             if _c:
                 known_cols[(_cn, _wt)] = list(_c)
@@ -728,7 +737,7 @@ async def board_page():
     def render_type_chips():
         segmented_chips(
             core.theme,
-            [(t, t) for t in ("User Story", "Feature", "Epic")],
+            [(t, t) for t in _work_item_types(filter_state["customer"])],
             filter_state["type"],
             _on_type_chip_click,
         )

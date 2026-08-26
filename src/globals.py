@@ -1,5 +1,11 @@
 # pandas removed from globals.py -- use local imports where needed
 from .devops import DevOpsManager
+
+# Importing a tracker module registers it (see src/trackers/). Imported after
+# devops above — the Azure provider subclasses DevOpsClient, so this order
+# avoids a circular import.
+from .trackers import azure as _azure_tracker  # noqa: F401
+from .trackers.base import DEFAULT_TYPE_HIERARCHY
 from .database import Database
 from dataclasses import dataclass
 import asyncio
@@ -209,11 +215,25 @@ class DevOpsEngine:
 
     async def setup_manager(self):
         df = await self.query_engine.query_db(
-            "select distinct customer_name, pat_token, org_url, devops_project from customers where pat_token is not null and pat_token != '' and org_url is not null and org_url != '' and is_current = 1"
+            "select distinct customer_name, pat_token, org_url, devops_project, "
+            "coalesce(integration_type, 'devops') as integration_type "
+            "from customers where pat_token is not null and pat_token != '' "
+            "and org_url is not null and org_url != '' and is_current = 1"
         )
         # DevOpsManager.__init__ connects to every org (network I/O) — keep it
         # off the event loop so the UI stays responsive during startup.
         self.manager = await asyncio.to_thread(DevOpsManager, df, self.log)
+
+    def type_hierarchy(self, customer_name: str | None = None) -> tuple:
+        """Work-item levels root → leaf for a customer's tracker (falls back to
+        the default hierarchy when no provider is connected). UI code should
+        consume this instead of hard-coding Epic/Feature/User Story."""
+        if self.manager:
+            if customer_name and customer_name in self.manager.clients:
+                return self.manager.clients[customer_name].type_hierarchy()
+            for client in self.manager.clients.values():
+                return client.type_hierarchy()
+        return DEFAULT_TYPE_HIERARCHY
 
     async def update_devops(self, incremental: bool = False):
         if not self.manager:
