@@ -7,7 +7,7 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
-### 5.0.4 (2026-xx-xx)
+### 5.0.4 (2026-09-01)
 - **Features**
   - ad manage individual time entries from the Time Tracker — right-click a project row → "Manage entries" lists the completed entries in the selected date range with inline edit (start / end / comment) and delete, so fixing a wrong time or removing a stray entry no longer needs the query editor. Edits recompute `total_time`/`cost` via the update trigger; new `update_time_entry` / `delete_time_entry` DB helpers (keyed by `time_id`).
   - fx image insert (Insert-image button + paste-to-upload) is now available when **creating** a DevOps work item, not only when updating one — closes the gap in the board's add dialog. Since the customer is chosen in the add form (and can change), the upload target resolves at upload time and the paste handler's customer stays in sync as the selection changes.
@@ -17,6 +17,9 @@ A modern web-based time tracking application with built-in task management and A
 - **Major changes**
   - rf pluggable tracker architecture (prep for Jira & co. — no behavior change): new `src/trackers/` package with a `TrackerProvider` contract (connect, fetch work items as the canonical DataFrame, board moves, create/update, comments, attachments, `type_hierarchy()`, `capabilities()`) and a provider registry. Azure DevOps is now the first module (`AzureDevOpsProvider`, key `devops`): the org-URL building, `System.*` field mapping, and PAT attachment fetches moved out of `DevOpsManager` into it, leaving the manager a provider-neutral per-customer multiplexer. New auto-migrated `customers.integration_type` column (default `'devops'`) selects each customer's provider — different customers can use different trackers once more modules exist. The board's work-item type chips/seeding now come from the provider's `type_hierarchy()` instead of hard-coded Epic/Feature/User Story.
 - **Minor improvements**
+  - fx Ctrl+Enter in the query editor no longer also inserts a newline into the SQL — the keypress is intercepted before CodeMirror sees it and only runs the query (F5 / Ctrl+Enter outside the editor unchanged).
+  - ad Visual-Studio-style comment chord in the query editor: **Ctrl+K Ctrl+C** comments the selected lines with `-- `, **Ctrl+K Ctrl+U** uncomments (the built-in Ctrl+/ still works). Blank lines are left alone; the chord times out after 2 s.
+  - fx the results grid's Ctrl+C row-copy no longer hijacks copying anything else while grid rows are still selected from an earlier click — copying from the row-edit dialog's fields (e.g. a description), from the SQL editor, or any selected text on the page now copies what you actually selected; row-copy only kicks in when nothing else is being copied.
   - rf Notepad's toolbar now wraps its title in the shared toolbar-group, so the page icon + title spacing matches every other page (it was sitting a full gap width apart).
 
 ### 5.0.3 (2026-08-11)
