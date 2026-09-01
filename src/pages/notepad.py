@@ -21,7 +21,7 @@ from fastapi import UploadFile, Request, File
 from nicegui import ui, app
 
 from ..core.app import AppCore
-from ..ui.elements import toolbar, page_card, toolbar_divider
+from ..ui.elements import toolbar, toolbar_group, page_card, toolbar_divider
 from ..ui.dynamic_widgets import render_markdown_toolbar
 from ..helpers import render_and_sanitize_markdown, UI_STYLES
 
@@ -387,8 +387,9 @@ async def notepad_page():
         state["toolbar_container"].clear()
         with state["toolbar_container"]:
             with toolbar(core.theme):
-                ui.icon("note", size="md").classes(f"text-{core.theme.get('accent')}")
-                ui.label("Notepad").classes(UI_STYLES.get_layout_classes("page_title"))
+                with toolbar_group(core.theme, divider_after=False):
+                    ui.icon("note", size="md").classes(f"text-{core.theme.get('accent')}")
+                    ui.label("Notepad").classes(UI_STYLES.get_layout_classes("page_title"))
                 ui.space()
 
                 if state["edit_mode"]:

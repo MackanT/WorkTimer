@@ -5,6 +5,7 @@ import logging
 import pandas as pd
 
 from src.devops import DevOpsManager
+from src.trackers.azure import AzureDevOpsProvider
 
 _LOG = logging.getLogger("worktimer.tests")
 _LOG.addHandler(logging.NullHandler())
@@ -16,12 +17,13 @@ class _FakeItem:
         self.fields = fields
 
 
-class _FakeClient:
-    def __init__(self, items):
-        self._items = items
-
-    def get_workitem_level(self, **kwargs):
-        return True, self._items
+def _fake_provider(items, customer="CustA"):
+    """A real AzureDevOpsProvider (no connection) with the API fetch stubbed —
+    the System.*→df normalization under test is the provider's own."""
+    p = AzureDevOpsProvider("pat", "https://dev.azure.com/x", _LOG)
+    p.customer_name = customer
+    p.get_workitem_level = lambda **kwargs: (True, items)
+    return p
 
 
 def _empty_manager():
@@ -65,7 +67,7 @@ def test_get_epics_feature_df_builds_hierarchy():
         _FakeItem(4, {"System.WorkItemType": "Task", "System.Title": "ignored"}),
     ]
     mgr = _empty_manager()
-    mgr.clients = {"CustA": _FakeClient(items)}
+    mgr.clients = {"CustA": _fake_provider(items)}
 
     ok, df = mgr.get_epics_feature_df()
     assert ok

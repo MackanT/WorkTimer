@@ -100,6 +100,7 @@ class Database:
                     pat_token text,
                     org_url text,
                     devops_project text,
+                    integration_type text default 'devops',
                     expected_work_pct real,
                     billing_round_minutes integer,
                     color text,
@@ -432,7 +433,8 @@ class Database:
         pd.DataFrame(rows).to_sql("queries", self.conn, if_exists="append", index=False)
 
     def insert_time_row(
-        self, customer_id: int, project_id: int, git_id: int = None, comment: str = None
+        self, customer_id: int, project_id: int, git_id: int = None,
+        comment: str = None, new_project_id: int = None, end_time: str = None,
     ):
         dt = datetime.now()
         now = dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -472,21 +474,56 @@ class Database:
             # Update the latest row with blank end_time
             last_row_id = int(rows.iloc[0]["time_id"])
 
-            self.execute_query(
-                """
-                update time
-                set
-                    end_time = ?,
-                    comment = ?,
-                    git_id = ?
-                where time_id = ?
-            """,
-                (now, comment, git_id, last_row_id),
+            # Custom stop time (backdate a forgotten timer); defaults to now.
+            # The after-update trigger recomputes total_time/cost from it.
+            end_val = (
+                self._parse_datetime(end_time).strftime("%Y-%m-%d %H:%M:%S")
+                if end_time else now
             )
+
+            # Optionally re-assign the entry to a different project of the same
+            # customer (e.g. logged on "generic", meant "specific task"). The
+            # denormalized project_name must move too — reports group by it; the
+            # after-update trigger recomputes total_time/cost, wage is unchanged.
+            moving = (
+                new_project_id is not None
+                and int(new_project_id) != int(project_id)
+            )
+            if moving:
+                target_pid = int(new_project_id)
+                self.execute_query(
+                    """
+                    update time
+                    set
+                        end_time = ?,
+                        comment = ?,
+                        git_id = ?,
+                        project_id = ?,
+                        project_name = ?
+                    where time_id = ?
+                """,
+                    (end_val, comment, git_id, target_pid,
+                     self.get_project_name(target_pid), last_row_id),
+                )
+            else:
+                self.execute_query(
+                    """
+                    update time
+                    set
+                        end_time = ?,
+                        comment = ?,
+                        git_id = ?
+                    where time_id = ?
+                """,
+                    (end_val, comment, git_id, last_row_id),
+                )
             customer_name = self.get_customer_name(customer_id)
-            project_name = self.get_project_name(project_id)
+            project_name = self.get_project_name(
+                new_project_id if moving else project_id
+            )
             self.log_engine.info(
-                f"Ending timer for customer: {customer_name} - project: {project_name}",
+                f"Ending timer for customer: {customer_name} - project: {project_name}"
+                + (" (re-assigned project)" if moving else ""),
             )
 
     def insert_timer_start_row(
@@ -573,6 +610,41 @@ class Database:
         self.log_engine.info(
             f"Deleted latest time entry for customer: {customer_name} - project: {project_name}",
         )
+
+    def update_time_entry(
+        self, time_id: int, start_time: str = None, end_time: str = None,
+        comment: str = None, git_id: int = None,
+    ) -> None:
+        """Edit a specific time entry by time_id — only the provided fields. The
+        after-update trigger recomputes total_time/cost from the new times."""
+        sets, params = [], []
+        if start_time is not None:
+            start_dt = self._parse_datetime(start_time)
+            sets.append("start_time = ?")
+            params.append(start_dt.strftime("%Y-%m-%d %H:%M:%S"))
+            sets.append("date_key = ?")
+            params.append(int(start_dt.strftime("%Y%m%d")))
+        if end_time is not None:
+            sets.append("end_time = ?")
+            params.append(self._parse_datetime(end_time).strftime("%Y-%m-%d %H:%M:%S"))
+        if comment is not None:
+            sets.append("comment = ?")
+            params.append(comment or None)
+        if git_id is not None:
+            sets.append("git_id = ?")
+            params.append(int(git_id) or None)
+        if not sets:
+            return
+        params.append(int(time_id))
+        self.execute_query(
+            f"update time set {', '.join(sets)} where time_id = ?", tuple(params)
+        )
+        self.log_engine.info(f"Updated time entry {time_id}")
+
+    def delete_time_entry(self, time_id: int) -> None:
+        """Delete a specific time entry by time_id."""
+        self.execute_query("delete from time where time_id = ?", (int(time_id),))
+        self.log_engine.info(f"Deleted time entry {time_id}")
 
     ### Customer Table Operations ###
 
@@ -1351,6 +1423,7 @@ class Database:
                     ("pat_token", "TEXT", None, None),
                     ("org_url", "TEXT", None, None),
                     ("devops_project", "TEXT", None, None),
+                    ("integration_type", "TEXT", "'devops'", None),
                     ("expected_work_pct", "REAL", None, None),
                     ("billing_round_minutes", "INTEGER", None, None),
                     ("color", "TEXT", None, None),

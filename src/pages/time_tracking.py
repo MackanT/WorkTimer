@@ -441,10 +441,111 @@ async def time_tracking_page():
         # Check DevOps connection using engine method
         has_devops = core.devops_engine.has_customer_connection(c_name) if core.devops_engine else False
 
+        # This customer's projects, so the entry can be re-assigned on stop
+        # (e.g. started on "generic", meant "specific task").
+        proj_df = await core.query_engine.query_db(
+            "select project_id, project_name from projects "
+            "where customer_id = ? and is_current = 1 order by project_name",
+            params=(customer_id,),
+        )
+        proj_options = {
+            int(r["project_id"]): str(r["project_name"])
+            for _, r in proj_df.iterrows()
+        }
+        if int(project_id) not in proj_options:
+            proj_options[int(project_id)] = p_name
+
+        # Start time of the running row, to default/validate the stop time.
+        running = await core.query_engine.query_db(
+            "select start_time from time where customer_id = ? and project_id = ? "
+            "and end_time is null order by time_id desc limit 1",
+            params=(customer_id, project_id),
+        )
+        start_str = str(running.iloc[0]["start_time"]) if not running.empty else None
+        now_dt = datetime.now()
+        dt_local_fmt = "%Y-%m-%dT%H:%M"
+        db_fmt = "%Y-%m-%d %H:%M:%S"
+
         _stop_card.clear()
         with _stop_card:
-            # Title
-            ui.label(f"{p_name} - {c_name}").classes("text-h6 w-full")
+            _proj_shown = {"v": False}
+
+            def _toggle_proj():
+                _proj_shown["v"] = not _proj_shown["v"]
+                project_select.set_visibility(_proj_shown["v"])
+
+            def _on_proj_change(e):
+                nm = (
+                    proj_options.get(int(e.value), p_name)
+                    if e.value is not None else p_name
+                )
+                title_label.set_text(f"{nm} - {c_name}")
+
+            # Title + a subtle "change project" affordance — re-assigning is an
+            # occasional action, so the selector stays hidden until asked for.
+            with ui.row().classes("w-full items-center gap-1 no-wrap"):
+                title_label = ui.label(f"{p_name} - {c_name}").classes("text-h6")
+                ui.space()
+                ui.button(icon="drive_file_move", on_click=_toggle_proj).props(
+                    "flat dense round size=sm"
+                ).tooltip("Log under a different project")
+
+            # Project — re-assignable; defaults to the one the timer ran on.
+            project_select = (
+                ui.select(
+                    proj_options, value=int(project_id), label="Project",
+                    on_change=_on_proj_change,
+                )
+                .props("dense outlined")
+                .classes("w-64 self-end")
+            )
+            project_select.set_visibility(False)
+
+            # Stop time — defaults to the moment Save is pressed; reveal to
+            # backdate a forgotten timer. Kept subtle (occasional action).
+            _end_shown = {"v": False}
+
+            def _update_end_hint():
+                if _end_shown["v"]:
+                    end_hint.set_text(
+                        "Stop: " + str(end_input.value or "").replace("T", " ")
+                    )
+                else:
+                    end_hint.set_text("Stop: now")
+
+            def _toggle_end():
+                _end_shown["v"] = not _end_shown["v"]
+                if _end_shown["v"]:
+                    end_input.value = datetime.now().strftime(dt_local_fmt)
+                end_input.set_visibility(_end_shown["v"])
+                _update_end_hint()
+
+            with ui.row().classes("w-full items-center gap-1 no-wrap"):
+                end_hint = ui.label("Stop: now").classes(
+                    f"text-caption text-{core.theme.get('muted')}"
+                )
+                ui.space()
+                ui.button(icon="schedule", on_click=_toggle_end).props(
+                    "flat dense round size=sm"
+                ).tooltip("Set a custom stop time (defaults to when you save)")
+
+            end_input = (
+                ui.input(
+                    label="Stop time",
+                    value=now_dt.strftime(dt_local_fmt),
+                    on_change=lambda e: _update_end_hint(),
+                )
+                .props('type="datetime-local" dense outlined')
+                .classes("w-64 self-end")
+                .tooltip("When the timer actually stopped")
+            )
+            if start_str:
+                try:
+                    _min = datetime.strptime(start_str, db_fmt).strftime(dt_local_fmt)
+                    end_input.props(f'min="{_min}"')
+                except ValueError:
+                    pass
+            end_input.set_visibility(False)
 
             # DevOps ID selector (if available)
             id_input = None
@@ -469,14 +570,41 @@ async def time_tracking_page():
                     git_id_val = extract_devops_id(id_input.value)
                     store_to_devops = id_checkbox.value if id_checkbox else False
 
+                new_project_id = (
+                    int(project_select.value)
+                    if project_select.value is not None else project_id
+                )
+
+                # Default (field hidden) → None, so the DB stamps the stop time at
+                # the moment of saving. A manual value is used only when revealed.
+                if _end_shown["v"]:
+                    end_val = end_input.value or datetime.now().strftime(dt_local_fmt)
+                    if start_str:
+                        try:
+                            if (
+                                datetime.strptime(end_val, dt_local_fmt)
+                                < datetime.strptime(start_str, db_fmt)
+                            ):
+                                ui.notify(
+                                    "Stop time can't be before the timer's start",
+                                    type="warning",
+                                )
+                                return
+                        except ValueError:
+                            pass
+                else:
+                    end_val = None
+
                 core.logger.debug(
                     f"Time entry save: git_id={git_id_val}, devops={store_to_devops}, "
-                    f"customer={customer_id}, project={project_id}",
+                    f"customer={customer_id}, project={project_id} → {new_project_id}, "
+                    f"end={end_val}",
                 )
 
                 if on_save_callback:
                     await on_save_callback(
-                        git_id_val, comment_input.value, store_to_devops
+                        git_id_val, comment_input.value, store_to_devops,
+                        new_project_id, end_val,
                     )
 
                 _stop_dialog.close()
@@ -523,7 +651,9 @@ async def time_tracking_page():
         # Unchecked - show dialog for saving comment/DevOps
         checkbox = event.sender
 
-        async def handle_save(git_id_val, comment, store_to_devops):
+        async def handle_save(
+            git_id_val, comment, store_to_devops, new_project_id=None, end_time=None
+        ):
             """Save time entry with comment and optionally to DevOps."""
             try:
                 await core.query_engine.function_db(
@@ -532,6 +662,8 @@ async def time_tracking_page():
                     project_id_int,
                     git_id=git_id_val,
                     comment=comment,
+                    new_project_id=new_project_id,
+                    end_time=end_time,
                 )
                 await on_timer_stopped(customer_id_int, project_id_int)
 
@@ -743,6 +875,143 @@ async def time_tracking_page():
 
         _manual_start_dialog.open()
 
+    async def show_manage_entries_dialog(customer_id: int, project_id: int):
+        """List completed time entries for a project (in the current date range)
+        with inline edit (start/end/comment) and delete."""
+        start_date, end_date = helpers.parse_date_range(date_input.value)
+        if not (start_date and end_date):
+            today = datetime.now().strftime("%Y%m%d")
+            start_date = end_date = today
+
+        info = await core.query_engine.query_db(
+            "select c.customer_name, p.project_name from customers c "
+            "join projects p on p.customer_id = c.customer_id "
+            "where c.customer_id = ? and p.project_id = ?",
+            params=(customer_id, project_id),
+        )
+        c_name = info.iloc[0]["customer_name"] if not info.empty else "Unknown"
+        p_name = info.iloc[0]["project_name"] if not info.empty else "Unknown"
+        dt_fmt = "%Y-%m-%dT%H:%M"
+        editing = {"id": None}
+
+        async def _reload_list():
+            rows = await core.query_engine.query_db(
+                """
+                select time_id, start_time, end_time, total_time, comment
+                from time
+                where customer_id = ? and project_id = ? and end_time is not null
+                  and date_key between ? and ?
+                order by start_time desc
+                """,
+                params=(customer_id, project_id, int(start_date), int(end_date)),
+            )
+            list_box.clear()
+            with list_box:
+                if rows.empty:
+                    ui.label("No completed entries in this range.").classes(
+                        f"text-sm text-{core.theme.get('muted')}"
+                    )
+                    return
+                for _, r in rows.iterrows():
+                    _render_row(r)
+
+        async def _save_edit(tid, s_val, e_val, c_val):
+            try:
+                if datetime.strptime(e_val, dt_fmt) < datetime.strptime(s_val, dt_fmt):
+                    ui.notify("End can't be before start", type="warning")
+                    return
+            except ValueError:
+                pass
+            await core.query_engine.function_db(
+                "update_time_entry", tid,
+                start_time=s_val, end_time=e_val, comment=c_val or None,
+            )
+            editing["id"] = None
+            await _reload_list()
+            await update_time_tracker()
+            core.event_bus.notify("Entry updated", type_="positive")
+
+        async def _delete(tid):
+            await core.query_engine.function_db("delete_time_entry", tid)
+            await _reload_list()
+            await update_time_tracker()
+            core.event_bus.notify("Entry deleted", type_="warning")
+
+        def _render_row(r):
+            tid = int(r["time_id"])
+            start = str(r["start_time"] or "")
+            end = str(r["end_time"] or "")
+            dur = float(r["total_time"] or 0)
+            comment = str(r["comment"] or "")
+            hairline = "border-bottom:1px solid rgba(255,255,255,0.08); padding:0.35rem 0;"
+
+            if editing["id"] == tid:
+                with ui.column().classes("w-full gap-1").style(hairline):
+                    with ui.row().classes("w-full gap-2 no-wrap"):
+                        s_in = ui.input(value=start.replace(" ", "T")[:16]).props(
+                            'type="datetime-local" dense outlined'
+                        ).classes("flex-1")
+                        e_in = ui.input(value=end.replace(" ", "T")[:16]).props(
+                            'type="datetime-local" dense outlined'
+                        ).classes("flex-1")
+                    c_in = ui.textarea(value=comment, placeholder="Comment").props(
+                        "dense outlined autogrow"
+                    ).classes("w-full")
+                    with ui.row().classes("w-full justify-end gap-1"):
+                        async def _save(_t=tid, _s=s_in, _e=e_in, _c=c_in):
+                            await _save_edit(_t, _s.value, _e.value, _c.value)
+
+                        def _cancel():
+                            editing["id"] = None
+                            asyncio.create_task(_reload_list())
+
+                        ui.button("Save", on_click=_save).props(
+                            "dense color=primary size=sm"
+                        )
+                        ui.button("Cancel", on_click=_cancel).props("flat dense size=sm")
+                return
+
+            with ui.row().classes("w-full items-center gap-2 no-wrap").style(hairline):
+                ui.label(f"{start[5:16]} → {end[11:16]}  ·  {dur:.2f}h").classes(
+                    "text-sm whitespace-nowrap"
+                )
+                if comment:
+                    ui.label(comment).classes(
+                        f"text-xs text-{core.theme.get('muted')} flex-1"
+                    ).style("overflow:hidden;text-overflow:ellipsis;white-space:nowrap;")
+                else:
+                    ui.space()
+
+                def _start_edit(_t=tid):
+                    editing["id"] = _t
+                    asyncio.create_task(_reload_list())
+
+                async def _del(_t=tid):
+                    await _delete(_t)
+
+                ui.button(icon="edit", on_click=lambda e, f=_start_edit: f()).props(
+                    "flat dense size=sm"
+                ).tooltip("Edit")
+                ui.button(icon="delete", on_click=lambda e, f=_del: f()).props(
+                    "flat dense size=sm color=negative"
+                ).tooltip("Delete")
+
+        _manage_card.clear()
+        with _manage_card:
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.label(f"{p_name} - {c_name}").classes("text-h6 flex-1")
+                ui.button(icon="close", on_click=_manage_dialog.close).props(
+                    "flat dense round"
+                )
+            ui.label("Edit or delete entries in the selected date range").classes(
+                f"text-caption text-{core.theme.get('muted')} -mt-2 mb-1"
+            )
+            list_box = ui.column().classes("w-full").style(
+                "max-height:60vh; overflow-y:auto;"
+            )
+        await _reload_list()
+        _manage_dialog.open()
+
     # ========================================================================
     # Data Functions
     # ========================================================================
@@ -905,8 +1174,11 @@ async def time_tracking_page():
                         await show_manual_time_entry_dialog(cid, pid)
                     async def _open_manual_start(cid=int(project["customer_id"]), pid=int(project["project_id"])):
                         await show_manual_start_dialog(cid, pid)
+                    async def _open_manage(cid=int(project["customer_id"]), pid=int(project["project_id"])):
+                        await show_manage_entries_dialog(cid, pid)
                     ui.menu_item("Add time entry", on_click=_open_manual).props("icon=add_circle")
                     ui.menu_item("Start from past time", on_click=_open_manual_start).props("icon=history")
+                    ui.menu_item("Manage entries", on_click=_open_manage).props("icon=edit_note")
 
         async def make_customer_card(
             customer_id, customer_name, group, customer_index=None, total_customers=None
@@ -1123,6 +1395,9 @@ async def time_tracking_page():
 
     with ui.dialog().props("persistent") as _stop_dialog:
         _stop_card = ui.card().classes(UI_STYLES.get_widget_width("extra_wide"))
+
+    with ui.dialog().props("persistent") as _manage_dialog:
+        _manage_card = ui.card().classes(UI_STYLES.get_widget_width("extra_wide"))
 
     core._setup_page_timers(
         "time_tracking", value_refresh_timer, midnight_refresh_timer

@@ -35,30 +35,35 @@ def _choose_project(configured, available):
 
 
 class DevOpsManager:
+    """Provider-neutral multiplexer: one TrackerProvider per customer.
+
+    Which provider a customer gets is resolved from the customers table's
+    `integration_type` column via the tracker registry (default: Azure DevOps).
+    Kept under its historical name — the app-facing API is unchanged.
+    """
+
     def __init__(self, df, log):
+        # Imported here, not at module top: provider modules import this module
+        # (the Azure provider subclasses DevOpsClient below), so a top-level
+        # import would be circular.
+        from .trackers.registry import create_provider_for_row
+
         self.clients = {}
         self.log = log
         for _, row in df.iterrows():
-            if row["org_url"].lower() in ("", "none", "null") or row[
-                "pat_token"
-            ].lower() in ("", "none", "null"):
-                continue
-            org_url = f"https://dev.azure.com/{row['org_url']}"
-            client = DevOpsClient(
-                row["pat_token"],
-                org_url,
-                self.log,
-                project_name=row.get("devops_project"),
-            )
+            client = create_provider_for_row(row, self.log)
+            if client is None:
+                continue  # missing credentials or unknown provider (logged)
             try:
                 client.connect()
                 self.clients[row["customer_name"]] = client
                 self.log.info(
-                    f"Connected to DevOps for customer {row['customer_name']}"
+                    f"Connected to {client.provider_key} tracker for customer "
+                    f"{row['customer_name']}"
                 )
             except Exception as e:
                 self.log.error(
-                    f"DevOps connection failed for {row['customer_name']}:\n{e}"
+                    f"Tracker connection failed for {row['customer_name']}:\n{e}"
                 )
 
     def _get_client(self, customer_name):
@@ -87,24 +92,13 @@ class DevOpsManager:
         return client.upload_attachment(file_name, content) if client else None
 
     def fetch_attachment(self, url):
-        """Fetch a DevOps attachment's bytes using the matching customer's PAT,
-        for proxying images into the WorkTimer preview. Returns
-        (content, content_type) or None. Only fetches work-item attachment URLs
-        that belong to a connected org (SSRF guard)."""
-        if "/_apis/wit/attachments/" not in url:
-            return None
+        """Fetch an attachment's bytes via whichever connected provider owns the
+        URL, for proxying images into the WorkTimer preview. Returns
+        (content, content_type) or None. Providers only accept their own
+        backend's attachment URLs (SSRF guard)."""
         for client in self.clients.values():
-            if not url.startswith(client.organization_url):
-                continue
-            try:
-                resp = requests.get(
-                    url, auth=("", client.personal_access_token), timeout=20
-                )
-                if resp.ok:
-                    ctype = resp.headers.get("Content-Type", "application/octet-stream")
-                    return resp.content, ctype
-            except Exception as e:
-                self.log.error(f"Attachment fetch failed ({client.organization_url}): {e}")
+            if client.owns_attachment_url(url):
+                return client.fetch_attachment(url)
         return None
 
     def save_comment(self, customer_name, comment, git_id):
@@ -197,57 +191,47 @@ class DevOpsManager:
             title, description, additional_fields, markdown, parent
         )
 
+    def create_item(
+        self,
+        customer_name,
+        type_key,
+        title,
+        description=None,
+        additional_fields=None,
+        markdown=False,
+        parent=None,
+    ):
+        """Create a work item of `type_key` (a value from the provider's
+        type_hierarchy()). Provider-neutral generic behind the named wrappers."""
+        client = self._get_client(customer_name)
+        if not client:
+            return (False, f"No tracker connection for {customer_name}")
+        return client.create_item(
+            type_key, title, description, additional_fields, markdown, parent
+        )
+
     def get_epics_feature_df(self, max_ids: dict = None, changed_dates: dict = None):
-        """Get work items in long format with parent_id column.
+        """All customers' work items in the canonical WORK_ITEM_COLUMNS shape.
+
+        Field mapping lives in each provider's fetch_work_items() — this just
+        concatenates per-customer frames.
 
         Args:
             max_ids: Dict of {customer_name: max_id} for incremental refresh (new items)
             changed_dates: Dict of {customer_name: iso_datetime_str} for catching edits
         """
-        rows = []
+        frames = []
         for customer_name, client in self.clients.items():
-            # Get customer-specific min_id for filtering
-            min_id = max_ids.get(customer_name) if max_ids else None
-            min_changed_date = changed_dates.get(customer_name) if changed_dates else None
-
-            status, items = client.get_workitem_level(
-                level=None, return_full=True, min_id=min_id, min_changed_date=min_changed_date
+            df = client.fetch_work_items(
+                min_id=max_ids.get(customer_name) if max_ids else None,
+                min_changed_date=(
+                    changed_dates.get(customer_name) if changed_dates else None
+                ),
             )
-            if not status or not items:
-                continue
+            if df is not None and not df.empty:
+                frames.append(df)
 
-            def _assigned_to(fields):
-                af = fields.get("System.AssignedTo")
-                if not af:
-                    return ""
-                if isinstance(af, dict):
-                    return af.get("displayName", af.get("uniqueName", ""))
-                return str(af)
-
-            # One row per Epic / Feature / User Story — identical shape, only
-            # parent_id differs (Epics are roots).
-            for item in items:
-                fields = getattr(item, "fields", {}) or {}
-                wtype = fields.get("System.WorkItemType")
-                if wtype not in ("Epic", "Feature", "User Story"):
-                    continue
-                rows.append(
-                    {
-                        "customer_name": customer_name,
-                        "type": wtype,
-                        "id": item.id,
-                        "title": fields.get("System.Title"),
-                        "state": fields.get("System.State"),
-                        "parent_id": None if wtype == "Epic" else fields.get("System.Parent"),
-                        "board_column": fields.get("System.BoardColumn", ""),
-                        "board_column_done": int(bool(fields.get("System.BoardColumnDone", False))),
-                        "assigned_to": _assigned_to(fields),
-                        "changed_date": fields.get("System.ChangedDate", ""),
-                        "priority": fields.get("Microsoft.VSTS.Common.Priority"),
-                    }
-                )
-
-        df = pd.DataFrame(rows)
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame([])
         return (True, df)
 
     def set_board_column(
@@ -711,9 +695,14 @@ class DevOpsClient:
             )
 
             if not kanban_column_field:
+                # ADO only provisions the WEF_*_Kanban.Column fields once a team
+                # board has picked the item up — new/API-created items lack them
+                # until the board next loads (or the area path maps to no team).
                 return (
                     False,
-                    "Kanban.Column field not found — item may not be on a board",
+                    f"#{work_item_id} isn't on a team board yet (new items get "
+                    "board fields when the board next loads) — open the board "
+                    "in Azure DevOps once, or check the item's area path",
                 )
 
             # Step 2 — patch the Kanban.Column field
