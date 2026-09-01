@@ -538,6 +538,18 @@ async def query_editor_page():
                     ).classes("w-full h-full")
                     editor.bind_value(app.storage.user, "query_editor_query")
 
+                    # Ctrl+Enter inside the editor: run the query WITHOUT letting
+                    # the keypress reach CodeMirror (it inserted a newline into
+                    # the SQL). capture+prevent kills the newline; stop keeps the
+                    # document-level ui.keyboard fallback from double-executing.
+                    async def _exec_from_editor(_e=None):
+                        await execute_query()
+
+                    editor.on(
+                        "keydown.enter.ctrl.capture.prevent.stop",
+                        _exec_from_editor,
+                    )
+
                 with splitter.after:
                     grid_box = (
                         ui.aggrid(
@@ -596,6 +608,18 @@ async def query_editor_page():
 
             document.addEventListener('keydown', function(e) {
                 if (e.ctrlKey && e.key === 'c') {
+                    // Row-copy is a fallback, not a hijack: rows may still be
+                    // selected from an earlier click while the user is copying
+                    // something else entirely. Let the browser handle Ctrl+C
+                    // whenever the focus is in any editable target (SQL editor,
+                    // a dialog's input/textarea fields, ...) ...
+                    const t = e.target;
+                    if (t && t.closest && t.closest(
+                        '.cm-editor, input, textarea, [contenteditable="true"], .q-dialog'
+                    )) return;
+                    // ... or when actual text is selected anywhere on the page.
+                    const textSel = window.getSelection && window.getSelection().toString();
+                    if (textSel) return;
                     const selectedRows = Array.from(document.querySelectorAll('.ag-row-selected'));
                     if (!selectedRows.length) return;
 
@@ -617,6 +641,80 @@ async def query_editor_page():
                 }
             }, true);  // true = capture phase, fires before browser default
         }
+    """)
+
+    # Visual-Studio-style comment chord on the SQL editor: Ctrl+K Ctrl+C
+    # comments the selected lines ("-- "), Ctrl+K Ctrl+U uncomments. Attached
+    # per visit (the editor element is recreated); retries until the CodeMirror
+    # view is mounted, like the image-paste hook in dynamic_widgets.
+    ui.run_javascript(f"""
+        let _cmTries = 0;
+        (function attachChord() {{
+            const c = getElement({editor.id});
+            if (!c || !c.editor) {{ if (_cmTries++ < 25) setTimeout(attachChord, 200); return; }}
+            const view = c.editor;
+            const dom = view.dom;
+            if (dom._wtChordEnabled) return;
+            dom._wtChordEnabled = true;
+
+            let pending = false;
+            let pendingTimer = null;
+
+            function selectedLineNumbers(state) {{
+                const seen = new Set();
+                for (const r of state.selection.ranges) {{
+                    const start = state.doc.lineAt(r.from).number;
+                    const end = state.doc.lineAt(r.to).number;
+                    for (let n = start; n <= end; n++) seen.add(n);
+                }}
+                return [...seen];
+            }}
+
+            function commentLines() {{
+                const state = view.state;
+                const changes = [];
+                for (const n of selectedLineNumbers(state)) {{
+                    const line = state.doc.line(n);
+                    if (line.text.trim() === '') continue;      // leave blanks
+                    changes.push({{from: line.from, insert: '-- '}});
+                }}
+                if (changes.length) view.dispatch({{changes}});
+            }}
+
+            function uncommentLines() {{
+                const state = view.state;
+                const changes = [];
+                for (const n of selectedLineNumbers(state)) {{
+                    const line = state.doc.line(n);
+                    const m = line.text.match(/^(\\s*)--\\s?/);
+                    if (m) changes.push({{from: line.from + m[1].length, to: line.from + m[0].length}});
+                }}
+                if (changes.length) view.dispatch({{changes}});
+            }}
+
+            dom.addEventListener('keydown', (e) => {{
+                if (pending) {{
+                    // Ignore the bare modifier keydowns between the two chord keys.
+                    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+                    pending = false;
+                    clearTimeout(pendingTimer);
+                    const k = e.key.toLowerCase();
+                    if (k === 'c' || k === 'u') {{
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (k === 'c') commentLines(); else uncommentLines();
+                        return;
+                    }}
+                    return;  // not part of the chord — let it type normally
+                }}
+                if (e.ctrlKey && e.key.toLowerCase() === 'k') {{
+                    e.preventDefault();   // also blocks the browser's Ctrl+K
+                    e.stopPropagation();
+                    pending = true;
+                    pendingTimer = setTimeout(() => {{ pending = false; }}, 2000);
+                }}
+            }}, true);
+        }})();
     """)
 
     async def handle_key(e: KeyEventArguments):
