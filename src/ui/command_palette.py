@@ -15,13 +15,20 @@ field neither opens the palette nor loses your keystroke.
 """
 
 import asyncio
+import math
 from datetime import datetime
 from pathlib import Path
 
 from nicegui import app, ui
 
+from .devops_forms import open_work_item_dialog
+
 _MAX_ROWS = 12
 _ROW_SELECTED_STYLE = "background: rgba(56, 189, 248, 0.18);"
+
+# Find-mode "done" styling mirrors the hierarchy's grey-out rule.
+_DONE_STATES = {"Resolved", "Closed", "Removed"}
+_DONE_COLUMN_TOKENS = {"done", "closed", "resolved", "completed"}
 
 
 def setup_command_palette(core) -> None:
@@ -29,12 +36,19 @@ def setup_command_palette(core) -> None:
     Called once per client from the SPA shell (root.py)."""
     state = {"commands": [], "filtered": [], "selected": 0}
 
+    # Neutral shell-level host for UI that command actions create (e.g. the
+    # work-item dialog from find-mode). Actions run in the palette's slot
+    # context — but the palette dialog is closed right before they run, and a
+    # dialog nested in a closed dialog's card never renders (it would only
+    # appear once the palette re-opens and remounts it).
+    action_host = ui.element("div").classes("hidden")
+
     with ui.dialog().props("position=top") as dialog:
         with ui.card().classes("p-2 rounded-md").style(
             "width: 560px; max-width: 90vw; margin-top: 8vh;"
         ):
             search = (
-                ui.input(placeholder="Search pages, timers, actions…")
+                ui.input(placeholder="Search pages, timers, actions…  (# finds work items)")
                 .props("dense outlined autofocus")
                 .classes("w-full")
             )
@@ -209,9 +223,92 @@ def setup_command_palette(core) -> None:
 
         return cmds
 
+    # ── find-mode ("#…"): search work items instead of commands ────────────
+    # Same matching as the board's search box — case-insensitive substring,
+    # all words must match, across title / assignee / state / column / #id and
+    # the ancestor chain — but spanning ALL customers, types and states
+    # (closed included; looking up a finished ticket is half the point).
+    def _item_haystack():
+        """Lowercased search text per work-item row; built once per palette open."""
+        if state.get("_item_index") is not None:
+            return state["_item_index"]
+        df = core.devops_engine.df if core.devops_engine is not None else None
+        if df is None or df.empty:
+            state["_item_index"] = (None, None)
+            return state["_item_index"]
+        cols = [
+            c for c in ("title", "assigned_to", "state", "board_column",
+                        "customer_name", "type")
+            if c in df.columns
+        ]
+        hay = df[cols].fillna("").astype(str).agg(" ".join, axis=1)
+        hay = hay + " #" + df["id"].astype(str)
+        if "parent_id" in df.columns:
+            id_to_title = {
+                int(i): str(t) for i, t in zip(df["id"], df["title"].fillna(""))
+            }
+            id_to_parent = {int(i): p for i, p in zip(df["id"], df["parent_id"])}
+
+            def _ancestors(pid):
+                parts, seen = [], set()
+                while pid is not None and not (
+                    isinstance(pid, float) and math.isnan(pid)
+                ):
+                    try:
+                        ip = int(pid)
+                    except (TypeError, ValueError):
+                        break
+                    if ip in seen:
+                        break
+                    seen.add(ip)
+                    parts.append(f"#{ip} {id_to_title.get(ip, '')}")
+                    pid = id_to_parent.get(ip)
+                return " ".join(parts)
+
+            hay = hay + " " + df["parent_id"].map(_ancestors)
+        state["_item_index"] = (df, hay.str.lower())
+        return state["_item_index"]
+
+    def _find_work_items(q: str) -> list:
+        df, hay = _item_haystack()
+        if df is None:
+            return []
+        sub = df
+        for part in q.split():
+            sub = sub[hay.loc[sub.index].str.contains(part, regex=False, na=False)]
+            if sub.empty:
+                return []
+        if "changed_date" in sub.columns:
+            sub = sub.sort_values("changed_date", ascending=False)
+        entries = []
+        for _, r in sub.head(_MAX_ROWS).iterrows():
+            row_dict = r.to_dict()
+            done = (
+                str(r.get("state") or "") in _DONE_STATES
+                or str(r.get("board_column") or "").strip().lower()
+                in _DONE_COLUMN_TOKENS
+            )
+
+            async def _open_item(item=row_dict):
+                await open_work_item_dialog(core, item)
+
+            entries.append({
+                "label": f"{r.get('display_name') or ''}  ·  {r.get('customer_name')}",
+                "_color": state.get("cust_colors", {}).get(r.get("customer_name")),
+                "_done": done,
+                "action": _open_item,
+            })
+        return entries
+
     # ── filtering + rendering ──────────────────────────────────────────────
     def _apply_filter():
-        q = (search.value or "").strip().lower()
+        raw = (search.value or "").strip()
+        if raw.startswith("#"):
+            state["filtered"] = _find_work_items(raw[1:].strip().lower())
+            state["selected"] = 0
+            _render_results()
+            return
+        q = raw.lower()
         if q:
             state["filtered"] = [
                 c for c in state["commands"]
@@ -238,13 +335,27 @@ def setup_command_palette(core) -> None:
                 if i == state["selected"]:
                     row.style(_ROW_SELECTED_STYLE)
                 with row:
-                    ui.icon(cmd["icon"], size="xs").classes("shrink-0")
-                    ui.label(cmd["label"]).classes("text-sm truncate")
+                    if "_color" in cmd:
+                        # Work-item row: customer colour dot, done items greyed.
+                        ui.element("div").style(
+                            "width:10px; height:10px; border-radius:50%; "
+                            f"flex:0 0 auto; background:{cmd['_color'] or '#64748b'};"
+                        )
+                        lbl_cls = "text-sm truncate"
+                        if cmd.get("_done"):
+                            lbl_cls += " text-grey-6"
+                        ui.label(cmd["label"]).classes(lbl_cls)
+                    else:
+                        ui.icon(cmd["icon"], size="xs").classes("shrink-0")
+                        ui.label(cmd["label"]).classes("text-sm truncate")
                 row.on("click", lambda e, c=cmd: asyncio.create_task(_run(c)))
 
     async def _run(cmd):
         dialog.close()
-        await cmd["action"]()
+        # Enter the host's slot explicitly: actions may create dialogs, and this
+        # also gives the click path (a bare asyncio task) a valid slot context.
+        with action_host:
+            await cmd["action"]()
 
     def _move(delta: int):
         if state["filtered"]:
@@ -263,6 +374,15 @@ def setup_command_palette(core) -> None:
     # ── opening ────────────────────────────────────────────────────────────
     async def _open_palette():
         state["commands"] = await _build_commands()
+        state["_item_index"] = None  # find-mode index rebuilt per open (fresh df)
+        colors_df = await core.query_engine.query_db(
+            "select customer_name, color from customers where is_current = 1"
+        )
+        state["cust_colors"] = {
+            r["customer_name"]: r["color"]
+            for _, r in colors_df.iterrows()
+            if r["color"]
+        }
         search.set_value("")
         _apply_filter()
         dialog.open()
