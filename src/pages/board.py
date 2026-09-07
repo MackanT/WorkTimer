@@ -9,7 +9,7 @@ v2 — Live mode:
 
 import asyncio
 import math
-from nicegui import ui, app
+from nicegui import app, context, ui
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
@@ -972,3 +972,34 @@ async def board_page():
                     hier.render_content()
 
     _apply_view()
+
+    # ── command-palette handoff: "Add Epic / Feature / User Story" ─────────────
+    # Same pattern as the Time page's stop handoff: the event covers "already on
+    # /board", the storage flag covers arriving via navigation. Event handlers
+    # run as bare tasks with no slot context, so the client is captured here, a
+    # liveness guard skips departed page renders, and the dialog is created
+    # inside the page container's slot explicitly.
+    page_client = context.client
+
+    def _page_is_live() -> bool:
+        try:
+            return board_container.id in page_client.elements
+        except Exception:
+            return False
+
+    async def _maybe_open_pending_add():
+        pending = page_client.storage.get("palette_add_item")
+        if not pending or not _page_is_live():
+            return
+        with board_container:
+            await _open_add_dialog(preset_type=str(pending))
+        page_client.storage["palette_add_item"] = None
+
+    def _on_palette_add(**_):
+        asyncio.create_task(_maybe_open_pending_add())
+
+    core.event_bus.register_unique(
+        "palette_add_item", _on_palette_add, key="board_page"
+    )
+
+    await _maybe_open_pending_add()  # palette add request that navigated here

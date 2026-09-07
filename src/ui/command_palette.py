@@ -82,6 +82,41 @@ def setup_command_palette(core) -> None:
                 "action": _go,
             })
 
+        # Board views — Hierarchy has no nav entry (it's the board's view
+        # toggle), so jumping straight to it sets the remembered view first.
+        for view_key, view_label, view_icon, view_kw in (
+            ("board", "Go to Board — Kanban view", "view_kanban", "kanban columns cards"),
+            ("hierarchy", "Go to Board — Hierarchy view", "account_tree", "hierarchy tree epic graph"),
+        ):
+            async def _go_board_view(v=view_key):
+                app.storage.user["devops_view"] = v
+                _go_to("/board")
+
+            cmds.append({
+                "label": view_label,
+                "icon": view_icon,
+                "keywords": f"go open page {view_kw}",
+                "action": _go_board_view,
+            })
+
+        # Create work items — handed over to the board page (same pattern as
+        # stop-timer): the event covers "already on /board", the storage flag
+        # covers arriving via navigation.
+        if core.devops_engine is not None:
+            for wtype in core.devops_engine.type_hierarchy():
+
+                async def _add_item(t=wtype):
+                    app.storage.client["palette_add_item"] = t
+                    core.event_bus.emit("palette_add_item")
+                    _go_to("/board")
+
+                cmds.append({
+                    "label": f"Add {wtype}",
+                    "icon": "add_circle",
+                    "keywords": "create new devops work item ticket",
+                    "action": _add_item,
+                })
+
         QE = core.query_engine
         running = await QE.query_db(
             "select t.customer_id, t.project_id, c.customer_name, p.project_name "
