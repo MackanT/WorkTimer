@@ -93,6 +93,50 @@ class PageState:
 # ============================================================================
 
 
+def recommended_first(cust_df: pd.DataFrame, selectable_labels: list, default_id) -> tuple:
+    """Order work-item options so the project's default item and its whole
+    subtree come first (BFS: the item, then children, then grandchildren —
+    each level by id), the remaining options after, original order kept.
+
+    Returns (ordered_labels, recommended_count) — the first `recommended_count`
+    entries belong to the default item's subtree, so callers can mark them.
+
+    `cust_df` is the customer's full work-item frame (all states, so parent
+    chains stay intact); `selectable_labels` are the display names actually
+    offered in the dropdown. Unknown/missing default → order unchanged."""
+    try:
+        default_id = int(default_id)
+    except (TypeError, ValueError):
+        return selectable_labels, 0
+
+    children: dict = {}
+    labels_by_id: dict = {}
+    for _, r in cust_df.iterrows():
+        try:
+            rid = int(r["id"])
+        except (TypeError, ValueError):
+            continue
+        labels_by_id[rid] = r.get("display_name")
+        pid = r.get("parent_id")
+        if pid is not None and not pd.isna(pid):
+            children.setdefault(int(pid), []).append(rid)
+
+    order, seen = [], set()
+    queue = [default_id]
+    while queue:
+        cur = queue.pop(0)
+        if cur in seen:
+            continue
+        seen.add(cur)
+        order.append(cur)
+        queue.extend(sorted(children.get(cur, [])))
+
+    selectable = set(selectable_labels)
+    rec = [labels_by_id[i] for i in order if labels_by_id.get(i) in selectable]
+    rec_set = set(rec)
+    return rec + [lbl for lbl in selectable_labels if lbl not in rec_set], len(rec)
+
+
 def format_value(value: float, is_time: bool) -> str:
     """Format a value as time (hours) or bonus (SEK)."""
     return f"{value:.2f} h" if is_time else f"{value:,.0f} SEK"
@@ -387,14 +431,28 @@ async def time_tracking_page():
             ui.button("Close", on_click=on_close).props("flat").classes(btn_classes)
 
     def _build_devops_selector(devops_engine, c_name, git_id, has_git_id):
-        """Render DevOps ID dropdown + 'Store to DevOps' toggle. Returns (id_input, id_checkbox)."""
+        """Render DevOps ID dropdown + 'Store to DevOps' toggle. Returns (id_input, id_checkbox).
+
+        When the project has a default work item, that item and its whole
+        subtree (an Epic's features/stories, a Feature's stories) are listed
+        first as the recommended picks; everything else follows."""
         id_checkbox = None
-        id_options = devops_engine.df[
-            (devops_engine.df["customer_name"] == c_name)
-            & (devops_engine.df["state"].isin(["Active", "New"]))
-        ][["display_name", "id"]].dropna()
+        cust_df = devops_engine.df[devops_engine.df["customer_name"] == c_name]
+        id_options = cust_df[cust_df["state"].isin(["Active", "New"])][
+            ["display_name", "id"]
+        ].dropna()
+        options = id_options["display_name"].tolist()
+        rec_count = 0
+        if has_git_id:
+            options, rec_count = recommended_first(cust_df, options, git_id)
+        # Dict options: the VALUE stays the clean display name (what
+        # extract_devops_id parses and preselection matches); the LABEL marks
+        # the default item's subtree with a star so related items stand out.
+        option_map = {
+            o: (f"★ {o}" if i < rec_count else o) for i, o in enumerate(options)
+        }
         id_input = ui.select(
-            id_options["display_name"].tolist(),
+            option_map,
             with_input=True,
             label="DevOps-ID",
         ).classes("w-full -mb-2")
