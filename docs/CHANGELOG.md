@@ -7,6 +7,11 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
+### 5.0.5 (2026-xx-xx)
+- **Features**
+  - rf hierarchy nodes are now coloured by **board column** instead of by type — "everything active = green" hid exactly what the board shows, so In Progress / On Hold / New etc. each get a colour (deterministic palette, cycled for many columns), items in a done-token column or done state grey out, and column-less items show neutral slate. The legend is now **dynamic**, built from the same colour map for the currently visible slice (customer / focus / show-closed), so it always matches the graph. Item type still reads from tree depth.
+  - ad create work items from the Hierarchy view — the hierarchy toolbar gains a ＋ button, so a filtered subtree no longer forces a round-trip back to the Board to add something. When a node is focused, the new item is **pre-parented under it** and defaults to the next level down (focused Epic → new Feature, focused Feature → new User Story, with the Parent dropdown pre-selected); whole-tree or leaf focus opens the normal add form. The graph redraws immediately after a successful add.
+
 ### 5.0.4 (2026-09-01)
 - **Features**
   - ad manage individual time entries from the Time Tracker — right-click a project row → "Manage entries" lists the completed entries in the selected date range with inline edit (start / end / comment) and delete, so fixing a wrong time or removing a stray entry no longer needs the query editor. Edits recompute `total_time`/`cost` via the update trigger; new `update_time_entry` / `delete_time_entry` DB helpers (keyed by `time_id`).

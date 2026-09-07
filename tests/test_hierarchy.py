@@ -26,11 +26,11 @@ def _two_epic_tree():
     ])
 
 
-def test_builds_nodes_edges_and_type_classes():
+def test_builds_nodes_edges_and_column_classes():
     df = _df([
-        {"customer_name": "A", "type": "Epic", "id": 1, "title": "E", "state": "Active", "parent_id": None},
-        {"customer_name": "A", "type": "Feature", "id": 2, "title": "F", "state": "Active", "parent_id": 1},
-        {"customer_name": "A", "type": "User Story", "id": 3, "title": "US", "state": "New", "parent_id": 2},
+        {"customer_name": "A", "type": "Epic", "id": 1, "title": "E", "state": "Active", "parent_id": None, "board_column": "Doing"},
+        {"customer_name": "A", "type": "Feature", "id": 2, "title": "F", "state": "Active", "parent_id": 1, "board_column": "On Hold"},
+        {"customer_name": "A", "type": "User Story", "id": 3, "title": "US", "state": "New", "parent_id": 2, "board_column": None},
     ])
     code = build_mermaid(df, "A")
 
@@ -41,10 +41,24 @@ def test_builds_nodes_edges_and_type_classes():
     assert 'n3("#3: US")' in code
     assert "n1 --> n2" in code
     assert "n2 --> n3" in code
-    assert "class n1 epic;" in code
-    assert "class n2 feature;" in code
-    assert "class n3 story;" in code
-    assert "classDef epic" in code
+    # Nodes are coloured by board column (sorted case-insensitively:
+    # "Doing" -> bc0, "On Hold" -> bc1); no column -> the neutral class.
+    assert "class n1 bc0;" in code
+    assert "class n2 bc1;" in code
+    assert "class n3 nocol;" in code
+    assert "classDef bc0" in code
+    assert "classDef bc1" in code
+    assert "classDef nocol" in code
+
+
+def test_done_column_items_grey_out():
+    # A done-token board column greys the node even while its state is Active.
+    df = _df([
+        {"customer_name": "A", "type": "User Story", "id": 5, "title": "X", "state": "Active", "parent_id": None, "board_column": "Done"},
+    ])
+    code = build_mermaid(df, "A")
+    assert "class n5 done;" in code
+    assert "classDef done" in code
 
 
 def test_closed_items_hidden_by_default():

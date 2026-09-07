@@ -27,15 +27,24 @@ _hier_click_targets: dict = {}
 
 _TERMINAL_STATES = {"Closed", "Removed"}
 _DONE_STATES = {"Resolved", "Closed"}
-_TYPE_CLASS = {"Epic": "epic", "Feature": "feature", "User Story": "story"}
 
-# Legend colours mirror the classDefs in build_mermaid().
-LEGEND = (
-    ("Epic", "#6d28d9"),
-    ("Feature", "#1d4ed8"),
-    ("User Story", "#0f766e"),
-    ("Done", "#334155"),
+# Nodes are coloured by BOARD COLUMN (in progress / on hold / new …) — the
+# item type already reads from tree depth, while the column is the information
+# a glance can't otherwise get. Palette cycles for customers with many columns;
+# assignment is deterministic (columns sorted case-insensitively).
+_COLUMN_PALETTE = (
+    "#0284c7",  # sky
+    "#7c3aed",  # violet
+    "#059669",  # emerald
+    "#d97706",  # amber
+    "#db2777",  # pink
+    "#0d9488",  # teal
+    "#4f46e5",  # indigo
+    "#ea580c",  # orange
 )
+_DONE_COLUMN_TOKENS = {"done", "closed", "resolved", "completed"}
+_DONE_COLOR = "#334155"
+_NO_COLUMN_COLOR = "#475569"
 
 
 def _story_progress_map(df: pd.DataFrame, customer: str) -> dict:
@@ -140,6 +149,44 @@ def _filtered(df: pd.DataFrame, customer: str, include_closed: bool) -> pd.DataF
     return sub
 
 
+def _visible_sub(df, customer, include_closed, focus_id):
+    """The currently rendered slice: customer + closed filter + focus subtree.
+    Shared by the graph builder and the legend so they always agree."""
+    if df is None or df.empty or not customer:
+        return pd.DataFrame()
+    sub = _filtered(df, customer, include_closed)
+    if focus_id is not None and not sub.empty:
+        keep = _descendants(sub, focus_id)
+        sub = sub[sub["id"].astype(int).isin(keep)]
+    return sub
+
+
+def _is_done_row(r) -> bool:
+    """Grey-out rule: a done-ish state OR sitting in a done-token board column."""
+    if str(r.get("state") or "") in _DONE_STATES:
+        return True
+    return str(r.get("board_column") or "").strip().lower() in _DONE_COLUMN_TOKENS
+
+
+def column_styles(sub: pd.DataFrame) -> dict:
+    """Ordered {board-column display name: fill colour} for the non-done columns
+    present in `sub` — drives both the graph classDefs and the legend."""
+    if sub is None or sub.empty:
+        return {}
+    seen: dict = {}  # normalised name -> display casing (first seen)
+    for _, r in sub.iterrows():
+        if _is_done_row(r):
+            continue
+        col = str(r.get("board_column") or "").strip()
+        if col:
+            seen.setdefault(col.lower(), col)
+    ordered = [seen[k] for k in sorted(seen)]
+    return {
+        name: _COLUMN_PALETTE[i % len(_COLUMN_PALETTE)]
+        for i, name in enumerate(ordered)
+    }
+
+
 def build_mermaid(
     df: pd.DataFrame,
     customer: str,
@@ -149,33 +196,34 @@ def build_mermaid(
 ) -> str:
     """Return a Mermaid flowchart of one customer's work-item hierarchy.
 
-    Nodes are coloured by type. An item whose parent isn't in the rendered set
+    Nodes are coloured by their board column (done items greyed out; items with
+    no column in a neutral slate). An item whose parent isn't in the rendered set
     (filtered out, or a non-Epic/Feature/Story parent) becomes a root. When
     focus_id is given, only that item and its descendants are shown. `direction`
     is a Mermaid flowchart direction (TD = top-down, LR = left-right). Returns an
     empty string when there is nothing to show.
     """
-    if df is None or df.empty or not customer:
-        return ""
-
-    sub = _filtered(df, customer, include_closed)
-    if focus_id is not None and not sub.empty:
-        keep = _descendants(sub, focus_id)
-        sub = sub[sub["id"].astype(int).isin(keep)]
+    sub = _visible_sub(df, customer, include_closed, focus_id)
     if sub.empty:
         return ""
 
     present = {int(r["id"]) for _, r in sub.iterrows()}
     progress = _story_progress_map(df, customer)
 
-    header = [
-        f"flowchart {direction}",
-        # Borderless (stroke matches fill); nodes use the round-edge shape below.
-        "classDef epic fill:#6d28d9,stroke:#6d28d9,color:#fff;",
-        "classDef feature fill:#1d4ed8,stroke:#1d4ed8,color:#fff;",
-        "classDef story fill:#0f766e,stroke:#0f766e,color:#fff;",
-        "classDef done fill:#334155,stroke:#334155,color:#cbd5e1;",
-    ]
+    # Board-column colouring: one class per column present in this view.
+    col_colors = column_styles(sub)
+    col_class = {name.lower(): f"bc{i}" for i, name in enumerate(col_colors)}
+
+    header = [f"flowchart {direction}"]
+    # Borderless (stroke matches fill); nodes use the round-edge shape below.
+    for i, color in enumerate(col_colors.values()):
+        header.append(f"classDef bc{i} fill:{color},stroke:{color},color:#fff;")
+    header.append(
+        f"classDef nocol fill:{_NO_COLUMN_COLOR},stroke:{_NO_COLUMN_COLOR},color:#e2e8f0;"
+    )
+    header.append(
+        f"classDef done fill:{_DONE_COLOR},stroke:{_DONE_COLOR},color:#cbd5e1;"
+    )
 
     node_lines = []
     for _, r in sub.iterrows():
@@ -191,11 +239,14 @@ def build_mermaid(
                 label += f"  {done} of {total} done"
         # Round-edge shape n("..") — softer, matches the app's rounded cards.
         node_lines.append(f'n{wid}("{label}")')
-        # Done items grey out; everything else is coloured by type.
-        state = str(r.get("state") or "")
-        cls = "done" if state in _DONE_STATES else _TYPE_CLASS.get(item_type)
-        if cls:
-            node_lines.append(f"class n{wid} {cls};")
+        # Done items grey out; everything else is coloured by its board column.
+        if _is_done_row(r):
+            cls = "done"
+        else:
+            cls = col_class.get(
+                str(r.get("board_column") or "").strip().lower(), "nocol"
+            )
+        node_lines.append(f"class n{wid} {cls};")
 
     edge_lines = []
     for _, r in sub.iterrows():
@@ -309,6 +360,41 @@ def create_hierarchy_view(core, get_customer):
             ui.mermaid(code, config=MERMAID_CONFIG)
 
     @ui.refreshable
+    def render_legend():
+        """Board-column colour legend for the currently visible slice — built
+        from the same mapping build_mermaid uses, so it always matches."""
+        sub = (
+            _visible_sub(
+                DO.df, state["customer"], state["show_closed"], state["focus_id"]
+            )
+            if (DO is not None and DO.df is not None)
+            else pd.DataFrame()
+        )
+        entries = list(column_styles(sub).items())
+        if not sub.empty:
+            if any(
+                not _is_done_row(r) and not str(r.get("board_column") or "").strip()
+                for _, r in sub.iterrows()
+            ):
+                entries.append(("No column", _NO_COLUMN_COLOR))
+            if any(_is_done_row(r) for _, r in sub.iterrows()):
+                entries.append(("Done", _DONE_COLOR))
+        with ui.row().classes("items-center gap-4 px-1 pb-1 shrink-0"):
+            for lbl, color in entries:
+                with ui.row().classes("items-center gap-1"):
+                    ui.element("div").style(
+                        f"width:12px; height:12px; border-radius:3px; background:{color};"
+                    )
+                    ui.label(lbl).classes(
+                        "text-xs " + UI_STYLES.get_layout_classes("muted_text")
+                    )
+
+    def _refresh_views():
+        """Graph and legend always refresh together (they share the colour map)."""
+        render_legend.refresh()
+        render_graph.refresh()
+
+    @ui.refreshable
     def render_focus_select():
         opts = (
             focus_options(DO.df, state["customer"], state["show_closed"])
@@ -327,7 +413,7 @@ def create_hierarchy_view(core, get_customer):
 
         def _on_focus(e):
             state["focus_id"] = int(e.value) if e.value else None
-            render_graph.refresh()
+            _refresh_views()
 
         sel.on_value_change(_on_focus)
 
@@ -344,7 +430,7 @@ def create_hierarchy_view(core, get_customer):
         async def _after():
             await DO.load_df()
             render_focus_select.refresh()
-            render_graph.refresh()
+            _refresh_views()
 
         await open_work_item_dialog(core, row, on_success=_after)
 
@@ -367,7 +453,7 @@ def create_hierarchy_view(core, get_customer):
     def _on_direction(value):
         state["direction"] = value
         render_direction_chips.refresh()
-        render_graph.refresh()
+        _refresh_views()
 
     @ui.refreshable
     def render_direction_chips():
@@ -381,7 +467,7 @@ def create_hierarchy_view(core, get_customer):
     def _on_show_closed(e):
         state["show_closed"] = e.value
         render_focus_select.refresh()
-        render_graph.refresh()
+        _refresh_views()
 
     def _zoom(mult=None):
         state["zoom"] = 1.0 if mult is None else max(0.2, min(5.0, state["zoom"] * mult))
@@ -391,7 +477,7 @@ def create_hierarchy_view(core, get_customer):
         if DO is not None:
             await DO.load_df()
         render_focus_select.refresh()
-        render_graph.refresh()
+        _refresh_views()
 
     def _ensure_client_js():
         if not app.storage.client.get("hier_css_injected"):
@@ -441,15 +527,7 @@ def create_hierarchy_view(core, get_customer):
             ).tooltip("Zoom in")
 
     def render_content():
-        with ui.row().classes("items-center gap-4 px-1 pb-1 shrink-0"):
-            for lbl, color in LEGEND:
-                with ui.row().classes("items-center gap-1"):
-                    ui.element("div").style(
-                        f"width:12px; height:12px; border-radius:3px; background:{color};"
-                    )
-                    ui.label(lbl).classes(
-                        "text-xs " + UI_STYLES.get_layout_classes("muted_text")
-                    )
+        render_legend()
         with ui.element("div").classes("w-full").style(
             "flex: 1; min-height: 0; overflow: auto;"
         ):
@@ -464,13 +542,36 @@ def create_hierarchy_view(core, get_customer):
             else None
         )
         render_focus_select.refresh()
-        render_graph.refresh()
+        _refresh_views()
+
+    def get_focus():
+        """The currently focused work item as {id, type, title, display_name},
+        or None when viewing the whole tree (or the item can't be resolved).
+        Lets the board's add dialog pre-parent new items under the focus."""
+        if state["focus_id"] is None or DO is None or DO.df is None:
+            return None
+        match = DO.df[
+            (DO.df["id"] == state["focus_id"])
+            & (DO.df["customer_name"] == state["customer"])
+        ]
+        if match.empty:
+            return None
+        r = match.iloc[0]
+        return {
+            "id": int(r["id"]),
+            "type": str(r["type"]),
+            "title": str(r["title"] or ""),
+            "display_name": str(
+                r.get("display_name") or f"{r['type']}: {int(r['id'])} - {r['title']}"
+            ),
+        }
 
     return SimpleNamespace(
         render_controls=render_controls,
         render_zoom_controls=render_zoom_controls,
         render_content=render_content,
         set_customer=set_customer,
+        get_focus=get_focus,
         refresh=_refresh,
         apply_zoom=_apply_zoom,
     )

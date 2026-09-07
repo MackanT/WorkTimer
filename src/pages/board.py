@@ -388,8 +388,14 @@ async def board_page():
         )
 
     # ── add-item dialog (full add form) ───────────────────────────────────────
-    async def _open_add_dialog():
-        """Open the full DevOps add form in a dialog."""
+    async def _open_add_dialog(preset_type: str | None = None,
+                               preset_parent: str | None = None):
+        """Open the full DevOps add form in a dialog.
+
+        `preset_type` overrides the board's type filter for the new item and
+        `preset_parent` (a display_name like "Feature: 123 - Title") pre-selects
+        the Parent dropdown — used by the hierarchy view's ＋ button to add a
+        child under the focused item."""
         add_cfg = (
             core.ui_config
             .get("board_devops_forms", {})
@@ -428,6 +434,10 @@ async def board_page():
                 async def _on_add_success():
                     dlg.close()
                     await _reload_board_data(show_notify=False)
+                    # When adding from the hierarchy view, redraw its graph so
+                    # the new node appears immediately.
+                    if view_state["view"] == "hierarchy":
+                        await hier.refresh()
 
                 result = await render_devops_form(
                     core, "add", add_cfg,
@@ -443,7 +453,7 @@ async def board_page():
                     if cust and "customer_name" in widgets:
                         widgets["customer_name"].widget.value = cust
                         widgets["customer_name"].widget.update()
-                    wtype = filter_state.get("type", "User Story")
+                    wtype = preset_type or filter_state.get("type", "User Story")
                     if wtype and "work_item_type" in widgets:
                         widgets["work_item_type"].widget.value = wtype
                         widgets["work_item_type"].widget.update()
@@ -465,6 +475,15 @@ async def board_page():
                     # triggers board-column loading — so call it once here directly.
                     if load_fn:
                         await load_fn()
+
+                    # Pre-parent the new item (hierarchy ＋ on a focused node).
+                    # Same pattern as the update dialog's work_item pre-fill:
+                    # refresh loads the options for the current customer, then
+                    # the value is set on top of them.
+                    if preset_parent and "parent_name" in widgets:
+                        await widgets["parent_name"].refresh()
+                        widgets["parent_name"].widget.value = preset_parent
+                        widgets["parent_name"].widget.update()
 
                     # Image insert (button + paste) on the Description editor —
                     # parity with the update dialog. Here the customer is chosen
@@ -804,13 +823,39 @@ async def board_page():
         else:
             hier.render_controls()
 
+    async def _open_add_from_hierarchy():
+        """＋ in the hierarchy view: when a node is focused, pre-select it as the
+        parent and default the new item to the next level down (Epic → Feature,
+        Feature → User Story). Whole-tree or leaf focus opens a plain add."""
+        focus = hier.get_focus()
+        levels = list(
+            DO.type_hierarchy(filter_state["customer"])
+            if DO is not None else DEFAULT_TYPE_HIERARCHY
+        )
+        child_type = None
+        if focus and focus["type"] in levels:
+            idx = levels.index(focus["type"])
+            if idx + 1 < len(levels):
+                child_type = levels[idx + 1]
+        if focus and child_type:
+            await _open_add_dialog(
+                preset_type=child_type, preset_parent=focus["display_name"]
+            )
+        else:
+            await _open_add_dialog()
+
     @ui.refreshable
     def render_view_actions():
         if view_state["view"] == "board":
+            async def _open_add_plain():
+                # Zero-arg wrapper — a bare _open_add_dialog reference would let
+                # NiceGUI pass the click event into preset_type.
+                await _open_add_dialog()
+
             ui.button(icon="refresh", on_click=_on_refresh).props(
                 "flat dense color=white"
             ).tooltip("Reload from local DB (no API call)")
-            ui.button(icon="add", on_click=_open_add_dialog).props(
+            ui.button(icon="add", on_click=_open_add_plain).props(
                 "flat dense color=white"
             ).tooltip("Add new DevOps work item")
         else:
@@ -818,6 +863,12 @@ async def board_page():
             ui.button(icon="refresh", on_click=hier.refresh).props(
                 "flat dense color=white"
             ).tooltip("Reload from local cache")
+            ui.button(icon="add", on_click=_open_add_from_hierarchy).props(
+                "flat dense color=white"
+            ).tooltip(
+                "Add work item — created under the focused item when a focus "
+                "is selected"
+            )
 
     with toolbar(core.theme):
         with toolbar_group(core.theme, divider_after=True):
