@@ -403,6 +403,18 @@ class ConfigLoader:
     def _load_ui_config(self) -> None:
         """Load config_ui.yml and extract ui, query, and tasks sub-configs."""
         ui_yaml = self._load_yaml("config_ui.yml", required=True)
+
+        # Optional per-install override written by Settings → "Time & billing".
+        # Kept as its own small file so the app never rewrites the heavily
+        # commented config_ui.yml; keys here win over its time_settings block.
+        ts_override = self.config_folder / "time_settings.yml"
+        if ts_override.exists():
+            overrides = self._load_yaml("time_settings.yml", required=False) or {}
+            ui_yaml["time_settings"] = {
+                **(ui_yaml.get("time_settings") or {}),
+                **overrides,
+            }
+
         self.configs["ui"] = ConfigUI(**ui_yaml)
         self.configs["query"] = QueryConfig(**{"query": ui_yaml.get("query", {})})
         tasks_yaml = ui_yaml.get("task", {})

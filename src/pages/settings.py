@@ -1,13 +1,14 @@
 """
 Settings Page
 
-Sidebar-navigation layout with three sections:
-  - DevOps Contacts   (customer list / contact detail)
-  - DevOps Tags       (tag table + add/edit dialog)
-  - Theme             (colour pickers for the app palette)
+Toolbar-tab layout (the app's standard idiom) with four sections:
+  - DevOps  (sync controls + per-customer contacts/assignees)
+  - Tags    (work-item tag table + add/edit dialog)
+  - Theme   (colour pickers for the app palette)
+  - Data    (database backup, time & billing defaults, about/version)
 
-Add and Reset buttons live next to each section name in the left sidebar.
-DevOps sync buttons live in the toolbar.
+Each section renders as cards with a consistent accent header; per-section
+actions (Add / Reset / Save) live inside the section they affect.
 """
 
 from pathlib import Path
@@ -20,7 +21,7 @@ import tempfile
 import yaml
 from nicegui import ui
 from ..core.app import AppCore
-from ..ui.elements import toolbar, toolbar_group, page_card
+from ..ui.elements import toolbar, toolbar_group
 from ..helpers import UI_STYLES
 
 
@@ -38,18 +39,20 @@ def _prune_backups(backups_dir: Path, keep: int = 10) -> None:
             pass
 
 
-def open_backup_dialog(core) -> None:
-    """Database backup dialog: back up to the local backups/ folder (auto-synced
-    via OneDrive) or download a copy. Uses SQLite's online backup, safe live."""
+def _render_backup_card(core) -> None:
+    """Database backup as a Settings card: back up to the local backups/ folder
+    (auto-synced via OneDrive) or download a copy. SQLite online backup, safe live."""
     backups_dir = Path(core.settings.db_path).resolve().parent.parent / "backups"
     muted = UI_STYLES.get_layout_classes("muted_text")
 
-    with ui.dialog() as dlg, ui.card().style("min-width: 460px; max-width: 92vw;"):
-        ui.label("Database backup").classes("text-lg font-semibold")
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Database backup").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
         ui.label(
             "Consistent copies, safe while the app runs. Saved to a backups/ "
             "folder next to the database; the newest 10 are kept."
-        ).classes("text-sm " + muted)
+        ).classes("text-xs " + muted)
 
         list_col = ui.column().classes("w-full gap-0 mt-2 max-h-60 overflow-auto")
 
@@ -95,16 +98,103 @@ def open_backup_dialog(core) -> None:
                     os.remove(tmp)
 
         with ui.row().classes("w-full justify-end gap-2 mt-3"):
-            ui.button("Close", on_click=dlg.close).props("flat")
             ui.button("Download", icon="download", on_click=_download).props(
-                "outline color=primary no-caps"
+                "outline color=primary no-caps dense"
             ).tooltip("Save a copy via your browser's download")
             ui.button("Backup now", icon="save", on_click=_backup_now).props(
-                "color=primary no-caps"
+                "color=primary no-caps dense"
             ).tooltip("Save a copy to the backups/ folder next to the database")
 
         _refresh()
-    dlg.open()
+
+def _render_time_settings_card(core) -> None:
+    """Edit the global time/billing defaults (the config's time_settings block).
+
+    Saved to config/time_settings.yml — a small override file merged over
+    config_ui.yml at load — so the commented main config is never rewritten."""
+    ts = dict(core.ui_config.get("time_settings") or {})
+    muted = UI_STYLES.get_layout_classes("muted_text")
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Time & billing defaults").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
+        ui.label(
+            "Global defaults used by Reports — a customer's own expected % and "
+            "rounding override these where set."
+        ).classes("text-xs " + muted + " mb-2")
+
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            round_in = ui.number(
+                label="Default rounding (min)", min=0, step=5,
+                value=int(ts.get("rounding_minutes", 0) or 0),
+            ).props("dense outlined").classes("w-44")
+            mode_in = ui.select(
+                ["up", "nearest", "down"], label="Rounding mode",
+                value=str(ts.get("rounding_mode", "up") or "up"),
+            ).props("dense outlined").classes("w-36")
+            currency_in = ui.input(
+                label="Currency suffix", value=str(ts.get("currency", "") or ""),
+            ).props("dense outlined").classes("w-32")
+            hours_in = ui.number(
+                label="Target hours/day", min=0, step=0.5,
+                value=float(ts.get("target_hours_per_day", 8) or 8),
+            ).props("dense outlined").classes("w-36")
+            pct_in = ui.number(
+                label="Target %", min=0, step=5,
+                value=float(ts.get("target_percent", 100) or 100),
+            ).props("dense outlined").classes("w-32")
+
+        def _save():
+            values = {
+                "rounding_minutes": int(round_in.value or 0),
+                "rounding_mode": str(mode_in.value or "up"),
+                "currency": str(currency_in.value or ""),
+                "target_hours_per_day": float(hours_in.value or 8),
+                "target_percent": float(pct_in.value or 100),
+            }
+            try:
+                _save_yaml(_config_path(core, "time_settings.yml"), values)
+                # Live for this session too — Reports reads core.ui_config.
+                core.ui_config["time_settings"] = values
+                ui.notify("Time & billing defaults saved", type="positive")
+            except Exception as ex:
+                core.logger.error(f"Saving time settings failed: {ex}")
+                ui.notify(f"Save failed: {ex}", type="negative")
+
+        with ui.row().classes("w-full justify-end mt-2"):
+            ui.button("Save", icon="save", on_click=_save).props(
+                "color=primary no-caps dense"
+            )
+
+
+async def _render_about_card(core) -> None:
+    """App version + update status (reuses the cached daily update check)."""
+    from ..services.update_checker import _current_version, check_for_update
+
+    muted = UI_STYLES.get_layout_classes("muted_text")
+    version = _current_version()
+    status_txt, status_icon, status_cls = "Update check unavailable", "help", muted
+    try:
+        result = await check_for_update()
+        if result.get("available"):
+            status_txt = f"v{result['latest']} available — update with git pull"
+            status_icon, status_cls = "upgrade", "text-amber-400"
+        else:
+            status_txt = "Up to date"
+            status_icon, status_cls = "check_circle", "text-green-500"
+    except Exception:
+        pass
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("About").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
+        with ui.row().classes("items-center gap-2 mt-1"):
+            ui.label(f"WorkTimer v{version}").classes("text-sm text-white")
+            ui.icon(status_icon, size="xs").classes(f"{status_cls} shrink-0")
+            ui.label(status_txt).classes("text-xs " + muted)
+
 
 # ── Quasar colour palette offered in dropdowns ──────────────────────────────
 QUASAR_COLORS = [
@@ -212,8 +302,8 @@ async def _confirm_reset(what: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def _render_devops_contacts_tab(core: AppCore, reg: dict):
-    # reg["list_container"] must be set by settings_page before calling this.
+async def _render_devops_contacts_tab(core: AppCore):
+    """DevOps contacts editor — in-panel customer selector + per-customer detail."""
     path = _config_path(core, "devops_contacts.yml")
     selected: dict = {"customer": None}
     contacts_template = path.parent / "devops_contacts.yml.template"
@@ -228,15 +318,34 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
             shutil.copy2(contacts_template, path)
             core.config_loader.reload_config("devops_contacts.yml")
             selected["customer"] = None
-            _rebuild_customer_list()
+            _refresh_customer_select()
             _reload_detail()
             ui.notify("Contacts reset to defaults", type="warning")
 
         asyncio.create_task(_do())
 
-    # ── detail view ───────────────────────────────────────────────────────────
-    with ui.scroll_area().classes("w-full h-full"):
-        detail_col = ui.column().classes("w-full p-4 gap-4")
+    # ── header: customer selector + actions (the panel provides scrolling) ────
+    def _on_select(e):
+        if e.value and e.value != selected["customer"]:
+            selected["customer"] = e.value
+            _reload_detail()
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-3"):
+        with ui.row().classes("w-full items-center gap-2 no-wrap"):
+            cust_select = (
+                ui.select([], label="Customer", on_change=_on_select)
+                .props("dense outlined")
+                .classes("flex-1")
+            )
+            ui.button(
+                "Add customer", icon="add",
+                on_click=lambda: add_cust_dlg.open(),
+            ).props("outline color=primary no-caps dense")
+            ui.button(icon="restart_alt", on_click=_reset_contacts).props(
+                "flat dense color=primary"
+            ).tooltip("Reset contacts to the template")
+
+    detail_col = ui.column().classes("w-full gap-4")
 
     # ── Add-customer dialog ───────────────────────────────────────────────────
     with ui.dialog() as add_cust_dlg, ui.card():
@@ -263,7 +372,7 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
                 new_cust_in.value = ""
                 add_cust_dlg.close()
                 selected["customer"] = name
-                _rebuild_customer_list()
+                _refresh_customer_select()
                 _reload_detail()
                 ui.notify(f"Customer '{name}' added", type="positive")
 
@@ -271,43 +380,20 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
                 "color=primary dense"
             )
 
-    # ── expose actions for sidebar ────────────────────────────────────────────
-    reg["add"]   = add_cust_dlg.open
-    reg["reset"] = _reset_contacts
-
     # ── rebuild helpers ───────────────────────────────────────────────────────
-    def _rebuild_customer_list():
-        list_container = reg["list_container"]
-        list_container.clear()
+    def _refresh_customer_select():
         dd = _load_yaml(path)
-        with list_container:
-            for cust_name in dd.get("customers", {}).keys():
-                is_sel = selected["customer"] == cust_name
-                bg = f"bg-{core.theme.get('toolbar_bg')}" if is_sel else ""
-                with ui.element("div").classes(
-                    f"w-full pl-7 pr-2 py-1.5 cursor-pointer flex items-center gap-1 "
-                    f"hover:bg-slate-700 {bg}"
-                ).on("click", lambda n=cust_name: _select_customer(n)):
-                    ui.icon("person", size="xs").classes(
-                        f"text-{core.theme.get('muted')} shrink-0"
-                    )
-                    ui.label(cust_name).classes("text-sm text-white truncate")
-
-    reg["rebuild"] = _rebuild_customer_list
-
-    def _select_customer(name: str):
-        selected["customer"] = name
-        if switch := reg.get("switch_to_contacts"):
-            switch()
-        _rebuild_customer_list()
-        _reload_detail()
+        names = list(dd.get("customers", {}).keys())
+        if selected["customer"] not in names:
+            selected["customer"] = names[0] if names else None
+        cust_select.set_options(names, value=selected["customer"])
 
     def _reload_detail():
         detail_col.clear()
         customer = selected["customer"]
         if not customer:
             with detail_col:
-                ui.label("Select a customer from the left panel to edit.").classes(
+                ui.label("No customers yet — use Add customer above.").classes(
                     UI_STYLES.get_layout_classes("muted_text_sm")
                 )
             return
@@ -327,7 +413,7 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
                     _save_yaml(path, ddd)
                     core.config_loader.reload_config("devops_contacts.yml")
                     selected["customer"] = None
-                    _rebuild_customer_list()
+                    _refresh_customer_select()
                     _reload_detail()
                     ui.notify(f"Deleted '{c}'", type="warning")
 
@@ -424,7 +510,7 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
                         "color=primary dense flat"
                     ).tooltip("Save default")
 
-    _rebuild_customer_list()
+    _refresh_customer_select()
     _reload_detail()
 
 
@@ -433,7 +519,7 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def _render_devops_tags_tab(core: AppCore, reg: dict):
+async def _render_devops_tags_tab(core: AppCore):
     path = _config_path(core, "devops_tags.yml")
     table_container = ui.element("div").classes("w-full")
 
@@ -558,7 +644,7 @@ async def _render_devops_tags_tab(core: AppCore, reg: dict):
         tags = data.get("devops_tags", [])
         with table_container:
             if not tags:
-                ui.label("No tags yet — use Add Tag in the sidebar.").classes(
+                ui.label("No tags yet — use Add tag above.").classes(
                     UI_STYLES.get_layout_classes("muted_text_sm")
                 )
                 return
@@ -626,12 +712,19 @@ async def _render_devops_tags_tab(core: AppCore, reg: dict):
 
         asyncio.create_task(_do())
 
-    # ── expose actions for sidebar ────────────────────────────────────────────
-    reg["add"]   = _open_add
-    reg["reset"] = _reset_tags
-
     # ── panel body ────────────────────────────────────────────────────────────
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        with ui.row().classes("w-full items-center justify-between mb-2"):
+            ui.label("Work-item tags").classes(
+                f"text-sm font-semibold text-{core.theme.get('accent')}"
+            )
+            with ui.row().classes("gap-1 shrink-0"):
+                ui.button("Add tag", icon="add", on_click=_open_add).props(
+                    "outline color=primary no-caps dense"
+                )
+                ui.button(icon="restart_alt", on_click=_reset_tags).props(
+                    "flat dense color=primary"
+                ).tooltip("Reset tags to the template")
         _reload_table()
 
 
@@ -640,7 +733,7 @@ async def _render_devops_tags_tab(core: AppCore, reg: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def _render_theme_tab(core: AppCore, reg: dict):
+async def _render_theme_tab(core: AppCore):
     theme_path = _config_path(core, "config_theme.yml")
     template_path = theme_path.parent / "config_theme.yml.template"
     data = _load_yaml(theme_path)
@@ -679,9 +772,14 @@ async def _render_theme_tab(core: AppCore, reg: dict):
 
         asyncio.create_task(_do())
 
-    reg["reset"] = _reset_theme
-
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        with ui.row().classes("w-full items-center justify-between mb-1"):
+            ui.label("Theme colours").classes(
+                f"text-sm font-semibold text-{core.theme.get('accent')}"
+            )
+            ui.button(icon="restart_alt", on_click=_reset_theme).props(
+                "flat dense color=primary"
+            ).tooltip("Reset theme to the template")
         ui.label(
             "Each colour picker saves both the hex value (for Quasar components) "
             "and the nearest Tailwind token (for class-based styling) simultaneously."
@@ -813,51 +911,9 @@ async def _render_theme_tab(core: AppCore, reg: dict):
 
 
 async def settings_page():
-    """Settings page — sidebar navigation with three configuration sections."""
+    """Settings page — toolbar tabs with four sections (DevOps / Tags / Theme / Data),
+    matching the navigation idiom of the Data Input and Info pages."""
     core = await AppCore.get_or_initialize()
-
-    contacts_reg: dict = {}
-    tags_reg:     dict = {}
-    theme_reg:    dict = {}
-
-    panel_refs: dict = {}
-    row_refs:   dict = {}
-    state = {"active": "contacts", "contacts_expanded": True}
-
-    # These dicts hold element refs that are populated during sidebar render,
-    # then used in _toggle_contacts / _switch which are called at click-time.
-    _expand_icon: dict  = {}   # {"el": ui.icon}
-    _sub_list:    dict  = {}   # {"el": ui.element}
-
-    def _switch(section: str):
-        state["active"] = section
-        for k, panel in panel_refs.items():
-            if k == section:
-                panel.classes(remove="hidden")
-            else:
-                panel.classes("hidden")
-        for k, row_el in row_refs.items():
-            if k == section:
-                row_el.classes("bg-slate-700", remove="hover:bg-slate-700")
-            else:
-                row_el.classes("hover:bg-slate-700", remove="bg-slate-700")
-
-    def _toggle_contacts():
-        if state["active"] != "contacts":
-            # switching to contacts always expands
-            _switch("contacts")
-            state["contacts_expanded"] = True
-            _sub_list["el"].classes(remove="hidden")
-            _expand_icon["el"].set_name("expand_more")
-        else:
-            # already on contacts — toggle expand
-            state["contacts_expanded"] = not state["contacts_expanded"]
-            if state["contacts_expanded"]:
-                _sub_list["el"].classes(remove="hidden")
-                _expand_icon["el"].set_name("expand_more")
-            else:
-                _sub_list["el"].classes("hidden")
-                _expand_icon["el"].set_name("chevron_right")
 
     from ..services.services import DevOpsService
     _svc = DevOpsService(core)
@@ -866,29 +922,41 @@ async def settings_page():
     _eng = core.devops_engine
 
     with toolbar(core.theme):
-        with toolbar_group(core.theme, divider_after=False):
+        with toolbar_group(core.theme, divider_after=True):
             ui.icon("tune", size="md").classes(f"text-{core.theme.get('accent')}")
             ui.label("Settings").classes(UI_STYLES.get_layout_classes("page_title"))
 
-        ui.element("div").classes("flex-1")
-
-        with toolbar_group(core.theme, divider_after=True):
-            ui.button(
-                "Backup", icon="backup", on_click=lambda: open_backup_dialog(core)
-            ).props("flat dense no-caps color=primary").tooltip(
-                "Back up the database (local folder or download)"
+        with (
+            ui.tabs(value="devops")
+            .props(
+                f'horizontal dense active-color="{core.theme.get("accent")}" '
+                f'indicator-color="{core.theme.get("accent")}"'
             )
+            .classes(UI_STYLES.get_layout_classes("tab_label"))
+        ) as main_tabs:
+            ui.tab("devops", label="DevOps", icon="cloud_sync")
+            ui.tab("tags", label="Tags", icon="label")
+            ui.tab("theme", label="Theme", icon="color_lens")
+            ui.tab("data", label="Data", icon="storage")
 
-        with toolbar_group(core.theme, divider_after=False):
+    def _render_sync_card():
+        """DevOps sync controls — moved out of the toolbar into the section."""
+        with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+            ui.label("Synchronisation").classes(
+                f"text-sm font-semibold text-{core.theme.get('accent')}"
+            )
             if _eng is None:
-                ui.label("DevOps not configured").classes(
-                    UI_STYLES.get_layout_classes("muted_text_xs")
-                ).tooltip("Add a customer with PAT token + org URL to enable syncing")
-            else:
+                ui.label(
+                    "DevOps not configured — add a customer with a PAT token and "
+                    "org URL to enable syncing."
+                ).classes(UI_STYLES.get_layout_classes("muted_text_xs") + " mt-1")
+                return
+
+            with ui.row().classes("w-full items-center gap-3 no-wrap mt-1"):
                 _sync_lbl = ui.label(
                     f"incr: {_fmt_time(_eng.last_incremental_sync)}  ·  "
                     f"full: {_fmt_time(_eng.last_full_sync)}"
-                ).classes(UI_STYLES.get_layout_classes("muted_text_xs"))
+                ).classes(UI_STYLES.get_layout_classes("muted_text_xs") + " flex-1")
 
                 def _refresh_sync_labels():
                     try:
@@ -908,120 +976,37 @@ async def settings_page():
                     _refresh_sync_labels()
 
                 ui.button("Incremental", icon="sync", on_click=_run_incr).props(
-                    "color=primary dense outline"
+                    "color=primary dense outline no-caps"
                 )
                 ui.button("Full Sync", icon="cloud_download", on_click=_run_full).props(
-                    "color=primary dense outline"
+                    "color=primary dense outline no-caps"
                 )
 
-    with page_card(scrollable=False):
-        with ui.row().classes("w-full h-full gap-0 overflow-hidden"):
+    with (
+        ui.tab_panels(main_tabs, value="devops")
+        .props("vertical")
+        .classes("wt-page-content w-full")
+        .style("background: transparent;")
+    ):
+        with ui.tab_panel("devops").classes("p-0 h-full"):
+            with ui.scroll_area().classes("w-full h-full"):
+                with ui.column().classes("w-full gap-4 p-4"):
+                    _render_sync_card()
+                    await _render_devops_contacts_tab(core)
 
-            # ── Left sidebar ──────────────────────────────────────────────────
-            with ui.element("div").classes(
-                "w-56 h-full flex flex-col shrink-0 py-1 overflow-y-auto"
-            ).style("border-right: 1px solid #475569"):
+        with ui.tab_panel("tags").classes("p-0 h-full"):
+            with ui.scroll_area().classes("w-full h-full"):
+                with ui.column().classes("w-full gap-4 p-4"):
+                    await _render_devops_tags_tab(core)
 
-                # ── CONTACTS (accordion row) ──────────────────────────────────
-                with ui.row().classes(
-                    "w-full items-center px-2 py-2.5 gap-1.5 cursor-pointer bg-slate-700"
-                ).on("click", _toggle_contacts) as contacts_row:
+        with ui.tab_panel("theme").classes("p-0 h-full"):
+            with ui.scroll_area().classes("w-full h-full"):
+                with ui.column().classes("w-full gap-4 p-4"):
+                    await _render_theme_tab(core)
 
-                    exp_icon = ui.icon("expand_more", size="xs").classes(
-                        f"text-{core.theme.get('accent')} shrink-0"
-                    )
-                    ui.icon("contacts", size="xs").classes(
-                        f"text-{core.theme.get('muted')} shrink-0"
-                    )
-                    ui.label("DevOps Contacts").classes(
-                        "text-sm text-white flex-1 truncate leading-tight"
-                    )
-                    with ui.row().classes("gap-0 shrink-0"):
-                        ui.button(
-                            icon="add",
-                            on_click=lambda: contacts_reg.get("add") and contacts_reg["add"](),
-                        ).props("flat dense round size=xs color=primary").tooltip("Add customer")
-                        ui.button(
-                            icon="restart_alt",
-                            on_click=lambda: contacts_reg.get("reset") and contacts_reg["reset"](),
-                        ).props("flat dense round size=xs color=primary").tooltip("Reset")
-
-                row_refs["contacts"] = contacts_row
-                _expand_icon["el"]   = exp_icon
-
-                # ── customer sub-list ─────────────────────────────────────────
-                contacts_sub = ui.element("div").classes("w-full")
-                contacts_reg["list_container"] = contacts_sub
-                _sub_list["el"] = contacts_sub
-
-                ui.separator().classes("my-0.5 mx-3")
-
-                # ── TAGS (plain row) ──────────────────────────────────────────
-                with ui.row().classes(
-                    "w-full items-center px-2 py-2.5 gap-1.5 cursor-pointer hover:bg-slate-700"
-                ).on("click", lambda: _switch("tags")) as tags_row:
-                    ui.icon("label", size="xs").classes(
-                        f"text-{core.theme.get('muted')} shrink-0"
-                    )
-                    ui.label("DevOps Tags").classes(
-                        "text-sm text-white flex-1 truncate leading-tight"
-                    )
-                    with ui.row().classes("gap-0 shrink-0"):
-                        ui.button(
-                            icon="add",
-                            on_click=lambda: tags_reg.get("add") and tags_reg["add"](),
-                        ).props("flat dense round size=xs color=primary").tooltip("Add tag")
-                        ui.button(
-                            icon="restart_alt",
-                            on_click=lambda: tags_reg.get("reset") and tags_reg["reset"](),
-                        ).props("flat dense round size=xs color=primary").tooltip("Reset")
-
-                row_refs["tags"] = tags_row
-
-                ui.separator().classes("my-0.5 mx-3")
-
-                # ── THEME (plain row) ─────────────────────────────────────────
-                with ui.row().classes(
-                    "w-full items-center px-2 py-2.5 gap-1.5 cursor-pointer hover:bg-slate-700"
-                ).on("click", lambda: _switch("theme")) as theme_row:
-                    ui.icon("color_lens", size="xs").classes(
-                        f"text-{core.theme.get('muted')} shrink-0"
-                    )
-                    ui.label("Theme").classes(
-                        "text-sm text-white flex-1 truncate leading-tight"
-                    )
-                    with ui.row().classes("gap-0 shrink-0"):
-                        ui.button(
-                            icon="restart_alt",
-                            on_click=lambda: theme_reg.get("reset") and theme_reg["reset"](),
-                        ).props("flat dense round size=xs color=primary").tooltip("Reset")
-
-                row_refs["theme"] = theme_row
-
-            # ── Right panels (pre-rendered, toggled via hidden class) ─────────
-            with ui.element("div").classes("flex-1 h-full overflow-hidden relative"):
-
-                # Contacts — active by default
-                with ui.element("div").classes("absolute inset-0") as p:
-                    await _render_devops_contacts_tab(core, contacts_reg)
-                panel_refs["contacts"] = p
-
-                # Tags
-                with ui.element("div").classes("absolute inset-0 hidden") as p:
-                    with ui.scroll_area().classes("w-full h-full"):
-                        with ui.column().classes("w-full gap-4 p-4"):
-                            await _render_devops_tags_tab(core, tags_reg)
-                panel_refs["tags"] = p
-
-                # Theme
-                with ui.element("div").classes("absolute inset-0 hidden") as p:
-                    with ui.scroll_area().classes("w-full h-full"):
-                        with ui.column().classes("w-full gap-4 p-4"):
-                            await _render_theme_tab(core, theme_reg)
-                panel_refs["theme"] = p
-
-    # wire switch callback so customer clicks work from any panel
-    contacts_reg["switch_to_contacts"] = lambda: _switch("contacts")
-    # populate the sidebar customer list after all panels are rendered
-    if contacts_reg.get("rebuild"):
-        contacts_reg["rebuild"]()
+        with ui.tab_panel("data").classes("p-0 h-full"):
+            with ui.scroll_area().classes("w-full h-full"):
+                with ui.column().classes("w-full gap-4 p-4"):
+                    _render_backup_card(core)
+                    _render_time_settings_card(core)
+                    await _render_about_card(core)
