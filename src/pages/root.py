@@ -14,6 +14,7 @@ from . import (
     settings_page,
 )
 from ..core.app import AppCore
+from ..ui.command_palette import setup_command_palette
 
 
 # Layout CSS injected per-client (ui.add_head_html must run inside a page context).
@@ -120,6 +121,7 @@ async def _setup_spa_shell():
     ui.add_head_html(_LAYOUT_CSS)
     core = await AppCore.get_or_initialize()
     core.nav_bar.render()
+    setup_command_palette(core)  # global Ctrl+K — one dialog + binding per client
 
     # Register timer indicator — once per client
     if not app.storage.client.get("timer_indicator_registered", False):

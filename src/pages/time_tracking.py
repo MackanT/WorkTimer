@@ -8,7 +8,7 @@ Full time tracking interface with customer/project cards, timers, and DevOps int
 - Granular updates where possible (update_time_tracker) vs full rebuilds (render_time_tracker)
 """
 
-from nicegui import ui
+from nicegui import app, context, ui
 import asyncio
 import pandas as pd
 from datetime import datetime, timedelta
@@ -649,7 +649,18 @@ async def time_tracking_page():
             return
 
         # Unchecked - show dialog for saving comment/DevOps
-        checkbox = event.sender
+        await open_stop_dialog_for(customer_id_int, project_id_int, event.sender)
+
+    async def open_stop_dialog_for(customer_id_int, project_id_int, checkbox=None):
+        """The stop-a-timer flow (comment / project / stop-time dialog) — shared
+        by the checkbox uncheck and the command palette. `checkbox` is the row's
+        checkbox so cancel/save keep its visual state truthful in both flows."""
+
+        def _sync_checkbox(value: bool):
+            nonlocal ignore_next_checkbox_event
+            if checkbox is not None and checkbox.value != value:
+                ignore_next_checkbox_event = True
+                checkbox.set_value(value)
 
         async def handle_save(
             git_id_val, comment, store_to_devops, new_project_id=None, end_time=None
@@ -666,6 +677,7 @@ async def time_tracking_page():
                     end_time=end_time,
                 )
                 await on_timer_stopped(customer_id_int, project_id_int)
+                _sync_checkbox(False)  # palette flow: box is still checked
 
                 core.event_bus.notify("Entry saved successfully!", type_="positive")
 
@@ -701,12 +713,11 @@ async def time_tracking_page():
                 "delete_time_row", customer_id_int, project_id_int
             )
             await on_timer_stopped(customer_id_int, project_id_int)
+            _sync_checkbox(False)
 
         def handle_close():
-            """Close dialog without saving - reset checkbox."""
-            nonlocal ignore_next_checkbox_event
-            ignore_next_checkbox_event = True
-            checkbox.set_value(True)
+            """Close dialog without saving - the timer keeps running."""
+            _sync_checkbox(True)
 
         await show_time_entry_dialog(
             customer_id=customer_id_int,
@@ -1412,5 +1423,48 @@ async def time_tracking_page():
         "ui_refresh_requested", _on_ui_refresh, key="time_tracking_page"
     )
 
+    # ── command-palette integration ────────────────────────────────────────
+    # The palette can start/stop timers from any page: a start emits
+    # "timer_state_changed" (full rebuild so the checkbox state is truthful);
+    # a stop is handed over as a pending request — the event covers "already on
+    # this page", the storage flag covers arriving via navigation. The flag is
+    # only cleared after the dialog actually opened, so a stale handler from a
+    # previous page render failing can't swallow the request.
+    #
+    # Event handlers run as bare asyncio tasks with no slot context, so:
+    #  - the client is captured here (app.storage.client would raise), and
+    #  - a liveness guard makes registrations from departed page renders exit
+    #    silently (register_unique replaces them, but an emit can race the swap).
+    page_client = context.client
+
+    def _page_is_live() -> bool:
+        try:
+            return container.id in page_client.elements
+        except Exception:
+            return False
+
+    async def _maybe_open_pending_stop():
+        pending = page_client.storage.get("palette_stop")
+        if not pending or not _page_is_live():
+            return
+        cid, pid = int(pending[0]), int(pending[1])
+        await open_stop_dialog_for(cid, pid, checkbox_refs.get((cid, pid)))
+        page_client.storage["palette_stop"] = None
+
+    def _on_timer_state_changed(**_):
+        if _page_is_live():
+            asyncio.create_task(render_time_tracker())
+
+    def _on_palette_stop(**_):
+        asyncio.create_task(_maybe_open_pending_stop())
+
+    core.event_bus.register_unique(
+        "timer_state_changed", _on_timer_state_changed, key="time_tracking_page"
+    )
+    core.event_bus.register_unique(
+        "palette_stop_timer", _on_palette_stop, key="time_tracking_page"
+    )
+
     await render_time_tracker()
     await update_tab_indicator_now()  # Populate active-timer chips on initial load
+    await _maybe_open_pending_stop()  # Palette stop request that navigated here
