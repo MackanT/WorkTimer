@@ -21,7 +21,7 @@ from pathlib import Path
 
 from nicegui import app, ui
 
-from .devops_forms import open_work_item_dialog
+from .devops_forms import open_add_work_item_dialog, open_work_item_dialog
 
 _MAX_ROWS = 12
 _ROW_SELECTED_STYLE = "background: rgba(56, 189, 248, 0.18);"
@@ -113,16 +113,26 @@ def setup_command_palette(core) -> None:
                 "action": _go_board_view,
             })
 
-        # Create work items — handed over to the board page (same pattern as
-        # stop-timer): the event covers "already on /board", the storage flag
-        # covers arriving via navigation.
+        # Create work items — the shared add dialog opens right over whatever
+        # page is showing (no navigation). Seeded with the board's remembered
+        # customer; a successful add emits devops_refreshed so an open board
+        # reloads.
         if core.devops_engine is not None:
             for wtype in core.devops_engine.type_hierarchy():
 
                 async def _add_item(t=wtype):
-                    app.storage.client["palette_add_item"] = t
-                    core.event_bus.emit("palette_add_item")
-                    _go_to("/board")
+                    async def _added():
+                        core.event_bus.emit("devops_refreshed")
+
+                    dlg = await open_add_work_item_dialog(
+                        core,
+                        preset_customer=app.storage.user.get("devops_customer"),
+                        preset_type=t,
+                        on_success=_added,
+                    )
+                    if dlg is not None:
+                        # Lives in the long-lived shell host — dispose on close.
+                        dlg.on("hide", lambda: dlg.delete())
 
                 cmds.append({
                     "label": f"Add {wtype}",

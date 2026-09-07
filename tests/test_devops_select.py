@@ -79,10 +79,11 @@ def test_unparseable_text_is_none():
 
 
 def test_options_for_customer_filters_active_and_customer():
-    # Only Acme's Active/New items — the Closed one and Beta are excluded.
+    # Only Acme's Active/New items — the Closed one and Beta are excluded —
+    # sorted newest-id first (most likely related to current work).
     assert _engine_with(_WORK_ITEMS).get_work_item_options("Acme") == [
-        {"label": "US: 1 - A", "id": 1},
         {"label": "Bug: 2 - B", "id": 2},
+        {"label": "US: 1 - A", "id": 1},
     ]
 
 

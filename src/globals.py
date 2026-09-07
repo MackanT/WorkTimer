@@ -170,6 +170,8 @@ class DevOpsEngine:
         active = self.df[self.df["state"].isin(["Active", "New"])]
         if customer_name is not None:
             active = active[active["customer_name"] == customer_name]
+        # Newest (highest id) first — most likely related to current work.
+        active = active.sort_values("id", ascending=False)
 
         def _row_option(row):
             if pd.isna(row.get("id")) or pd.isna(row.get("display_name")):

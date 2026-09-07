@@ -96,7 +96,8 @@ class PageState:
 def recommended_first(cust_df: pd.DataFrame, selectable_labels: list, default_id) -> tuple:
     """Order work-item options so the project's default item and its whole
     subtree come first (BFS: the item, then children, then grandchildren —
-    each level by id), the remaining options after, original order kept.
+    each level newest-id first), the remaining options after, original order
+    kept.
 
     Returns (ordered_labels, recommended_count) — the first `recommended_count`
     entries belong to the default item's subtree, so callers can mark them.
@@ -129,7 +130,7 @@ def recommended_first(cust_df: pd.DataFrame, selectable_labels: list, default_id
             continue
         seen.add(cur)
         order.append(cur)
-        queue.extend(sorted(children.get(cur, [])))
+        queue.extend(sorted(children.get(cur, []), reverse=True))
 
     selectable = set(selectable_labels)
     rec = [labels_by_id[i] for i in order if labels_by_id.get(i) in selectable]
@@ -438,9 +439,10 @@ async def time_tracking_page():
         first as the recommended picks; everything else follows."""
         id_checkbox = None
         cust_df = devops_engine.df[devops_engine.df["customer_name"] == c_name]
+        # Newest (highest id) first — most likely related to current work.
         id_options = cust_df[cust_df["state"].isin(["Active", "New"])][
             ["display_name", "id"]
-        ].dropna()
+        ].dropna().sort_values("id", ascending=False)
         options = id_options["display_name"].tolist()
         rec_count = 0
         if has_git_id:

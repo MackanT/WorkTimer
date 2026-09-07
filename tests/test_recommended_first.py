@@ -33,12 +33,13 @@ SELECTABLE = [
 
 def test_epic_default_floats_whole_subtree_bfs():
     out, n = recommended_first(_cust_df(), SELECTABLE, 1)
-    # BFS from epic 1: (1 not selectable) → features 2,3 → stories 4,5; rest after.
+    # BFS from epic 1, each level newest-id first: (1 not selectable) →
+    # features 3,2 → stories 5,4; rest after.
     assert out == [
-        "Feature: 2 - A",
         "Feature: 3 - B",
-        "User Story: 4 - A1",
+        "Feature: 2 - A",
         "User Story: 5 - B1",
+        "User Story: 4 - A1",
         "Epic: 9 - Other",
     ]
     assert n == 4  # the first four are the recommended subtree

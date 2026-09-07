@@ -237,6 +237,149 @@ async def open_work_item_dialog(
             loading_box.clear()
 
 
+async def open_add_work_item_dialog(
+    core,
+    preset_customer: str | None = None,
+    preset_type: str | None = None,
+    preset_parent: str | None = None,
+    on_success=None,
+):
+    """Open the full DevOps add form in a dialog, page-independently.
+
+    Used by the board (＋ button), the hierarchy view (＋ with `preset_parent`
+    pre-selecting the focused node as parent) and the command palette ("Add
+    Epic/Feature/User Story" over whatever page is open). `on_success` (async,
+    optional) runs after a successful save. Returns the dialog so long-lived
+    callers can dispose of it on close."""
+    add_cfg = core.ui_config.get("board_devops_forms", {}).get("add", {})
+    muted = core.theme.get("muted")
+
+    with ui.dialog().props("maximized") as dlg:
+        with ui.card().style(_DIALOG_CARD_STYLE).props("flat bordered"):
+            form_actions: dict = {"submit": None}
+
+            async def _submit_from_header():
+                submit_fn = form_actions.get("submit")
+                if submit_fn:
+                    await submit_fn()
+
+            # Match the update dialog look with a top context bar.
+            with ui.row().classes("items-center gap-2 no-wrap w-full").style(
+                "padding: 0.6rem 0.8rem; flex-shrink: 0;"
+            ):
+                ui.icon("add_circle", size="16px").classes("text-primary shrink-0")
+                ui.label("New Work Item").classes(
+                    f"text-{muted} text-xs uppercase tracking-wide shrink-0"
+                )
+                ui.label("·").classes(f"text-{muted} text-xs shrink-0")
+                type_label = ui.label(preset_type or "User Story").classes(
+                    f"text-{muted} text-xs shrink-0"
+                )
+                customer_label = ui.label(preset_customer or "").classes(
+                    "text-sm font-semibold flex-1"
+                ).style("overflow:hidden; text-overflow:ellipsis; white-space:nowrap;")
+                ui.space()
+                ui.button("Add", icon="save", on_click=_submit_from_header).props(
+                    "dense color=primary"
+                )
+                ui.button("Cancel", icon="close", on_click=dlg.close).props(
+                    "flat dense color=grey-6"
+                )
+            ui.separator()
+
+            async def _on_add_success():
+                dlg.close()
+                if on_success:
+                    await on_success()
+
+            result = await render_devops_form(
+                core, "add", add_cfg,
+                on_success=_on_add_success,
+                show_internal_header=False,
+            )
+
+            _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
+            form_actions["submit"] = submit_fn
+
+            if widgets:
+                if preset_customer and "customer_name" in widgets:
+                    widgets["customer_name"].widget.value = preset_customer
+                    widgets["customer_name"].widget.update()
+                wtype = preset_type or "User Story"
+                if wtype and "work_item_type" in widgets:
+                    widgets["work_item_type"].widget.value = wtype
+                    widgets["work_item_type"].widget.update()
+
+                def _sync_add_header(_e=None):
+                    if "work_item_type" in widgets:
+                        type_label.set_text(
+                            str(widgets["work_item_type"].widget.value or "User Story")
+                        )
+                    if "customer_name" in widgets:
+                        customer_label.set_text(
+                            str(widgets["customer_name"].widget.value or "")
+                        )
+
+                if "work_item_type" in widgets:
+                    widgets["work_item_type"].on_value_change(_sync_add_header)
+                if "customer_name" in widgets:
+                    widgets["customer_name"].on_value_change(_sync_add_header)
+                _sync_add_header()
+
+                # The customer/type values above are set programmatically, which does
+                # not fire the widgets' "update:model-value" browser event that normally
+                # triggers board-column loading — so call it once here directly.
+                if load_fn:
+                    await load_fn()
+
+                # Pre-parent the new item (hierarchy ＋ on a focused node).
+                # Same pattern as the update dialog's work_item pre-fill:
+                # refresh loads the options for the current customer, then
+                # the value is set on top of them.
+                if preset_parent and "parent_name" in widgets:
+                    await widgets["parent_name"].refresh()
+                    widgets["parent_name"].widget.value = preset_parent
+                    widgets["parent_name"].widget.update()
+
+                # Image insert (button + paste) on the Description editor —
+                # parity with the update dialog. Here the customer is chosen
+                # in the form and can change, so resolve it at upload time and
+                # keep the paste target in sync when it changes.
+                desc = widgets.get("description_editor")
+                cust_w = widgets.get("customer_name")
+                if (
+                    desc is not None and cust_w is not None
+                    and hasattr(desc, "enable_image_upload")
+                    and core.devops_engine is not None
+                ):
+                    async def _add_image_uploader(name, content):
+                        cust_now = cust_w.widget.value
+                        if not cust_now:
+                            ui.notify("Pick a customer first", type="warning")
+                            return None
+                        return await asyncio.to_thread(
+                            core.devops_engine.upload_attachment,
+                            cust_now, name, content,
+                        )
+
+                    desc.enable_image_upload(
+                        _add_image_uploader,
+                        paste_endpoint="/upload_devops_image",
+                        paste_fields={"customer": cust_w.widget.value or ""},
+                    )
+
+                    def _sync_paste_customer(_e=None):
+                        desc.update_paste_fields(
+                            "/upload_devops_image",
+                            {"customer": cust_w.widget.value or ""},
+                        )
+
+                    cust_w.on_value_change(_sync_paste_customer)
+
+    dlg.open()
+    return dlg
+
+
 def _render_comment(comment: dict) -> None:
     """Render one Azure DevOps comment (author/date header + body)."""
     with ui.card().props("flat bordered").classes("w-full"):
