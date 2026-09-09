@@ -140,11 +140,13 @@ class NavigationBar:
         """Legacy shim — delegates to set_active_timers."""
         self.set_active_timers(tooltip_lines or [] if active else [])
 
-    def set_update_available(self, version: str | None) -> None:
+    def set_update_available(self, version: str | None, on_click=None) -> None:
         """Show or hide the update badge in the nav bar right side.
 
         Args:
             version: Latest version string to display, or None/empty to hide.
+            on_click: optional handler (e.g. a what's-new preview) — makes the
+                badge clickable.
         """
         if self._update_badge is None:
             return
@@ -153,14 +155,19 @@ class NavigationBar:
             return
         with self._update_badge:
             ui.icon("upgrade", size="xs").classes("text-amber-400 shrink-0")
-            (
+            pill = (
                 ui.label(f"v{version} available")
                 .classes(
                     "text-xs text-amber-300 border border-amber-600"
                     " px-2 py-0.5 rounded-full whitespace-nowrap"
                 )
-                .tooltip("Update with: git pull (then restart the app)")
+                .tooltip(
+                    "Update with: git pull (then restart the app)"
+                    + (" — click to see what's new" if on_click else "")
+                )
             )
+            if on_click:
+                pill.classes("cursor-pointer").on("click", on_click)
 
     def set_active(self, path: str, theme: dict):
         """Update the active navigation button"""

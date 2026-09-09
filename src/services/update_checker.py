@@ -19,6 +19,10 @@ _PYPROJECT_URL = (
     "https://raw.githubusercontent.com/mackant/worktimer"
     "/refs/heads/main/pyproject.toml"
 )
+_CHANGELOG_URL = (
+    "https://raw.githubusercontent.com/mackant/worktimer"
+    "/refs/heads/main/docs/CHANGELOG.md"
+)
 _CHECK_INTERVAL = timedelta(hours=24)
 
 # Process-level cache so multiple clients don't re-trigger the network call
@@ -49,6 +53,28 @@ def _current_version() -> str:
             return tomllib.load(f)["project"]["version"]
     except Exception:
         return "unknown"
+
+
+def extract_whats_new(changelog_text: str, since_version: str) -> str:
+    """The changelog sections for versions strictly newer than `since_version`,
+    as markdown ('### x.y.z (date)' headings and their bodies). Empty string
+    when there is nothing newer (or nothing parseable)."""
+    import re
+
+    out = []
+    for sec in re.split(r"(?m)^### ", changelog_text or "")[1:]:
+        m = re.match(r"(\d+\.\d+\.\d+)", sec)
+        if m and _is_newer(m.group(1), since_version):
+            out.append("### " + sec.rstrip())
+    return "\n\n".join(out)
+
+
+def fetch_remote_changelog_blocking() -> str:
+    """Blocking fetch of main's CHANGELOG.md — run in a thread executor. Used
+    by the update badge's what's-new preview (the local changelog predates the
+    version the badge is announcing)."""
+    with urllib.request.urlopen(_CHANGELOG_URL, timeout=5) as resp:
+        return resp.read().decode("utf-8")
 
 
 def _fetch_latest_blocking() -> str:

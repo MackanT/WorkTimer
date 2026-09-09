@@ -132,17 +132,86 @@ async def _setup_spa_shell():
 
         core.event_bus.register("active_timer_count_changed", _on_timer_count_changed)
 
-        # Background update check — fires once per process per 24 h
+        # ── What's-new dialog (shared by the update badge + post-update popup) ──
+        # Built inside a shell-level host: callers run as background tasks with
+        # no slot context, so the target slot must be entered explicitly.
+        _whats_new_host = ui.element("div").classes("hidden")
+
+        def _show_whats_new(md_text: str, title: str):
+            with _whats_new_host, ui.dialog() as dlg, ui.card().classes(
+                "rounded-lg"
+            ).style(
+                "min-width: 480px; max-width: min(720px, 92vw);"
+            ):
+                with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                    ui.icon("new_releases", size="sm").classes("text-amber-400")
+                    ui.label(title).classes("text-base font-semibold flex-1")
+                    ui.button(icon="close", on_click=dlg.close).props(
+                        "flat dense round color=grey-6"
+                    )
+                with ui.scroll_area().classes("w-full").style("max-height: 60vh;"):
+                    ui.markdown(md_text)
+            dlg.on("hide", lambda: dlg.delete())  # shell-lived — don't accumulate
+            dlg.open()
+
+        # Background update check — fires once per process per 24 h. The badge
+        # is clickable: it fetches main's changelog (the local one predates the
+        # announced version) and shows the sections newer than this install.
         async def _check_for_update():
-            from ..services.update_checker import check_for_update
+            from ..services.update_checker import (
+                check_for_update,
+                extract_whats_new,
+                fetch_remote_changelog_blocking,
+            )
             try:
                 result = await check_for_update()
                 if result["available"]:
-                    core.nav_bar.set_update_available(result["latest"])
+
+                    async def _show_remote_whats_new():
+                        try:
+                            loop = asyncio.get_event_loop()
+                            text = await loop.run_in_executor(
+                                None, fetch_remote_changelog_blocking
+                            )
+                            news = extract_whats_new(text, result["current"])
+                        except Exception:
+                            news = ""
+                        _show_whats_new(
+                            news or "_Could not load the changelog._",
+                            f"What's new in v{result['latest']}",
+                        )
+
+                    core.nav_bar.set_update_available(
+                        result["latest"], on_click=_show_remote_whats_new
+                    )
             except Exception:
                 pass
 
         asyncio.create_task(_check_for_update())
+
+        # Post-update popup — once per install after a version change: show the
+        # local changelog sections between the last-seen version and this one.
+        async def _maybe_show_post_update_news():
+            from pathlib import Path
+
+            from ..services.update_checker import _current_version, extract_whats_new
+
+            try:
+                current = _current_version()
+                last_seen = app.storage.general.get("last_seen_version")
+                app.storage.general["last_seen_version"] = current
+                if not last_seen or last_seen == current or current == "unknown":
+                    return  # first run ever, or no change — no popup
+                changelog = (
+                    Path(__file__).parent.parent.parent / "docs" / "CHANGELOG.md"
+                ).read_text(encoding="utf-8")
+                news = extract_whats_new(changelog, last_seen)
+                if news:
+                    _show_whats_new(news, f"WorkTimer updated to v{current}")
+            except Exception:
+                pass
+
+        asyncio.create_task(_maybe_show_post_update_news())
 
         # Set initial nav-bar state from DB
         try:
