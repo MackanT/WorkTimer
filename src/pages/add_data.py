@@ -313,6 +313,12 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
     try:
         if entity_type == "customer":
+            # Registered tracker providers feed the "Tracker" selector — a new
+            # provider module (e.g. Jira) appears here automatically.
+            from ..trackers.registry import available_providers
+
+            data_sources["integration_types"] = available_providers()
+
             if operation in ["update", "disable"]:
                 # Get active customers
                 df = await QE.query_db(
@@ -326,7 +332,8 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     # For update, we need current values per customer
                     full_df = await QE.query_db(
                         "SELECT customer_name, org_url, pat_token, devops_project, "
-                        "expected_work_pct, billing_round_minutes, color "
+                        "expected_work_pct, billing_round_minutes, color, "
+                        "coalesce(integration_type, 'devops') as integration_type "
                         "FROM customers WHERE is_current = 1"
                     )
                     data_sources["org_url"] = {}
@@ -337,10 +344,14 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     data_sources["expected_work_pct"] = {}
                     data_sources["billing_round_minutes"] = {}
                     data_sources["color"] = {}
+                    data_sources["integration_type_current"] = {}
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
                         data_sources["org_url"][cname] = row["org_url"] or ""
                         data_sources["pat_token"][cname] = row["pat_token"] or ""
+                        data_sources["integration_type_current"][cname] = (
+                            row["integration_type"] or "devops"
+                        )
                         data_sources["new_customer_name"][cname] = cname
                         data_sources["devops_project_current"][cname] = (
                             row["devops_project"] or ""
