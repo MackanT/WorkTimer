@@ -248,7 +248,7 @@ def setup_command_palette(core) -> None:
             return state["_item_index"]
         cols = [
             c for c in ("title", "assigned_to", "state", "board_column",
-                        "customer_name", "type")
+                        "customer_name", "type", "description")
             if c in df.columns
         ]
         hay = df[cols].fillna("").astype(str).agg(" ".join, axis=1)
@@ -300,7 +300,11 @@ def setup_command_palette(core) -> None:
             )
 
             async def _open_item(item=row_dict):
-                await open_work_item_dialog(core, item)
+                # The dialog lives in the long-lived shell host — delete it once
+                # closed so repeated lookups don't accumulate dead elements.
+                dlg = await open_work_item_dialog(core, item)
+                if dlg is not None:
+                    dlg.on("hide", lambda: dlg.delete())
 
             entries.append({
                 "label": f"{r.get('display_name') or ''}  ·  {r.get('customer_name')}",

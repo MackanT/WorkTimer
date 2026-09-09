@@ -29,6 +29,7 @@ WORK_ITEM_COLUMNS = [
     "assigned_to",
     "changed_date",
     "priority",
+    "description",  # plain-text (tags stripped, truncated) — for search only
 ]
 
 # Work-item levels root → leaf. Used as the fallback wherever no provider is

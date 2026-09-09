@@ -224,7 +224,8 @@ class Database:
                     board_column_done integer,
                     assigned_to text,
                     changed_date text,
-                    priority integer
+                    priority integer,
+                    description text
                 )
                 """)
                 self.log_engine.info("Table 'devops' created successfully.")
@@ -660,6 +661,7 @@ class Database:
         expected_work_pct: float = None,
         billing_round_minutes: int = None,
         color: str = None,
+        integration_type: str = None,
     ):
         now = datetime.now()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -696,8 +698,8 @@ class Database:
         # Insert new customer row
         self.execute_query(
             """
-            insert into customers (customer_name, start_date, wage, pat_token, org_url, devops_project, expected_work_pct, billing_round_minutes, color, valid_from, valid_to, is_current, inserted_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            insert into customers (customer_name, start_date, wage, pat_token, org_url, devops_project, expected_work_pct, billing_round_minutes, color, integration_type, valid_from, valid_to, is_current, inserted_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """,
             (
                 customer_name,
@@ -709,6 +711,7 @@ class Database:
                 expected_work_pct,
                 billing_round_minutes,
                 color or None,
+                integration_type or "devops",
                 valid_from,
                 None,
                 now_str,
@@ -753,6 +756,7 @@ class Database:
         expected_work_pct: float = None,
         billing_round_minutes: int = None,
         color: str = None,
+        integration_type: str = None,
     ):
         # None means "leave unchanged" — the old unconditional SET wiped
         # org_url/pat_token whenever a caller omitted them. Pass "" to clear.
@@ -778,6 +782,10 @@ class Database:
         if color is not None:
             set_clauses.append("color = ?")
             params.append(color or None)
+        if integration_type:
+            # Never blanked — a customer always has a tracker (default devops).
+            set_clauses.append("integration_type = ?")
+            params.append(integration_type)
         params.append(customer_name)
         self.execute_query(
             f"update customers set {', '.join(set_clauses)} where customer_name = ?",
@@ -1497,6 +1505,7 @@ class Database:
                     ("assigned_to", "TEXT", None, None),
                     ("changed_date", "TEXT", None, None),
                     ("priority", "INTEGER", None, None),
+                    ("description", "TEXT", None, None),
                 ],
                 "tasks": [
                     ("task_id", "INTEGER", None, None),

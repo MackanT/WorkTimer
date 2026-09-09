@@ -197,11 +197,12 @@ async def board_page():
 
         # Free-text search across each card's visible fields (title, assignee,
         # state, board column, and #id) — case-insensitive substring match.
-        # Descriptions aren't in the df, so they're not searched.
+        # Descriptions are cached as plain text during sync, so they match too.
         query = (filter_state.get("search") or "").strip().lower()
         if query:
             cols = [
-                c for c in ("title", "assigned_to", "state", "board_column")
+                c for c in ("title", "assigned_to", "state", "board_column",
+                            "description")
                 if c in DO.df.columns
             ]
             haystack = DO.df[cols].fillna("").astype(str).agg(" ".join, axis=1)
@@ -859,4 +860,3 @@ async def board_page():
                     hier.render_content()
 
     _apply_view()
-

@@ -80,6 +80,7 @@ def test_fetch_work_items_normalizes_to_canonical_schema(monkeypatch):
             "System.BoardColumnDone": True,
             "System.AssignedTo": {"displayName": "Dev"},
             "Microsoft.VSTS.Common.Priority": 2,
+            "System.Description": "<p>Fix the <b>login&nbsp;flow</b></p>",
         }),
         SimpleNamespace(id=3, fields={"System.WorkItemType": "Task"}),  # filtered
     ]
@@ -96,6 +97,9 @@ def test_fetch_work_items_normalizes_to_canonical_schema(monkeypatch):
     assert story["parent_id"] == 1
     assert story["board_column_done"] == 1
     assert story["assigned_to"] == "Dev"
+    # Description cached as searchable plain text: tags stripped, entities decoded.
+    assert story["description"] == "Fix the login flow"
+    assert epic["description"] == ""
 
 
 def test_fetch_work_items_empty_result(monkeypatch):

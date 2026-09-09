@@ -9,12 +9,28 @@ Kept as a subclass rather than a file move so the battle-tested client code
 (and its imports in tests) stays put; a future cosmetic pass can relocate it.
 """
 
+import html as _html
+import re
+
 import pandas as pd
 import requests
 
 from .base import TrackerCapabilities, TrackerProvider, WORK_ITEM_COLUMNS
 from .registry import register_provider
 from ..devops import DevOpsClient
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+
+
+def _plain_text(value, limit: int = 2000) -> str:
+    """Searchable plain text from an HTML/markdown description: tags stripped,
+    entities unescaped, whitespace collapsed, truncated to keep the cache lean."""
+    if not value:
+        return ""
+    text = _TAG_RE.sub(" ", str(value))
+    text = _html.unescape(text)
+    return _WS_RE.sub(" ", text).strip()[:limit]
 
 
 def _blankish(val) -> bool:
@@ -104,6 +120,9 @@ class AzureDevOpsProvider(DevOpsClient, TrackerProvider):
                     "assigned_to": _assigned_to(fields),
                     "changed_date": fields.get("System.ChangedDate", ""),
                     "priority": fields.get("Microsoft.VSTS.Common.Priority"),
+                    # Already in the expand="All" payload — cached as plain text
+                    # so board search / palette find can match description bodies.
+                    "description": _plain_text(fields.get("System.Description")),
                 }
             )
         if not rows:
