@@ -334,6 +334,13 @@ add_data_page:
           options: []
           options_source: today
           optional: false
+        - name: integration_type
+          label: Tracker
+          type: select
+          options: []
+          options_source: integration_types
+          default: devops
+          optional: true
         - name: org_url
           label: DevOps Org. URL
           type: input
@@ -379,6 +386,14 @@ add_data_page:
           options_source: new_customer_name
           optional: false
           parent: customer_name
+        - name: integration_type
+          label: Tracker
+          type: select
+          options: []
+          options_source: integration_types
+          default_source: integration_type_current
+          parent: customer_name
+          optional: true
         - name: "org_url"
           label: "DevOps Org. URL"
           type: input
@@ -714,6 +729,11 @@ info_page:
       icon: info
       friendly_name: Info
       file: readme.md
+  shortcuts:
+    meta:
+      icon: keyboard
+      friendly_name: Shortcuts
+      file: shortcuts.md
   read_me:
     meta:
       icon: change_history
