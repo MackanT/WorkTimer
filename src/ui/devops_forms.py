@@ -236,6 +236,10 @@ async def open_work_item_dialog(
 
             loading_box.clear()
 
+    # Returned so long-lived callers (the command palette's find-mode) can
+    # dispose of the dialog on close; page-scoped callers may ignore it.
+    return dlg
+
 
 async def open_add_work_item_dialog(
     core,
