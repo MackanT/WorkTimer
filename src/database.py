@@ -12,6 +12,18 @@ class Database:
     _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
     _QUERY_EDITABLE_TABLES = {"time", "customers", "projects"}
 
+    # Seed for the query page's default "customers" query. Class-level so the
+    # legacy-column drop can also repair the stored copy on old databases.
+    _CUSTOMERS_DEFAULT_QUERY = """
+                select
+                     customer_id
+                    ,customer_name
+                    ,wage
+                    ,tracker_id
+                from customers
+                where is_current = 1
+                """
+
     def __init__(self, db_file: str, log_engine):
         self.db_file = db_file  # kept for sibling files (e.g. the PAT key)
         self.conn = sqlite3.connect(db_file, check_same_thread=False)
@@ -20,6 +32,16 @@ class Database:
         self.conn.execute("PRAGMA busy_timeout = 5000")
         self._conn_lock = threading.RLock()
         self.log_engine = log_engine
+
+    @staticmethod
+    def _normalize_seed_sql(sql: str) -> str:
+        """Source-indented seed SQL → the form stored in the queries table
+        (dedented, leading blank line removed). Every write of a default
+        query must go through this, or the query page shows raw indentation."""
+        lines = dedent(sql).splitlines()
+        if lines and lines[0].strip() == "":
+            lines = lines[1:]
+        return "\n".join(lines)
 
     def _validate_identifier(self, identifier: str, label: str = "identifier") -> str:
         if not isinstance(identifier, str) or not identifier:
@@ -98,10 +120,9 @@ class Database:
                     customer_name text,
                     start_date datetime,
                     wage real,
-                    pat_token text,
-                    org_url text,
                     devops_project text,
                     integration_type text default 'devops',
+                    tracker_id integer,
                     expected_work_pct real,
                     billing_round_minutes integer,
                     color text,
@@ -270,6 +291,22 @@ class Database:
                 # with "foreign key mismatch" the moment PRAGMA foreign_keys=ON.
                 self.log_engine.info("Table 'tasks' created successfully.")
 
+            ## Trackers Table — a tracker connection is its own object;
+            ## customers link to one via customers.tracker_id. Flat and
+            ## unversioned: credentials are configuration, not billing facts.
+            if not self._table_exists("trackers"):
+                self.execute_query("""
+                create table if not exists trackers (
+                    tracker_id integer primary key autoincrement,
+                    tracker_name text unique,
+                    integration_type text default 'devops',
+                    org_url text,
+                    pat_token text,
+                    inserted_at datetime
+                )
+                """)
+                self.log_engine.info("Table 'trackers' created successfully.")
+
             # Auto-migrate existing databases: add columns introduced in later
             # versions and (re)create missing or outdated triggers. Single
             # source of truth is get_expected_schema().
@@ -279,6 +316,12 @@ class Database:
             # already carrying the enc: prefix are left alone).
             self._encrypt_plaintext_pats()
 
+            # Tracker/customer split: give legacy per-customer credentials a
+            # trackers row and link it (idempotent — only unlinked customers),
+            # then retire the legacy credential columns once nobody needs them.
+            self._migrate_customer_trackers()
+            self._drop_legacy_customer_credentials()
+
             self.conn.commit()
             self.log_engine.info("Database loaded without errors!")
         except Exception as e:
@@ -286,28 +329,36 @@ class Database:
             self.log_engine.error(f"Error initializing database: {e}")
 
     def _encrypt_plaintext_pats(self):
-        """Startup migration: encrypt plaintext customers.pat_token values
-        (every row, history included — backups carry the whole table)."""
+        """Startup migration: encrypt plaintext pat_token values in customers
+        (every row, history included — backups carry the whole table) and
+        trackers."""
         from .pat_crypto import encrypt_pat, encryption_available
 
         if not encryption_available():
             return
         try:
             with self._conn_lock:
-                rows = self.conn.execute(
-                    "select rowid, pat_token from customers "
-                    "where pat_token is not null and pat_token != '' "
-                    "and pat_token not like 'enc:%'"
-                ).fetchall()
                 changed = 0
-                for rowid, pat in rows:
-                    enc = encrypt_pat(pat, self.db_file, self.log_engine)
-                    if enc != pat:
-                        self.conn.execute(
-                            "update customers set pat_token = ? where rowid = ?",
-                            (enc, rowid),
-                        )
-                        changed += 1
+                for table in ("customers", "trackers"):
+                    # customers loses its pat_token column once the legacy
+                    # credentials are dropped — skip it then.
+                    if not self._table_exists(table):
+                        continue
+                    if "pat_token" not in self._get_table_columns(table):
+                        continue
+                    rows = self.conn.execute(
+                        f"select rowid, pat_token from {table} "
+                        "where pat_token is not null and pat_token != '' "
+                        "and pat_token not like 'enc:%'"
+                    ).fetchall()
+                    for rowid, pat in rows:
+                        enc = encrypt_pat(pat, self.db_file, self.log_engine)
+                        if enc != pat:
+                            self.conn.execute(
+                                f"update {table} set pat_token = ? where rowid = ?",
+                                (enc, rowid),
+                            )
+                            changed += 1
                 if changed:
                     self.conn.commit()
                     self.log_engine.info(
@@ -315,6 +366,79 @@ class Database:
                     )
         except Exception as e:
             self.log_engine.error(f"PAT encryption migration failed: {e}")
+
+    def _migrate_customer_trackers(self):
+        """Startup migration for the tracker/customer split: each current
+        customer with embedded credentials and no tracker link gets (or
+        joins) a trackers row. Deduped by type + org + decrypted PAT, so
+        customers that shared credentials end up sharing one tracker. The
+        legacy customer columns are left in place (read only as fallback)."""
+        from .pat_crypto import decrypt_pat
+
+        try:
+            cols = self._get_table_columns("customers")
+            if "pat_token" not in cols or "org_url" not in cols:
+                return  # legacy columns already dropped — nothing to migrate
+            with self._conn_lock:
+                rows = self.conn.execute(
+                    "select customer_name, pat_token, org_url, "
+                    "coalesce(integration_type, 'devops') "
+                    "from customers where is_current = 1 "
+                    "and pat_token is not null and pat_token != '' "
+                    "and org_url is not null and org_url != '' "
+                    "and tracker_id is null"
+                ).fetchall()
+                if not rows:
+                    return
+
+                def _key(itype, org, pat):
+                    return (
+                        str(itype),
+                        str(org).strip().lower(),
+                        decrypt_pat(pat, self.db_file, self.log_engine),
+                    )
+
+                existing = self.conn.execute(
+                    "select tracker_id, integration_type, org_url, pat_token "
+                    "from trackers"
+                ).fetchall()
+                by_key = {_key(t[1], t[2], t[3]): t[0] for t in existing}
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                for cname, pat, org, itype in rows:
+                    key = _key(itype, org, pat)
+                    tid = by_key.get(key)
+                    if tid is None:
+                        tname = f"{str(org).strip()} ({itype})"
+                        base, n = tname, 2
+                        while self.conn.execute(
+                            "select 1 from trackers where tracker_name = ?",
+                            (tname,),
+                        ).fetchone():
+                            tname = f"{base} {n}"
+                            n += 1
+                        cur = self.conn.execute(
+                            "insert into trackers (tracker_name, "
+                            "integration_type, org_url, pat_token, inserted_at) "
+                            "values (?, ?, ?, ?, ?)",
+                            (tname, itype, org, pat, now_str),
+                        )
+                        tid = cur.lastrowid
+                        by_key[key] = tid
+                        self.log_engine.info(
+                            f"Created tracker '{tname}' from customer '{cname}'"
+                        )
+                    self.conn.execute(
+                        "update customers set tracker_id = ? "
+                        "where customer_name = ? and tracker_id is null",
+                        (tid, cname),
+                    )
+                self.conn.commit()
+                self.log_engine.info(
+                    f"Linked {len(rows)} customer(s) to tracker records"
+                )
+        except Exception as e:
+            self.log_engine.error(f"Tracker migration failed: {e}")
 
     def _table_exists(self, table_name: str) -> bool:
         """Return True if the given table exists in the database."""
@@ -368,16 +492,7 @@ class Database:
             ),
             (
                 "customers",
-                """
-                select
-                     customer_id
-                    ,customer_name
-                    ,wage
-                    ,org_url
-                    ,pat_token
-                from customers
-                where is_current = 1
-                """,
+                self._CUSTOMERS_DEFAULT_QUERY,
             ),
             (
                 "projects",
@@ -453,16 +568,10 @@ class Database:
             ),
         ]
 
-        def _strip_leading_blank(sql: str) -> str:
-            lines = sql.splitlines()
-            if lines and lines[0].strip() == "":
-                lines = lines[1:]
-            return "\n".join(lines)
-
         rows = [
             {
                 "query_name": name,
-                "query_sql": _strip_leading_blank(dedent(sql)),
+                "query_sql": self._normalize_seed_sql(sql),
                 "is_default": 1,
             }
             for name, sql in query_settings
@@ -698,15 +807,20 @@ class Database:
         billing_round_minutes: int = None,
         color: str = None,
         integration_type: str = None,
+        tracker_name: str = None,
     ):
         now = datetime.now()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
-        # Never store a plaintext PAT (idempotent for enc:-prefixed values).
-        if pat_token:
-            from .pat_crypto import encrypt_pat
+        # Credentials live on trackers now — the legacy args are accepted for
+        # call compatibility but no longer stored on the customer.
+        if pat_token or org_url:
+            self.log_engine.warning(
+                "insert_customer: org_url/pat_token are ignored — create a "
+                "tracker and pass tracker_name instead"
+            )
 
-            pat_token = encrypt_pat(pat_token, self.db_file, self.log_engine)
+        tracker_id = self.get_tracker_id(tracker_name) if tracker_name else None
 
         if not valid_from:
             valid_from = min(start_date, now.strftime("%Y-%m-%d"))
@@ -721,6 +835,16 @@ class Database:
             (customer_name,),
             data_type="int",
         )
+
+        # A new version of an existing customer keeps its tracker link unless
+        # the caller picked one explicitly.
+        if tracker_id is None and old_customer_id:
+            tracker_id = self._get_value_from_db(
+                "select tracker_id from customers "
+                "where customer_id = ? and is_current = 1",
+                (old_customer_id,),
+                data_type="int",
+            )
 
         if old_customer_id:
             self.execute_query(
@@ -740,20 +864,19 @@ class Database:
         # Insert new customer row
         self.execute_query(
             """
-            insert into customers (customer_name, start_date, wage, pat_token, org_url, devops_project, expected_work_pct, billing_round_minutes, color, integration_type, valid_from, valid_to, is_current, inserted_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            insert into customers (customer_name, start_date, wage, devops_project, expected_work_pct, billing_round_minutes, color, integration_type, tracker_id, valid_from, valid_to, is_current, inserted_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """,
             (
                 customer_name,
                 start_date,
                 wage,
-                pat_token,
-                org_url,
                 devops_project or None,
                 expected_work_pct,
                 billing_round_minutes,
                 color or None,
                 integration_type or "devops",
+                tracker_id,
                 valid_from,
                 None,
                 now_str,
@@ -788,6 +911,185 @@ class Database:
                     f"Updated projects {project_list} to use {customer_name} new id: {new_customer_id}",
                 )
 
+    # ── trackers ──────────────────────────────────────────────────────────
+    def get_tracker_id(self, tracker_name: str):
+        """tracker_id for a tracker name, or None."""
+        return self._get_value_from_db(
+            "select tracker_id from trackers where tracker_name = ?",
+            (tracker_name,),
+            data_type="int",
+        )
+
+    def insert_tracker(
+        self,
+        tracker_name: str,
+        integration_type: str = None,
+        org_url: str = None,
+        pat_token: str = None,
+    ):
+        if self.get_tracker_id(tracker_name):
+            raise ValueError(f"Tracker '{tracker_name}' already exists")
+        if pat_token:
+            from .pat_crypto import encrypt_pat
+
+            pat_token = encrypt_pat(pat_token, self.db_file, self.log_engine)
+        self.execute_query(
+            "insert into trackers (tracker_name, integration_type, org_url, "
+            "pat_token, inserted_at) values (?, ?, ?, ?, ?)",
+            (
+                tracker_name,
+                integration_type or "devops",
+                org_url,
+                pat_token,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+        self.log_engine.info(f"Inserted tracker '{tracker_name}'")
+
+    def update_tracker(
+        self,
+        tracker_name: str,
+        new_tracker_name: str = None,
+        integration_type: str = None,
+        org_url: str = None,
+        pat_token: str = None,
+    ):
+        """None = leave unchanged; '' clears org_url/pat_token."""
+        set_clauses, params = [], []
+        if new_tracker_name and new_tracker_name != tracker_name:
+            set_clauses.append("tracker_name = ?")
+            params.append(new_tracker_name)
+        if integration_type:
+            set_clauses.append("integration_type = ?")
+            params.append(integration_type)
+        if org_url is not None:
+            set_clauses.append("org_url = ?")
+            params.append(org_url)
+        if pat_token is not None:
+            # Never store a plaintext PAT (enc:-prefixed values pass through).
+            from .pat_crypto import encrypt_pat
+
+            set_clauses.append("pat_token = ?")
+            params.append(encrypt_pat(pat_token, self.db_file, self.log_engine))
+        if not set_clauses:
+            return
+        params.append(tracker_name)
+        self.execute_query(
+            f"update trackers set {', '.join(set_clauses)} "
+            "where tracker_name = ?",
+            tuple(params),
+        )
+        self.log_engine.info(f"Updated tracker '{tracker_name}'")
+
+    def delete_tracker(self, tracker_name: str):
+        """Remove a tracker. Customers linked to it are detached (tracker_id
+        NULL) and lose their connection until linked to another tracker."""
+        tracker_id = self.get_tracker_id(tracker_name)
+        if not tracker_id:
+            raise ValueError(f"Tracker '{tracker_name}' not found")
+        self.execute_query(
+            "update customers set tracker_id = null where tracker_id = ?",
+            (tracker_id,),
+        )
+        self.execute_query(
+            "delete from trackers where tracker_id = ?", (tracker_id,)
+        )
+        self.log_engine.info(
+            f"Deleted tracker '{tracker_name}' (linked customers detached)"
+        )
+
+    def _drop_legacy_customer_credentials(self):
+        """Retire customers.pat_token / customers.org_url once every current
+        customer that carried credentials is linked to a tracker. Destructive
+        by design (credentials live on trackers now) and guarded: an unlinked
+        customer with legacy credentials blocks the drop, and a SQLite too
+        old for DROP COLUMN (< 3.35) just leaves the columns in place. Also
+        repairs the query page's stored default 'customers' query, which
+        referenced the dropped columns."""
+        try:
+            cols = self._get_table_columns("customers")
+            legacy = [c for c in ("pat_token", "org_url") if c in cols]
+            if not legacy:
+                return
+            with self._conn_lock:
+                blockers = self.conn.execute(
+                    "select count(*) from customers where is_current = 1 "
+                    "and tracker_id is null "
+                    "and coalesce(pat_token, '') != '' "
+                    "and coalesce(org_url, '') != ''"
+                ).fetchone()[0]
+                if blockers:
+                    self.log_engine.warning(
+                        f"Keeping legacy credential columns — {blockers} "
+                        "customer(s) not yet linked to a tracker"
+                    )
+                    return
+                for col in legacy:
+                    self.conn.execute(
+                        f"alter table customers drop column {col}"
+                    )
+                    self.log_engine.info(
+                        f"Dropped legacy column customers.{col}"
+                    )
+                if self._table_exists("queries"):
+                    self.conn.execute(
+                        "update queries set query_sql = ? "
+                        "where query_name = 'customers' and is_default = 1",
+                        (self._normalize_seed_sql(self._CUSTOMERS_DEFAULT_QUERY),),
+                    )
+                self.conn.commit()
+        except Exception as e:
+            self.log_engine.error(f"Legacy credential column drop failed: {e}")
+
+    def get_visible_devops_items(self):
+        """Cached work items for CURRENT customers only. A disabled
+        customer's rows stay in the devops table (re-enabling restores them
+        without a resync) but must not surface on the board, hierarchy or
+        work-item pickers."""
+        return self.fetch_query(
+            "select * from devops where customer_name in "
+            "(select customer_name from customers where is_current = 1)"
+        )
+
+    def get_tracker_connections(self):
+        """One row per current customer with a usable tracker connection —
+        credentials come from the linked tracker. While the legacy
+        per-customer columns still exist (pre-split databases where the drop
+        was blocked), they remain the fallback for unlinked customers.
+        Feeds DevOpsEngine.setup_manager."""
+        if "pat_token" in self._get_table_columns("customers"):
+            return self.fetch_query(
+                """
+                select distinct c.customer_name,
+                       coalesce(nullif(t.pat_token, ''), c.pat_token) as pat_token,
+                       coalesce(nullif(t.org_url, ''), c.org_url) as org_url,
+                       c.devops_project,
+                       coalesce(t.integration_type, c.integration_type, 'devops')
+                           as integration_type
+                from customers c
+                left join trackers t on t.tracker_id = c.tracker_id
+                where c.is_current = 1
+                  and coalesce(nullif(t.pat_token, ''), c.pat_token) is not null
+                  and coalesce(nullif(t.pat_token, ''), c.pat_token) != ''
+                  and coalesce(nullif(t.org_url, ''), c.org_url) is not null
+                  and coalesce(nullif(t.org_url, ''), c.org_url) != ''
+                """
+            )
+        return self.fetch_query(
+            """
+            select distinct c.customer_name,
+                   t.pat_token,
+                   t.org_url,
+                   c.devops_project,
+                   coalesce(t.integration_type, 'devops') as integration_type
+            from customers c
+            join trackers t on t.tracker_id = c.tracker_id
+            where c.is_current = 1
+              and coalesce(t.pat_token, '') != ''
+              and coalesce(t.org_url, '') != ''
+            """
+        )
+
     def update_customer(
         self,
         customer_name: str,
@@ -799,20 +1101,24 @@ class Database:
         billing_round_minutes: int = None,
         color: str = None,
         integration_type: str = None,
+        tracker_name: str = None,
     ):
-        # None means "leave unchanged" — the old unconditional SET wiped
-        # org_url/pat_token whenever a caller omitted them. Pass "" to clear.
+        # None means "leave unchanged". Pass "" to clear (where clearing makes
+        # sense). Credentials live on trackers now — the legacy org_url /
+        # pat_token args are accepted for call compatibility but ignored.
+        if pat_token or org_url:
+            self.log_engine.warning(
+                "update_customer: org_url/pat_token are ignored — update the "
+                "customer's tracker instead"
+            )
         set_clauses = ["customer_name = ?"]
         params = [new_customer_name]
-        if org_url is not None:
-            set_clauses.append("org_url = ?")
-            params.append(org_url)
-        if pat_token is not None:
-            # Never store a plaintext PAT ("" passes through, clearing it).
-            from .pat_crypto import encrypt_pat
-
-            set_clauses.append("pat_token = ?")
-            params.append(encrypt_pat(pat_token, self.db_file, self.log_engine))
+        if tracker_name is not None:
+            # "" unlinks the customer from its tracker.
+            set_clauses.append("tracker_id = ?")
+            params.append(
+                self.get_tracker_id(tracker_name) if tracker_name else None
+            )
         if devops_project is not None:
             # "" clears it (fall back to the org's first project).
             set_clauses.append("devops_project = ?")
@@ -1386,13 +1692,11 @@ class Database:
             select 
                 c.customer_name, 
                 c.customer_id, 
-                p.project_name, 
+                p.project_name,
                 p.project_id,
-                p.git_id, 
-                c.wage, 
-                c.org_url, 
-                c.pat_token,
-                p.is_current as p_current, 
+                p.git_id,
+                c.wage,
+                p.is_current as p_current,
                 c.is_current as c_current 
             from customers c
             left join projects p on p.customer_id = c.customer_id
@@ -1468,15 +1772,25 @@ class Database:
                     ("git_id", "INTEGER", "0", None),
                     ("comment", "TEXT", None, None),
                 ],
+                "trackers": [
+                    ("tracker_id", "INTEGER", None, None),
+                    ("tracker_name", "TEXT", None, None),
+                    ("integration_type", "TEXT", "'devops'", None),
+                    ("org_url", "TEXT", None, None),
+                    ("pat_token", "TEXT", None, None),
+                    ("inserted_at", "DATETIME", None, None),
+                ],
+                # NOTE: pat_token/org_url deliberately absent — they were
+                # migrated to trackers and dropped; listing them here would
+                # make the auto-migration re-add them.
                 "customers": [
                     ("customer_id", "INTEGER", None, None),
                     ("customer_name", "TEXT", None, None),
                     ("start_date", "DATETIME", None, None),
                     ("wage", "REAL", None, None),
-                    ("pat_token", "TEXT", None, None),
-                    ("org_url", "TEXT", None, None),
                     ("devops_project", "TEXT", None, None),
                     ("integration_type", "TEXT", "'devops'", None),
+                    ("tracker_id", "INTEGER", None, None),
                     ("expected_work_pct", "REAL", None, None),
                     ("billing_round_minutes", "INTEGER", None, None),
                     ("color", "TEXT", None, None),
@@ -2113,9 +2427,7 @@ class Database:
             return self.fetch_query(
                 """
                 select
-                     pat_token
-                    ,org_url
-                    ,expected_work_pct
+                     expected_work_pct
                     ,billing_round_minutes
                     ,color
                 from customers

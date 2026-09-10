@@ -35,36 +35,25 @@ def test_memory_db_skips_encryption():
     assert encrypt_pat("tok", ":memory:", _log) == "tok"
 
 
-def test_database_writes_and_migration_encrypt(tmp_path):
+def test_database_migration_encrypts_legacy_customer_pats(tmp_path):
+    # Tracker-table write encryption is covered in test_tracker_split; this
+    # exercises the startup sweep over a pre-split customers table (the
+    # credential columns were dropped, so re-create the legacy shape).
     from src.database import Database
 
     db_path = str(tmp_path / "wt.db")
     db = Database(db_path, _log)
     db.initialize_db()
-
-    # insert_customer encrypts on write
-    db.insert_customer(
-        "C1", "2026-01-01", 100, org_url="org", pat_token="plain-pat"
+    db.insert_customer("C1", "2026-01-01", 100)
+    db.execute_query("alter table customers add column pat_token text")
+    db.execute_query("alter table customers add column org_url text")
+    db.execute_query(
+        "update customers set pat_token = 'legacy-pat', org_url = 'org'"
     )
-    val = db.fetch_query(
-        "select pat_token from customers where is_current = 1"
-    ).iloc[0, 0]
-    assert val.startswith("enc:")
-    assert decrypt_pat(val, db_path, _log) == "plain-pat"
 
-    # the startup migration catches rows that predate encryption
-    db.execute_query("update customers set pat_token = 'legacy-pat'")
     db._encrypt_plaintext_pats()
     val = db.fetch_query(
         "select pat_token from customers where is_current = 1"
     ).iloc[0, 0]
     assert val.startswith("enc:")
     assert decrypt_pat(val, db_path, _log) == "legacy-pat"
-
-    # update_customer re-encrypts a replaced PAT, and saving the enc: value
-    # back (the form pre-fills it) does not double-encrypt
-    db.update_customer("C1", "C1", pat_token=val)
-    same = db.fetch_query(
-        "select pat_token from customers where is_current = 1"
-    ).iloc[0, 0]
-    assert same == val

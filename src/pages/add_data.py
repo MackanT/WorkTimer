@@ -6,13 +6,14 @@ Uses V2 architecture with per-client AppCore and event-driven updates.
 Fully config-driven using config_ui.yml structure.
 """
 
+import asyncio
 import copy
 import os
 import sqlite3
 import tempfile
 import pandas as pd
 from datetime import date
-from nicegui import ui, events
+from nicegui import context, ui, events
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
@@ -118,6 +119,41 @@ async def add_data_page():
                         "text-warning"
                     )
 
+    # ── palette data-input shortcuts land here ─────────────────────────────
+    # Storage flag covers a fresh page load, the event covers "already on
+    # this page" (same handover pattern as the Time page's palette_stop).
+    page_client = context.client
+
+    def _page_is_live() -> bool:
+        try:
+            return main_tabs.id in page_client.elements
+        except Exception:
+            return False
+
+    async def _apply_pending_focus():
+        req = page_client.storage.get("add_data_focus")
+        if not req or not _page_is_live():
+            return
+        page_client.storage["add_data_focus"] = None
+        entity, op = req.get("entity"), req.get("operation")
+        if entity in add_data_page_config:
+            main_tabs.set_value(entity)
+        widget = getattr(core, "_entity_first_widget", {}).get((entity, op))
+        if widget is not None:
+            await asyncio.sleep(0.2)  # let the tab panel switch in the browser
+            try:
+                widget.run_method("focus")
+            except Exception:
+                pass  # focus is a nicety — never break the navigation
+
+    def _on_focus_request(**_):
+        asyncio.create_task(_apply_pending_focus())
+
+    core.event_bus.register_unique(
+        "add_data_focus", _on_focus_request, key="add_data_page"
+    )
+    await _apply_pending_focus()
+
 
 async def render_entity_tabs(
     core: AppCore, entity_type: str, operations: list, page_config: dict
@@ -163,12 +199,14 @@ async def render_entity_form(
             return
         kwargs = {name: widget.value for name, widget in widgets.items()}
         # Snapshot before the values get cleared below — used to decide whether
-        # this customer change touched DevOps credentials (see re-init at the end).
-        devops_touched = entity_type == "customer" and (
-            operation in ("disable", "reenable")
-            or bool(kwargs.get("pat_token"))
-            or bool(kwargs.get("org_url"))
-            or bool(kwargs.get("devops_project"))
+        # this change touched tracker connections (see re-init at the end).
+        devops_touched = entity_type == "tracker" or (
+            entity_type == "customer"
+            and (
+                operation in ("disable", "reenable")
+                or bool(kwargs.get("tracker_name"))
+                or bool(kwargs.get("devops_project"))
+            )
         )
         try:
             await core.query_engine.function_db(action["function"], **kwargs)
@@ -206,7 +244,8 @@ async def render_entity_form(
             # re-inits in the background.
             if devops_touched:
                 core.logger.info(
-                    f"Customer DevOps config changed ({operation}) — re-initializing DevOps"
+                    f"Tracker config changed ({entity_type}.{operation}) — "
+                    "re-initializing tracker connections"
                 )
                 core.force_devops_reinit()
         except Exception as e:
@@ -288,6 +327,13 @@ async def render_entity_form(
                     parent_map[field_name] = dw
                     dynamic_widgets.append(dw)
 
+    # First field per form — the palette's data-input shortcuts focus it.
+    if not hasattr(core, "_entity_first_widget"):
+        core._entity_first_widget = {}
+    core._entity_first_widget[(entity_type, operation)] = (
+        dynamic_widgets[0].widget if dynamic_widgets else None
+    )
+
     async def refresh_all_widgets():
         try:
             _sources_cache["data"] = None  # refetch once for this refresh cycle
@@ -313,11 +359,14 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
     try:
         if entity_type == "customer":
-            # Registered tracker providers feed the "Tracker" selector — a new
-            # provider module (e.g. Jira) appears here automatically.
-            from ..trackers.registry import available_providers
-
-            data_sources["integration_types"] = available_providers()
+            # Trackers a customer can link to (credentials live on the
+            # tracker entity, not the customer).
+            tdf = await QE.query_db(
+                "SELECT tracker_name FROM trackers ORDER BY tracker_name"
+            )
+            data_sources["tracker_data"] = (
+                tdf["tracker_name"].tolist() if not tdf.empty else []
+            )
 
             if operation in ["update", "disable"]:
                 # Get active customers
@@ -331,28 +380,26 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 if operation == "update":
                     # For update, we need current values per customer
                     full_df = await QE.query_db(
-                        "SELECT customer_name, org_url, pat_token, devops_project, "
-                        "expected_work_pct, billing_round_minutes, color, "
-                        "coalesce(integration_type, 'devops') as integration_type "
-                        "FROM customers WHERE is_current = 1"
+                        "SELECT c.customer_name, c.devops_project, "
+                        "c.expected_work_pct, c.billing_round_minutes, c.color, "
+                        "t.tracker_name "
+                        "FROM customers c "
+                        "LEFT JOIN trackers t ON t.tracker_id = c.tracker_id "
+                        "WHERE c.is_current = 1"
                     )
-                    data_sources["org_url"] = {}
-                    data_sources["pat_token"] = {}
                     data_sources["new_customer_name"] = {}
+                    data_sources["tracker_current"] = {}
                     # Current project per customer (preselects the picker).
                     data_sources["devops_project_current"] = {}
                     data_sources["expected_work_pct"] = {}
                     data_sources["billing_round_minutes"] = {}
                     data_sources["color"] = {}
-                    data_sources["integration_type_current"] = {}
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
-                        data_sources["org_url"][cname] = row["org_url"] or ""
-                        data_sources["pat_token"][cname] = row["pat_token"] or ""
-                        data_sources["integration_type_current"][cname] = (
-                            row["integration_type"] or "devops"
-                        )
                         data_sources["new_customer_name"][cname] = cname
+                        data_sources["tracker_current"][cname] = (
+                            row["tracker_name"] or ""
+                        )
                         data_sources["devops_project_current"][cname] = (
                             row["devops_project"] or ""
                         )
@@ -386,6 +433,39 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
             # Today's date for start_date
             data_sources["today"] = date.today().isoformat()
+
+        elif entity_type == "tracker":
+            # Registered tracker providers feed the "Type" selector — a new
+            # provider module (e.g. Jira) appears here automatically.
+            from ..trackers.registry import available_providers
+
+            data_sources["integration_types"] = available_providers()
+
+            if operation in ("update", "delete"):
+                tdf = await QE.query_db(
+                    "SELECT tracker_name, "
+                    "coalesce(integration_type, 'devops') as integration_type, "
+                    "org_url, pat_token "
+                    "FROM trackers ORDER BY tracker_name"
+                )
+                data_sources["tracker_data"] = (
+                    tdf["tracker_name"].tolist() if not tdf.empty else []
+                )
+                if operation == "update":
+                    data_sources["new_tracker_name"] = {}
+                    data_sources["integration_type_current"] = {}
+                    data_sources["org_url"] = {}
+                    # The PAT shows as its opaque enc: value — saving it back
+                    # unchanged is a no-op (no double encryption).
+                    data_sources["pat_token"] = {}
+                    for _, row in tdf.iterrows():
+                        tname = row["tracker_name"]
+                        data_sources["new_tracker_name"][tname] = tname
+                        data_sources["integration_type_current"][tname] = (
+                            row["integration_type"] or "devops"
+                        )
+                        data_sources["org_url"][tname] = row["org_url"] or ""
+                        data_sources["pat_token"][tname] = row["pat_token"] or ""
 
         elif entity_type == "project":
             # Get active customers

@@ -220,12 +220,10 @@ class DevOpsEngine:
             self.log.error(f"Error starting DevOps scheduled tasks: {e}")
 
     async def setup_manager(self):
-        df = await self.query_engine.query_db(
-            "select distinct customer_name, pat_token, org_url, devops_project, "
-            "coalesce(integration_type, 'devops') as integration_type "
-            "from customers where pat_token is not null and pat_token != '' "
-            "and org_url is not null and org_url != '' and is_current = 1"
-        )
+        # A customer's connection comes from its linked tracker; the legacy
+        # per-customer columns remain the fallback for unlinked customers
+        # (pre-migration rows, or an unfinished setup).
+        df = await self.query_engine.function_db("get_tracker_connections")
         # PATs are stored encrypted at rest — providers need the real token.
         # An undecryptable value becomes '' (backup restored without its key),
         # so that customer is skipped with a clear log line.
@@ -367,7 +365,9 @@ class DevOpsEngine:
             self.log.error(f"Error when updating the devops data: {devops_df}")
 
     async def load_df(self):
-        df = await self.query_engine.query_db("select * from devops")
+        # Current customers only — a disabled customer's cached items stay
+        # in the table but disappear from the board/pickers until re-enabled.
+        df = await self.query_engine.function_db("get_visible_devops_items")
         self.df = df if not df.empty else None
         if self.df is None:
             self.log.warning("DevOps dataframe is empty")

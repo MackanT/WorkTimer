@@ -211,24 +211,48 @@ def test_devops_field_update_is_customer_scoped(db):
     assert res.iloc[1]["board_column"] == "New"  # B (same id) untouched
 
 
+def test_devops_rows_hidden_for_disabled_customers(db):
+    db.execute_query(
+        "insert into customers (customer_name, start_date, wage, is_current) "
+        "values ('A', '2025-01-01', 100, 1), ('B', '2025-01-01', 100, 0)"
+    )
+    df = pd.DataFrame(
+        [
+            {"customer_name": "A", "type": "User Story", "id": 1, "title": "a",
+             "state": "New", "parent_id": None, "board_column": "New",
+             "board_column_done": 0, "assigned_to": "", "changed_date": "", "priority": 2},
+            {"customer_name": "B", "type": "User Story", "id": 2, "title": "b",
+             "state": "New", "parent_id": None, "board_column": "New",
+             "board_column_done": 0, "assigned_to": "", "changed_date": "", "priority": 2},
+        ]
+    )
+    db.update_devops_data(df, mode="replace")
+
+    # Disabled B's cached rows stay in the table but are not visible.
+    visible = db.get_visible_devops_items()
+    assert set(visible["customer_name"]) == {"A"}
+    assert len(db.fetch_query("select * from devops")) == 2
+
+    # Re-enabling brings them straight back — no resync needed.
+    db.execute_query("update customers set is_current = 1 where customer_name = 'B'")
+    visible = db.get_visible_devops_items()
+    assert set(visible["customer_name"]) == {"A", "B"}
+
+
 # ── Partial updates don't wipe omitted fields (§9) ───────────────────────────
 
 
-def test_update_customer_leaves_omitted_credentials(db):
+def test_update_customer_ignores_legacy_credential_args(db):
+    # Credentials moved to the trackers table; the legacy org_url/pat_token
+    # args must be accepted (old callers) but change nothing and not error.
     db.execute_query(
-        "insert into customers (customer_name, start_date, wage, org_url, pat_token, is_current) "
-        "values ('C', '2025-01-01', 100, 'org', 'tok', 1)"
+        "insert into customers (customer_name, start_date, wage, is_current) "
+        "values ('C', '2025-01-01', 100, 1)"
     )
-    db.update_customer("C", "C2")  # no org/pat -> unchanged
-    row = db.fetch_query(
-        "select customer_name, org_url, pat_token from customers"
-    ).iloc[0]
+    db.update_customer("C", "C2", org_url="org", pat_token="tok")
+    row = db.fetch_query("select customer_name from customers").iloc[0]
     assert row["customer_name"] == "C2"
-    assert row["org_url"] == "org" and row["pat_token"] == "tok"
-
-    db.update_customer("C2", "C2", org_url="", pat_token="")  # explicit clear
-    row = db.fetch_query("select org_url, pat_token from customers").iloc[0]
-    assert row["org_url"] == "" and row["pat_token"] == ""
+    assert "pat_token" not in db._get_table_columns("customers")
 
 
 def test_update_project_leaves_omitted_git_id(db):

@@ -118,15 +118,30 @@ def setup_command_palette(core) -> None:
         # customer; a successful add emits devops_refreshed so an open board
         # reloads.
         if core.devops_engine is not None:
-            for wtype in core.devops_engine.type_hierarchy():
+            DO = core.devops_engine
+            # Union of levels across ALL connected trackers (Azure: Epic /
+            # Feature / User Story; Jira adds Story / Sub-task). Each command
+            # presets a customer whose tracker HAS that level — preferring the
+            # board's remembered customer — so the type survives the dialog's
+            # per-tracker validity snap.
+            remembered = app.storage.user.get("devops_customer")
+            type_presets: dict = {}
+            for cust in (DO.manager.clients if DO.manager else {}):
+                for wtype in DO.type_hierarchy(cust):
+                    if cust == remembered or wtype not in type_presets:
+                        type_presets[wtype] = cust
+            if not type_presets:
+                type_presets = {t: remembered for t in DO.type_hierarchy()}
 
-                async def _add_item(t=wtype):
+            for wtype, preset_cust in type_presets.items():
+
+                async def _add_item(t=wtype, c=preset_cust):
                     async def _added():
                         core.event_bus.emit("devops_refreshed")
 
                     dlg = await open_add_work_item_dialog(
                         core,
-                        preset_customer=app.storage.user.get("devops_customer"),
+                        preset_customer=c,
                         preset_type=t,
                         on_success=_added,
                     )
@@ -137,7 +152,7 @@ def setup_command_palette(core) -> None:
                 cmds.append({
                     "label": f"Add {wtype}",
                     "icon": "add_circle",
-                    "keywords": "create new devops work item ticket",
+                    "keywords": "create new devops jira work item ticket issue",
                     "action": _add_item,
                 })
 
@@ -230,6 +245,36 @@ def setup_command_palette(core) -> None:
             "keywords": "database backup export save copy",
             "action": _backup,
         })
+
+        # Data-input shortcuts — one command per entity operation from the
+        # config (customer/tracker/project/…): jumps to the input page with
+        # the right tab open and the form's first field focused.
+        _OP_LABELS = {"reenable": "Re-enable"}
+        for entity, section in (core.ui_config.get("add_data_page") or {}).items():
+            meta = section.get("meta", {})
+            if meta.get("build_function") != "render_entity_tabs":
+                continue
+            for op in meta.get("options", []):
+                verb = _OP_LABELS.get(op, op.capitalize())
+
+                async def _open_input(e=entity, o=op):
+                    # Flag covers the fresh page load; the event covers
+                    # "already on /add_data" (same pattern as palette_stop).
+                    app.storage.client["add_data_focus"] = {
+                        "entity": e, "operation": o,
+                    }
+                    core.event_bus.emit("add_data_focus")
+                    _go_to("/add_data")
+
+                cmds.append({
+                    "label": f"{verb} {entity}",
+                    "icon": meta.get("icon", "input"),
+                    "keywords": (
+                        f"data input form manage new edit "
+                        f"{meta.get('friendly_name', '')}"
+                    ).lower(),
+                    "action": _open_input,
+                })
 
         return cmds
 

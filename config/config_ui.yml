@@ -350,20 +350,11 @@ add_data_page:
           options: []
           options_source: today
           optional: false
-        - name: integration_type
+        - name: tracker_name
           label: Tracker
           type: select
           options: []
-          options_source: integration_types
-          default: devops
-          optional: true
-        - name: org_url
-          label: DevOps Org. URL
-          type: input
-          optional: true
-        - name: pat_token
-          label: DevOps PAT
-          type: input
+          options_source: tracker_data
           optional: true
         - name: expected_work_pct
           label: Expected work %
@@ -402,30 +393,16 @@ add_data_page:
           options_source: new_customer_name
           optional: false
           parent: customer_name
-        - name: integration_type
+        - name: tracker_name
           label: Tracker
           type: select
           options: []
-          options_source: integration_types
-          default_source: integration_type_current
+          options_source: tracker_data
+          default_source: tracker_current
           parent: customer_name
           optional: true
-        - name: "org_url"
-          label: "DevOps Org. URL"
-          type: input
-          options: []
-          options_source: org_url
-          optional: true
-          parent: customer_name
-        - name: "pat_token"
-          label: "DevOps PAT"
-          type: input
-          options: []
-          options_source: pat_token
-          optional: true
-          parent: customer_name
         - name: "devops_project"
-          label: "DevOps Project"
+          label: "Project"
           type: select
           options: []
           options_source: devops_projects
@@ -500,6 +477,101 @@ add_data_page:
         - update
         - disable
         - reenable
+
+  ### Tracker connections (customers link to one via the Tracker field) ###
+  tracker:
+    add:
+      fields:
+        - name: tracker_name
+          label: Name
+          type: input
+          optional: false
+        - name: integration_type
+          label: Type
+          type: select
+          options: []
+          options_source: integration_types
+          default: devops
+          optional: false
+        - name: org_url
+          label: "Org URL / Jira site"
+          type: input
+          optional: false
+        - name: pat_token
+          label: "PAT (Jira: email:api-token)"
+          type: input
+          optional: false
+      action:
+        function: "insert_tracker"
+        main_action: "Tracker"
+        main_param: "tracker_name"
+        secondary_action: "added"
+        button_name: "Add"
+    update:
+      fields:
+        - name: tracker_name
+          label: Name
+          type: select
+          options: []
+          options_source: tracker_data
+          optional: false
+        - name: new_tracker_name
+          label: New Name
+          type: input
+          options: []
+          options_source: new_tracker_name
+          optional: true
+          parent: tracker_name
+        - name: integration_type
+          label: Type
+          type: select
+          options: []
+          options_source: integration_types
+          default_source: integration_type_current
+          parent: tracker_name
+          optional: true
+        - name: org_url
+          label: "Org URL / Jira site"
+          type: input
+          options: []
+          options_source: org_url
+          optional: true
+          parent: tracker_name
+        - name: pat_token
+          label: "PAT (Jira: email:api-token)"
+          type: input
+          options: []
+          options_source: pat_token
+          optional: true
+          parent: tracker_name
+      action:
+        function: "update_tracker"
+        main_action: "Tracker"
+        main_param: "tracker_name"
+        secondary_action: "updated"
+        button_name: "Update"
+    delete:
+      fields:
+        - name: tracker_name
+          label: Name
+          type: select
+          options: []
+          options_source: tracker_data
+          optional: false
+      action:
+        function: "delete_tracker"
+        main_action: "Tracker"
+        main_param: "tracker_name"
+        secondary_action: "deleted"
+        button_name: "Delete"
+    meta:
+      icon: cable
+      friendly_name: Trackers
+      build_function: render_entity_tabs
+      options:
+        - add
+        - update
+        - delete
 
   ### Project Information ###
   project:
@@ -685,18 +757,6 @@ query:
       button_name: "Update"
   customers:
     fields:
-      - name: pat_token
-        label: PAT Token
-        type: input
-        options: []
-        options_source: pat_token
-        optional: true
-      - name: org_url
-        label: Organization URL
-        type: input
-        options: []
-        options_source: org_url
-        optional: true
       - name: expected_work_pct
         label: Expected work %
         type: number
