@@ -334,6 +334,11 @@ class AppCore:
                 await DevOpsWorkItemHandlers(self.devops_engine, self.logger).preload_cached_board_columns()
 
                 asyncio.create_task(self.devops_engine.start_scheduled_updates())
+
+                try:
+                    self.event_bus.emit("devops_refreshed")
+                except Exception:
+                    pass
             else:
                 self._devops_initialized = False
                 self._devops_no_customers = True
@@ -421,8 +426,13 @@ class AppCore:
         async with core._init_lock:
             if not core._initialized:
                 await core.initialize_local_engines()
-            if not core._devops_initialized:
-                await core.initialize_devops()
+
+        if not core._devops_initialized:
+            if _global_devops_initialized and _global_devops_engine is not None:
+                core.devops_engine = _global_devops_engine
+                core._devops_initialized = True
+            else:
+                asyncio.create_task(core.initialize_devops())
 
         core.apply_theme()
 
