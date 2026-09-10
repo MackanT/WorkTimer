@@ -60,6 +60,24 @@ async def devops_attachment(url: str):
     )
 
 
+def _with_loading(button, handler):
+    """Wrap an async click handler so `button` shows Quasar's loading spinner
+    (text → spinner, further clicks ignored) while it runs — tracker writes
+    are network calls that can take a couple of seconds."""
+
+    async def _run():
+        button.props("loading")
+        try:
+            await handler()
+        finally:
+            try:
+                button.props(remove="loading")
+            except Exception:
+                pass  # dialog already closed and the button deleted
+
+    return _run
+
+
 _DIALOG_CARD_STYLE = (
     "margin: 2rem auto; width: calc(100% - 4rem); max-width: 980px;"
     "max-height: calc(100vh - 4rem); overflow-y: auto;"
@@ -174,7 +192,8 @@ async def open_work_item_dialog(
                 ui.button(icon="open_in_new", on_click=_open_in_devops).props(
                     "flat dense color=primary"
                 ).tooltip(f"Open in {tracker_label}")
-                ui.button("Update", icon="save", on_click=_submit_from_header).props("dense color=primary")
+                _update_btn = ui.button("Update", icon="save").props("dense color=primary")
+                _update_btn.on("click", _with_loading(_update_btn, _submit_from_header))
                 ui.button("Cancel", icon="close", on_click=_confirm_discard_or_close).props(
                     "flat dense color=grey-6"
                 )
@@ -311,9 +330,8 @@ async def open_add_work_item_dialog(
                     "text-sm font-semibold flex-1"
                 ).style("overflow:hidden; text-overflow:ellipsis; white-space:nowrap;")
                 ui.space()
-                ui.button("Add", icon="save", on_click=_submit_from_header).props(
-                    "dense color=primary"
-                )
+                _add_btn = ui.button("Add", icon="save").props("dense color=primary")
+                _add_btn.on("click", _with_loading(_add_btn, _submit_from_header))
                 ui.button("Cancel", icon="close", on_click=dlg.close).props(
                     "flat dense color=grey-6"
                 )
@@ -580,7 +598,10 @@ async def render_devops_form(
             with ui.row().classes("w-full items-center gap-2 mt-4"):
                 ui.label(title).classes(helpers.UI_STYLES.get_layout_classes("title"))
                 ui.space()
-                ui.button(action.get("button_name", "Submit"), icon="save", on_click=on_submit).props("color=primary")
+                _submit_btn = ui.button(
+                    action.get("button_name", "Submit"), icon="save"
+                ).props("color=primary")
+                _submit_btn.on("click", _with_loading(_submit_btn, on_submit))
                 if on_close:
                     ui.button(icon="close", on_click=on_close).props("flat dense round color=grey-6").tooltip("Close")
 
@@ -739,9 +760,10 @@ async def render_devops_form(
                     else:
                         ui.notify(f"Failed to add comment: {msg}", type="negative")
 
-                ui.button(icon="send", on_click=_post_comment).props(
+                _send_btn = ui.button(icon="send").props(
                     "dense color=primary"
                 ).tooltip("Add comment")
+                _send_btn.on("click", _with_loading(_send_btn, _post_comment))
 
             # Thread — newest first (see get_work_item_comments).
             _refs["box"] = ui.column().classes("w-full gap-2 mt-1")

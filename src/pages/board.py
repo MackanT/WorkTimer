@@ -9,7 +9,7 @@ v2 — Live mode:
 
 import asyncio
 import math
-from nicegui import app, ui
+from nicegui import app, context, ui
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
@@ -818,8 +818,25 @@ async def board_page():
         render_view_actions()
 
     # Reload the board when a DevOps sync completes elsewhere (settings page
-    # emits "devops_refreshed" after manual incremental/full syncs).
+    # emits "devops_refreshed" after manual syncs; the background tracker
+    # init emits it when the connections land).
+    page_client = context.client
+
     def _on_devops_refreshed(**_):
+        # Page built BEFORE the background init finished (engine/df missing)?
+        # The customer tabs and closures can't be rebuilt by a soft refresh —
+        # reload this page once, now that data exists (the automatic version
+        # of the manual F5 that used to be needed).
+        eng = core.devops_engine
+        if (DO is None or not customer_names) and eng is not None:
+            if eng.df is not None and not eng.df.empty:
+                try:
+                    if board_container.id in page_client.elements:
+                        with page_client:
+                            ui.navigate.reload()
+                except Exception:
+                    pass  # page gone or client disconnected — nothing to do
+                return
         asyncio.create_task(_reload_board_data(show_notify=False))
 
     core.event_bus.register_unique(

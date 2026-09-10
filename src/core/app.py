@@ -436,15 +436,22 @@ class AppCore:
 
         core.apply_theme()
 
-        # Toggle the DevOps-only nav item (Board — which now also hosts the
-        # Hierarchy view) based on connectivity. Replaces the old idea of
-        # enabling/disabling DevOps inside add-data tabs.
+        # Toggle the tracker-only nav item (Board — which now also hosts the
+        # Hierarchy view). The nav bar renders ONCE per client and tracker
+        # init runs in the background, so live connectivity can't be the
+        # criterion (Board would vanish while connections come up): fall back
+        # to what's CONFIGURED in the DB whenever the engine isn't ready.
         try:
             has_devops = bool(
                 core.devops_engine
                 and getattr(core.devops_engine, "manager", None)
                 and getattr(core.devops_engine.manager, "clients", None)
             )
+            if not has_devops:
+                conns = await core.query_engine.function_db(
+                    "get_tracker_connections"
+                )
+                has_devops = conns is not None and not conns.empty
             for _key in ("board",):
                 cfg = core.nav_bar.navigation_config.get(_key, {})
                 cfg["enabled"] = has_devops
