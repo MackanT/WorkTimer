@@ -75,7 +75,7 @@ class DevOpsManager:
         """
         client = self.clients.get(customer_name)
         if not client:
-            self.log.warning(f"No DevOps connection for {customer_name}")
+            self.log.warning(f"No tracker connection for {customer_name}")
         return client
 
     def get_available_projects(self):
@@ -104,13 +104,13 @@ class DevOpsManager:
     def save_comment(self, customer_name, comment, git_id):
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.add_comment_to_work_item(git_id, comment)
 
     def get_workitem_level(self, customer_name, level=None, work_item_id=None):
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.get_workitem_level(level, work_item_id)
 
     def get_description(self, customer_name, work_item_id):
@@ -120,14 +120,14 @@ class DevOpsManager:
         """
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}", "markdown", {})
+            return (False, f"No tracker connection for {customer_name}", "markdown", {})
         return client.get_work_item_description(work_item_id)
 
     def get_comments(self, customer_name, work_item_id):
         """Return a work item's comments. (True, [ {author,date,text}, ... ]) or (False, msg)."""
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.get_work_item_comments(work_item_id)
 
     def get_work_item_url(self, customer_name, work_item_id):
@@ -143,7 +143,7 @@ class DevOpsManager:
         """Update multiple fields of a work item. Returns (True, msg) or (False, msg)."""
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.update_work_item_fields(work_item_id, fields, markdown)
 
     def create_user_story(
@@ -157,7 +157,7 @@ class DevOpsManager:
     ):
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.create_user_story(
             title, description, additional_fields, markdown, parent
         )
@@ -172,7 +172,7 @@ class DevOpsManager:
     ):
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.create_epic(title, description, additional_fields, markdown)
 
     def create_feature(
@@ -186,7 +186,7 @@ class DevOpsManager:
     ):
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.create_feature(
             title, description, additional_fields, markdown, parent
         )
@@ -222,12 +222,18 @@ class DevOpsManager:
         """
         frames = []
         for customer_name, client in self.clients.items():
-            df = client.fetch_work_items(
-                min_id=max_ids.get(customer_name) if max_ids else None,
-                min_changed_date=(
-                    changed_dates.get(customer_name) if changed_dates else None
-                ),
-            )
+            # One provider's failure must never abort the whole preload — that
+            # would blank every customer's board, not just the broken one.
+            try:
+                df = client.fetch_work_items(
+                    min_id=max_ids.get(customer_name) if max_ids else None,
+                    min_changed_date=(
+                        changed_dates.get(customer_name) if changed_dates else None
+                    ),
+                )
+            except Exception as e:
+                self.log.error(f"Work-item fetch failed for {customer_name}: {e}")
+                continue
             if df is not None and not df.empty:
                 frames.append(df)
 
@@ -240,7 +246,7 @@ class DevOpsManager:
         """Move a work item to a board column."""
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.set_board_column(work_item_id, column_name)
 
 

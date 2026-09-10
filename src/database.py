@@ -13,6 +13,7 @@ class Database:
     _QUERY_EDITABLE_TABLES = {"time", "customers", "projects"}
 
     def __init__(self, db_file: str, log_engine):
+        self.db_file = db_file  # kept for sibling files (e.g. the PAT key)
         self.conn = sqlite3.connect(db_file, check_same_thread=False)
         # Each browser tab currently opens its own connection — wait for locks
         # instead of failing instantly with "database is locked".
@@ -274,11 +275,46 @@ class Database:
             # source of truth is get_expected_schema().
             self.validate_and_migrate_schema(auto_migrate=True)
 
+            # Encrypt any plaintext PAT tokens at rest (idempotent — values
+            # already carrying the enc: prefix are left alone).
+            self._encrypt_plaintext_pats()
+
             self.conn.commit()
             self.log_engine.info("Database loaded without errors!")
         except Exception as e:
             self.conn.commit()
             self.log_engine.error(f"Error initializing database: {e}")
+
+    def _encrypt_plaintext_pats(self):
+        """Startup migration: encrypt plaintext customers.pat_token values
+        (every row, history included — backups carry the whole table)."""
+        from .pat_crypto import encrypt_pat, encryption_available
+
+        if not encryption_available():
+            return
+        try:
+            with self._conn_lock:
+                rows = self.conn.execute(
+                    "select rowid, pat_token from customers "
+                    "where pat_token is not null and pat_token != '' "
+                    "and pat_token not like 'enc:%'"
+                ).fetchall()
+                changed = 0
+                for rowid, pat in rows:
+                    enc = encrypt_pat(pat, self.db_file, self.log_engine)
+                    if enc != pat:
+                        self.conn.execute(
+                            "update customers set pat_token = ? where rowid = ?",
+                            (enc, rowid),
+                        )
+                        changed += 1
+                if changed:
+                    self.conn.commit()
+                    self.log_engine.info(
+                        f"Encrypted {changed} stored PAT token(s) at rest"
+                    )
+        except Exception as e:
+            self.log_engine.error(f"PAT encryption migration failed: {e}")
 
     def _table_exists(self, table_name: str) -> bool:
         """Return True if the given table exists in the database."""
@@ -666,6 +702,12 @@ class Database:
         now = datetime.now()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
+        # Never store a plaintext PAT (idempotent for enc:-prefixed values).
+        if pat_token:
+            from .pat_crypto import encrypt_pat
+
+            pat_token = encrypt_pat(pat_token, self.db_file, self.log_engine)
+
         if not valid_from:
             valid_from = min(start_date, now.strftime("%Y-%m-%d"))
 
@@ -766,8 +808,11 @@ class Database:
             set_clauses.append("org_url = ?")
             params.append(org_url)
         if pat_token is not None:
+            # Never store a plaintext PAT ("" passes through, clearing it).
+            from .pat_crypto import encrypt_pat
+
             set_clauses.append("pat_token = ?")
-            params.append(pat_token)
+            params.append(encrypt_pat(pat_token, self.db_file, self.log_engine))
         if devops_project is not None:
             # "" clears it (fall back to the org's first project).
             set_clauses.append("devops_project = ?")

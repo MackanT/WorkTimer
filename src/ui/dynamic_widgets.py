@@ -239,7 +239,12 @@ def md_insert(editor, text):
 def _render_image_button(editor, uploader):
     """A toolbar image button that opens the file picker directly (no dialog).
     A hidden ui.upload does the transfer; the button clicks its file input
-    client-side, which preserves the user gesture the picker requires."""
+    client-side, which preserves the user gesture the picker requires.
+    Returns (upload_element, button) so callers can toggle visibility.
+
+    Uploader contract: return a URL on success, None on failure (generic
+    error toast here), or False for "refused and already explained" — the
+    uploader showed its own notify, so no second toast."""
 
     async def _on_upload(e):
         try:
@@ -251,7 +256,7 @@ def _render_image_button(editor, uploader):
         if url:
             md_insert(editor, f"![{e.name}]({url})\n")
             ui.notify("Image inserted", type="positive")
-        else:
+        elif url is not False:
             ui.notify("Image upload failed", type="negative")
 
     up = (
@@ -265,6 +270,7 @@ def _render_image_button(editor, uploader):
         "click",
         js_handler=f'() => getHtmlElement({up.id}).querySelector("input").click()',
     )
+    return up, btn
 
 
 def render_markdown_toolbar(editor, image_uploader=None):
@@ -757,9 +763,12 @@ class DynamicDropDown(DynamicWidget):
             # It's a plain value, not an options list — just set the value
             self.widget.value = self._coerce_value_for_select(new_options)
 
-        # Apply default_source when widget has no value (e.g. after parent change)
+        # Apply default_source when the widget has no value — and always on a
+        # parent change: the default IS the new parent's current value (e.g.
+        # switching customer must show THAT customer's tracker/project, not a
+        # stale value that happens to also exist in the new options).
         default_source = self.field_config.get("default_source")
-        if default_source and not self.widget.value:
+        if default_source and (parent_val is not None or not self.widget.value):
             default_val = await self.data_fetcher(default_source, parent_val)
             # A dict/list here means the source hasn't resolved to a single value
             # (e.g. no parent selected yet, so the whole parent-keyed map comes
@@ -1237,9 +1246,21 @@ class DynamicEditorWithPreview(DynamicWidget):
         row = getattr(self, "_toolbar_row", None)
         if row is not None:
             with row:
-                _render_image_button(self._editor, uploader)
+                self._image_upload, self._image_btn = _render_image_button(
+                    self._editor, uploader
+                )
         if paste_endpoint:
             inject_image_paste(self._editor, paste_endpoint, paste_fields or {})
+
+    def set_image_upload_visible(self, visible: bool):
+        """Show/hide the Insert-image button — e.g. when the selected
+        customer's tracker has no attachment support (Jira v1)."""
+        for el in (
+            getattr(self, "_image_btn", None),
+            getattr(self, "_image_upload", None),
+        ):
+            if el is not None:
+                el.set_visibility(bool(visible))
 
     def update_paste_fields(self, paste_endpoint, paste_fields=None):
         """Refresh the paste-upload fields (e.g. when the customer changes in an

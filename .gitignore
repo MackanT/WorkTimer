@@ -21,3 +21,4 @@ config/task_visuals.yml
 config/config_notepad.yml
 
 data/.storage_secret
+data/.pat_key

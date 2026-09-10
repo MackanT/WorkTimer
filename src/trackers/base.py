@@ -36,6 +36,10 @@ WORK_ITEM_COLUMNS = [
 # connected (e.g. rendering the board type chips before any data loads).
 DEFAULT_TYPE_HIERARCHY = ("Epic", "Feature", "User Story")
 
+# Fallback state names where no provider can say better — matches the classic
+# Azure DevOps Agile process the app's config historically assumed.
+DEFAULT_STATE_OPTIONS = ("New", "Active", "Resolved", "Closed", "Removed")
+
 
 @dataclass(frozen=True)
 class TrackerCapabilities:
@@ -60,6 +64,9 @@ class TrackerProvider(ABC):
     # Registry key, matched against customers.integration_type (e.g. "devops").
     provider_key: str = ""
 
+    # Human name for UI labels ("Open in Azure DevOps" / "Open in Jira").
+    display_name: str = "Tracker"
+
     # Set by from_customer_row(); included in fetch_work_items() output.
     customer_name: str = ""
 
@@ -75,6 +82,19 @@ class TrackerProvider(ABC):
     @classmethod
     def capabilities(cls) -> TrackerCapabilities:
         return TrackerCapabilities()
+
+    @classmethod
+    def preferred_type(cls) -> str:
+        """The default working level for boards — usually the leaf (e.g.
+        User Story), but a provider whose leaf is auxiliary (Jira's Sub-task)
+        can point at the level people actually work at."""
+        return cls.type_hierarchy()[-1]
+
+    def state_options(self) -> list:
+        """State names for this tracker's work items, offered by the State
+        dropdowns. Instance-level (may need a live call, e.g. Jira statuses);
+        the default list matches the app's historical Azure config."""
+        return list(DEFAULT_STATE_OPTIONS)
 
     @classmethod
     @abstractmethod

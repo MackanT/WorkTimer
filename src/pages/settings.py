@@ -934,7 +934,7 @@ async def settings_page():
             )
             .classes(UI_STYLES.get_layout_classes("tab_label"))
         ) as main_tabs:
-            ui.tab("devops", label="DevOps", icon="cloud_sync")
+            ui.tab("devops", label="Trackers", icon="cloud_sync")
             ui.tab("tags", label="Tags", icon="label")
             ui.tab("theme", label="Theme", icon="color_lens")
             ui.tab("data", label="Data", icon="storage")
@@ -947,7 +947,7 @@ async def settings_page():
             )
             if _eng is None:
                 ui.label(
-                    "DevOps not configured — add a customer with a PAT token and "
+                    "No tracker configured — add a customer with a PAT token and "
                     "org URL to enable syncing."
                 ).classes(UI_STYLES.get_layout_classes("muted_text_xs") + " mt-1")
                 return

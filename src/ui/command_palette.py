@@ -198,13 +198,13 @@ def setup_command_palette(core) -> None:
         if core.devops_engine is not None:
 
             async def _sync():
-                ui.notify("DevOps incremental sync started…", type="info")
+                ui.notify("Tracker incremental sync started…", type="info")
                 await core.devops_engine.update_devops(incremental=True)
                 core.event_bus.emit("devops_refreshed")
-                ui.notify("DevOps sync complete", type="positive")
+                ui.notify("Tracker sync complete", type="positive")
 
             cmds.append({
-                "label": "Sync DevOps (incremental)",
+                "label": "Sync trackers (incremental)",
                 "icon": "sync",
                 "keywords": "devops azure refresh update board",
                 "action": _sync,

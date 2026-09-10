@@ -66,7 +66,10 @@ class DevOpsWorkItemHandlers:
         client = self.DO.manager._get_client(customer_name)
         if not client:
             return None
-        col_status, columns = client.get_board_columns_via_team_autodetect(
+        fetch_columns = getattr(client, "get_board_columns_via_team_autodetect", None)
+        if fetch_columns is None:
+            return None  # provider has no board-column API — cache stays empty
+        col_status, columns = fetch_columns(
             board_type=board_types.get(board_type, "Stories")
         )
         self.devops_columns_cache[customer_name][board_type] = columns
@@ -121,21 +124,21 @@ class DevOpsWorkItemHandlers:
             markdown=True,
         )
 
-        # Handle parent relationship (only for Features and User Stories)
-        if work_item_type in ("Feature", "User Story"):
+        # Parent applies to every level below the hierarchy root (Azure:
+        # Feature/User Story; Jira: Story/Sub-task).
+        root_type = self.DO.type_hierarchy(customer_name)[0]
+        if work_item_type != root_type:
             parent_id = None
             if wid.get("parent_name"):
                 parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
             create_kwargs["parent"] = parent_id
 
-        create_fn = {
-            "Epic": self.DO.manager.create_epic,
-            "Feature": self.DO.manager.create_feature,
-            "User Story": self.DO.manager.create_user_story,
-        }.get(work_item_type, self.DO.manager.create_user_story)
-
+        # Provider-neutral create: type_key routes inside each provider, so
+        # Jira's Story/Sub-task work without an Azure-name dispatch table.
         # API calls are blocking — keep them off the event loop.
-        success, message = await asyncio.to_thread(create_fn, **create_kwargs)
+        success, message = await asyncio.to_thread(
+            self.DO.manager.create_item, type_key=work_item_type, **create_kwargs
+        )
 
         if success:
             board_column = wid.get("board_column")

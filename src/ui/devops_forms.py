@@ -103,6 +103,10 @@ async def open_work_item_dialog(
         cust_color = None
     display_name = f"{item_type}: {item_id} - {title}"
     update_cfg = core.ui_config.get("board_devops_forms", {}).get("update", {})
+    # The customer's tracker name/capabilities drive labels and feature gating
+    # (e.g. no image upload for a tracker without attachment support).
+    tracker_label = core.devops_engine.provider_label(customer)
+    tracker_caps = core.devops_engine.capabilities(customer)
 
     def _open_in_devops():
         manager = getattr(core.devops_engine, "manager", None)
@@ -110,7 +114,7 @@ async def open_work_item_dialog(
         if url:
             ui.navigate.to(url, new_tab=True)
         else:
-            ui.notify("Could not build the Azure DevOps URL", type="warning")
+            ui.notify(f"Could not build the {tracker_label} URL", type="warning")
 
     with ui.dialog().props("maximized") as dlg:
         with ui.card().style(_DIALOG_CARD_STYLE).props("flat bordered"):
@@ -169,7 +173,7 @@ async def open_work_item_dialog(
                 ui.space()
                 ui.button(icon="open_in_new", on_click=_open_in_devops).props(
                     "flat dense color=primary"
-                ).tooltip("Open in Azure DevOps")
+                ).tooltip(f"Open in {tracker_label}")
                 ui.button("Update", icon="save", on_click=_submit_from_header).props("dense color=primary")
                 ui.button("Cancel", icon="close", on_click=_confirm_discard_or_close).props(
                     "flat dense color=grey-6"
@@ -191,50 +195,74 @@ async def open_work_item_dialog(
                 if on_success:
                     await on_success()
 
-            result = await render_devops_form(
-                core, "update", update_cfg,
-                on_success=_on_update_success,
-                hidden_field_names={"customer_name", "work_item", "current_column", "board_column"},
-                show_internal_header=False,
-            )
+            # try/finally: any failure while building the form (a provider
+            # missing an optional API, a network hiccup mid-load) must still
+            # clear the skeletons — otherwise the dialog "loads forever".
+            try:
+                result = await render_devops_form(
+                    core, "update", update_cfg,
+                    on_success=_on_update_success,
+                    hidden_field_names={"customer_name", "work_item", "current_column", "board_column"},
+                    show_internal_header=False,
+                )
 
-            _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
-            form_actions["submit"] = submit_fn
+                _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
+                form_actions["submit"] = submit_fn
 
-            if widgets:
-                if "customer_name" in widgets:
-                    widgets["customer_name"].widget.value = customer
-                    widgets["customer_name"].widget.update()
-                if "work_item" in widgets:
-                    await widgets["work_item"].refresh()
-                    widgets["work_item"].widget.value = display_name
-                    widgets["work_item"].widget.update()
-                if load_fn:
-                    await load_fn(None)
+                if widgets:
+                    if "customer_name" in widgets:
+                        widgets["customer_name"].widget.value = customer
+                        widgets["customer_name"].widget.update()
+                    if "work_item" in widgets:
+                        await widgets["work_item"].refresh()
+                        widgets["work_item"].widget.value = display_name
+                        widgets["work_item"].widget.update()
+                    if load_fn:
+                        try:
+                            await load_fn(None)
+                        except Exception as e:
+                            core.logger.error(
+                                f"Work-item detail load failed for #{item_id}: {e}"
+                            )
+                            ui.notify(
+                                "Could not load all work-item details",
+                                type="warning",
+                            )
 
-                dirty_state["programmatic"] = False
-                for field_name in ("state", "assigned_to", "priority", "description_editor"):
-                    w = widgets.get(field_name)
-                    if w:
-                        w.on_value_change(_mark_dirty)
+                    dirty_state["programmatic"] = False
+                    for field_name in ("state", "assigned_to", "priority", "description_editor"):
+                        w = widgets.get(field_name)
+                        if w:
+                            w.on_value_change(_mark_dirty)
 
-                # Images: upload to DevOps as attachments (button + paste), now
-                # that we know the customer for this work item.
-                desc = widgets.get("description_editor")
-                if desc is not None and customer and hasattr(desc, "enable_image_upload"):
+                    # Images: upload as tracker attachments (button + paste), now
+                    # that we know the customer — only for trackers that support
+                    # attachments (Jira v1 doesn't; the toolbar stays clean).
+                    desc = widgets.get("description_editor")
+                    if (
+                        desc is not None and customer
+                        and tracker_caps.attachments
+                        and hasattr(desc, "enable_image_upload")
+                    ):
 
-                    async def _devops_image_uploader(name, content, _cust=customer):
-                        return await asyncio.to_thread(
-                            core.devops_engine.upload_attachment, _cust, name, content
+                        async def _devops_image_uploader(name, content, _cust=customer):
+                            return await asyncio.to_thread(
+                                core.devops_engine.upload_attachment, _cust, name, content
+                            )
+
+                        desc.enable_image_upload(
+                            _devops_image_uploader,
+                            paste_endpoint="/upload_devops_image",
+                            paste_fields={"customer": customer},
                         )
-
-                    desc.enable_image_upload(
-                        _devops_image_uploader,
-                        paste_endpoint="/upload_devops_image",
-                        paste_fields={"customer": customer},
-                    )
-
-            loading_box.clear()
+            except Exception as e:
+                core.logger.error(
+                    f"Work-item dialog failed to build for #{item_id}: {e}"
+                )
+                ui.notify("Could not load the work item", type="negative")
+                dlg.close()
+            finally:
+                loading_box.clear()
 
     # Returned so long-lived callers (the command palette's find-mode) can
     # dispose of the dialog on close; page-scoped callers may ignore it.
@@ -309,25 +337,54 @@ async def open_add_work_item_dialog(
                 if preset_customer and "customer_name" in widgets:
                     widgets["customer_name"].widget.value = preset_customer
                     widgets["customer_name"].widget.update()
-                wtype = preset_type or "User Story"
-                if wtype and "work_item_type" in widgets:
-                    widgets["work_item_type"].widget.value = wtype
+                # Only force the type for an explicit preset (board lane add);
+                # otherwise the config default applies and the snap below
+                # corrects it per tracker.
+                if preset_type and "work_item_type" in widgets:
+                    widgets["work_item_type"].widget.value = preset_type
                     widgets["work_item_type"].widget.update()
 
                 def _sync_add_header(_e=None):
                     if "work_item_type" in widgets:
                         type_label.set_text(
-                            str(widgets["work_item_type"].widget.value or "User Story")
+                            str(widgets["work_item_type"].widget.value or "")
                         )
                     if "customer_name" in widgets:
                         customer_label.set_text(
                             str(widgets["customer_name"].widget.value or "")
                         )
 
+                def _snap_type_to_customer(_e=None):
+                    """Keep the type valid for the selected customer's tracker
+                    (mirrors the board's customer-switch snap): a pick that's
+                    valid for the new tracker survives; an invalid one becomes
+                    the tracker's preferred level."""
+                    tw = widgets.get("work_item_type")
+                    cw = widgets.get("customer_name")
+                    if tw is None or cw is None or core.devops_engine is None:
+                        return
+                    cust_now = cw.widget.value
+                    if not cust_now:
+                        return
+                    types = core.devops_engine.type_hierarchy(cust_now)
+                    if tw.widget.value not in types:
+                        tw.widget.value = core.devops_engine.preferred_type(cust_now)
+                        tw.widget.update()
+                        _sync_add_header()
+                    # Same for State: Azure's default "New" means nothing to a
+                    # Jira workflow — snap to the tracker's first state.
+                    sw = widgets.get("state")
+                    if sw is not None:
+                        states = core.devops_engine.state_options(cust_now)
+                        if states and sw.widget.value not in states:
+                            sw.widget.value = states[0]
+                            sw.widget.update()
+
                 if "work_item_type" in widgets:
                     widgets["work_item_type"].on_value_change(_sync_add_header)
                 if "customer_name" in widgets:
                     widgets["customer_name"].on_value_change(_sync_add_header)
+                    widgets["customer_name"].on_value_change(_snap_type_to_customer)
                 _sync_add_header()
 
                 # The customer/type values above are set programmatically, which does
@@ -335,6 +392,7 @@ async def open_add_work_item_dialog(
                 # triggers board-column loading — so call it once here directly.
                 if load_fn:
                     await load_fn()
+                _snap_type_to_customer()
 
                 # Pre-parent the new item (hierarchy ＋ on a focused node).
                 # Same pattern as the update dialog's work_item pre-fill:
@@ -359,8 +417,19 @@ async def open_add_work_item_dialog(
                     async def _add_image_uploader(name, content):
                         cust_now = cust_w.widget.value
                         if not cust_now:
+                            # False = refused-and-explained: the button's
+                            # generic "upload failed" toast is suppressed.
                             ui.notify("Pick a customer first", type="warning")
-                            return None
+                            return False
+                        # Fallback gate — the button is hidden for trackers
+                        # without attachments, but the selection can race.
+                        if not core.devops_engine.capabilities(cust_now).attachments:
+                            ui.notify(
+                                f"{core.devops_engine.provider_label(cust_now)} "
+                                "doesn't support image attachments yet",
+                                type="warning",
+                            )
+                            return False
                         return await asyncio.to_thread(
                             core.devops_engine.upload_attachment,
                             cust_now, name, content,
@@ -373,12 +442,24 @@ async def open_add_work_item_dialog(
                     )
 
                     def _sync_paste_customer(_e=None):
+                        cust_now = cust_w.widget.value
                         desc.update_paste_fields(
                             "/upload_devops_image",
-                            {"customer": cust_w.widget.value or ""},
+                            {"customer": cust_now or ""},
                         )
+                        # Hide the Insert-image button for trackers without
+                        # attachment support (visible while no customer is
+                        # chosen — the uploader then asks for one).
+                        if hasattr(desc, "set_image_upload_visible"):
+                            desc.set_image_upload_visible(
+                                not cust_now
+                                or core.devops_engine.capabilities(
+                                    cust_now
+                                ).attachments
+                            )
 
                     cust_w.on_value_change(_sync_paste_customer)
+                    _sync_paste_customer()
 
     dlg.open()
     return dlg
@@ -504,7 +585,7 @@ async def render_devops_form(
                     ui.button(icon="close", on_click=on_close).props("flat dense round color=grey-6").tooltip("Close")
 
         if not data_sources.get("customer_data"):
-            ui.label("No DevOps data available. Please configure DevOps connections first.").classes("text-warning")
+            ui.label("No tracker data available. Please configure a tracker connection first.").classes("text-warning")
             return None, {}, None, None
 
         rows_layout = form_config.get("rows", []) or [
@@ -752,19 +833,30 @@ async def prepare_devops_data_sources(core, operation: str) -> dict:
             customer_df = DO.df[DO.df["customer_name"] == customer]
             work_items[customer] = customer_df["display_name"].tolist()
 
-            epics = customer_df[customer_df["type"] == "Epic"]["display_name"].tolist()
-            features = customer_df[customer_df["type"].isin(["Epic", "Feature"])][
-                "display_name"
-            ].tolist()
-
+            # Parent options per level from the customer's tracker hierarchy:
+            # anything at a strictly higher level qualifies (Azure: User Story
+            # under Epic or Feature; Jira: Story under Epic, Sub-task under
+            # Epic/Story — the tracker rejects invalid picks with its own msg).
+            levels = list(DO.type_hierarchy(customer))
             parent_names[customer] = {
-                "Epic": [],
-                "Feature": epics,
-                "User Story": features,
+                level: customer_df[customer_df["type"].isin(levels[:i])][
+                    "display_name"
+                ].tolist()
+                for i, level in enumerate(levels)
             }
 
         data_sources["work_items"] = work_items
         data_sources["parent_names"] = parent_names
+        # Per-customer type options, driven by the tracker (Azure:
+        # Epic/Feature/User Story; Jira: Epic/Story/Sub-task).
+        data_sources["work_item_types"] = {
+            c: list(DO.type_hierarchy(c)) for c in customer_names
+        }
+        # Per-customer state options (Jira: project statuses; may fetch once
+        # per provider → keep it off the event loop).
+        data_sources["work_item_states"] = await asyncio.to_thread(
+            lambda: {c: DO.state_options(c) for c in customer_names}
+        )
 
         try:
             config_devops = core.config_loader.get_raw_dict("devops_contacts")

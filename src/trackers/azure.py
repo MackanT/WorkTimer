@@ -50,6 +50,7 @@ class AzureDevOpsProvider(DevOpsClient, TrackerProvider):
     """One customer's Azure DevOps connection, as a pluggable tracker module."""
 
     provider_key = "devops"
+    display_name = "Azure DevOps"
 
     _TYPE_HIERARCHY = ("Epic", "Feature", "User Story")
 

@@ -5,7 +5,8 @@ from .devops import DevOpsManager
 # devops above — the Azure provider subclasses DevOpsClient, so this order
 # avoids a circular import.
 from .trackers import azure as _azure_tracker  # noqa: F401
-from .trackers.base import DEFAULT_TYPE_HIERARCHY
+from .trackers import jira as _jira_tracker  # noqa: F401
+from .trackers.base import DEFAULT_STATE_OPTIONS, DEFAULT_TYPE_HIERARCHY
 from .database import Database
 from dataclasses import dataclass
 import asyncio
@@ -167,7 +168,10 @@ class DevOpsEngine:
         """
         if self.df is None or self.df.empty:
             return [] if customer_name is not None else {}
-        active = self.df[self.df["state"].isin(["Active", "New"])]
+        # Provider-neutral "open item" filter — state NAMES differ per tracker
+        # (ADO: Active/New..., Jira: To Do/In Progress...), so exclude the
+        # done-ish ones instead of whitelisting Azure's.
+        active = self.df[~self.df["state"].isin(["Resolved", "Closed", "Removed", "Done"])]
         if customer_name is not None:
             active = active[active["customer_name"] == customer_name]
         # Newest (highest id) first — most likely related to current work.
@@ -222,9 +226,57 @@ class DevOpsEngine:
             "from customers where pat_token is not null and pat_token != '' "
             "and org_url is not null and org_url != '' and is_current = 1"
         )
+        # PATs are stored encrypted at rest — providers need the real token.
+        # An undecryptable value becomes '' (backup restored without its key),
+        # so that customer is skipped with a clear log line.
+        if not df.empty:
+            from .pat_crypto import decrypt_pat
+
+            df["pat_token"] = df["pat_token"].map(
+                lambda v: decrypt_pat(v, self.query_engine.file_name, self.log)
+            )
+            df = df[df["pat_token"] != ""]
         # DevOpsManager.__init__ connects to every org (network I/O) — keep it
         # off the event loop so the UI stays responsive during startup.
         self.manager = await asyncio.to_thread(DevOpsManager, df, self.log)
+
+    def provider_label(self, customer_name: str | None = None) -> str:
+        """The customer's tracker name for UI labels ('Azure DevOps'/'Jira')."""
+        if self.manager and customer_name in (self.manager.clients or {}):
+            return self.manager.clients[customer_name].display_name
+        return "Tracker"
+
+    def capabilities(self, customer_name: str | None = None):
+        """The customer's tracker capabilities; permissive defaults when the
+        customer has no connected provider (UI then behaves as before)."""
+        from .trackers.base import TrackerCapabilities
+
+        if self.manager and customer_name in (self.manager.clients or {}):
+            return self.manager.clients[customer_name].capabilities()
+        return TrackerCapabilities()
+
+    def state_options(self, customer_name: str | None = None) -> list:
+        """State names for a customer's tracker (Jira: its project statuses,
+        cached on the provider after the first fetch). May do one blocking
+        HTTP call on a cache miss — call via to_thread from async code."""
+        if self.manager and customer_name in (self.manager.clients or {}):
+            try:
+                states = self.manager.clients[customer_name].state_options()
+                if states:
+                    return list(states)
+            except Exception as e:
+                self.log.error(f"State options failed for {customer_name}: {e}")
+        return list(DEFAULT_STATE_OPTIONS)
+
+    def preferred_type(self, customer_name: str | None = None) -> str:
+        """The default board level for a customer's tracker (User Story for
+        DevOps, Story for Jira — its Sub-task leaf is auxiliary)."""
+        if self.manager:
+            if customer_name and customer_name in self.manager.clients:
+                return self.manager.clients[customer_name].preferred_type()
+            for client in self.manager.clients.values():
+                return client.preferred_type()
+        return DEFAULT_TYPE_HIERARCHY[-1]
 
     def type_hierarchy(self, customer_name: str | None = None) -> tuple:
         """Work-item levels root → leaf for a customer's tracker (falls back to

@@ -456,7 +456,7 @@ async def time_tracking_page():
         id_input = ui.select(
             option_map,
             with_input=True,
-            label="DevOps-ID",
+            label="Tracker-ID",
         ).classes("w-full -mb-2")
         if has_git_id:
             match = id_options[id_options["id"] == git_id]
@@ -465,7 +465,7 @@ async def time_tracking_page():
             def toggle_switch():
                 id_checkbox.value = not id_checkbox.value
                 id_checkbox.update()
-            ui.label("Store to DevOps").on("click", toggle_switch).classes("cursor-pointer")
+            ui.label("Store to tracker").on("click", toggle_switch).classes("cursor-pointer")
             id_checkbox = ui.switch(value=has_git_id).props("dense")
         return id_input, id_checkbox
 

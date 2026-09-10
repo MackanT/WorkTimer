@@ -83,10 +83,16 @@ board_devops_forms:
       - name: work_item_type
         label: Work Item Type
         type: select
+        # Options follow the selected customer's tracker (Azure: Epic/Feature/
+        # User Story; Jira: Epic/Story/Sub-task). Static options are the
+        # no-data fallback; the dialog snaps an invalid value to the tracker's
+        # preferred level (no default_source — that would clobber presets).
         options:
           - Epic
           - Feature
           - User Story
+        options_source: work_item_types
+        parent: customer_name
         default: User Story
         optional: False
       - name: work_item_title
@@ -96,12 +102,16 @@ board_devops_forms:
       - name: state
         label: State
         type: select
+        # Per-customer via the tracker (Jira: project statuses); static list
+        # is the fallback. An invalid default is snapped in the dialog.
         options:
           - New
           - Active
           - Resolved
           - Closed
           - Removed
+        options_source: work_item_states
+        parent: customer_name
         default: New
         optional: False
       - name: source
@@ -117,7 +127,7 @@ board_devops_forms:
         optional: True
         conditional: true
         visible_when:
-          work_item_type: [User Story]
+          work_item_type: [User Story, Story]
       - name: contact_person
         label: Contact Person
         type: select
@@ -128,7 +138,7 @@ board_devops_forms:
         parent: customer_name
         conditional: true
         visible_when:
-          work_item_type: [User Story]
+          work_item_type: [User Story, Story]
       - name: assigned_to
         label: Assigned To
         type: select
@@ -153,7 +163,7 @@ board_devops_forms:
         parent: customer_name
         conditional: true
         visible_when:
-          work_item_type: [Feature, User Story]
+          work_item_type: [Feature, User Story, Story, Sub-task]
       - name: priority
         label: Priority
         type: select
@@ -212,10 +222,10 @@ board_devops_forms:
 
             ## Dependencies
 
-          User Story: |
+          User Story: &story_template |
             **Received Date:** {today}
-            **Source:** 
-            **Contact:** 
+            **Source:**
+            **Contact:**
 
             ## Problem
 
@@ -228,6 +238,8 @@ board_devops_forms:
 
             ## Validation
 
+          # Jira's working level shares the User Story template.
+          Story: *story_template
     rows:
       - [customer_name, work_item_type, work_item_title]
       - [parent_name, assigned_to]
@@ -259,12 +271,16 @@ board_devops_forms:
       - name: state
         label: State
         type: select
+        # Per-customer via the tracker (Jira: project statuses); static list
+        # is the fallback.
         options:
           - New
           - Active
           - Resolved
           - Closed
           - Removed
+        options_source: work_item_states
+        parent: customer_name
         optional: True
       - name: assigned_to
         label: Assigned To

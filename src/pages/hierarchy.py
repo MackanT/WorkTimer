@@ -47,9 +47,12 @@ _DONE_COLOR = "#334155"
 _NO_COLUMN_COLOR = "#475569"
 
 
-def _story_progress_map(df: pd.DataFrame, customer: str) -> dict:
+def _story_progress_map(
+    df: pd.DataFrame, customer: str, count_type: str = "User Story"
+) -> dict:
     """Map each work item id -> (done_stories, total_stories) over its whole
     subtree, computed from ALL states (so rollups count hidden/closed items too).
+    `count_type` is the tracker's working level (Azure: User Story, Jira: Story).
     """
     full = df[df["customer_name"] == customer]
     children: dict[int, list[int]] = {}
@@ -72,9 +75,11 @@ def _story_progress_map(df: pd.DataFrame, customer: str) -> dict:
                 continue
             seen.add(cur)
             typ, st = info.get(cur, ("", ""))
-            if typ == "User Story" and st != "Removed":
+            if typ == count_type and st != "Removed":
                 total += 1
-                if st in _DONE_STATES:
+                # Done by Azure state name OR by done-token status (Jira's
+                # state IS its board column, e.g. "Done").
+                if st in _DONE_STATES or st.strip().lower() in _DONE_COLUMN_TOKENS:
                     done += 1
             stack.extend(children.get(cur, []))
         progress[node_id] = (done, total)
@@ -193,6 +198,7 @@ def build_mermaid(
     include_closed: bool = False,
     focus_id: int | None = None,
     direction: str = "TD",
+    count_type: str = "User Story",
 ) -> str:
     """Return a Mermaid flowchart of one customer's work-item hierarchy.
 
@@ -208,7 +214,7 @@ def build_mermaid(
         return ""
 
     present = {int(r["id"]) for _, r in sub.iterrows()}
-    progress = _story_progress_map(df, customer)
+    progress = _story_progress_map(df, customer, count_type)
 
     # Board-column colouring: one class per column present in this view.
     col_colors = column_styles(sub)
@@ -281,8 +287,14 @@ def default_focus_id(
     return int(epics.iloc[0]["id"])
 
 
-def focus_options(df: pd.DataFrame, customer: str, include_closed: bool = False) -> dict:
-    """Options for the Focus selector: {value: label}, Epics then Features.
+def focus_options(
+    df: pd.DataFrame,
+    customer: str,
+    include_closed: bool = False,
+    parent_types: tuple = ("Epic", "Feature"),
+) -> dict:
+    """Options for the Focus selector: {value: label}, grouped root-first by
+    `parent_types` (the tracker hierarchy's non-leaf levels).
 
     Value "" means the whole tree; other values are the work-item id as a string.
     """
@@ -291,10 +303,12 @@ def focus_options(df: pd.DataFrame, customer: str, include_closed: bool = False)
         return opts
 
     sub = _filtered(df, customer, include_closed)
-    parents = sub[sub["type"].isin(["Epic", "Feature"])].copy()
+    parents = sub[sub["type"].isin(parent_types)].copy()
     if parents.empty:
         return opts
-    parents["_ord"] = parents["type"].map({"Epic": 0, "Feature": 1})
+    parents["_ord"] = parents["type"].map(
+        {t: i for i, t in enumerate(parent_types)}
+    )
     parents = parents.sort_values(["_ord", "id"])
     for _, r in parents.iterrows():
         wid = int(r["id"])
@@ -334,7 +348,7 @@ def create_hierarchy_view(core, get_customer):
                 "padding: 4rem;"
             ):
                 ui.icon("account_tree", size="xl").classes(f"text-{muted}")
-                ui.label("No DevOps data available.").classes(f"text-{muted} mt-2")
+                ui.label("No tracker data available.").classes(f"text-{muted} mt-2")
             return
 
         code = build_mermaid(
@@ -343,6 +357,7 @@ def create_hierarchy_view(core, get_customer):
             include_closed=state["show_closed"],
             focus_id=state["focus_id"],
             direction=state["direction"],
+            count_type=DO.preferred_type(state["customer"]),
         )
         if not code:
             with ui.column().classes("items-center justify-center w-full").style(
@@ -397,7 +412,12 @@ def create_hierarchy_view(core, get_customer):
     @ui.refreshable
     def render_focus_select():
         opts = (
-            focus_options(DO.df, state["customer"], state["show_closed"])
+            focus_options(
+                DO.df,
+                state["customer"],
+                state["show_closed"],
+                parent_types=tuple(DO.type_hierarchy(state["customer"])[:-1]),
+            )
             if (DO is not None and DO.df is not None and state["customer"])
             else {"": "Whole tree"}
         )

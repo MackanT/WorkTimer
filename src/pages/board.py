@@ -94,6 +94,10 @@ async def board_page():
         filter_state["customer"] = (
             _saved_cust if _saved_cust in customer_names else customer_names[0]
         )
+        # Preferred level for THIS customer's tracker (Jira's leaf is Sub-task
+        # but its working level is Story; Azure's leaf User Story is both).
+        if DO is not None:
+            filter_state["type"] = DO.preferred_type(filter_state["customer"])
 
     # Per-customer indicator colours (shown as a dot on the customer tabs).
     cust_colors: dict = {}
@@ -518,7 +522,7 @@ async def board_page():
         if not cust:
             with ui.column().classes("items-center justify-center w-full").style("padding: 4rem;"):
                 ui.icon("view_kanban", size="xl").classes(f"text-{muted}")
-                ui.label("No customers with DevOps data available.").classes(f"text-{muted} mt-2")
+                ui.label("No customers with tracker data available.").classes(f"text-{muted} mt-2")
             return
 
         data = _board_data()
@@ -745,7 +749,7 @@ async def board_page():
             ).tooltip("Reload from local DB (no API call)")
             ui.button(icon="add", on_click=_open_add_plain).props(
                 "flat dense color=white"
-            ).tooltip("Add new DevOps work item")
+            ).tooltip("Add new work item")
         else:
             hier.render_zoom_controls()
             ui.button(icon="refresh", on_click=hier.refresh).props(
@@ -786,6 +790,15 @@ async def board_page():
                 async def _on_customer_change(e):
                     filter_state["customer"] = e.value
                     app.storage.user["devops_customer"] = e.value
+                    # Trackers differ in type names (User Story vs Story) — a
+                    # stale type from the previous customer would blank the
+                    # board, so snap to the new tracker's preferred level.
+                    types = _work_item_types(e.value)
+                    if filter_state["type"] not in types:
+                        filter_state["type"] = (
+                            DO.preferred_type(e.value) if DO is not None else types[0]
+                        )
+                    render_type_chips.refresh()
                     render_board.refresh()
                     render_done_zone.refresh()
                     hier.set_customer(e.value)
