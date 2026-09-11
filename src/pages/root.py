@@ -100,15 +100,29 @@ html, body { overflow: hidden !important; }
 }
 </style>
 <script>
-requestAnimationFrame(function () {
-    var pc = document.querySelector('.q-page-container');
-    if (pc) {
-        var h = parseFloat(getComputedStyle(pc).paddingTop);
+/* Keep --wt-nav-h equal to the real header height. A single
+   requestAnimationFrame raced Vue's mount (first paint can happen before
+   or after Quasar renders the header depending on load timing), leaving
+   the 68px fallback and a blank band under the nav. Poll until the header
+   exists, measure it directly, and re-measure whenever its size changes
+   (timer pills / update badge add a row). */
+(function () {
+    function sync(hd) {
+        var h = hd.offsetHeight;
         if (h > 0) {
             document.documentElement.style.setProperty('--wt-nav-h', h + 'px');
         }
     }
-});
+    var poll = setInterval(function () {
+        var hd = document.querySelector('.q-header');
+        if (hd) {
+            clearInterval(poll);
+            sync(hd);
+            new ResizeObserver(function () { sync(hd); }).observe(hd);
+        }
+    }, 50);
+    setTimeout(function () { clearInterval(poll); }, 15000);
+})();
 document.addEventListener('keydown', function (e) {
     if (e.key === 'F5') e.preventDefault();
 });

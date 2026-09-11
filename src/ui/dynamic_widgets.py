@@ -1254,13 +1254,15 @@ class DynamicEditorWithPreview(DynamicWidget):
 
     def set_image_upload_visible(self, visible: bool):
         """Show/hide the Insert-image button — e.g. when the selected
-        customer's tracker has no attachment support (Jira v1)."""
-        for el in (
-            getattr(self, "_image_btn", None),
-            getattr(self, "_image_upload", None),
-        ):
-            if el is not None:
-                el.set_visibility(bool(visible))
+        customer's tracker has no attachment support (Jira v1).
+
+        Only the BUTTON is toggled: the companion ui.upload relies on a
+        permanent Tailwind `hidden` class, and set_visibility(True) strips
+        exactly that class (NiceGUI implements visibility with it) — which
+        would surface the big uploader box in the toolbar."""
+        btn = getattr(self, "_image_btn", None)
+        if btn is not None:
+            btn.set_visibility(bool(visible))
 
     def update_paste_fields(self, paste_endpoint, paste_fields=None):
         """Refresh the paste-upload fields (e.g. when the customer changes in an
