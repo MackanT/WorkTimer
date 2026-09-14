@@ -1450,8 +1450,10 @@ class DynamicColor(DynamicWidget):
     """Hex colour picker with a swatch; refreshes from parent like DynamicInput."""
 
     def _create_widget(self):
+        # "outlined" only — dense made it shorter than the sibling inputs
+        # (they all use plain outlined), which stood out in the form grid.
         return ui.color_input(label=self.label, **self.widget_kwargs).props(
-            "dense outlined"
+            "outlined"
         )
 
     async def _refresh_impl(self, parent_val):
