@@ -24,6 +24,22 @@ class Database:
                 where is_current = 1
                 """
 
+    # Default "projects" query — joins customers so the customer NAME shows
+    # next to its id (project_id stays first: the row-edit needs the pk).
+    _PROJECTS_DEFAULT_QUERY = """
+                select
+                     p.project_id
+                    ,p.project_name
+                    ,p.customer_id
+                    ,c.customer_name
+                    ,p.git_id
+                from projects p
+                left join customers c
+                    on c.customer_id = p.customer_id
+                    and c.is_current = 1
+                where p.is_current = 1
+                """
+
     def __init__(self, db_file: str, log_engine):
         self.db_file = db_file  # kept for sibling files (e.g. the PAT key)
         self.conn = sqlite3.connect(db_file, check_same_thread=False)
@@ -496,15 +512,7 @@ class Database:
             ),
             (
                 "projects",
-                """
-                select
-                     project_id
-                    ,project_name
-                    ,customer_id
-                    ,git_id
-                from projects
-                where is_current = 1
-                """,
+                self._PROJECTS_DEFAULT_QUERY,
             ),
             (
                 "weekly",
