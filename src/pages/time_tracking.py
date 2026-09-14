@@ -355,7 +355,11 @@ async def time_tracking_page():
         state.edit_mode_enabled = not state.edit_mode_enabled
 
         if state.edit_mode_enabled:
-            core.event_bus.notify("Edit mode: Use ↑↓ arrows to reorder", type_="info")
+            core.event_bus.notify(
+                "Edit mode: drag rows to reorder (or use the arrows); "
+                "the sort button orders a customer's projects by usage",
+                type_="info",
+            )
             await render_time_tracker()
             edit_button.set_text("Save Order")
             edit_button.props("color=primary")
@@ -1171,7 +1175,40 @@ async def time_tracking_page():
                     (UI_STYLES.get_inline_style("time_tracking", "project_row") or "")
                     + " display: grid; grid-template-columns: auto 1fr auto; gap: 0.5rem; width: 100%;"
                 )
-            ):
+            ) as project_row_el:
+                if state.edit_mode_enabled:
+                    # Drag a row onto another to reorder (arrows still work);
+                    # the light line shows where it lands (insert before).
+                    project_row_el.props('draggable="true"').classes(
+                        "cursor-move"
+                    )
+                    project_row_el.on(
+                        "dragstart",
+                        lambda _, c=int(customer_id), i=project_index: (
+                            proj_drag.update(customer_id=c, index=i)
+                        ),
+                    )
+                    project_row_el.on(
+                        "dragover",
+                        js_handler=(
+                            "(e) => { e.preventDefault(); "
+                            "e.currentTarget.classList.add('wt-drop-above'); }"
+                        ),
+                    )
+                    project_row_el.on(
+                        "dragleave",
+                        js_handler=(
+                            "(e) => { if (!e.currentTarget.contains("
+                            "e.relatedTarget)) e.currentTarget"
+                            ".classList.remove('wt-drop-above'); }"
+                        ),
+                    )
+                    project_row_el.on(
+                        "drop",
+                        lambda _, c=int(customer_id), i=project_index: (
+                            asyncio.create_task(_drop_project(c, i))
+                        ),
+                    )
                 # Show arrows in edit mode, checkbox in normal mode
                 if state.edit_mode_enabled:
 
@@ -1337,6 +1374,18 @@ async def time_tracking_page():
                                     lambda x: (
                                         x and customer_index < total_customers - 1
                                     ),
+                                )
+                                ui.button(
+                                    icon="sort",
+                                    on_click=lambda _, c=int(customer_id): (
+                                        asyncio.create_task(
+                                            _sort_projects_by_usage(c)
+                                        )
+                                    ),
+                                ).props("flat dense size=sm").classes(
+                                    f"text-{core.theme.get('accent')}"
+                                ).tooltip(
+                                    "Sort projects by usage (last 60 days)"
                                 )
 
                         if cust_colors.get(customer_name):
@@ -1591,6 +1640,51 @@ async def time_tracking_page():
     # so the full rebuild after a save (ui_refresh_requested → container.clear)
     # doesn't destroy a dialog that is still open.
     _quick_add_host = ui.element("div").classes("hidden")
+
+    # Drag-and-drop project reordering (edit mode) — same HTML5 drag pattern
+    # as the board's cards; state.project_orders is the single source.
+    proj_drag: dict = {"customer_id": None, "index": None}
+
+    async def _drop_project(customer_id: int, target_index: int):
+        src = proj_drag.get("index")
+        same_customer = proj_drag.get("customer_id") == customer_id
+        proj_drag["customer_id"] = None
+        proj_drag["index"] = None
+        if not same_customer or src is None or src == target_index:
+            return
+        projects = state.project_orders.get(customer_id)
+        if not projects or not (0 <= src < len(projects)):
+            return
+        item = projects.pop(src)
+        projects.insert(min(target_index, len(projects)), item)
+        await render_time_tracker()
+
+    async def _sort_projects_by_usage(customer_id: int):
+        """One-click ordering by logged time in the last 60 days (most first;
+        unused projects keep their current relative order at the bottom).
+        Deliberately manual — an auto-reordering list ruins muscle memory."""
+        rows = await core.query_engine.query_db(
+            "select project_id, sum(coalesce(total_time, "
+            "(julianday('now', 'localtime') - julianday(start_time)) * 24)) as h "
+            "from time where customer_id = ? "
+            "and date(start_time) >= date('now', '-60 days') "
+            "group by project_id",
+            params=(customer_id,),
+        )
+        usage = (
+            {int(r["project_id"]): float(r["h"] or 0) for _, r in rows.iterrows()}
+            if not rows.empty
+            else {}
+        )
+        projects = state.project_orders.get(customer_id)
+        if not projects:
+            return
+        projects.sort(key=lambda p: -usage.get(int(p[0]), 0.0))  # stable
+        await render_time_tracker()
+        ui.notify(
+            "Sorted by last 60 days of logged time — Save Order to keep it",
+            type="info",
+        )
 
     async def open_quick_add(
         entity: str, presets: dict = None, operation: str = "add"

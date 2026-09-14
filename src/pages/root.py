@@ -78,6 +78,13 @@ html, body { overflow: hidden !important; }
     min-height: 0 !important;
 }
 
+/* Drag-and-drop indicators (notepad sidebar, time-tracker project rows):
+   a light line above the row the dragged item would land BEFORE, and a
+   dashed outline on containers it would drop INTO (group headers). Toggled
+   client-side on dragover/dragleave — no server round-trips. */
+.wt-drop-above { box-shadow: 0 -2px 0 0 rgba(255, 255, 255, 0.75) !important; }
+.wt-drop-into { outline: 1px dashed rgba(255, 255, 255, 0.55) !important; outline-offset: -1px; }
+
 /* Hide scrollbar on horizontally-scrollable rows while keeping scroll functionality */
 .wt-nav-scroll::-webkit-scrollbar,
 .wt-toolbar-scroll::-webkit-scrollbar { display: none; }
