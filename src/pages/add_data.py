@@ -15,11 +15,87 @@ from nicegui import ui
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
+from ..ui.devops_forms import _setup_conditional_visibility, _with_loading
 
 _OP_TAB_LABELS = {"reenable": "Re-enable"}
 
 # Field types that take the full form width in the two-column grid.
 _WIDE_FIELD_TYPES = {"textarea", "editor_with_preview", "devops_id"}
+
+
+def _render_test_connection_button(core, widgets: dict, visible_fn) -> None:
+    """'Test connection' on the tracker forms: builds a provider from the
+    CURRENT form values (falling back to the stored, decrypted credentials
+    for fields left blank/unchanged on the update form) and calls its
+    connect() — a credential typo surfaces here instead of as a background
+    re-init failure minutes later."""
+
+    async def _test():
+        vals = {
+            n: (w.value or "") for n, w in widgets.items() if visible_fn(n)
+        }
+        itype = str(vals.get("integration_type") or "devops")
+        org = str(vals.get("org_url") or vals.get("jira_site") or "").strip()
+        email = str(vals.get("jira_email") or "").strip()
+        token = str(vals.get("jira_api_token") or "").strip()
+        pat = str(vals.get("pat_token") or "").strip()
+        if pat.startswith("enc:"):
+            pat = ""  # the update form's encrypted prefill — use stored
+
+        # Update form: anything blank falls back to the stored credentials.
+        tname = str(vals.get("tracker_name") or "").strip()
+        needs_stored = not org or (
+            not (email and token) if itype == "jira" else not pat
+        )
+        if tname and needs_stored:
+            stored = await core.query_engine.function_db(
+                "get_tracker_credentials", tname
+            )
+            if stored:
+                _stype, s_org, s_pat = stored
+                org = org or s_org
+                if itype == "jira":
+                    s_email, _, s_token = s_pat.partition(":")
+                    email = email or s_email
+                    token = token or s_token
+                else:
+                    pat = pat or s_pat
+
+        if itype == "jira":
+            pat = f"{email}:{token}" if email and token else ""
+        if not org or not pat:
+            ui.notify("Fill in the connection fields first", type="warning")
+            return
+
+        row = {
+            "customer_name": tname or "connection test",
+            "integration_type": itype,
+            "org_url": org,
+            "pat_token": pat,
+            "devops_project": None,
+        }
+
+        def _connect():
+            from ..trackers.registry import create_provider_for_row
+
+            provider = create_provider_for_row(row, core.logger)
+            if provider is None:
+                raise Exception("credentials look incomplete")
+            provider.connect()
+            return provider.available_projects
+
+        try:
+            projects = await asyncio.to_thread(_connect)
+        except Exception as e:
+            ui.notify(f"Connection failed: {e}", type="negative")
+            return
+        shown = ", ".join(map(str, projects[:5]))
+        if len(projects) > 5:
+            shown += f" … (+{len(projects) - 5})"
+        ui.notify(f"Connected — projects: {shown}", type="positive")
+
+    btn = ui.button("Test connection", icon="wifi_tethering").props("outline")
+    btn.on("click", _with_loading(btn, _test))
 
 
 def entity_sections(core) -> dict:
@@ -165,11 +241,25 @@ async def render_entity_form(
     dynamic_widgets = []
     parent_map = {}
 
+    def _visible(name):
+        w = widgets.get(name)
+        return w is not None and getattr(w.widget, "visible", True)
+
     async def on_submit():
-        required_fields = [f["name"] for f in fields if not f.get("optional", False)]
+        # Hidden fields (visible_when for another tracker type) neither
+        # validate nor submit — their stale values must not reach the DB.
+        required_fields = [
+            f["name"]
+            for f in fields
+            if not f.get("optional", False) and _visible(f["name"])
+        ]
         if not helpers.check_input(widgets, required_fields):
             return
-        kwargs = {name: widget.value for name, widget in widgets.items()}
+        kwargs = {
+            name: widget.value
+            for name, widget in widgets.items()
+            if _visible(name)
+        }
         # Snapshot before the values get cleared below — used to decide whether
         # this change touched tracker connections (see re-init at the end).
         devops_touched = entity_type == "tracker" or (
@@ -269,7 +359,10 @@ async def render_entity_form(
                 parent_map[field_name] = dw
                 dynamic_widgets.append(dw)
 
-        with ui.row().classes("w-full justify-end"):
+        with ui.row().classes("w-full justify-end gap-2"):
+            if entity_type == "tracker" and operation in ("add", "update"):
+                _render_test_connection_button(core, widgets, _visible)
+
             save_btn = ui.button(
                 action.get("button_name", "Save"), icon="save"
             ).props("color=primary")
@@ -285,6 +378,12 @@ async def render_entity_form(
                         pass
 
             save_btn.on("click", _submit_with_spinner)
+
+    # visible_when conditions (per-type credential fields on the tracker
+    # forms) — same mechanism the work-item forms use.
+    _setup_conditional_visibility(
+        widgets, {f["name"]: f for f in fields}, set()
+    )
 
     # Widgets (field order preserved) and first field per form — the dialog
     # uses these for presets and keyboard focus.
@@ -411,20 +510,44 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     tdf["tracker_name"].tolist() if not tdf.empty else []
                 )
                 if operation == "update":
+                    from ..pat_crypto import decrypt_pat
+
+                    db_file = core.query_engine.file_name
                     data_sources["new_tracker_name"] = {}
                     data_sources["integration_type_current"] = {}
+                    # Credential prefills are PER TYPE, and the SECRET fields
+                    # (PAT / API token) always prefill blank — blank means
+                    # "keep the stored one", and showing the enc: blob would
+                    # only suggest a wrong format. The always-"" maps still
+                    # matter: switching trackers clears a typed-but-unsaved
+                    # value via the parent refresh.
                     data_sources["org_url"] = {}
-                    # The PAT shows as its opaque enc: value — saving it back
-                    # unchanged is a no-op (no double encryption).
                     data_sources["pat_token"] = {}
+                    data_sources["jira_site"] = {}
+                    data_sources["jira_email"] = {}
+                    data_sources["jira_api_token"] = {}
                     for _, row in tdf.iterrows():
                         tname = row["tracker_name"]
+                        itype = row["integration_type"] or "devops"
                         data_sources["new_tracker_name"][tname] = tname
-                        data_sources["integration_type_current"][tname] = (
-                            row["integration_type"] or "devops"
-                        )
-                        data_sources["org_url"][tname] = row["org_url"] or ""
-                        data_sources["pat_token"][tname] = row["pat_token"] or ""
+                        data_sources["integration_type_current"][tname] = itype
+                        for key in ("org_url", "pat_token", "jira_site",
+                                    "jira_email", "jira_api_token"):
+                            data_sources[key][tname] = ""
+                        if itype == "jira":
+                            data_sources["jira_site"][tname] = (
+                                row["org_url"] or ""
+                            )
+                            # The email half of the packed credential is not
+                            # secret — prefill it.
+                            pat = decrypt_pat(
+                                row["pat_token"] or "", db_file, core.logger
+                            )
+                            data_sources["jira_email"][tname] = (
+                                pat.partition(":")[0]
+                            )
+                        else:
+                            data_sources["org_url"][tname] = row["org_url"] or ""
 
         elif entity_type == "project":
             # Get active customers

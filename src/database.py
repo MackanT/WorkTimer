@@ -928,15 +928,45 @@ class Database:
             data_type="int",
         )
 
+    def get_tracker_credentials(self, tracker_name: str):
+        """(integration_type, org_url, DECRYPTED pat) for a tracker, or None.
+        Server-side only — feeds the update form's email prefill, partial
+        Jira credential updates, and the Test-connection button."""
+        from .pat_crypto import decrypt_pat
+
+        row = self.fetch_query(
+            "select coalesce(integration_type, 'devops') as integration_type, "
+            "org_url, pat_token from trackers where tracker_name = ?",
+            (tracker_name,),
+        )
+        if row.empty:
+            return None
+        pat = decrypt_pat(
+            row.iloc[0]["pat_token"] or "", self.db_file, self.log_engine
+        )
+        return (
+            row.iloc[0]["integration_type"],
+            row.iloc[0]["org_url"] or "",
+            pat or "",
+        )
+
     def insert_tracker(
         self,
         tracker_name: str,
         integration_type: str = None,
         org_url: str = None,
         pat_token: str = None,
+        jira_site: str = None,
+        jira_email: str = None,
+        jira_api_token: str = None,
     ):
+        """The Jira form splits credentials into site/email/token fields —
+        they pack into the org_url and email:token pat used everywhere else."""
         if self.get_tracker_id(tracker_name):
             raise ValueError(f"Tracker '{tracker_name}' already exists")
+        org_url = org_url or jira_site
+        if not pat_token and jira_email and jira_api_token:
+            pat_token = f"{jira_email.strip()}:{jira_api_token.strip()}"
         if pat_token:
             from .pat_crypto import encrypt_pat
 
@@ -961,8 +991,13 @@ class Database:
         integration_type: str = None,
         org_url: str = None,
         pat_token: str = None,
+        jira_site: str = None,
+        jira_email: str = None,
+        jira_api_token: str = None,
     ):
-        """None = leave unchanged; '' clears org_url/pat_token."""
+        """Empty/None = leave unchanged (clearing credentials is not a thing —
+        delete the tracker instead). A partial Jira edit (email OR token)
+        merges with the stored decrypted value, so either can change alone."""
         set_clauses, params = [], []
         if new_tracker_name and new_tracker_name != tracker_name:
             set_clauses.append("tracker_name = ?")
@@ -970,10 +1005,19 @@ class Database:
         if integration_type:
             set_clauses.append("integration_type = ?")
             params.append(integration_type)
-        if org_url is not None:
+        org = org_url or jira_site
+        if org:
             set_clauses.append("org_url = ?")
-            params.append(org_url)
-        if pat_token is not None:
+            params.append(org)
+        if not pat_token and (jira_email or jira_api_token):
+            current = self.get_tracker_credentials(tracker_name)
+            cur_pat = current[2] if current else ""
+            cur_email, _, cur_token = cur_pat.partition(":")
+            email = (jira_email or cur_email).strip()
+            token = (jira_api_token or cur_token).strip()
+            if email and token:
+                pat_token = f"{email}:{token}"
+        if pat_token:
             # Never store a plaintext PAT (enc:-prefixed values pass through).
             from .pat_crypto import encrypt_pat
 
@@ -1058,6 +1102,18 @@ class Database:
             "select * from devops where customer_name in "
             "(select customer_name from customers where is_current = 1)"
         )
+
+    def get_customer_tracker_names(self):
+        """{customer_name: tracker_name} for current customers with a linked
+        tracker — resolves which tracker's form defaults apply."""
+        df = self.fetch_query(
+            "select c.customer_name, t.tracker_name from customers c "
+            "join trackers t on t.tracker_id = c.tracker_id "
+            "where c.is_current = 1"
+        )
+        if df.empty:
+            return {}
+        return dict(zip(df["customer_name"], df["tracker_name"]))
 
     def get_tracker_connections(self):
         """One row per current customer with a usable tracker connection —

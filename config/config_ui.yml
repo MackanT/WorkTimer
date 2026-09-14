@@ -494,13 +494,40 @@ add_data_page:
           default: devops
           optional: false
         - name: org_url
-          label: "Org URL / Jira site"
+          label: "DevOps organisation"
           type: input
           optional: false
+          conditional: true
+          visible_when:
+            integration_type: [devops]
         - name: pat_token
-          label: "PAT (Jira: email:api-token)"
+          label: "Personal Access Token (PAT)"
           type: input
           optional: false
+          conditional: true
+          visible_when:
+            integration_type: [devops]
+        - name: jira_site
+          label: "Jira site (yoursite.atlassian.net)"
+          type: input
+          optional: false
+          conditional: true
+          visible_when:
+            integration_type: [jira]
+        - name: jira_email
+          label: "Atlassian account email"
+          type: input
+          optional: false
+          conditional: true
+          visible_when:
+            integration_type: [jira]
+        - name: jira_api_token
+          label: "API token"
+          type: input
+          optional: false
+          conditional: true
+          visible_when:
+            integration_type: [jira]
       action:
         function: "insert_tracker"
         main_action: "Tracker"
@@ -531,19 +558,55 @@ add_data_page:
           parent: tracker_name
           optional: true
         - name: org_url
-          label: "Org URL / Jira site"
+          label: "DevOps organisation"
           type: input
           options: []
           options_source: org_url
           optional: true
           parent: tracker_name
+          conditional: true
+          visible_when:
+            integration_type: [devops]
         - name: pat_token
-          label: "PAT (Jira: email:api-token)"
+          label: "Personal Access Token (blank = unchanged)"
           type: input
           options: []
           options_source: pat_token
           optional: true
           parent: tracker_name
+          conditional: true
+          visible_when:
+            integration_type: [devops]
+        - name: jira_site
+          label: "Jira site (yoursite.atlassian.net)"
+          type: input
+          options: []
+          options_source: jira_site
+          optional: true
+          parent: tracker_name
+          conditional: true
+          visible_when:
+            integration_type: [jira]
+        - name: jira_email
+          label: "Atlassian account email"
+          type: input
+          options: []
+          options_source: jira_email
+          optional: true
+          parent: tracker_name
+          conditional: true
+          visible_when:
+            integration_type: [jira]
+        - name: jira_api_token
+          label: "API token (blank = unchanged)"
+          type: input
+          options: []
+          options_source: jira_api_token
+          optional: true
+          parent: tracker_name
+          conditional: true
+          visible_when:
+            integration_type: [jira]
       action:
         function: "update_tracker"
         main_action: "Tracker"
