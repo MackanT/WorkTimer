@@ -1250,6 +1250,34 @@ async def time_tracking_page():
                     ui.menu_item("Add time entry", on_click=_open_manual).props("icon=add_circle")
                     ui.menu_item("Start from past time", on_click=_open_manual_start).props("icon=history")
                     ui.menu_item("Manage entries", on_click=_open_manage).props("icon=edit_note")
+                    ui.separator()
+
+                    async def _open_update_project(
+                        cn=str(project["customer_name"]),
+                        pn=str(project["project_name"]),
+                    ):
+                        await open_quick_add(
+                            "project",
+                            operation="update",
+                            presets={"customer_name": cn, "project_name": pn},
+                        )
+
+                    async def _disable_project(
+                        cn=str(project["customer_name"]),
+                        pn=str(project["project_name"]),
+                    ):
+                        # Direct action — reversible via the Projects
+                        # dialog's Re-enable tab.
+                        await core.query_engine.function_db(
+                            "disable_project",
+                            customer_name=cn,
+                            project_name=pn,
+                        )
+                        ui.notify(f"Project '{pn}' disabled", type="positive")
+                        core.event_bus.emit("ui_refresh_requested")
+
+                    ui.menu_item("Update project", on_click=_open_update_project).props("icon=edit")
+                    ui.menu_item("Disable project", on_click=_disable_project).props("icon=block")
 
         async def make_customer_card(
             customer_id, customer_name, group, customer_index=None, total_customers=None
@@ -1341,11 +1369,59 @@ async def time_tracking_page():
                         )
                     )
 
+                    # Right-click the header: manage THIS customer (same
+                    # pattern as the project rows' context menu).
+                    with ui.context_menu():
+
+                        async def _ctx_update(cn=str(customer_name)):
+                            await open_quick_add(
+                                "customer",
+                                presets={"customer_name": cn},
+                                operation="update",
+                            )
+
+                        async def _ctx_add_project(cn=str(customer_name)):
+                            await open_quick_add(
+                                "project", presets={"customer_name": cn}
+                            )
+
+                        async def _ctx_disable(cn=str(customer_name)):
+                            # Direct action, no dialog — reversible via the
+                            # Customers dialog's Re-enable tab.
+                            await core.query_engine.function_db(
+                                "disable_customer", customer_name=cn
+                            )
+                            ui.notify(f"Customer '{cn}' disabled", type="positive")
+                            core.event_bus.emit("ui_refresh_requested")
+                            core.force_devops_reinit()
+
+                        ui.menu_item("Update customer", on_click=_ctx_update).props(
+                            "icon=edit"
+                        )
+                        ui.menu_item(
+                            "Add project", on_click=_ctx_add_project
+                        ).props("icon=add_circle")
+                        ui.menu_item("Disable customer", on_click=_ctx_disable).props(
+                            "icon=block"
+                        )
+
                 ui.separator().classes(
                     UI_STYLES.get_layout_classes("divider_row")
                 )
 
                 with entity_card_content():
+                    # Quick-add project for THIS customer (pre-filled) — under
+                    # the divider so it clearly belongs to the project list.
+                    ui.button(
+                        "Add project",
+                        icon="add",
+                        on_click=lambda cn=str(customer_name): asyncio.create_task(
+                            open_quick_add("project", presets={"customer_name": cn})
+                        ),
+                    ).props("flat dense size=sm no-caps").classes(
+                        f"text-{core.theme.get('muted')} self-start"
+                    )
+
                     # Merge/init project order
                     customer_projects = group.sort_values("project_sort_order")
                     db_ordered = [
@@ -1388,12 +1464,44 @@ async def time_tracking_page():
         customers_list = list(
             zip(customers_from_db["customer_id"], customers_from_db["customer_name"])
         )
+
+        # Customers with no projects yet are absent from the joined frame —
+        # append them so they show as (empty) cards ready for "Add project".
+        all_cust = await core.query_engine.query_db(
+            "select customer_id, customer_name, color, "
+            "coalesce(sort_order, 999) as so "
+            "from customers where is_current = 1 "
+            "order by so, customer_name"
+        )
+        if not all_cust.empty:
+            known_ids = {int(c[0]) for c in customers_list}
+            for _, r in all_cust.iterrows():
+                if int(r["customer_id"]) not in known_ids:
+                    customers_list.append(
+                        (int(r["customer_id"]), r["customer_name"])
+                    )
+            # Colour dots follow renames/edits — refresh on every rebuild.
+            cust_colors.clear()
+            cust_colors.update({
+                r["customer_name"]: r["color"]
+                for _, r in all_cust.iterrows()
+                if r["color"]
+            })
+
         current_ids = {c[0] for c in customers_list}
 
         # Initialize customer order if needed
         if not state.customer_order or {c[0] for c in state.customer_order} != current_ids:
             state.customer_order.clear()
             state.customer_order.extend(customers_list)
+        else:
+            # Same customers, but a RENAME keeps the id — refresh the cached
+            # names, or the card keeps showing the old one until a reload.
+            id_to_name = {int(cid): name for cid, name in customers_list}
+            state.customer_order[:] = [
+                (cid, id_to_name.get(int(cid), name))
+                for cid, name in state.customer_order
+            ]
 
         # Rebuild container
         container.clear()
@@ -1403,15 +1511,38 @@ async def time_tracking_page():
                 for cust_idx, (customer_id, customer_name) in enumerate(
                     state.customer_order
                 ):
+                    # An empty group is fine: the card renders header + the
+                    # "Add project" button, so new customers are visible.
                     group = df[df["customer_id"] == customer_id]
-                    if not group.empty:
-                        await make_customer_card(
-                            customer_id,
-                            customer_name,
-                            group,
-                            customer_index=cust_idx,
-                            total_customers=total_customers,
-                        )
+                    await make_customer_card(
+                        customer_id,
+                        customer_name,
+                        group,
+                        customer_index=cust_idx,
+                        total_customers=total_customers,
+                    )
+
+                # Ghost card — a dashed "new customer" placeholder (mirrors
+                # the board drop-zone look); click opens the add dialog.
+                with (
+                    ui.card()
+                    .props("flat")
+                    .classes(
+                        "rounded-md items-center justify-center "
+                        "cursor-pointer shrink-0 mb-2 gap-1"
+                    )
+                    .style(
+                        "border: 2px dashed rgba(148, 163, 184, 0.35);"
+                        " background: transparent; min-height: 140px;"
+                        " min-width: 220px; align-self: stretch;"
+                    )
+                    .on(
+                        "click",
+                        lambda: asyncio.create_task(open_quick_add("customer")),
+                    )
+                ):
+                    ui.icon("add", size="md").classes("text-grey-6")
+                    ui.label("Add customer").classes("text-grey-6 text-sm")
 
         core.logger.debug("Completed render_time_tracker (full rebuild)")
 
@@ -1456,6 +1587,21 @@ async def time_tracking_page():
 
     container = ui.scroll_area().classes("wt-page-content w-full")
 
+    # Stable host for the quick-add entity dialogs: created OUTSIDE `container`
+    # so the full rebuild after a save (ui_refresh_requested → container.clear)
+    # doesn't destroy a dialog that is still open.
+    _quick_add_host = ui.element("div").classes("hidden")
+
+    async def open_quick_add(
+        entity: str, presets: dict = None, operation: str = "add"
+    ):
+        from .add_data import open_entity_dialog
+
+        with _quick_add_host:
+            await open_entity_dialog(
+                core, entity, operation=operation, presets=presets
+            )
+
     # Pre-create dialog shells so they exist in the proper slot context at page load.
     # The show_* functions clear + rebuild the card body and then open the dialog.
     with ui.dialog().props("persistent") as _manual_dialog:
@@ -1474,10 +1620,13 @@ async def time_tracking_page():
         "time_tracking", value_refresh_timer, midnight_refresh_timer
     )
 
-    # Refresh displayed values when data changes elsewhere — the query editor
-    # (row edits) and add-data forms emit "ui_refresh_requested" on submit.
+    # Rebuild when data changes elsewhere — the query editor (row edits) and
+    # the entity dialogs emit "ui_refresh_requested" on submit. A FULL rebuild:
+    # the quick-add dialogs create customers/projects while this page is open,
+    # and the granular value update can't add new cards/rows.
     def _on_ui_refresh(**_):
-        asyncio.create_task(update_time_tracker())
+        if _page_is_live():
+            asyncio.create_task(render_time_tracker())
 
     core.event_bus.register_unique(
         "ui_refresh_requested", _on_ui_refresh, key="time_tracking_page"
