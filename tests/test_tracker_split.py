@@ -61,6 +61,89 @@ def test_tracker_crud_encrypts_pat(db):
     assert same == row["pat_token"]
 
 
+def test_jira_split_credentials_pack_and_merge(db):
+    # Add with split Jira fields → packed email:token, site → org_url.
+    db.insert_tracker(
+        "J", "jira", jira_site="x.atlassian.net",
+        jira_email="me@x.com", jira_api_token="tok1",
+    )
+    itype, org, pat = db.get_tracker_credentials("J")
+    assert (itype, org, pat) == ("jira", "x.atlassian.net", "me@x.com:tok1")
+    stored = db.fetch_query(
+        "select pat_token from trackers where tracker_name='J'"
+    ).iloc[0, 0]
+    assert stored.startswith("enc:")
+
+    # Token-only rotation keeps the stored email.
+    db.update_tracker("J", jira_api_token="tok2")
+    assert db.get_tracker_credentials("J")[2] == "me@x.com:tok2"
+
+    # Email-only change keeps the stored token.
+    db.update_tracker("J", jira_email="new@x.com")
+    assert db.get_tracker_credentials("J")[2] == "new@x.com:tok2"
+
+    # Blank credential fields leave everything unchanged.
+    db.update_tracker("J", jira_email="", jira_api_token="", jira_site="")
+    assert db.get_tracker_credentials("J") == (
+        "jira", "x.atlassian.net", "new@x.com:tok2"
+    )
+
+    db.update_tracker("J", jira_site="y.atlassian.net")
+    assert db.get_tracker_credentials("J")[1] == "y.atlassian.net"
+
+
+def test_get_tracker_credentials_missing(db):
+    assert db.get_tracker_credentials("nope") is None
+
+
+def test_get_customer_tracker_names(db):
+    db.insert_tracker("T1", "devops", "org", "pat")
+    db.insert_customer("C1", "2026-01-01", 100, tracker_name="T1")
+    db.insert_customer("C2", "2026-01-01", 100)  # unlinked → absent
+    assert db.get_customer_tracker_names() == {"C1": "T1"}
+
+
+def test_tracker_defaults_roundtrip(tmp_path):
+    from src.tracker_defaults import (
+        defaults_for,
+        load_tracker_defaults,
+        save_tracker_defaults,
+    )
+
+    assert load_tracker_defaults(tmp_path) == {}
+    data = {"Test (jira)": {
+        "*": {"priority": 3, "source": "Teams"},
+        "Story": {"state": "To Do", "priority": 2},
+    }}
+    save_tracker_defaults(tmp_path, data)
+    loaded = load_tracker_defaults(tmp_path)
+    assert loaded == data
+
+    # Effective defaults: "*" overlaid by the level's own entry per field.
+    assert defaults_for(loaded, "Test (jira)", "Story") == {
+        "priority": 2, "source": "Teams", "state": "To Do",
+    }
+    assert defaults_for(loaded, "Test (jira)", "Epic") == {
+        "priority": 3, "source": "Teams",
+    }
+    assert defaults_for(loaded, "unknown", "Story") == {}
+
+    # A legacy FLAT entry (fields directly under the tracker) normalises
+    # to the "*" level.
+    (tmp_path / "tracker_defaults.yml").write_text(
+        "trackers:\n  Old:\n    state: New\n    priority: 1\n",
+        encoding="utf-8",
+    )
+    assert load_tracker_defaults(tmp_path) == {
+        "Old": {"*": {"state": "New", "priority": 1}}
+    }
+
+    # Corrupt file degrades to no defaults instead of breaking the form.
+    (tmp_path / "tracker_defaults.yml").write_text("::: not yaml [",
+                                                   encoding="utf-8")
+    assert load_tracker_defaults(tmp_path) == {}
+
+
 def test_delete_tracker_detaches_customers(db):
     db.insert_tracker("T1", "devops", "org", "pat")
     db.insert_customer("C1", "2026-01-01", 100, tracker_name="T1")

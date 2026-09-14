@@ -744,6 +744,14 @@ class DynamicDropDown(DynamicWidget):
         """Refresh dropdown options"""
         # Get fresh options from data fetcher
         new_options = await self.data_fetcher(self.options_source, parent_val)
+        # A dict whose values are lists/dicts is a PARENT-KEYED map fetched
+        # without a parent selection — not real options. Applying it would
+        # replace the options with parent names and clear a valid value
+        # (this blanked the add form's type select). Leave the widget alone.
+        if isinstance(new_options, dict) and any(
+            isinstance(v, (list, dict)) for v in new_options.values()
+        ):
+            return
         old_value = self._coerce_value_for_select(self.widget.value)
 
         # Guard: set options only for list/dict payloads

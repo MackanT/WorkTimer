@@ -107,6 +107,178 @@ def _render_backup_card(core) -> None:
 
         _refresh()
 
+def _render_tracker_defaults_card(core) -> None:
+    """Per-tracker prefills for the add-work-item form (state, priority,
+    initial column, source, contact). Saved to config/tracker_defaults.yml;
+    the add dialog reads the file fresh, so changes apply immediately."""
+    from ..tracker_defaults import (
+        ALL_TYPES,
+        load_tracker_defaults,
+        save_tracker_defaults,
+    )
+    from ..trackers.registry import get_provider_class
+    from ..ui.devops_handlers import DevOpsWorkItemHandlers
+
+    muted = UI_STYLES.get_layout_classes("muted_text")
+    try:
+        tdf = core.query_engine.db.fetch_query(
+            "select tracker_name, coalesce(integration_type,'devops') as itype "
+            "from trackers order by tracker_name"
+        )
+        trackers = (
+            dict(zip(tdf["tracker_name"], tdf["itype"])) if not tdf.empty else {}
+        )
+        cust_map = core.query_engine.db.get_customer_tracker_names()
+    except Exception:
+        trackers, cust_map = {}, {}
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Work-item form defaults").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
+        ui.label(
+            "Prefills for new work items, per tracker AND work-item type — "
+            "'All types' applies everywhere, a specific type overrides it "
+            "per field. Fields a tracker or level doesn't use are ignored "
+            "(for Jira, state IS the board column, so no column default)."
+        ).classes("text-xs " + muted + " mb-2")
+
+        if not trackers:
+            ui.label("No trackers configured yet.").classes("text-xs " + muted)
+            return
+
+        stored = load_tracker_defaults(core.config_loader.config_folder)
+        src_field = next(
+            (
+                f
+                for f in core.ui_config.get("board_devops_forms", {})
+                .get("add", {})
+                .get("fields", [])
+                if f.get("name") == "source"
+            ),
+            {},
+        )
+        source_options = list(src_field.get("options") or [])
+
+        def _tracker_customers(tname):
+            return [c for c, t in cust_map.items() if t == tname]
+
+        def _tracker_levels(tname):
+            cls = get_provider_class(trackers.get(tname) or "devops")
+            levels = list(cls.type_hierarchy()) if cls else []
+            return {ALL_TYPES: "All types", **{lv: lv for lv in levels}}
+
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            tracker_sel = ui.select(
+                list(trackers), label="Tracker", value=next(iter(trackers))
+            ).props("dense outlined").classes("w-64")
+            type_sel = ui.select(
+                _tracker_levels(next(iter(trackers))),
+                label="Work item type", value=ALL_TYPES,
+            ).props("dense outlined").classes("w-44")
+
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            state_in = ui.select(
+                [], label="State", with_input=True, new_value_mode="add-unique"
+            ).props("dense outlined clearable").classes("w-44")
+            prio_in = ui.select(
+                [1, 2, 3, 4], label="Priority"
+            ).props("dense outlined clearable").classes("w-32")
+            col_in = ui.select(
+                [], label="Initial board column", with_input=True,
+                new_value_mode="add-unique",
+            ).props("dense outlined clearable").classes("w-52")
+            source_in = ui.select(
+                source_options, label="Source", with_input=True,
+                new_value_mode="add-unique",
+            ).props("dense outlined clearable").classes("w-40")
+            contact_in = ui.input(label="Contact person").props(
+                "dense outlined clearable"
+            ).classes("w-52")
+
+        def _load_for(tname, wtype):
+            vals = (stored.get(tname) or {}).get(wtype) or {}
+            # Options from a live customer on this tracker, when one exists.
+            # Board columns are per work-item type where the cache has them.
+            states, columns = [], []
+            eng = core.devops_engine
+            for cust in _tracker_customers(tname):
+                if eng is not None:
+                    try:
+                        states = eng.state_options(cust)
+                    except Exception:
+                        states = []
+                cols_by_type = DevOpsWorkItemHandlers.devops_columns_cache.get(
+                    cust, {}
+                )
+                if wtype != ALL_TYPES and cols_by_type.get(wtype):
+                    columns = list(cols_by_type[wtype])
+                else:
+                    columns = sorted(
+                        {c for lst in cols_by_type.values() for c in lst}
+                    )
+                if states or columns:
+                    break
+            state_in.set_options(states or [], value=vals.get("state"))
+            prio_in.value = vals.get("priority")
+            is_jira = trackers.get(tname) == "jira"
+            col_in.set_visibility(not is_jira)
+            col_in.set_options(columns or [], value=(
+                None if is_jira else vals.get("board_column")
+            ))
+            source_in.value = vals.get("source")
+            contact_in.value = vals.get("contact_person") or ""
+
+        def _save():
+            tname = tracker_sel.value
+            wtype = type_sel.value or ALL_TYPES
+            if not tname:
+                return
+            vals = {
+                "state": state_in.value or None,
+                "priority": int(prio_in.value) if prio_in.value else None,
+                "board_column": (
+                    col_in.value or None
+                    if trackers.get(tname) != "jira"
+                    else None
+                ),
+                "source": source_in.value or None,
+                "contact_person": (contact_in.value or "").strip() or None,
+            }
+            vals = {k: v for k, v in vals.items() if v is not None}
+            entry = stored.setdefault(tname, {})
+            if vals:
+                entry[wtype] = vals
+            else:
+                entry.pop(wtype, None)
+            if not entry:
+                stored.pop(tname, None)
+            try:
+                save_tracker_defaults(core.config_loader.config_folder, stored)
+                level = "all types" if wtype == ALL_TYPES else wtype
+                ui.notify(
+                    f"Defaults saved for '{tname}' ({level})", type="positive"
+                )
+            except Exception as ex:
+                core.logger.error(f"Saving tracker defaults failed: {ex}")
+                ui.notify(f"Save failed: {ex}", type="negative")
+
+        def _on_tracker_change(e):
+            type_sel.set_options(_tracker_levels(e.value), value=ALL_TYPES)
+            _load_for(e.value, ALL_TYPES)
+
+        tracker_sel.on_value_change(_on_tracker_change)
+        type_sel.on_value_change(
+            lambda e: _load_for(tracker_sel.value, e.value or ALL_TYPES)
+        )
+        _load_for(tracker_sel.value, ALL_TYPES)
+
+        with ui.row().classes("w-full justify-end mt-2"):
+            ui.button("Save", icon="save", on_click=_save).props(
+                "color=primary no-caps dense"
+            )
+
+
 def _render_time_settings_card(core) -> None:
     """Edit the global time/billing defaults (the config's time_settings block).
 
@@ -483,6 +655,118 @@ async def _render_devops_contacts_tab(core: AppCore):
                         ui.button(icon="add", on_click=_add_item).props(
                             "dense flat color=primary"
                         )
+
+                        if field_key == "assignees":
+
+                            async def _fetch_members(c=customer):
+                                """Pull the tracker's member list and let the
+                                user tick whom to import as assignees."""
+                                eng = core.devops_engine
+                                manager = (
+                                    getattr(eng, "manager", None) if eng else None
+                                )
+                                if manager is None or c not in getattr(
+                                    manager, "clients", {}
+                                ):
+                                    ui.notify(
+                                        "No live tracker connection for "
+                                        "this customer",
+                                        type="warning",
+                                    )
+                                    return
+                                ok, res = await asyncio.to_thread(
+                                    manager.list_members, c
+                                )
+                                if not ok:
+                                    ui.notify(
+                                        f"Fetch failed: {res}", type="negative"
+                                    )
+                                    return
+                                if not res:
+                                    ui.notify("No members found", type="info")
+                                    return
+                                existing = set(
+                                    (
+                                        _load_yaml(path)
+                                        .get("customers", {})
+                                        .get(c, {}) or {}
+                                    ).get("assignees") or []
+                                )
+                                with ui.dialog() as mdlg, ui.card().classes(
+                                    "rounded-lg"
+                                ).style("min-width: 380px; max-width: 90vw;"):
+                                    ui.label(
+                                        f"Tracker members — {c}"
+                                    ).classes("text-sm font-semibold")
+                                    ui.label(
+                                        "Tick whom to add to the assignee "
+                                        "list (already-added are locked)."
+                                    ).classes(
+                                        UI_STYLES.get_layout_classes(
+                                            "muted_text_xs"
+                                        )
+                                    )
+                                    boxes = {}
+                                    with ui.column().classes(
+                                        "gap-0 mt-2 w-full"
+                                    ).style(
+                                        "max-height: 50vh; overflow-y: auto;"
+                                    ):
+                                        for name in res:
+                                            already = name in existing
+                                            cb = ui.checkbox(
+                                                name, value=already
+                                            ).props("dense")
+                                            if already:
+                                                cb.props("disable")
+                                            boxes[name] = (cb, already)
+
+                                    def _import():
+                                        ddd = _load_yaml(path)
+                                        lst = (
+                                            ddd.setdefault("customers", {})
+                                            .setdefault(c, {})
+                                            .setdefault("assignees", [])
+                                        )
+                                        added = 0
+                                        for nm, (cb, already) in boxes.items():
+                                            if (
+                                                cb.value
+                                                and not already
+                                                and nm not in lst
+                                            ):
+                                                lst.append(nm)
+                                                added += 1
+                                        _save_yaml(path, ddd)
+                                        core.config_loader.reload_config(
+                                            "devops_contacts.yml"
+                                        )
+                                        mdlg.close()
+                                        _reload_detail()
+                                        ui.notify(
+                                            f"Imported {added} member(s)",
+                                            type="positive",
+                                        )
+
+                                    with ui.row().classes(
+                                        "w-full justify-end gap-2 mt-2"
+                                    ):
+                                        ui.button(
+                                            "Cancel", on_click=mdlg.close
+                                        ).props("flat")
+                                        ui.button(
+                                            "Import selected",
+                                            icon="download",
+                                            on_click=_import,
+                                        ).props("color=primary")
+                                mdlg.on("hide", lambda: mdlg.delete())
+                                mdlg.open()
+
+                            ui.button(
+                                icon="cloud_download", on_click=_fetch_members
+                            ).props("dense flat color=primary").tooltip(
+                                "Fetch members from the tracker"
+                            )
 
             with ui.card().props("flat bordered").classes("w-full rounded-lg p-3"):
                 ui.label("Default Assignee").classes(
@@ -992,6 +1276,7 @@ async def settings_page():
             with ui.scroll_area().classes("w-full h-full"):
                 with ui.column().classes("w-full gap-4 p-4"):
                     _render_sync_card()
+                    _render_tracker_defaults_card(core)
                     await _render_devops_contacts_tab(core)
 
         with ui.tab_panel("tags").classes("p-0 h-full"):
