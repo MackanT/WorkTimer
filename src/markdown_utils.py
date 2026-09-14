@@ -181,7 +181,9 @@ def render_and_sanitize_markdown(text: str) -> str:
         return m.group(1) + "/devops_attachment?url=" + _urlquote(m.group(2), safe="") + m.group(3)
 
     cleaned_html = re.sub(
-        r'(<img\b[^>]*\bsrc=")(https://[^"]*/_apis/wit/attachments/[^"]*)(")',
+        r'(<img\b[^>]*\bsrc=")'
+        r'(https://[^"]*(?:/_apis/wit/attachments/|/rest/api/3/attachment/)[^"]*)'
+        r'(")',
         _proxy_devops_attachment,
         cleaned_html,
     )

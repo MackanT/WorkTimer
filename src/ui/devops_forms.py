@@ -7,6 +7,10 @@ board can own the full DevOps workflow.
 
 import asyncio
 import copy
+import mimetypes
+import re as _re
+import time
+import uuid
 
 from nicegui import ui, app
 from fastapi import UploadFile, File, Request, Response
@@ -14,6 +18,62 @@ from fastapi import UploadFile, File, Request, Response
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
 from ..ui.devops_handlers import DevOpsWorkItemHandlers
+
+
+# Images inserted on the ADD form for item-scoped attachment stores (Jira):
+# the item doesn't exist yet, so the bytes are STAGED here, previewed via
+# /staged_image/<token>, and uploaded + swapped for the real attachment URL
+# right after the item is created (see DevOpsWorkItemHandlers.add_work_item).
+_STAGED_IMAGES: dict = {}  # token -> (filename, bytes, monotonic timestamp)
+_STAGED_URL_RE = _re.compile(r"/staged_image/([0-9a-f]{32})")
+
+
+def _prune_staged(max_age: float = 3600.0) -> None:
+    now = time.monotonic()
+    for token in [
+        t for t, v in _STAGED_IMAGES.items() if now - v[2] > max_age
+    ]:
+        _STAGED_IMAGES.pop(token, None)
+
+
+def stage_image(file_name: str, content: bytes) -> str:
+    """Hold image bytes until the work item exists; returns the preview URL."""
+    _prune_staged()
+    token = uuid.uuid4().hex
+    _STAGED_IMAGES[token] = (file_name or "image.png", content, time.monotonic())
+    return f"/staged_image/{token}"
+
+
+def take_staged_images(markdown_text: str) -> list:
+    """[(url_in_text, filename, bytes)] for staged refs in the text — the
+    entries are CONSUMED, so call only when the upload is about to happen."""
+    out = []
+    for token in _STAGED_URL_RE.findall(markdown_text or ""):
+        item = _STAGED_IMAGES.pop(token, None)
+        if item:
+            out.append((f"/staged_image/{token}", item[0], item[1]))
+    return out
+
+
+def strip_staged_image_lines(markdown_text: str) -> str:
+    """The text minus staged-image lines — the initial create must not send
+    the temporary relative URLs to the tracker."""
+    return _re.sub(
+        r"^\s*!\[[^\]]*\]\(/staged_image/[0-9a-f]{32}\)\s*$",
+        "",
+        markdown_text or "",
+        flags=_re.M,
+    )
+
+
+@app.get("/staged_image/{token}")
+async def staged_image(token: str):
+    item = _STAGED_IMAGES.get(token)
+    if not item:
+        return Response(status_code=404)
+    media_type = mimetypes.guess_type(item[0])[0] or "image/png"
+    return Response(content=item[1], media_type=media_type,
+                    headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.post("/upload_devops_image")
@@ -28,12 +88,22 @@ async def upload_devops_image(request: Request, file: UploadFile = File(...)):
     customer = form.get("customer")
     if not customer:
         return {"error": "Missing customer"}
+    # Item-scoped stores (Jira) attach to the work item being edited.
+    work_item_id = form.get("work_item_id")
+    content = await file.read()
+    # Add-form paste for an item-scoped store: no item exists yet — stage
+    # the bytes; add_work_item uploads them right after the create.
+    if form.get("stage") and not work_item_id:
+        return {"path": stage_image(file.filename or "paste.png", content)}
     engine = get_global_devops_engine()
     if engine is None:
         return {"error": "No DevOps connection"}
-    content = await file.read()
     url = await asyncio.to_thread(
-        engine.upload_attachment, customer, file.filename or "paste.png", content
+        engine.upload_attachment,
+        customer,
+        file.filename or "paste.png",
+        content,
+        int(work_item_id) if work_item_id else None,
     )
     return {"path": url} if url else {"error": "Upload failed"}
 
@@ -264,15 +334,21 @@ async def open_work_item_dialog(
                         and hasattr(desc, "enable_image_upload")
                     ):
 
-                        async def _devops_image_uploader(name, content, _cust=customer):
+                        async def _devops_image_uploader(
+                            name, content, _cust=customer, _wid=item_id
+                        ):
                             return await asyncio.to_thread(
-                                core.devops_engine.upload_attachment, _cust, name, content
+                                core.devops_engine.upload_attachment,
+                                _cust, name, content, _wid,
                             )
 
                         desc.enable_image_upload(
                             _devops_image_uploader,
                             paste_endpoint="/upload_devops_image",
-                            paste_fields={"customer": customer},
+                            paste_fields={
+                                "customer": customer,
+                                "work_item_id": str(item_id),
+                            },
                         )
             except Exception as e:
                 core.logger.error(
@@ -397,12 +473,87 @@ async def open_add_work_item_dialog(
                         if states and sw.widget.value not in states:
                             sw.widget.value = states[0]
                             sw.widget.update()
+                    # State IS the board column for some trackers (Jira) —
+                    # hide the redundant Initial Board Column input there.
+                    bc = widgets.get("board_column")
+                    if bc is not None:
+                        caps = core.devops_engine.capabilities(cust_now)
+                        bc.widget.set_visibility(caps.distinct_board_column)
+                        if not caps.distinct_board_column and bc.widget.value:
+                            bc.widget.value = None
+                            bc.widget.update()
+
+                def _apply_tracker_defaults(_e=None):
+                    """Configured per-tracker/per-type prefills (Settings →
+                    Trackers): state / priority / column / source / contact.
+                    Runs as a task so parent-dependent dropdowns can load
+                    their options before values are applied; re-applied when
+                    the customer OR the work-item type changes."""
+
+                    async def _run():
+                        cw = widgets.get("customer_name")
+                        cust_now = cw.widget.value if cw else None
+                        if not cust_now or core.devops_engine is None:
+                            return
+                        from ..tracker_defaults import (
+                            DEFAULT_FIELDS,
+                            defaults_for,
+                            load_tracker_defaults,
+                        )
+
+                        tracker_map = await core.query_engine.function_db(
+                            "get_customer_tracker_names"
+                        )
+                        tw = widgets.get("work_item_type")
+                        wtype = tw.widget.value if tw else None
+                        defaults = defaults_for(
+                            load_tracker_defaults(
+                                core.config_loader.config_folder
+                            ),
+                            tracker_map.get(cust_now, ""),
+                            wtype,
+                        )
+                        if not defaults:
+                            return
+                        caps = core.devops_engine.capabilities(cust_now)
+                        for fname in DEFAULT_FIELDS:
+                            val = defaults.get(fname)
+                            w = widgets.get(fname)
+                            if w is None or val in (None, ""):
+                                continue
+                            if (
+                                fname == "board_column"
+                                and not caps.distinct_board_column
+                            ):
+                                continue
+                            try:
+                                if getattr(w, "parent", None) is not None:
+                                    await w.refresh()  # options first
+                                # Selects may stringify numeric options —
+                                # route the value through the same coercion
+                                # (a raw int priority never matched).
+                                coerce = getattr(
+                                    w, "_coerce_value_for_select", None
+                                )
+                                w.widget.value = (
+                                    coerce(val) if callable(coerce) else val
+                                )
+                                w.widget.update()
+                            except Exception:
+                                pass  # a default must never break the form
+
+                    asyncio.create_task(_run())
 
                 if "work_item_type" in widgets:
                     widgets["work_item_type"].on_value_change(_sync_add_header)
+                    # Per-type defaults follow the level selection.
+                    widgets["work_item_type"].on_value_change(
+                        _apply_tracker_defaults
+                    )
                 if "customer_name" in widgets:
                     widgets["customer_name"].on_value_change(_sync_add_header)
                     widgets["customer_name"].on_value_change(_snap_type_to_customer)
+                    widgets["customer_name"].on_value_change(_apply_tracker_defaults)
                 _sync_add_header()
 
                 # The customer/type values above are set programmatically, which does
@@ -410,7 +561,20 @@ async def open_add_work_item_dialog(
                 # triggers board-column loading — so call it once here directly.
                 if load_fn:
                     await load_fn()
+                # The type is a parent-dependent select: its options only
+                # exist AFTER the load above, so the preset value is applied
+                # here (a set against empty options doesn't stick).
+                if "work_item_type" in widgets:
+                    try:
+                        await widgets["work_item_type"].refresh()
+                    except Exception:
+                        pass
+                    if preset_type:
+                        widgets["work_item_type"].widget.value = preset_type
+                        widgets["work_item_type"].widget.update()
                 _snap_type_to_customer()
+                _sync_add_header()
+                _apply_tracker_defaults()
 
                 # Pre-parent the new item (hierarchy ＋ on a focused node).
                 # Same pattern as the update dialog's work_item pre-fill:
@@ -441,13 +605,18 @@ async def open_add_work_item_dialog(
                             return False
                         # Fallback gate — the button is hidden for trackers
                         # without attachments, but the selection can race.
-                        if not core.devops_engine.capabilities(cust_now).attachments:
+                        caps = core.devops_engine.capabilities(cust_now)
+                        if not caps.attachments:
                             ui.notify(
                                 f"{core.devops_engine.provider_label(cust_now)} "
                                 "doesn't support image attachments yet",
                                 type="warning",
                             )
                             return False
+                        if caps.attachments_require_item:
+                            # Item-scoped store (Jira): no item yet — stage
+                            # now, upload right after the create.
+                            return stage_image(name, content)
                         return await asyncio.to_thread(
                             core.devops_engine.upload_attachment,
                             cust_now, name, content,
@@ -461,19 +630,20 @@ async def open_add_work_item_dialog(
 
                     def _sync_paste_customer(_e=None):
                         cust_now = cust_w.widget.value
+                        caps = core.devops_engine.capabilities(cust_now)
+                        paste_fields = {"customer": cust_now or ""}
+                        if caps.attachments_require_item:
+                            # Pastes are staged too — see /upload_devops_image.
+                            paste_fields["stage"] = "1"
                         desc.update_paste_fields(
-                            "/upload_devops_image",
-                            {"customer": cust_now or ""},
+                            "/upload_devops_image", paste_fields
                         )
-                        # Hide the Insert-image button for trackers without
-                        # attachment support (visible while no customer is
-                        # chosen — the uploader then asks for one).
+                        # Hide the Insert-image button only for trackers with
+                        # no attachment support at all (item-scoped stores
+                        # stage instead). Visible while no customer is chosen.
                         if hasattr(desc, "set_image_upload_visible"):
                             desc.set_image_upload_visible(
-                                not cust_now
-                                or core.devops_engine.capabilities(
-                                    cust_now
-                                ).attachments
+                                not cust_now or caps.attachments
                             )
 
                     cust_w.on_value_change(_sync_paste_customer)

@@ -50,6 +50,12 @@ class TrackerCapabilities:
     hierarchy: bool = True       # parent/child work-item levels
     comments: bool = True        # read + post work-item comments
     attachments: bool = True     # upload/fetch attachments (image embedding)
+    # Attachments live on an ITEM, not the project (Jira) — image upload is
+    # only offered where a work item already exists (the update dialog).
+    attachments_require_item: bool = False
+    # False when state and board column are the SAME axis (Jira: status is
+    # the column) — the UI then hides the redundant board-column input.
+    distinct_board_column: bool = True
 
 
 class TrackerProvider(ABC):
@@ -89,6 +95,11 @@ class TrackerProvider(ABC):
         User Story), but a provider whose leaf is auxiliary (Jira's Sub-task)
         can point at the level people actually work at."""
         return cls.type_hierarchy()[-1]
+
+    def list_members(self):
+        """(True, [display names]) of people usable as assignees on this
+        connection, or (False, msg). Default: not supported."""
+        return (False, "Member listing is not supported for this tracker")
 
     def state_options(self) -> list:
         """State names for this tracker's work items, offered by the State
@@ -151,8 +162,9 @@ class TrackerProvider(ABC):
 
     # ── attachments ───────────────────────────────────────────────────────
     @abstractmethod
-    def upload_attachment(self, file_name, content):
-        """Upload bytes; return an embeddable URL or None."""
+    def upload_attachment(self, file_name, content, work_item_id=None):
+        """Upload bytes; return an embeddable URL or None. `work_item_id`
+        targets item-scoped stores (Jira); project-scoped ones ignore it."""
 
     @abstractmethod
     def owns_attachment_url(self, url) -> bool:

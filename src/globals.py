@@ -148,11 +148,15 @@ class DevOpsEngine:
         or {} when no manager. Feeds the customer form's project picker."""
         return self.manager.get_available_projects() if self.manager else {}
 
-    def upload_attachment(self, customer_name, file_name, content):
-        """Upload bytes as a DevOps attachment for a customer; returns the URL or
-        None. Used to embed pasted/inserted images in work-item descriptions."""
+    def upload_attachment(self, customer_name, file_name, content,
+                          work_item_id=None):
+        """Upload bytes as a tracker attachment for a customer; returns the URL
+        or None. Used to embed pasted/inserted images in work-item
+        descriptions. `work_item_id` targets item-scoped stores (Jira)."""
         return (
-            self.manager.upload_attachment(customer_name, file_name, content)
+            self.manager.upload_attachment(
+                customer_name, file_name, content, work_item_id
+            )
             if self.manager
             else None
         )

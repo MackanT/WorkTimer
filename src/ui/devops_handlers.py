@@ -116,10 +116,21 @@ class DevOpsWorkItemHandlers:
             "System.AssignedTo": wid.get("assigned_to", ""),
         }
 
+        # Staged images (item-scoped attachment stores like Jira): the initial
+        # create must not carry the temporary /staged_image/ URLs — they're
+        # stripped here and swapped in right after the item exists.
+        # Lazy import: devops_forms imports this module.
+        from .devops_forms import strip_staged_image_lines, take_staged_images
+
+        has_staged = "/staged_image/" in (description or "")
         create_kwargs = dict(
             customer_name=customer_name,
             title=title,
-            description=description,
+            description=(
+                strip_staged_image_lines(description)
+                if has_staged
+                else description
+            ),
             additional_fields=additional_fields,
             markdown=True,
         )
@@ -139,6 +150,42 @@ class DevOpsWorkItemHandlers:
         success, message = await asyncio.to_thread(
             self.DO.manager.create_item, type_key=work_item_type, **create_kwargs
         )
+
+        if success and has_staged:
+            # Upload the staged images to the new item and rewrite the
+            # description with the real attachment URLs (consumes the stage
+            # only now, so a failed create keeps the staged bytes intact).
+            id_match = re.search(r"ID (\d+)", message)
+            staged = take_staged_images(description) if id_match else []
+            if staged:
+                new_id = int(id_match.group(1))
+                fixed = description
+                for temp_url, file_name, content in staged:
+                    real_url = await asyncio.to_thread(
+                        self.DO.manager.upload_attachment,
+                        customer_name, file_name, content, new_id,
+                    )
+                    if real_url:
+                        fixed = fixed.replace(temp_url, real_url)
+                    else:
+                        # Drop the dead temporary reference entirely.
+                        fixed = re.sub(
+                            rf"^\s*!\[[^\]]*\]\({re.escape(temp_url)}\)\s*$",
+                            "", fixed, flags=re.M,
+                        )
+                        self.LOG.warning(
+                            f"Staged image upload failed for '{file_name}' "
+                            f"on new item {new_id}"
+                        )
+                ok, msg = await asyncio.to_thread(
+                    self.DO.manager.update_work_item_fields,
+                    customer_name, new_id,
+                    {"System.Description": fixed}, markdown=True,
+                )
+                if not ok:
+                    self.LOG.warning(
+                        f"Could not attach staged images to {new_id}: {msg}"
+                    )
 
         if success:
             board_column = wid.get("board_column")

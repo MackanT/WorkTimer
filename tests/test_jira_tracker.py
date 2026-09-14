@@ -51,7 +51,9 @@ def test_from_customer_row_unpacks_email_token_and_site():
     assert p.configured_project == "ABC"
     assert p.customer_name == "Jira Co"
     assert p.type_hierarchy() == ("Epic", "Story", "Sub-task")
-    assert p.capabilities().attachments is False
+    # Attachments are per-issue: supported, but only where an item exists.
+    assert p.capabilities().attachments is True
+    assert p.capabilities().attachments_require_item is True
 
 
 def test_from_customer_row_rejects_unpacked_credentials():
@@ -85,7 +87,8 @@ def test_adf_text_extracts_nested_content():
         ],
     }
     text = _adf_text(doc)
-    assert "Title" in text and "Hello world" in text and "item one" in text
+    # ADF → markdown-ish: structure and marks survive as markdown.
+    assert text == "# Title\n\nHello **world**\n\n- item one"
     assert _adf_text(None) == ""
 
 
@@ -213,18 +216,32 @@ def test_preferred_type_is_story_not_the_subtask_leaf():
 def test_board_columns_come_from_project_statuses(monkeypatch):
     p = create_provider_for_row(_row(), _log)
     p.project_key = "ABC"
-    payload = [  # /project/{key}/statuses: one entry per issue type
+    payload = [  # /project/{key}/statuses: one entry per issue type —
+        # Jira lists them in arbitrary order (Done first here); the result
+        # must follow the workflow: new → indeterminate → done.
         {"name": "Story", "statuses": [
-            {"name": "To Do"}, {"name": "In Progress"}, {"name": "Done"},
+            {"name": "Done", "statusCategory": {"key": "done"}},
+            {"name": "In Progress",
+             "statusCategory": {"key": "indeterminate"}},
+            {"name": "To Do", "statusCategory": {"key": "new"}},
         ]},
         {"name": "Sub-task", "statuses": [
-            {"name": "To Do"}, {"name": "Done"},  # dupes must collapse
+            {"name": "To Do", "statusCategory": {"key": "new"}},  # dupe
+            {"name": "Done", "statusCategory": {"key": "done"}},
         ]},
     ]
     monkeypatch.setattr(p, "_request", lambda m, path, **kw: payload)
     status, columns = p.get_board_columns_via_team_autodetect()
     assert status is True
     assert columns == ["To Do", "In Progress", "Done"]
+
+
+def test_capabilities_mark_state_as_the_board_column():
+    caps = JiraProvider.capabilities()
+    assert caps.distinct_board_column is False  # status IS the column
+    azure_cls = get_provider_class("devops")
+    if azure_cls is not None:
+        assert azure_cls.capabilities().distinct_board_column is True
 
 
 def test_board_columns_degrade_gracefully(monkeypatch):
@@ -260,6 +277,142 @@ def test_text_to_adf_paragraphs_and_linebreaks():
     assert [n["type"] for n in p1["content"]] == ["text", "hardBreak", "text"]
     assert p2["content"][0]["text"] == "second para"
     assert _text_to_adf("")["content"]  # empty text still a valid doc
+
+
+def test_text_to_adf_markdown_blocks():
+    md = (
+        "## Status\n"
+        "\n"
+        "Work is **done** with `code` and a [link](https://x.se).\n"
+        "\n"
+        "- first\n"
+        "- second\n"
+        "\n"
+        "1. one\n"
+        "2. two\n"
+        "\n"
+        "> a quote\n"
+        "\n"
+        "```python\n"
+        "x = 1\n"
+        "```\n"
+        "\n"
+        "---\n"
+    )
+    kinds = [b["type"] for b in _text_to_adf(md)["content"]]
+    assert kinds == [
+        "heading", "paragraph", "bulletList", "orderedList",
+        "blockquote", "codeBlock", "rule",
+    ]
+    doc = _text_to_adf(md)["content"]
+    assert doc[0]["attrs"] == {"level": 2}
+    para = doc[1]["content"]
+    assert {"type": "strong"} in (para[1].get("marks") or [])
+    assert {"type": "code"} in (para[3].get("marks") or [])
+    assert para[5]["marks"][0] == {
+        "type": "link", "attrs": {"href": "https://x.se"}
+    }
+    assert len(doc[2]["content"]) == 2                  # two bullets
+    assert doc[5]["attrs"] == {"language": "python"}
+    assert doc[5]["content"][0]["text"] == "x = 1"
+
+
+def test_text_to_adf_image_line_becomes_external_media():
+    url = "https://x.atlassian.net/rest/api/3/attachment/content/10001"
+    doc = _text_to_adf(f"before\n\n![shot.png]({url})\n\nafter")
+    kinds = [b["type"] for b in doc["content"]]
+    assert kinds == ["paragraph", "mediaSingle", "paragraph"]
+    media = doc["content"][1]["content"][0]
+    assert media == {
+        "type": "media", "attrs": {"type": "external", "url": url}
+    }
+
+
+def test_text_to_adf_tables_and_task_lists():
+    md = (
+        "| Col 1 | Col 2 |\n"
+        "| ---: | :-- |\n"
+        "| A | B |\n"
+        "| C | D |\n"
+        "\n"
+        "- [ ] open task\n"
+        "- [x] done task\n"
+    )
+    doc = _text_to_adf(md)["content"]
+    assert [b["type"] for b in doc] == ["table", "taskList"]
+
+    table = doc[0]
+    row_kinds = [
+        row["content"][0]["type"] for row in table["content"]
+    ]
+    assert row_kinds == ["tableHeader", "tableCell", "tableCell"]
+    assert len(table["content"]) == 3  # header + 2 body rows (sep consumed)
+    first_cell = table["content"][0]["content"][0]
+    assert first_cell["content"][0]["content"][0]["text"] == "Col 1"
+
+    tasklist = doc[1]
+    states = [i["attrs"]["state"] for i in tasklist["content"]]
+    assert states == ["TODO", "DONE"]
+    assert all(i["attrs"].get("localId") for i in tasklist["content"])
+    assert tasklist["content"][0]["content"][0]["text"] == "open task"
+
+    # Read side mirrors both (alignment colons normalise to ---).
+    back = _adf_text(_text_to_adf(md), limit=10_000)
+    assert "| Col 1 | Col 2 |" in back
+    assert "| --- | --- |" in back
+    assert "| A | B |" in back
+    assert "- [ ] open task" in back and "- [x] done task" in back
+
+
+def test_adf_markdown_round_trip():
+    md = (
+        "# Title\n"
+        "\n"
+        "Some **bold** and *italic* text.\n"
+        "\n"
+        "- item one\n"
+        "- item two\n"
+        "\n"
+        "```sql\n"
+        "select 1\n"
+        "```"
+    )
+    assert _adf_text(_text_to_adf(md), limit=10_000) == md
+
+
+def test_upload_attachment_targets_the_issue(monkeypatch):
+    p = create_provider_for_row(_row(), _log)
+    seen = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [{
+                "id": "9001",
+                "content": "https://myteam.atlassian.net/rest/api/3/"
+                           "attachment/content/9001",
+            }]
+
+    def _fake_post(url, **kw):
+        seen["url"] = url
+        seen["headers"] = kw.get("headers") or {}
+        return _Resp()
+
+    monkeypatch.setattr("src.trackers.jira.requests.post", _fake_post)
+
+    # No work item → per-issue store has nowhere to put it.
+    assert p.upload_attachment("a.png", b"x") is None
+
+    url = p.upload_attachment("a.png", b"x", work_item_id=10001)
+    assert url.endswith("/attachment/content/9001")
+    assert "/issue/10001/attachments" in seen["url"]
+    assert seen["headers"].get("X-Atlassian-Token") == "no-check"
+
+    # The returned content URL is owned (proxied) by this provider.
+    assert p.owns_attachment_url(url) is True
+    assert p.owns_attachment_url("https://evil.example/x") is False
 
 
 def test_create_item_resolves_issue_type_parent_and_priority(monkeypatch):

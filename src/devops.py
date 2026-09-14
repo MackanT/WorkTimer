@@ -85,11 +85,15 @@ class DevOpsManager:
             for name, client in self.clients.items()
         }
 
-    def upload_attachment(self, customer_name, file_name, content):
-        """Upload bytes as a DevOps attachment for a customer's project; returns
-        the attachment URL or None."""
+    def upload_attachment(self, customer_name, file_name, content,
+                          work_item_id=None):
+        """Upload bytes as a tracker attachment for a customer; returns the
+        attachment URL or None. `work_item_id` targets item-scoped stores
+        (Jira); project-scoped providers ignore it."""
         client = self._get_client(customer_name)
-        return client.upload_attachment(file_name, content) if client else None
+        if not client:
+            return None
+        return client.upload_attachment(file_name, content, work_item_id)
 
     def fetch_attachment(self, url):
         """Fetch an attachment's bytes via whichever connected provider owns the
@@ -100,6 +104,14 @@ class DevOpsManager:
             if client.owns_attachment_url(url):
                 return client.fetch_attachment(url)
         return None
+
+    def list_members(self, customer_name):
+        """People usable as assignees on a customer's tracker connection.
+        (True, [display names]) or (False, msg)."""
+        client = self._get_client(customer_name)
+        if not client:
+            return (False, f"No tracker connection for {customer_name}")
+        return client.list_members()
 
     def save_comment(self, customer_name, comment, git_id):
         client = self._get_client(customer_name)
@@ -308,10 +320,11 @@ class DevOpsClient:
             raise Exception("Connection not established. Call connect() first.")
         return self.connection.clients.get_work_item_tracking_client()
 
-    def upload_attachment(self, file_name, content):
+    def upload_attachment(self, file_name, content, work_item_id=None):
         """Upload `content` (bytes) as a project attachment and return its URL,
         which can be embedded in a work-item description (e.g. ![](url)). Returns
-        None on failure."""
+        None on failure. `work_item_id` is accepted for provider parity and
+        ignored — ADO attachments are project-scoped."""
         try:
             # create_attachment streams via data.read(), so it needs a file-like
             # object — wrap the raw bytes in BytesIO.
@@ -665,6 +678,37 @@ class DevOpsClient:
         except Exception as e:
             self.log.error(f"Error updating work item {work_item_id}: {e}")
             return (False, f"Error updating work item {work_item_id}: {e}")
+
+    def list_members(self):
+        """Display names of the project's team members (union of all its
+        teams), for the assignee-import flow. (True, names) or (False, msg)."""
+        try:
+            token = base64.b64encode(
+                f":{self.personal_access_token}".encode("ascii")
+            ).decode("ascii")
+            headers = {"Authorization": f"Basic {token}"}
+            teams = requests.get(
+                f"{self.organization_url}/_apis/projects/{self.project_name}"
+                "/teams?api-version=7.1",
+                headers=headers, timeout=20,
+            ).json().get("value", [])
+            names: dict = {}
+            for team in teams:
+                members = requests.get(
+                    f"{self.organization_url}/_apis/projects/"
+                    f"{self.project_name}/teams/{team['id']}/members"
+                    "?api-version=7.1",
+                    headers=headers, timeout=20,
+                ).json().get("value", [])
+                for member in members:
+                    ident = member.get("identity") or {}
+                    display = ident.get("displayName")
+                    if display and not ident.get("isContainer"):
+                        names[display.lower()] = display
+            return (True, sorted(names.values()))
+        except Exception as e:
+            self.log.error(f"Member listing failed: {e}")
+            return (False, f"Error listing members: {e}")
 
     def set_board_column(self, work_item_id: int, column_name: str) -> tuple:
         """Move a work item to a board column via the hidden Kanban.Column field.

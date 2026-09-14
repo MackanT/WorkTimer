@@ -31,6 +31,7 @@ Field mapping notes:
 """
 
 import re
+import uuid
 
 import pandas as pd
 import requests
@@ -48,29 +49,126 @@ _SEARCH_FIELDS = (
 
 
 def _adf_text(node, limit: int = 2000) -> str:
-    """Plain text from an ADF (Atlassian Document Format) tree — recursively
-    collects text nodes; block nodes contribute line breaks. Lossy by design:
-    this feeds the search cache and lightweight previews."""
-    parts: list = []
+    """ADF (Atlassian Document Format) → markdown-ish text — the read-side
+    counterpart of _text_to_adf, so a Jira description survives a WorkTimer
+    edit round trip (headings, lists, quotes, code, bold/italic/links,
+    attachment images). Feeds the search cache, the description editor and
+    comment display. Still lossy for constructs outside that set (tables,
+    panels, file-type media) — those flatten to their text."""
 
-    def _walk(n):
-        if isinstance(n, list):
-            for item in n:
-                _walk(item)
-            return
-        if not isinstance(n, dict):
-            return
-        if n.get("type") == "text":
-            parts.append(n.get("text") or "")
-        _walk(n.get("content") or [])
-        if n.get("type") in ("paragraph", "heading", "listItem", "codeBlock",
-                             "blockquote", "rule"):
-            parts.append("\n")
+    def _inline(n) -> str:
+        t = n.get("type")
+        if t == "text":
+            s = n.get("text") or ""
+            for mark in n.get("marks") or []:
+                mt = mark.get("type")
+                if mt == "strong":
+                    s = f"**{s}**"
+                elif mt == "em":
+                    s = f"*{s}*"
+                elif mt == "code":
+                    s = f"`{s}`"
+                elif mt == "link":
+                    href = (mark.get("attrs") or {}).get("href") or ""
+                    s = f"[{s}]({href})"
+            return s
+        if t == "hardBreak":
+            return "\n"
+        if t == "inlineCard":
+            return str((n.get("attrs") or {}).get("url") or "")
+        if t in ("emoji", "mention"):
+            return str((n.get("attrs") or {}).get("text") or "")
+        return "".join(_inline(c) for c in n.get("content") or [])
 
-    _walk(node)
-    text = re.sub(r"[ \t]+", " ", "".join(parts))
-    text = re.sub(r"\n{2,}", "\n", text).strip()
-    return text[:limit]
+    def _block(n, out: list):
+        t = n.get("type")
+        kids = n.get("content") or []
+        if t == "paragraph":
+            out.append("".join(_inline(c) for c in kids))
+        elif t == "heading":
+            level = int((n.get("attrs") or {}).get("level") or 1)
+            out.append("#" * level + " " + "".join(_inline(c) for c in kids))
+        elif t == "bulletList":
+            for li in kids:
+                body: list = []
+                for c in li.get("content") or []:
+                    _block(c, body)
+                if body:
+                    out.append("- " + body[0])
+                    out.extend("  " + b for b in body[1:])
+        elif t == "orderedList":
+            for i, li in enumerate(kids, 1):
+                body = []
+                for c in li.get("content") or []:
+                    _block(c, body)
+                if body:
+                    out.append(f"{i}. " + body[0])
+                    out.extend("   " + b for b in body[1:])
+        elif t == "codeBlock":
+            lang = (n.get("attrs") or {}).get("language") or ""
+            out.append(f"```{lang}")
+            out.append("".join(_inline(c) for c in kids))
+            out.append("```")
+        elif t == "blockquote":
+            body = []
+            for c in kids:
+                _block(c, body)
+            out.extend("> " + b for b in body)
+        elif t == "rule":
+            out.append("---")
+        elif t == "taskList":
+            for item in kids:
+                state = (item.get("attrs") or {}).get("state")
+                mark = "x" if state == "DONE" else " "
+                text_ = "".join(
+                    _inline(c) for c in item.get("content") or []
+                )
+                out.append(f"- [{mark}] {text_}")
+        elif t == "table":
+            def _cells(row_node):
+                cells = []
+                for cell in row_node.get("content") or []:
+                    body: list = []
+                    for c in cell.get("content") or []:
+                        _block(c, body)
+                    cells.append(" ".join(body).replace("\n", " ").strip())
+                return cells
+
+            rows = kids
+            if rows:
+                first = _cells(rows[0])
+                header = any(
+                    (c.get("type") == "tableHeader")
+                    for c in rows[0].get("content") or []
+                )
+                if header:
+                    out.append("| " + " | ".join(first) + " |")
+                    out.append("| " + " | ".join("---" for _ in first) + " |")
+                    body_rows = rows[1:]
+                else:
+                    body_rows = rows
+                for row_node in body_rows:
+                    out.append("| " + " | ".join(_cells(row_node)) + " |")
+        elif t in ("media", "mediaSingle", "mediaGroup"):
+            medias = [n] if t == "media" else kids
+            for media in medias:
+                url = (media.get("attrs") or {}).get("url") or ""
+                if url:  # file-type media (Jira-web uploads) has no URL
+                    out.append(f"![image]({url})")
+        else:
+            for c in kids:
+                _block(c, out)
+
+    blocks: list = []
+    top = node if isinstance(node, list) else (
+        (node.get("content") or []) if isinstance(node, dict) else []
+    )
+    for child in top:
+        before = len(blocks)
+        _block(child, blocks)
+        if len(blocks) > before:
+            blocks.append("")  # blank line between blocks
+    return "\n".join(blocks).strip()[:limit]
 
 
 def _normalise_site(raw: str) -> str:
@@ -100,22 +198,304 @@ def _type_from_issuetype(issuetype: dict) -> str:
     return "Story"
 
 
-def _text_to_adf(text) -> dict:
-    """Plain/markdown-ish text → a minimal ADF doc (paragraphs, line breaks).
+# Markdown constructs the editor toolbar produces (write side of the ⇄ pair).
+_INLINE_MD_RE = re.compile(
+    r"\*\*(?P<bold>.+?)\*\*"
+    r"|\*(?P<em>[^*\n]+)\*"
+    r"|`(?P<code>[^`\n]+)`"
+    r"|\[(?P<ltext>[^\]\n]+)\]\((?P<lurl>[^)\s]+)\)"
+)
+_IMAGE_LINE_RE = re.compile(r"^\s*!\[[^\]]*\]\((?P<url>[^)\s]+)\)\s*$")
+_HEADING_MD_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+_TASK_MD_RE = re.compile(r"^\s*[-*]\s+\[(?P<done>[ xX])\]\s+(?P<text>.*)$")
+_BULLET_MD_RE = re.compile(r"^\s*[-*]\s+(.*)$")
+_ORDERED_MD_RE = re.compile(r"^\s*\d+[.)]\s+(.*)$")
+_QUOTE_MD_RE = re.compile(r"^>\s?(.*)$")
+_RULE_MD_RE = re.compile(r"^\s*(-{3,}|\*{3,})\s*$")
+_FENCE_MD_RE = re.compile(r"^```(\w*)\s*$")
+_TABLE_LINE_RE = re.compile(r"^\s*\|(?P<cells>.*)\|\s*$")
+_TABLE_SEP_CELL_RE = re.compile(r"^\s*:?-{2,}:?\s*$")
 
-    Deliberately lossy: Jira Cloud's v3 API only accepts ADF and a full
-    markdown→ADF converter is its own project — text (markdown syntax
-    included) survives verbatim; blank lines split paragraphs."""
-    content = []
-    for para in re.split(r"\n\s*\n", str(text or "")):
-        nodes: list = []
-        for line in para.split("\n"):
-            if nodes:
-                nodes.append({"type": "hardBreak"})
-            if line:
-                nodes.append({"type": "text", "text": line})
-        if nodes:
-            content.append({"type": "paragraph", "content": nodes})
+
+def _table_cells(line: str) -> list:
+    m = _TABLE_LINE_RE.match(line)
+    return [c.strip() for c in m.group("cells").split("|")] if m else []
+
+
+def _table_to_adf(rows: list) -> dict:
+    """Markdown table lines → ADF table. Row 2 of `| --- | :-- |` cells is
+    the header separator (alignment is dropped — ADF cells don't carry it)."""
+    parsed = [_table_cells(r) for r in rows]
+    has_header = (
+        len(parsed) >= 2
+        and parsed[1]
+        and all(_TABLE_SEP_CELL_RE.match(c) for c in parsed[1])
+    )
+
+    def _row(cells, tag):
+        return {
+            "type": "tableRow",
+            "content": [
+                {
+                    "type": tag,
+                    "attrs": {},
+                    "content": [
+                        {"type": "paragraph", "content": _inline_adf_nodes(c)}
+                    ],
+                }
+                for c in cells
+            ],
+        }
+
+    adf_rows = []
+    if has_header:
+        adf_rows.append(_row(parsed[0], "tableHeader"))
+        body = parsed[2:]
+    else:
+        body = parsed
+    adf_rows.extend(_row(cells, "tableCell") for cells in body if cells)
+    return {
+        "type": "table",
+        "attrs": {"isNumberColumnEnabled": False, "layout": "default"},
+        "content": adf_rows,
+    }
+
+
+def _inline_adf_nodes(text: str) -> list:
+    """Markdown inline spans (bold / italic / inline code / links) → ADF
+    text nodes with marks; everything else stays literal text."""
+    nodes: list = []
+    pos = 0
+    for m in _INLINE_MD_RE.finditer(text):
+        if m.start() > pos:
+            nodes.append({"type": "text", "text": text[pos:m.start()]})
+        if m.group("bold") is not None:
+            nodes.append({"type": "text", "text": m.group("bold"),
+                          "marks": [{"type": "strong"}]})
+        elif m.group("em") is not None:
+            nodes.append({"type": "text", "text": m.group("em"),
+                          "marks": [{"type": "em"}]})
+        elif m.group("code") is not None:
+            nodes.append({"type": "text", "text": m.group("code"),
+                          "marks": [{"type": "code"}]})
+        else:
+            nodes.append({"type": "text", "text": m.group("ltext"),
+                          "marks": [{"type": "link",
+                                     "attrs": {"href": m.group("lurl")}}]})
+        pos = m.end()
+    if pos < len(text):
+        nodes.append({"type": "text", "text": text[pos:]})
+    return nodes
+
+
+def _md_paragraph(lines: list) -> dict:
+    nodes: list = []
+    for i, line in enumerate(lines):
+        if i:
+            nodes.append({"type": "hardBreak"})
+        nodes.extend(_inline_adf_nodes(line))
+    return {"type": "paragraph", "content": nodes}
+
+
+def _text_to_adf(text) -> dict:
+    """Markdown → ADF (Jira Cloud's only write format). Covers what the
+    app's editor toolbar produces — headings, bullet/numbered lists, quotes,
+    fenced code blocks, rules, bold/italic/inline code/links — plus
+    standalone image lines, which become EXTERNAL media (e.g. the
+    authenticated issue-attachment URLs upload_attachment returns). Unknown
+    constructs survive as literal text; nothing is dropped."""
+    lines = str(text or "").splitlines()
+    content: list = []
+    para: list = []
+    items: list = []
+    list_kind = None  # "bulletList" | "orderedList"
+    tasks: list = []  # pending (done, inline_nodes) task items
+    table_rows: list = []  # pending markdown table lines
+    quote: list = []
+    code: list | None = None
+    code_lang = ""
+
+    def _code_block():
+        node = {
+            "type": "codeBlock",
+            "content": (
+                [{"type": "text", "text": "\n".join(code)}] if code else []
+            ),
+        }
+        if code_lang:
+            node["attrs"] = {"language": code_lang}
+        return node
+
+    def flush_para():
+        nonlocal para
+        if para:
+            content.append(_md_paragraph(para))
+            para = []
+
+    def flush_list():
+        nonlocal items, list_kind
+        if items:
+            content.append({
+                "type": list_kind,
+                "content": [
+                    {"type": "listItem", "content": [p]} for p in items
+                ],
+            })
+            items = []
+        list_kind = None
+
+    def flush_quote():
+        nonlocal quote
+        if quote:
+            content.append(
+                {"type": "blockquote", "content": [_md_paragraph(quote)]}
+            )
+            quote = []
+
+    def flush_tasks():
+        nonlocal tasks
+        if tasks:
+            content.append({
+                "type": "taskList",
+                "attrs": {"localId": uuid.uuid4().hex},
+                "content": [
+                    {
+                        "type": "taskItem",
+                        "attrs": {
+                            "localId": uuid.uuid4().hex,
+                            "state": "DONE" if done else "TODO",
+                        },
+                        "content": nodes,
+                    }
+                    for done, nodes in tasks
+                ],
+            })
+            tasks = []
+
+    def flush_table():
+        nonlocal table_rows
+        if table_rows:
+            content.append(_table_to_adf(table_rows))
+            table_rows = []
+
+    def flush_all():
+        flush_para()
+        flush_list()
+        flush_quote()
+        flush_tasks()
+        flush_table()
+
+    for line in lines:
+        if code is not None:
+            if _FENCE_MD_RE.match(line):
+                content.append(_code_block())
+                code = None
+            else:
+                code.append(line)
+            continue
+
+        fence = _FENCE_MD_RE.match(line)
+        if fence:
+            flush_all()
+            code = []
+            code_lang = fence.group(1) or ""
+            continue
+
+        if not line.strip():
+            flush_all()
+            continue
+
+        img = _IMAGE_LINE_RE.match(line)
+        if img:
+            flush_all()
+            content.append({
+                "type": "mediaSingle",
+                "content": [{
+                    "type": "media",
+                    "attrs": {"type": "external", "url": img.group("url")},
+                }],
+            })
+            continue
+
+        if _RULE_MD_RE.match(line):
+            flush_all()
+            content.append({"type": "rule"})
+            continue
+
+        m = _HEADING_MD_RE.match(line)
+        if m:
+            flush_all()
+            content.append({
+                "type": "heading",
+                "attrs": {"level": len(m.group(1))},
+                "content": _inline_adf_nodes(m.group(2)),
+            })
+            continue
+
+        m = _TABLE_LINE_RE.match(line)
+        if m:
+            flush_para()
+            flush_list()
+            flush_quote()
+            flush_tasks()
+            table_rows.append(line)
+            continue
+
+        m = _TASK_MD_RE.match(line)  # before bullets — `- [ ]` matches both
+        if m:
+            flush_para()
+            flush_list()
+            flush_quote()
+            flush_table()
+            tasks.append((
+                m.group("done").lower() == "x",
+                _inline_adf_nodes(m.group("text")),
+            ))
+            continue
+
+        m = _BULLET_MD_RE.match(line)
+        if m:
+            flush_para()
+            flush_quote()
+            flush_tasks()
+            flush_table()
+            if list_kind != "bulletList":
+                flush_list()
+                list_kind = "bulletList"
+            items.append(_md_paragraph([m.group(1)]))
+            continue
+
+        m = _ORDERED_MD_RE.match(line)
+        if m:
+            flush_para()
+            flush_quote()
+            flush_tasks()
+            flush_table()
+            if list_kind != "orderedList":
+                flush_list()
+                list_kind = "orderedList"
+            items.append(_md_paragraph([m.group(1)]))
+            continue
+
+        m = _QUOTE_MD_RE.match(line)
+        if m:
+            flush_para()
+            flush_list()
+            flush_tasks()
+            flush_table()
+            quote.append(m.group(1))
+            continue
+
+        flush_list()
+        flush_quote()
+        flush_tasks()
+        flush_table()
+        para.append(line)
+
+    if code is not None:  # unterminated fence — keep its body
+        content.append(_code_block())
+    flush_all()
+
     if not content:
         content = [{"type": "paragraph", "content": []}]
     return {"type": "doc", "version": 1, "content": content}
@@ -171,10 +551,12 @@ class JiraProvider(TrackerProvider):
 
     @classmethod
     def capabilities(cls) -> TrackerCapabilities:
-        # Attachments are per-issue in Jira — the project-level upload the
-        # image-paste flow expects doesn't exist, so v1 declares it off.
+        # Attachments are per-issue in Jira (no project-level store), so
+        # image upload is only offered where the item already exists.
         return TrackerCapabilities(
-            board_columns=True, hierarchy=True, comments=True, attachments=False
+            board_columns=True, hierarchy=True, comments=True,
+            attachments=True, attachments_require_item=True,
+            distinct_board_column=False,  # status IS the board column
         )
 
     @classmethod
@@ -353,14 +735,22 @@ class JiraProvider(TrackerProvider):
             data = self._request(
                 "GET", f"/rest/api/3/project/{self.project_key}/statuses"
             )
-            names, seen = [], set()
+            # Workflow order: To Do–ish → In Progress–ish → Done–ish (the
+            # raw per-issue-type listing put Done first). Stable within a
+            # category by first appearance.
+            category_order = {"new": 0, "indeterminate": 1, "done": 2}
+            seen: dict = {}
             for itype in data if isinstance(data, list) else []:
                 for st in itype.get("statuses") or []:
                     nm = st.get("name")
-                    if nm and nm.lower() not in seen:
-                        seen.add(nm.lower())
-                        names.append(nm)
-            if names:
+                    if not nm or nm.lower() in seen:
+                        continue
+                    cat = (st.get("statusCategory") or {}).get("key")
+                    seen[nm.lower()] = (
+                        category_order.get(cat, 1), len(seen), nm
+                    )
+            if seen:
+                names = [nm for _, _, nm in sorted(seen.values())]
                 self._statuses_cache = names
                 return (True, list(names))
             return (False, "No statuses found for the project")
@@ -430,6 +820,27 @@ class JiraProvider(TrackerProvider):
             None,
         )
         return exact or candidates[0]
+
+    def list_members(self):
+        """Display names of people assignable in this project (apps and
+        system accounts are filtered out)."""
+        try:
+            users = self._request(
+                "GET",
+                "/rest/api/3/user/assignable/search"
+                f"?project={requests.utils.quote(self.project_key or '')}"
+                "&maxResults=200",
+            )
+            names = sorted({
+                str(u.get("displayName"))
+                for u in (users if isinstance(users, list) else [])
+                if u.get("displayName")
+                and u.get("accountType", "atlassian") == "atlassian"
+            })
+            return (True, names)
+        except Exception as e:
+            self.log.error(f"Jira member listing failed: {e}")
+            return (False, f"Error listing members: {e}")
 
     def _resolve_account_id(self, name: str):
         """accountId of the assignable user best matching a name/email, or
@@ -647,12 +1058,49 @@ class JiraProvider(TrackerProvider):
             self.log.error(f"Jira transition failed for {work_item_id}: {e}")
             return (False, f"Error moving issue: {e}")
 
-    # ── attachments: not supported in v1 ──────────────────────────────────
-    def upload_attachment(self, file_name, content):
+    # ── attachments (per-issue) ───────────────────────────────────────────
+    def upload_attachment(self, file_name, content, work_item_id=None):
+        """Attach bytes to a specific issue and return the authenticated
+        content URL — embedded as external media on save, proxied by the
+        app's /devops_attachment endpoint for the preview."""
+        if not work_item_id:
+            self.log.warning(
+                "Jira attachments are per-issue — no work item given, skipped"
+            )
+            return None
+        try:
+            resp = requests.post(
+                f"{self.site}/rest/api/3/issue/{int(work_item_id)}/attachments",
+                auth=(self.email, self.api_token),
+                headers={
+                    "X-Atlassian-Token": "no-check",
+                    "Accept": "application/json",
+                },
+                files={"file": (file_name, content)},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list) and data:
+                return data[0].get("content")
+        except Exception as e:
+            self.log.error(
+                f"Jira attachment upload failed for {work_item_id}: {e}"
+            )
         return None
 
     def owns_attachment_url(self, url) -> bool:
-        return False
+        return str(url).startswith(f"{self.site}/rest/api/3/attachment/")
 
     def fetch_attachment(self, url):
-        return None
+        if not self.owns_attachment_url(url):
+            return None
+        try:
+            resp = requests.get(
+                url, auth=(self.email, self.api_token), timeout=20
+            )
+            resp.raise_for_status()
+            return (resp.content, resp.headers.get("Content-Type"))
+        except Exception as e:
+            self.log.error(f"Jira attachment fetch failed: {e}")
+            return None
