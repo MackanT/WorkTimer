@@ -246,25 +246,21 @@ def setup_command_palette(core) -> None:
             "action": _backup,
         })
 
-        # Data-input shortcuts — one command per entity operation from the
-        # config (customer/tracker/project/…): jumps to the input page with
-        # the right tab open and the form's first field focused.
+        # Data-management shortcuts — one command per entity operation from
+        # the config (customer/tracker/project/…): opens the entity dialog
+        # right over the current page, on the right operation tab with its
+        # first field focused (same no-navigation pattern as the work-item
+        # add commands).
+        from ..pages.add_data import entity_sections, open_entity_dialog
+
         _OP_LABELS = {"reenable": "Re-enable"}
-        for entity, section in (core.ui_config.get("add_data_page") or {}).items():
+        for entity, section in entity_sections(core).items():
             meta = section.get("meta", {})
-            if meta.get("build_function") != "render_entity_tabs":
-                continue
             for op in meta.get("options", []):
                 verb = _OP_LABELS.get(op, op.capitalize())
 
                 async def _open_input(e=entity, o=op):
-                    # Flag covers the fresh page load; the event covers
-                    # "already on /add_data" (same pattern as palette_stop).
-                    app.storage.client["add_data_focus"] = {
-                        "entity": e, "operation": o,
-                    }
-                    core.event_bus.emit("add_data_focus")
-                    _go_to("/add_data")
+                    await open_entity_dialog(core, e, operation=o)
 
                 cmds.append({
                     "label": f"{verb} {entity}",

@@ -1,186 +1,158 @@
 """
-Add Data Page
+Entity management dialogs (formerly the Data Input page).
 
-Data input interface for creating new customers, projects, tasks, bonuses, and DevOps work items.
-Uses V2 architecture with per-client AppCore and event-driven updates.
-Fully config-driven using config_ui.yml structure.
+Customers, trackers, projects and bonuses are managed in dialogs that open
+right over whatever page is showing — from the nav bar's Data menu or a
+palette command — instead of a dedicated page. Fully config-driven from
+config_ui.yml's add_data_page section (kept under its historical key).
 """
 
 import asyncio
 import copy
-import os
-import sqlite3
-import tempfile
 import pandas as pd
 from datetime import date
-from nicegui import context, ui, events
+from nicegui import ui
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
-from ..ui.elements import (
-    toolbar,
-    toolbar_group,
-    entity_card_shell,
-    entity_card_header,
-    entity_card_content,
-)
+
+_OP_TAB_LABELS = {"reenable": "Re-enable"}
+
+# Field types that take the full form width in the two-column grid.
+_WIDE_FIELD_TYPES = {"textarea", "editor_with_preview", "devops_id"}
 
 
-async def add_data_page():
-    """Add Data page - for creating new entities
-
-    Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
-    Direct access to /add_data is handled by redirect in root.py
-    """
-
-    core = await AppCore.get_or_initialize()
-
-    add_data_page_config = core.ui_config.get("add_data_page", {})
-
-    BUILD_FUNCTIONS = {
-        "render_entity_tabs": render_entity_tabs,
-        "render_database_tabs": render_database_tabs,
+def entity_sections(core) -> dict:
+    """{entity_key: section} for the configured manageable entities —
+    feeds the nav bar's Data menu and the palette's shortcuts."""
+    return {
+        name: sec
+        for name, sec in (core.ui_config.get("add_data_page") or {}).items()
+        if sec.get("meta", {}).get("build_function") == "render_entity_tabs"
     }
 
-    # ========================================================================
-    # Toolbar Controls
-    # ========================================================================
-    def render_toolbar():
-        """Render control panel - stable across data refreshes."""
-        with toolbar(core.theme):
-            with toolbar_group(core.theme, divider_after=True):
-                ui.icon("input", size="md").classes(f"text-{core.theme.get('accent')}")
-                ui.label("Data Input").classes(
-                    helpers.UI_STYLES.get_layout_classes("page_title")
-                )
-            with (
-                ui.tabs(value="customer")
-                .props(
-                    f'horizontal dense active-color="{core.theme.get("accent")}" indicator-color="{core.theme.get("accent")}"'
-                )
-                .classes(helpers.UI_STYLES.get_layout_classes("tab_label"))
-            ) as main_tabs:
-                for page_dict, page_section in add_data_page_config.items():
-                    p_data = page_section.get("meta", {})
-                    icon = p_data.get("icon", "warning")
-                    label = p_data.get("friendly_name", page_dict)
-                    ui.tab(page_dict, label=label, icon=icon)
 
-        return main_tabs
-
-    main_tabs = render_toolbar()
-
-    # Wire up tab change to trigger refresh
-    async def on_tab_change(e):
-        tab_name = e.value
-        # Refresh all forms in the newly visible tab
-        if (
-            hasattr(core, "_entity_refresh_fns")
-            and tab_name in core._entity_refresh_fns
-        ):
-            for op, refresh_fn in core._entity_refresh_fns[tab_name].items():
-                if refresh_fn:
-                    try:
-                        await refresh_fn()
-                        core.logger.debug(f"Refreshed {tab_name}.{op} on tab change")
-                    except Exception as err:
-                        core.logger.error(f"Error refreshing {tab_name}.{op}: {err}")
-
-    main_tabs.on_value_change(on_tab_change)
-
-    start_tab = next(iter(add_data_page_config))
-
-    with (
-        ui.tab_panels(main_tabs, value=start_tab)
-        .props("vertical")
-        .classes("wt-page-content w-full")
-        .style(
-            "background: transparent;"
-        )
-    ):
-        for page_dict, page_section in add_data_page_config.items():
-            p_data = page_section.get("meta", {})
-            build_fn_name = p_data.get("build_function")
-
-            with ui.tab_panel(page_dict):
-                if build_fn_name and build_fn_name in BUILD_FUNCTIONS:
-                    build_fn = BUILD_FUNCTIONS[build_fn_name]
-                    await build_fn(
-                        core,
-                        page_dict,
-                        p_data.get("options", []),
-                        add_data_page_config,
-                    )
-                else:
-                    core.logger.warning(
-                        f"No build function '{build_fn_name}' found for {page_dict}"
-                    )
-                    ui.label("Configuration error: build function not found").classes(
-                        "text-warning"
-                    )
-
-    # ── palette data-input shortcuts land here ─────────────────────────────
-    # Storage flag covers a fresh page load, the event covers "already on
-    # this page" (same handover pattern as the Time page's palette_stop).
-    page_client = context.client
-
-    def _page_is_live() -> bool:
-        try:
-            return main_tabs.id in page_client.elements
-        except Exception:
-            return False
-
-    async def _apply_pending_focus():
-        req = page_client.storage.get("add_data_focus")
-        if not req or not _page_is_live():
-            return
-        page_client.storage["add_data_focus"] = None
-        entity, op = req.get("entity"), req.get("operation")
-        if entity in add_data_page_config:
-            main_tabs.set_value(entity)
-        widget = getattr(core, "_entity_first_widget", {}).get((entity, op))
-        if widget is not None:
-            await asyncio.sleep(0.2)  # let the tab panel switch in the browser
-            try:
-                widget.run_method("focus")
-            except Exception:
-                pass  # focus is a nicety — never break the navigation
-
-    def _on_focus_request(**_):
-        asyncio.create_task(_apply_pending_focus())
-
-    core.event_bus.register_unique(
-        "add_data_focus", _on_focus_request, key="add_data_page"
-    )
-    await _apply_pending_focus()
-
-
-async def render_entity_tabs(
-    core: AppCore, entity_type: str, operations: list, page_config: dict
+async def open_entity_dialog(
+    core: AppCore,
+    entity_type: str,
+    operation: str = None,
+    presets: dict = None,
 ):
-    """Render sub-tabs for entity operations (Add/Update/Disable/Reenable)"""
-    entity_config = page_config.get(entity_type, {})
+    """Open the management dialog for one entity: operation tabs
+    (Add/Update/…) on top, the active operation's form below in a two-column
+    grid. `operation` preselects a tab; `presets` ({field_name: value})
+    pre-fills fields of that tab (e.g. the customer for a project add) —
+    focus goes to the first field that is NOT preset."""
+    section = core.ui_config.get("add_data_page", {}).get(entity_type, {})
+    meta = section.get("meta", {})
+    operations = list(meta.get("options", []))
+    if not operations:
+        ui.notify(f"No forms configured for '{entity_type}'", type="warning")
+        return None
 
-    # Initialize storage for refresh functions
-    if not hasattr(core, "_entity_refresh_fns"):
-        core._entity_refresh_fns = {}
-    core._entity_refresh_fns.setdefault(entity_type, {})
+    # Dialog-local registry: a submit refreshes the sibling operation forms,
+    # and the preselected operation's first field gets keyboard focus.
+    registry: dict = {"refresh": {}, "first": {}}
 
-    with ui.row(wrap=False):
-        for op in operations:
-            refresh_fn = await render_entity_form(
-                core=core,
-                entity_type=entity_type,
-                operation=op,
-                form_config=entity_config.get(op, {}),
+    accent = core.theme.get("accent")
+    with ui.dialog() as dlg, ui.card().props("flat bordered").classes(
+        "rounded-lg"
+    ).style("width: min(860px, 95vw); max-width: 95vw; padding: 0;"):
+        with ui.row().classes("items-center gap-2 no-wrap w-full").style(
+            "padding: 0.6rem 0.8rem 0;"
+        ):
+            ui.icon(meta.get("icon", "input"), size="sm").classes(f"text-{accent}")
+            ui.label(
+                meta.get("friendly_name", entity_type.capitalize())
+            ).classes("text-base font-semibold flex-1")
+            ui.button(icon="close", on_click=dlg.close).props(
+                "flat dense round color=grey-6"
             )
-            core._entity_refresh_fns[entity_type][op] = refresh_fn
+        with (
+            ui.tabs()
+            .props(
+                f'dense align=center active-color="{accent}" '
+                f'indicator-color="{accent}" no-caps'
+            )
+            .classes("w-full")
+        ) as op_tabs:
+            for op in operations:
+                ui.tab(op, label=_OP_TAB_LABELS.get(op, op.capitalize()))
+        ui.separator()
+        with ui.tab_panels(
+            op_tabs,
+            value=operation if operation in operations else operations[0],
+        ).classes("w-full").style("background: transparent;"):
+            for op in operations:
+                with ui.tab_panel(op).style("padding: 1rem;"):
+                    registry["refresh"][op] = await render_entity_form(
+                        core=core,
+                        entity_type=entity_type,
+                        operation=op,
+                        form_config=section.get(op, {}),
+                        registry=registry,
+                    )
+
+    registry["close"] = dlg.close  # a successful submit closes the dialog
+    dlg.on("hide", lambda: dlg.delete())  # transient — never accumulates
+    dlg.open()
+
+    target_op = operation if operation in operations else operations[0]
+    op_widgets = registry.get("widgets", {}).get(target_op, {})
+
+    if presets:
+        # Walk fields in FORM order (parents precede their children), and for
+        # a parent-dependent preset field load its options BEFORE setting the
+        # value — such a select starts empty, and a value outside the current
+        # options doesn't stick (that lost the project preselect).
+        for fname, dw in op_widgets.items():
+            if fname not in presets:
+                continue
+            if getattr(dw, "parent", None) is not None:
+                try:
+                    await dw.refresh()
+                except Exception:
+                    pass
+            try:
+                dw.widget.value = presets[fname]
+                dw.widget.update()
+            except Exception:
+                pass
+        # Programmatic sets don't fire the browser event that reloads the
+        # remaining dependent dropdowns — refresh them now.
+        for fname, dw in op_widgets.items():
+            if fname in presets:
+                continue
+            if getattr(dw, "parent", None) is not None:
+                try:
+                    await dw.refresh()
+                except Exception:
+                    pass
+
+    focus_widget = registry["first"].get(target_op)
+    if presets:
+        for fname, dw in op_widgets.items():
+            if fname not in presets:
+                focus_widget = dw.widget
+                break
+    if focus_widget is not None:
+        await asyncio.sleep(0.15)  # let the dialog render in the browser
+        try:
+            focus_widget.run_method("focus")
+        except Exception:
+            pass  # focus is a nicety
+    return dlg
 
 
 async def render_entity_form(
-    core: AppCore, entity_type: str, operation: str, form_config: dict
+    core: AppCore,
+    entity_type: str,
+    operation: str,
+    form_config: dict,
+    registry: dict,
 ):
-    """Render a single entity form based on config"""
+    """Render a single entity form based on config. `registry` is the host
+    dialog's {"refresh": {op: fn}, "first": {op: widget}} shared state."""
     # Deep-copy: the config dicts are shared process-wide; assign_dynamic_options
     # writes options into the field dicts, which must not leak across clients.
     fields = copy.deepcopy(form_config.get("fields", []))
@@ -219,23 +191,11 @@ async def render_entity_form(
             core.logger.info(msg_1)
             if msg_2:
                 core.logger.info(msg_2)
-            for widget in widgets.values():
-                if hasattr(widget, "value"):
-                    widget.value = "" if isinstance(widget.value, str) else None
-            if (
-                hasattr(core, "_entity_refresh_fns")
-                and entity_type in core._entity_refresh_fns
-            ):
-                core.logger.debug(f"Refreshing all {entity_type} tabs")
-                for op, refresh_fn in core._entity_refresh_fns[entity_type].items():
-                    if refresh_fn:
-                        try:
-                            await refresh_fn()
-                            core.logger.debug(f"Refreshed {entity_type}.{op}")
-                        except Exception as e:
-                            core.logger.error(
-                                f"Error refreshing {entity_type}.{op}: {e}"
-                            )
+            # A successful submit closes the dialog (it self-deletes on hide,
+            # so no field clearing / sibling refresh is needed).
+            close_fn = registry.get("close")
+            if close_fn:
+                close_fn()
             core.event_bus.emit("ui_refresh_requested")
 
             # A customer's DevOps credentials (or active state) changed — rebuild
@@ -252,85 +212,84 @@ async def render_entity_form(
             core.logger.error(f"Error in {operation} {entity_type}: {e}")
             ui.notify(f"Error: {e}", type="negative")
 
-    with entity_card_shell():
-        with entity_card_header():
-            with ui.element("div").style(
-                "display:flex; align-items:center; gap:0.25rem; overflow:hidden;"
-            ):
-                ui.label(operation.capitalize()).classes(
-                    helpers.UI_STYLES.get_widget_style("time_tracking_customer_name")[
-                        "classes"
-                    ]
-                ).style(
-                    "overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left;"
+    # Per-cycle cache: without it, every child-widget refresh re-ran all
+    # of prepare_data_sources' queries. refresh_all_widgets() invalidates
+    # it once per cycle so data stays fresh after submits/tab changes.
+    _sources_cache: dict = {"data": None}
+
+    async def data_fetcher(source_key, parent_val=None):
+        if _sources_cache["data"] is None:
+            _sources_cache["data"] = await prepare_data_sources(
+                core, entity_type, operation
+            )
+        fresh = _sources_cache["data"]
+        if source_key not in fresh:
+            return [] if parent_val is not None else ""
+        data = fresh[source_key]
+        if parent_val and isinstance(data, dict):
+            return data.get(parent_val, [])
+        elif isinstance(data, list):
+            return data
+        elif isinstance(data, dict):
+            return data
+        return [] if parent_val is not None else ""
+
+    with ui.column().classes("w-full gap-4"):
+        # Two-column field grid — halves the form height and fills the card
+        # instead of the old one-per-row stack. Wide types span both columns.
+        with ui.grid(columns=2).classes("w-full gap-3"):
+            for field in fields:
+                field_type = field.get("type", "input")
+                field_name = field["name"]
+                parent_field = field.get("parent")
+                parent_widget = (
+                    parent_map.get(parent_field) if parent_field else None
                 )
-                ui.space()
-                ui.button(icon="save", on_click=on_submit).props("color=primary")
 
-        ui.separator().classes(
-            helpers.UI_STYLES.get_layout_classes("divider_row")
-        )
-
-        with entity_card_content():
-            # Per-cycle cache: without it, every child-widget refresh re-ran all
-            # of prepare_data_sources' queries. refresh_all_widgets() invalidates
-            # it once per cycle so data stays fresh after submits/tab changes.
-            _sources_cache: dict = {"data": None}
-
-            async def data_fetcher(source_key, parent_val=None):
-                if _sources_cache["data"] is None:
-                    _sources_cache["data"] = await prepare_data_sources(
-                        core, entity_type, operation
+                widget_class = WIDGET_CLASSES.get(field_type)
+                if not widget_class:
+                    core.logger.warning(
+                        f"Unknown field type '{field_type}' for '{field_name}' — skipping"
                     )
-                fresh = _sources_cache["data"]
-                if source_key not in fresh:
-                    return [] if parent_val is not None else ""
-                data = fresh[source_key]
-                if parent_val and isinstance(data, dict):
-                    return data.get(parent_val, [])
-                elif isinstance(data, list):
-                    return data
-                elif isinstance(data, dict):
-                    return data
-                return [] if parent_val is not None else ""
+                    continue
 
-            with ui.column().classes("w-full gap-2"):
-                for field in fields:
-                    field_type = field.get("type", "input")
-                    field_name = field["name"]
-                    parent_field = field.get("parent")
-                    parent_widget = (
-                        parent_map.get(parent_field) if parent_field else None
-                    )
+                dw = widget_class(
+                    name=field_name,
+                    data_fetcher=data_fetcher,
+                    options_source=field.get("options_source", ""),
+                    parent=parent_widget,
+                    label=field.get("label", field_name),
+                    initial_value=field.get("default"),
+                    field_config=field,
+                )
+                dw.widget.classes("w-full")
+                if field_type in _WIDE_FIELD_TYPES:
+                    dw.widget.classes("col-span-2")
+                widgets[field_name] = dw
+                parent_map[field_name] = dw
+                dynamic_widgets.append(dw)
 
-                    widget_class = WIDGET_CLASSES.get(field_type)
-                    if not widget_class:
-                        core.logger.warning(
-                            f"Unknown field type '{field_type}' for '{field_name}' — skipping"
-                        )
-                        continue
+        with ui.row().classes("w-full justify-end"):
+            save_btn = ui.button(
+                action.get("button_name", "Save"), icon="save"
+            ).props("color=primary")
 
-                    widget_width = helpers.UI_STYLES.get_widget_width(
-                        field.get("size", "standard")
-                    )
-                    dw = widget_class(
-                        name=field_name,
-                        data_fetcher=data_fetcher,
-                        options_source=field.get("options_source", ""),
-                        parent=parent_widget,
-                        label=field.get("label", field_name),
-                        initial_value=field.get("default"),
-                        field_config=field,
-                    )
-                    dw.widget.classes(widget_width)
-                    widgets[field_name] = dw
-                    parent_map[field_name] = dw
-                    dynamic_widgets.append(dw)
+            async def _submit_with_spinner():
+                save_btn.props("loading")
+                try:
+                    await on_submit()
+                finally:
+                    try:
+                        save_btn.props(remove="loading")
+                    except Exception:
+                        pass
 
-    # First field per form — the palette's data-input shortcuts focus it.
-    if not hasattr(core, "_entity_first_widget"):
-        core._entity_first_widget = {}
-    core._entity_first_widget[(entity_type, operation)] = (
+            save_btn.on("click", _submit_with_spinner)
+
+    # Widgets (field order preserved) and first field per form — the dialog
+    # uses these for presets and keyboard focus.
+    registry.setdefault("widgets", {})[operation] = widgets
+    registry.setdefault("first", {})[operation] = (
         dynamic_widgets[0].widget if dynamic_widgets else None
     )
 
@@ -570,167 +529,3 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
     return data_sources
 
-
-
-
-async def render_database_tabs(
-    core: AppCore, entity_type: str, operations: list, page_config: dict
-):
-    """Render database management tabs (Compare and Update)
-
-    Args:
-        core: AppCore instance
-        entity_type: Entity type (unused, for signature compatibility)
-        operations: List of operations (unused, for signature compatibility)
-        page_config: Page configuration dict (unused, for signature compatibility)
-    """
-    from ..database import Database
-
-    # Get database name from settings
-    db_name = core.settings.db_path
-
-    with (
-        ui.tabs()
-        .props("inline-label align=left")
-        .classes(helpers.UI_STYLES.get_layout_classes("full_width")) as db_tabs
-    ):
-        ui.tab("compare", label="Compare")
-        ui.tab("update", label="Update")
-
-    with ui.tab_panels(db_tabs, value="compare").classes(
-        helpers.UI_STYLES.get_layout_classes("full_width")
-    ):
-        # Compare tab
-        with ui.tab_panel("compare"):
-            with (
-                ui.card()
-                .classes(
-                    helpers.UI_STYLES.get_card_classes("xs", "card").replace(
-                        "mx-auto", "ml-0"
-                    )
-                )
-                .style("max-height: 82vh; overflow-y: auto;")
-            ):
-                ui.label(
-                    "Upload a .db file to compare with the main database."
-                ).classes(helpers.UI_STYLES.get_layout_classes("title"))
-
-                db_deltas = ui.codemirror("", language="SQL", theme="dracula").classes(
-                    "w-full h-96"
-                )
-
-                def handle_upload(e: events.UploadEventArguments):
-                    ui.notify(f"File uploaded: {e.name}", color="positive")
-                    uploaded_path = None
-                    try:
-                        with tempfile.NamedTemporaryFile(
-                            delete=False, suffix=".db"
-                        ) as tmp:
-                            tmp.write(e.content.read())
-                            uploaded_path = tmp.name
-
-                        sync_sql = Database.generate_sync_sql(db_name, uploaded_path)
-                        db_deltas.set_content(sync_sql)
-                    except Exception as ex:
-                        core.logger.error(f"Error comparing databases: {ex}")
-                        ui.notify(f"Error: {ex}", type="negative")
-                    finally:
-                        # Clean up temp file even when the comparison fails
-                        if uploaded_path and os.path.exists(uploaded_path):
-                            os.remove(uploaded_path)
-
-                ui.upload(on_upload=handle_upload).props("accept=.db").classes(
-                    "q-pa-xs q-ma-xs"
-                )
-
-        # Update tab
-        with ui.tab_panel("update"):
-            with (
-                ui.card()
-                .classes(
-                    helpers.UI_STYLES.get_card_classes("xs", "card").replace(
-                        "mx-auto", "ml-0"
-                    )
-                )
-                .style("max-height: 82vh; overflow-y: auto;")
-            ):
-                ui.label("Run SQL queries on uploaded database").classes(
-                    helpers.UI_STYLES.get_layout_classes("title")
-                )
-
-                query_editor = ui.codemirror(
-                    "", language="SQL", theme="dracula"
-                ).classes("w-full h-48")
-
-                result_display = ui.codemirror(
-                    "", language="text", theme="dracula"
-                ).classes("w-full h-96")
-
-                uploaded_db_path = None
-
-                def handle_db_upload(e: events.UploadEventArguments):
-                    nonlocal uploaded_db_path
-                    ui.notify(f"Database uploaded: {e.name}", color="positive")
-                    try:
-                        # Drop the previous upload's temp file before replacing it
-                        if uploaded_db_path and os.path.exists(uploaded_db_path):
-                            os.remove(uploaded_db_path)
-                        with tempfile.NamedTemporaryFile(
-                            delete=False, suffix=".db"
-                        ) as tmp:
-                            tmp.write(e.content.read())
-                            uploaded_db_path = tmp.name
-                        core.logger.info(
-                            f"Database uploaded to: {uploaded_db_path}"
-                        )
-                    except Exception as ex:
-                        core.logger.error(f"Error uploading database: {ex}")
-                        ui.notify(f"Error: {ex}", type="negative")
-
-                async def execute_query():
-                    if not uploaded_db_path:
-                        ui.notify("Please upload a database first", type="warning")
-                        return
-
-                    query = query_editor.value
-                    if not query:
-                        ui.notify("Please enter a query", type="warning")
-                        return
-
-                    try:
-                        conn = sqlite3.connect(uploaded_db_path)
-                        try:
-                            if query.strip().upper().startswith("SELECT"):
-                                # Read query - show results
-                                df = pd.read_sql_query(query, conn)
-                                result_display.set_content(df.to_string())
-                                ui.notify(f"Query returned {len(df)} rows", type="positive")
-                            else:
-                                # Write query - execute and show rows affected
-                                cursor = conn.cursor()
-                                cursor.execute(query)
-                                conn.commit()
-                                rows_affected = cursor.rowcount
-                                result_display.set_content(
-                                    f"Query executed successfully. Rows affected: {rows_affected}"
-                                )
-                                ui.notify(
-                                    f"Query executed. {rows_affected} rows affected",
-                                    type="positive",
-                                )
-                            core.logger.info("Query executed successfully")
-                        finally:
-                            conn.close()
-                    except Exception as ex:
-                        core.logger.error(f"Error executing query: {ex}")
-                        result_display.set_content(f"Error: {ex}")
-                        ui.notify(f"Error: {ex}", type="negative")
-
-                ui.upload(on_upload=handle_db_upload).props("accept=.db").classes(
-                    "q-pa-xs q-ma-xs"
-                )
-
-                with ui.row().classes("gap-2 mt-2"):
-                    ui.button(
-                        "Execute Query", icon="play_arrow", on_click=execute_query
-                    ).props("color=primary")

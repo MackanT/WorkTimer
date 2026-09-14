@@ -460,6 +460,40 @@ class AppCore:
             pass
 
         if not app.storage.client.get("navigation_created", False):
+            # The Data nav item opens entity dialogs over the current page
+            # (the dedicated Data Input page is retired) — build its dropdown
+            # from the same config the dialogs use. Imported lazily: the
+            # pages package imports this module.
+            try:
+                from ..pages.add_data import entity_sections, open_entity_dialog
+
+                # Menu clicks run in the auto-closing menu's slot — a dialog
+                # created there is nested in a closed menu and never renders
+                # (it would only appear on the NEXT menu open). Build dialogs
+                # in a neutral shell-level host instead, same pattern as the
+                # command palette's action_host.
+                data_dialog_host = ui.element("div").classes("hidden")
+
+                def _mk_open(entity):
+                    async def _open():
+                        with data_dialog_host:
+                            await open_entity_dialog(core, entity)
+
+                    return _open
+
+                core.nav_bar.menu_providers["/add_data"] = [
+                    (
+                        sec.get("meta", {}).get("friendly_name", name.capitalize()),
+                        sec.get("meta", {}).get("icon", "input"),
+                        _mk_open(name),
+                    )
+                    for name, sec in entity_sections(core).items()
+                ]
+            except Exception as e:
+                self_log = getattr(core, "logger", None)
+                if self_log:
+                    self_log.error(f"Data menu setup failed: {e}")
+
             core.nav_bar.render()
 
             async def on_navigate():

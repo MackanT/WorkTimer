@@ -27,6 +27,10 @@ class NavigationBar:
         self.on_navigate = None
         self._active_timers_row = None
         self._update_badge = None
+        # {nav path: [(label, icon, async_handler), …]} — a nav item with an
+        # entry here renders as a dropdown menu (opens dialogs) instead of a
+        # page link. Set BEFORE render() (e.g. the Data entity menu).
+        self.menu_providers: dict = {}
 
     def render(self) -> None:
         """
@@ -66,6 +70,26 @@ class NavigationBar:
 
                     # Navigation buttons
                     for item in nav_items:
+                        menu_entries = self.menu_providers.get(item["path"])
+                        if menu_entries:
+                            # Dropdown item — opens dialogs over the current
+                            # page instead of navigating anywhere.
+                            button = ui.button(
+                                item["label"], icon=item["icon"]
+                            ).props("flat")
+                            button.classes(
+                                f"text-{nav_text} hover:bg-{nav_hover} shrink-0"
+                            )
+                            with button:
+                                with ui.menu().props("auto-close"):
+                                    for m_label, m_icon, m_handler in menu_entries:
+                                        with ui.menu_item(on_click=m_handler):
+                                            with ui.row().classes(
+                                                "items-center gap-2 no-wrap"
+                                            ):
+                                                ui.icon(m_icon, size="xs")
+                                                ui.label(m_label)
+                            continue
 
                         def create_click_handler(path):
                             def handler():

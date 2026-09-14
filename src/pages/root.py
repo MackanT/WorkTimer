@@ -5,7 +5,6 @@ from . import (
     time_tracking_page,
     log_page,
     query_editor_page,
-    add_data_page,
     board_page,
     reports_page,
     tasks_page,
@@ -98,6 +97,7 @@ html, body { overflow: hidden !important; }
     height: 100% !important;
     min-height: 0 !important;
 }
+
 </style>
 <script>
 /* Keep --wt-nav-h equal to the real header height. A single
@@ -250,7 +250,6 @@ async def _setup_spa_shell():
     ui.sub_pages(
         {
             "/time": time_tracking_page,
-            "/add_data": add_data_page,
             "/board": board_page,
             "/reports": reports_page,
             "/query_editor": query_editor_page,
@@ -273,14 +272,13 @@ async def root_page():
 
 # ============================================================================
 # Direct Access Pages (for refresh support)
-# These allow refreshing on /time, /add_data, etc. without 404 errors.
+# These allow refreshing on /time, /board, etc. without 404 errors.
 # Every route renders the same SPA shell, which routes to the matching sub-page
 # — registered in a loop instead of nine identical handler functions.
 # ============================================================================
 
 _SPA_ROUTES = [
     "/time",
-    "/add_data",
     "/board",
     "/reports",
     "/query_editor",

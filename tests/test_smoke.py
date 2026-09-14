@@ -8,7 +8,7 @@ def test_main_imports_and_registers_pages():
 
 def test_all_page_modules_import():
     from src.pages import (  # noqa: F401
-        add_data_page,
+        open_entity_dialog,
         board_page,
         info_page,
         log_page,
