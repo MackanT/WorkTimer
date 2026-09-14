@@ -177,6 +177,19 @@ class NavigationBar:
         self._update_badge.clear()
         if not version:
             return
+        # Tell the user the right update command for HOW they run the app:
+        # Docker needs a rebuild (new dependencies!), bare metal just pulls
+        # (uv run syncs dependencies automatically).
+        import os
+
+        in_docker = bool(os.getenv("WORKTIMER_DOCKER")) or os.path.exists(
+            "/.dockerenv"
+        )
+        update_cmd = (
+            "docker compose up -d --build"
+            if in_docker
+            else "git pull, then restart (uv run syncs dependencies)"
+        )
         with self._update_badge:
             ui.icon("upgrade", size="xs").classes("text-amber-400 shrink-0")
             pill = (
@@ -186,7 +199,7 @@ class NavigationBar:
                     " px-2 py-0.5 rounded-full whitespace-nowrap"
                 )
                 .tooltip(
-                    "Update with: git pull (then restart the app)"
+                    f"Update with: {update_cmd}"
                     + (" — click to see what's new" if on_click else "")
                 )
             )

@@ -5,6 +5,13 @@ WORKDIR /app
 # set desired timezone
 ENV TZ=Europe/Stockholm
 
+# Inside the container the app must bind all interfaces for the port mapping
+# to work — reachability from outside the HOST is governed by the compose
+# port mapping, not this. (The bare-metal default is 127.0.0.1.)
+ENV HOST=0.0.0.0
+# Lets the app detect it runs in Docker (update instructions differ).
+ENV WORKTIMER_DOCKER=1
+
 # install tzdata and configure timezone non-interactively
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata \

@@ -242,6 +242,41 @@ def test_devops_rows_hidden_for_disabled_customers(db):
 # ── Partial updates don't wipe omitted fields (§9) ───────────────────────────
 
 
+def test_backdated_entry_gets_bonus_of_its_own_date(db):
+    # The insert trigger must resolve bonus by the ENTRY's date, not today's
+    # (audit 7.6) — a backdated manual entry is priced with the rate that
+    # was valid when the work happened.
+    db.execute_query(
+        "insert into customers (customer_name, start_date, wage, is_current) "
+        "values ('C', '2025-01-01', 100, 1)"
+    )
+    cid = int(db.fetch_query("select customer_id from customers").iloc[0, 0])
+    db.execute_query(
+        "insert into projects (customer_id, project_name, is_current) "
+        "values (?, 'P', 1)",
+        (cid,),
+    )
+    db.execute_query(
+        "insert into bonus (bonus_percent, start_date, end_date) "
+        "values (0.1, '2026-01-01', '2026-01-31')"
+    )
+    db.execute_query(
+        "insert into bonus (bonus_percent, start_date, end_date) "
+        "values (0.2, '2026-02-01', null)"  # the CURRENT rate
+    )
+    pid = int(db.fetch_query("select project_id from projects").iloc[0, 0])
+    db.execute_query(
+        "insert into time (customer_id, project_id, date_key, start_time, "
+        "end_time) values (?, ?, 20260115, "
+        "'2026-01-15 08:00:00', '2026-01-15 10:00:00')",
+        (cid, pid),
+    )
+    row = db.fetch_query("select bonus, user_bonus, total_time from time").iloc[0]
+    assert abs(float(row["bonus"]) - 0.1) < 1e-9      # January's rate
+    assert abs(float(row["total_time"]) - 2.0) < 1e-6
+    assert abs(float(row["user_bonus"]) - 20.0) < 1e-6  # 0.1 * 100 * 2h
+
+
 def test_update_customer_ignores_legacy_credential_args(db):
     # Credentials moved to the trackers table; the legacy org_url/pat_token
     # args must be accepted (old callers) but change nothing and not error.

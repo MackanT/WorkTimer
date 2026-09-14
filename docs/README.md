@@ -162,7 +162,7 @@ Four tabs, matching the app's standard layout:
 Define tags used to categorise work items — icon + colour per tag, add/edit/delete in the table.
 
 ### Theme
-Customise the app colour scheme (Quasar + Tailwind token pairs). Press **Save Theme**, then **F5** to apply.
+Customise the app colour scheme (Quasar + Tailwind token pairs). Press **Save Theme**, then reload (**Ctrl + R**) to apply.
 
 ### Data
 - **Backup** — list of recent backups, *Backup now*, and a browser download
