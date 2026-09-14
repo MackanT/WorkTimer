@@ -2,13 +2,15 @@
 
 ## Project Overview
 WorkTimer V5 is a local NiceGUI web app (SPA) running on port 8080. It tracks time
-against customer/project entries and integrates with Azure DevOps.
+against customer/project entries and integrates with issue trackers — Azure DevOps
+and Jira Cloud — via a pluggable provider architecture.
 
 ## Stack
 - **Python 3.11+** with `asyncio`
 - **NiceGUI ≥2.24.1** (Quasar/Vue under the hood) — single-page app
 - **SQLite** via custom `QueryEngine` in `src/globals.py`
-- **Azure DevOps** SDK (`azure-devops`, `msrest`)
+- **Azure DevOps** SDK (`azure-devops`, `msrest`); **Jira Cloud** via plain REST v3
+- **cryptography** (Fernet) — tracker credentials encrypted at rest (key: `data/.pat_key`)
 - **Pandas** for query results
 - Version: see `pyproject.toml` → `project.version`
 
@@ -21,9 +23,17 @@ src/core/events.py         EventBus — thread-safe cross-thread communication +
 src/pages/root.py          SPA shell; injects layout CSS, renders nav bar, registers sub-pages
 src/ui/elements.py         NavigationBar, toolbar() context manager, card helpers
 src/pages/                 One file per page (time_tracking, settings, log, board, …)
+src/pages/add_data.py      Entity-management DIALOGS (customers/trackers/projects/bonus)
+                           — the old Data Input page is retired; open_entity_dialog()
+src/trackers/              Pluggable tracker providers: base.py (TrackerProvider ABC,
+                           TrackerCapabilities), azure.py, jira.py, registry.py.
+                           Customers link to rows in the `trackers` table (credentials
+                           live there, encrypted); `DevOpsManager` multiplexes per customer
 src/services/              BaseService + typed services; background threads call these
 src/services/update_checker.py  Daily GitHub update check (see Update Check section)
-config/                    YAML configs for theme, UI layout, navigation, DevOps contacts
+config/                    YAML configs for theme, UI layout, navigation, tracker contacts
+                           (+ gitignored per-user overrides: time_settings.yml,
+                           tracker_defaults.yml)
 ```
 
 ## Key Patterns
