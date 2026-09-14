@@ -18,7 +18,7 @@ Cloud REST API (v3). Scope of this first iteration:
 Credentials (v1 — reuses the existing customer columns, no schema change):
   pat_token = "email:api-token"   (Jira basic auth needs both, packed)
   org_url   = the site, e.g. "yoursite.atlassian.net" (with or without https)
-  devops_project = the project KEY (falls back to the first project found)
+  tracker_project = the project KEY (falls back to the first project found)
 
 Field mapping notes:
   - `type` is normalised by issue-type hierarchy level (1 → Epic, 0 → Story,
@@ -573,7 +573,7 @@ class JiraProvider(TrackerProvider):
         email, token = pat.split(":", 1)
         provider = cls(
             email.strip(), token.strip(), site, log,
-            project_key=row.get("devops_project"),
+            project_key=row.get("tracker_project"),
         )
         provider.customer_name = str(row.get("customer_name") or "")
         return provider

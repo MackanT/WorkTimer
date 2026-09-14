@@ -2,7 +2,7 @@
 
 import re
 
-from src.ui.devops_forms import _setup_conditional_visibility
+from src.ui.work_item_forms import _setup_conditional_visibility
 from src.ui.dynamic_widgets import WIDGET_CLASSES
 
 

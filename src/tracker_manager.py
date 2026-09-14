@@ -12,7 +12,7 @@ import json
 
 
 def _clean_project(val):
-    """Normalise a stored devops_project value to a non-empty str, or None.
+    """Normalise a stored tracker_project value to a non-empty str, or None.
     Guards against pandas NaN and the string sentinels used elsewhere."""
     if val is None:
         return None
@@ -34,7 +34,7 @@ def _choose_project(configured, available):
     return available[0] if available else None
 
 
-class DevOpsManager:
+class TrackerManager:
     """Provider-neutral multiplexer: one TrackerProvider per customer.
 
     Which provider a customer gets is resolved from the customers table's
@@ -44,7 +44,7 @@ class DevOpsManager:
 
     def __init__(self, df, log):
         # Imported here, not at module top: provider modules import this module
-        # (the Azure provider subclasses DevOpsClient below), so a top-level
+        # (the Azure provider subclasses AzureDevOpsClient below), so a top-level
         # import would be circular.
         from .trackers.registry import create_provider_for_row
 
@@ -71,7 +71,7 @@ class DevOpsManager:
         Get DevOps client for customer, logging warning if not found.
 
         Returns:
-            DevOpsClient or None
+            AzureDevOpsClient or None
         """
         client = self.clients.get(customer_name)
         if not client:
@@ -262,7 +262,7 @@ class DevOpsManager:
         return client.set_board_column(work_item_id, column_name)
 
 
-class DevOpsClient:
+class AzureDevOpsClient:
     def __init__(
         self, personal_access_token, organization_url, log, project_name=None
     ):
@@ -824,4 +824,4 @@ class DevOpsClient:
             self.log.error(f"Fallback board column fetch failed: {e}")
             return (False, f"Error: {e}")
 
-    # DevOpsManager should not itself implement update logic; calls go to DevOpsClient
+    # TrackerManager should not itself implement update logic; calls go to AzureDevOpsClient

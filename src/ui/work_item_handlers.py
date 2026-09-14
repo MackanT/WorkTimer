@@ -13,7 +13,7 @@ from collections import defaultdict
 from .. import helpers
 
 
-class DevOpsWorkItemHandlers:
+class WorkItemHandlers:
     """Handlers for DevOps work item operations."""
 
     devops_columns_cache = defaultdict(dict)
@@ -24,21 +24,21 @@ class DevOpsWorkItemHandlers:
         Initialize DevOps handlers.
 
         Args:
-            DO: DevOpsEngine instance
+            DO: TrackerEngine instance
             LOG: Logger instance
         """
         self.DO = DO
         self.LOG = LOG
 
-        if not DevOpsWorkItemHandlers._preload_started:
-            DevOpsWorkItemHandlers._preload_started = True
+        if not WorkItemHandlers._preload_started:
+            WorkItemHandlers._preload_started = True
             asyncio.ensure_future(self._background_work())
 
     async def _background_work(self):
         # A form can be opened before DevOps init finishes — don't crash the
         # preload task on a missing manager; app.py re-runs it after init.
         if not self.DO or not self.DO.manager:
-            DevOpsWorkItemHandlers._preload_started = False
+            WorkItemHandlers._preload_started = False
             return
         await self.preload_cached_board_columns()
 
@@ -119,8 +119,8 @@ class DevOpsWorkItemHandlers:
         # Staged images (item-scoped attachment stores like Jira): the initial
         # create must not carry the temporary /staged_image/ URLs — they're
         # stripped here and swapped in right after the item exists.
-        # Lazy import: devops_forms imports this module.
-        from .devops_forms import strip_staged_image_lines, take_staged_images
+        # Lazy import: work_item_forms imports this module.
+        from .work_item_forms import strip_staged_image_lines, take_staged_images
 
         has_staged = "/staged_image/" in (description or "")
         create_kwargs = dict(

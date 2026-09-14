@@ -5,7 +5,7 @@ import logging
 
 import pandas as pd
 
-from src.globals import DevOpsEngine
+from src.globals import TrackerEngine
 from src.ui.dynamic_widgets import (
     DynamicDevOpsSelect,
     DynamicDropDown,
@@ -46,7 +46,7 @@ _WORK_ITEMS = pd.DataFrame(
 
 
 def _engine_with(df):
-    eng = DevOpsEngine(query_engine=None, log_engine=logging.getLogger("test"))
+    eng = TrackerEngine(query_engine=None, log_engine=logging.getLogger("test"))
     eng.df = df
     return eng
 
@@ -155,22 +155,22 @@ def test_dropdown_default_source_dict_does_not_crash():
     # The multi-project crash: with no parent selected, both sources return the
     # whole {customer: ...} map. A dict default must be ignored, not hashed.
     async def fetch(source, parent_val=None):
-        if source == "devops_projects":
+        if source == "tracker_projects":
             return {"CustA": ["P1", "P2"]}  # whole map (no parent)
         return {"CustA": "P1"}
 
-    w = _bare_dropdown("devops_projects", "devops_project_current", fetch)
+    w = _bare_dropdown("tracker_projects", "tracker_project_current", fetch)
     asyncio.run(w._refresh_impl(None))  # must not raise
     assert w.widget.value is None
 
 
 def test_dropdown_default_source_preselects_current_with_parent():
     async def fetch(source, parent_val=None):
-        if source == "devops_projects":
+        if source == "tracker_projects":
             return ["P1", "P2"] if parent_val else {"CustA": ["P1", "P2"]}
         return "P1" if parent_val else {"CustA": "P1"}
 
-    w = _bare_dropdown("devops_projects", "devops_project_current", fetch)
+    w = _bare_dropdown("tracker_projects", "tracker_project_current", fetch)
     asyncio.run(w._refresh_impl("CustA"))
     assert set(w.widget.options) == {"P1", "P2"}
     assert w.widget.value == "P1"

@@ -21,7 +21,7 @@ from pathlib import Path
 
 from nicegui import app, ui
 
-from .devops_forms import open_add_work_item_dialog, open_work_item_dialog
+from .work_item_forms import open_add_work_item_dialog, open_work_item_dialog
 
 _MAX_ROWS = 12
 _ROW_SELECTED_STYLE = "background: rgba(56, 189, 248, 0.18);"
@@ -117,8 +117,8 @@ def setup_command_palette(core) -> None:
         # page is showing (no navigation). Seeded with the board's remembered
         # customer; a successful add emits devops_refreshed so an open board
         # reloads.
-        if core.devops_engine is not None:
-            DO = core.devops_engine
+        if core.tracker_engine is not None:
+            DO = core.tracker_engine
             # Union of levels across ALL connected trackers (Azure: Epic /
             # Feature / User Story; Jira adds Story / Sub-task). Each command
             # presets a customer whose tracker HAS that level — preferring the
@@ -210,11 +210,11 @@ def setup_command_palette(core) -> None:
                 "action": _start,
             })
 
-        if core.devops_engine is not None:
+        if core.tracker_engine is not None:
 
             async def _sync():
                 ui.notify("Tracker incremental sync started…", type="info")
-                await core.devops_engine.update_devops(incremental=True)
+                await core.tracker_engine.refresh_tracker_data(incremental=True)
                 core.event_bus.emit("devops_refreshed")
                 ui.notify("Tracker sync complete", type="positive")
 
@@ -283,7 +283,7 @@ def setup_command_palette(core) -> None:
         """Lowercased search text per work-item row; built once per palette open."""
         if state.get("_item_index") is not None:
             return state["_item_index"]
-        df = core.devops_engine.df if core.devops_engine is not None else None
+        df = core.tracker_engine.df if core.tracker_engine is not None else None
         if df is None or df.empty:
             state["_item_index"] = (None, None)
             return state["_item_index"]

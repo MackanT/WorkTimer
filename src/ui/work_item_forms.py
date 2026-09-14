@@ -17,13 +17,13 @@ from fastapi import UploadFile, File, Request, Response
 
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
-from ..ui.devops_handlers import DevOpsWorkItemHandlers
+from ..ui.work_item_handlers import WorkItemHandlers
 
 
 # Images inserted on the ADD form for item-scoped attachment stores (Jira):
 # the item doesn't exist yet, so the bytes are STAGED here, previewed via
 # /staged_image/<token>, and uploaded + swapped for the real attachment URL
-# right after the item is created (see DevOpsWorkItemHandlers.add_work_item).
+# right after the item is created (see WorkItemHandlers.add_work_item).
 _STAGED_IMAGES: dict = {}  # token -> (filename, bytes, monotonic timestamp)
 _STAGED_URL_RE = _re.compile(r"/staged_image/([0-9a-f]{32})")
 
@@ -82,7 +82,7 @@ async def upload_devops_image(request: Request, file: UploadFile = File(...)):
     return {path: url} so it can be embedded in a work-item description."""
     # Use the process-wide engine directly: this is a plain HTTP endpoint with no
     # NiceGUI client context, so AppCore.get_or_initialize() would fail.
-    from ..core.app import get_global_devops_engine
+    from ..core.app import get_global_tracker_engine
 
     form = await request.form()
     customer = form.get("customer")
@@ -95,7 +95,7 @@ async def upload_devops_image(request: Request, file: UploadFile = File(...)):
     # the bytes; add_work_item uploads them right after the create.
     if form.get("stage") and not work_item_id:
         return {"path": stage_image(file.filename or "paste.png", content)}
-    engine = get_global_devops_engine()
+    engine = get_global_tracker_engine()
     if engine is None:
         return {"error": "No DevOps connection"}
     url = await asyncio.to_thread(
@@ -113,9 +113,9 @@ async def devops_attachment(url: str):
     """Proxy a DevOps work-item attachment with the matching customer's PAT, so
     images embedded in a description render in the WorkTimer preview (the browser
     can't authenticate to dev.azure.com directly)."""
-    from ..core.app import get_global_devops_engine
+    from ..core.app import get_global_tracker_engine
 
-    engine = get_global_devops_engine()
+    engine = get_global_tracker_engine()
     manager = getattr(engine, "manager", None) if engine else None
     if manager is None:
         return Response(status_code=404)
@@ -193,11 +193,11 @@ async def open_work_item_dialog(
     update_cfg = core.ui_config.get("board_devops_forms", {}).get("update", {})
     # The customer's tracker name/capabilities drive labels and feature gating
     # (e.g. no image upload for a tracker without attachment support).
-    tracker_label = core.devops_engine.provider_label(customer)
-    tracker_caps = core.devops_engine.capabilities(customer)
+    tracker_label = core.tracker_engine.provider_label(customer)
+    tracker_caps = core.tracker_engine.capabilities(customer)
 
     def _open_in_devops():
-        manager = getattr(core.devops_engine, "manager", None)
+        manager = getattr(core.tracker_engine, "manager", None)
         url = manager.get_work_item_url(customer, item_id) if manager else None
         if url:
             ui.navigate.to(url, new_tab=True)
@@ -338,7 +338,7 @@ async def open_work_item_dialog(
                             name, content, _cust=customer, _wid=item_id
                         ):
                             return await asyncio.to_thread(
-                                core.devops_engine.upload_attachment,
+                                core.tracker_engine.upload_attachment,
                                 _cust, name, content, _wid,
                             )
 
@@ -455,21 +455,21 @@ async def open_add_work_item_dialog(
                     the tracker's preferred level."""
                     tw = widgets.get("work_item_type")
                     cw = widgets.get("customer_name")
-                    if tw is None or cw is None or core.devops_engine is None:
+                    if tw is None or cw is None or core.tracker_engine is None:
                         return
                     cust_now = cw.widget.value
                     if not cust_now:
                         return
-                    types = core.devops_engine.type_hierarchy(cust_now)
+                    types = core.tracker_engine.type_hierarchy(cust_now)
                     if tw.widget.value not in types:
-                        tw.widget.value = core.devops_engine.preferred_type(cust_now)
+                        tw.widget.value = core.tracker_engine.preferred_type(cust_now)
                         tw.widget.update()
                         _sync_add_header()
                     # Same for State: Azure's default "New" means nothing to a
                     # Jira workflow — snap to the tracker's first state.
                     sw = widgets.get("state")
                     if sw is not None:
-                        states = core.devops_engine.state_options(cust_now)
+                        states = core.tracker_engine.state_options(cust_now)
                         if states and sw.widget.value not in states:
                             sw.widget.value = states[0]
                             sw.widget.update()
@@ -477,7 +477,7 @@ async def open_add_work_item_dialog(
                     # hide the redundant Initial Board Column input there.
                     bc = widgets.get("board_column")
                     if bc is not None:
-                        caps = core.devops_engine.capabilities(cust_now)
+                        caps = core.tracker_engine.capabilities(cust_now)
                         bc.widget.set_visibility(caps.distinct_board_column)
                         if not caps.distinct_board_column and bc.widget.value:
                             bc.widget.value = None
@@ -493,7 +493,7 @@ async def open_add_work_item_dialog(
                     async def _run():
                         cw = widgets.get("customer_name")
                         cust_now = cw.widget.value if cw else None
-                        if not cust_now or core.devops_engine is None:
+                        if not cust_now or core.tracker_engine is None:
                             return
                         from ..tracker_defaults import (
                             DEFAULT_FIELDS,
@@ -515,7 +515,7 @@ async def open_add_work_item_dialog(
                         )
                         if not defaults:
                             return
-                        caps = core.devops_engine.capabilities(cust_now)
+                        caps = core.tracker_engine.capabilities(cust_now)
                         for fname in DEFAULT_FIELDS:
                             val = defaults.get(fname)
                             w = widgets.get(fname)
@@ -594,7 +594,7 @@ async def open_add_work_item_dialog(
                 if (
                     desc is not None and cust_w is not None
                     and hasattr(desc, "enable_image_upload")
-                    and core.devops_engine is not None
+                    and core.tracker_engine is not None
                 ):
                     async def _add_image_uploader(name, content):
                         cust_now = cust_w.widget.value
@@ -605,10 +605,10 @@ async def open_add_work_item_dialog(
                             return False
                         # Fallback gate — the button is hidden for trackers
                         # without attachments, but the selection can race.
-                        caps = core.devops_engine.capabilities(cust_now)
+                        caps = core.tracker_engine.capabilities(cust_now)
                         if not caps.attachments:
                             ui.notify(
-                                f"{core.devops_engine.provider_label(cust_now)} "
+                                f"{core.tracker_engine.provider_label(cust_now)} "
                                 "doesn't support image attachments yet",
                                 type="warning",
                             )
@@ -618,7 +618,7 @@ async def open_add_work_item_dialog(
                             # now, upload right after the create.
                             return stage_image(name, content)
                         return await asyncio.to_thread(
-                            core.devops_engine.upload_attachment,
+                            core.tracker_engine.upload_attachment,
                             cust_now, name, content,
                         )
 
@@ -630,7 +630,7 @@ async def open_add_work_item_dialog(
 
                     def _sync_paste_customer(_e=None):
                         cust_now = cust_w.widget.value
-                        caps = core.devops_engine.capabilities(cust_now)
+                        caps = core.tracker_engine.capabilities(cust_now)
                         paste_fields = {"customer": cust_now or ""}
                         if caps.attachments_require_item:
                             # Pastes are staged too — see /upload_devops_image.
@@ -676,7 +676,7 @@ async def _load_comments_into(core, widgets: dict, container) -> None:
     customer = cust_widget.value
     if not work_item_id or not customer:
         return
-    manager = getattr(core.devops_engine, "manager", None)
+    manager = getattr(core.tracker_engine, "manager", None)
     if not manager:
         return
 
@@ -726,27 +726,27 @@ async def render_devops_form(
             return
 
         if (
-            not core.devops_engine
-            or not hasattr(core.devops_engine, "manager")
-            or not core.devops_engine.manager
+            not core.tracker_engine
+            or not hasattr(core.tracker_engine, "manager")
+            or not core.tracker_engine.manager
         ):
             ui.notify("DevOps not configured - check PAT token / org URL", type="negative")
             return
 
         try:
-            devops_handlers = DevOpsWorkItemHandlers(core.devops_engine, core.logger)
+            item_handlers = WorkItemHandlers(core.tracker_engine, core.logger)
             if operation == "add":
                 wid_title = widgets.get("work_item_title")
-                success, message = await devops_handlers.add_work_item(widgets)
+                success, message = await item_handlers.add_work_item(widgets)
                 success_msg = f"Work item created: {wid_title.value if wid_title else ''}"
             else:
-                success, message = await devops_handlers.update_work_item(widgets)
+                success, message = await item_handlers.update_work_item(widgets)
                 success_msg = "Work item updated"
 
             if success:
                 ui.notify(success_msg, type="positive")
                 core.logger.info(message)
-                await core.devops_engine.update_devops(incremental=True)
+                await core.tracker_engine.refresh_tracker_data(incremental=True)
                 core.event_bus.emit("ui_refresh_requested")
                 if on_success:
                     await on_success()
@@ -875,11 +875,11 @@ async def render_devops_form(
 
         helpers.setup_template_handling(widgets)
         _setup_conditional_visibility(widgets, fields_by_name, hidden)
-        devops_handlers_setup = DevOpsWorkItemHandlers(core.devops_engine, core.logger)
+        item_handlers_setup = WorkItemHandlers(core.tracker_engine, core.logger)
         if operation == "add":
-            load_fn = devops_handlers_setup.setup_add_tab_handlers(widgets)
+            load_fn = item_handlers_setup.setup_add_tab_handlers(widgets)
         else:
-            load_fn = devops_handlers_setup.setup_update_tab_handlers(widgets)
+            load_fn = item_handlers_setup.setup_update_tab_handlers(widgets)
 
         # Comments panel (update only) — the work item's discussion thread.
         # Shown in the board dialog and the hierarchy dialog alike.
@@ -914,7 +914,7 @@ async def render_devops_form(
                     cust_widget = widgets.get("customer_name")
                     work_item_id = helpers.extract_devops_id(wid_widget.value) if wid_widget else None
                     customer = cust_widget.value if cust_widget else None
-                    manager = getattr(core.devops_engine, "manager", None)
+                    manager = getattr(core.tracker_engine, "manager", None)
                     if not (work_item_id and customer and manager):
                         return
                     ok, msg = await asyncio.to_thread(
@@ -1006,7 +1006,7 @@ def _setup_conditional_visibility(widgets: dict, fields_by_name: dict, hidden: s
 
 async def prepare_devops_data_sources(core, operation: str) -> dict:
     """Prepare data sources for DevOps forms."""
-    DO = core.devops_engine
+    DO = core.tracker_engine
     data_sources = {}
 
     try:

@@ -13,8 +13,8 @@ from nicegui import app, context, ui
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
-from ..ui.devops_handlers import DevOpsWorkItemHandlers
-from ..ui.devops_forms import open_add_work_item_dialog, open_work_item_dialog
+from ..ui.work_item_handlers import WorkItemHandlers
+from ..ui.work_item_forms import open_add_work_item_dialog, open_work_item_dialog
 from ..trackers.base import DEFAULT_TYPE_HIERARCHY
 from .hierarchy import create_hierarchy_view
 
@@ -33,7 +33,7 @@ _BOARD_CSS = """<style>
 async def board_page():
     """DevOps Board — Kanban view of work items from local cache."""
     core = await AppCore.get_or_initialize()
-    DO = core.devops_engine
+    DO = core.tracker_engine
     muted = core.theme.get("muted")  # theme muted-text token
 
     # Inject once per client — SPA re-visits would stack duplicate <style> blocks.
@@ -122,7 +122,7 @@ async def board_page():
     # Without this, the first render derives order from df insertion order which is arbitrary.
     for _cn in customer_names:
         for _wt in _work_item_types(_cn):
-            _c = DevOpsWorkItemHandlers.devops_columns_cache.get(_cn, {}).get(_wt)
+            _c = WorkItemHandlers.devops_columns_cache.get(_cn, {}).get(_wt)
             if _c:
                 known_cols[(_cn, _wt)] = list(_c)
 
@@ -130,7 +130,7 @@ async def board_page():
     def _column_order(customer: str, item_type: str) -> list[str]:
         """Return ordered column list; once a column is known it stays visible."""
         key = (customer, item_type)
-        cached = DevOpsWorkItemHandlers.devops_columns_cache.get(customer, {}).get(item_type)
+        cached = WorkItemHandlers.devops_columns_cache.get(customer, {}).get(item_type)
         if cached:
             result = list(cached)
             for c in known_cols.get(key, []):
@@ -392,7 +392,7 @@ async def board_page():
             priority_colors=PRIORITY_COLORS, priority_labels=PRIORITY_LABELS,
         )
 
-    # ── add-item dialog (shared, page-independent — see devops_forms) ─────────
+    # ── add-item dialog (shared, page-independent — see work_item_forms) ─────────
     async def _open_add_dialog(preset_type: str | None = None,
                                preset_parent: str | None = None):
         """Open the shared add form seeded with the board's current customer /
@@ -827,7 +827,7 @@ async def board_page():
         # The customer tabs and closures can't be rebuilt by a soft refresh —
         # reload this page once, now that data exists (the automatic version
         # of the manual F5 that used to be needed).
-        eng = core.devops_engine
+        eng = core.tracker_engine
         if (DO is None or not customer_names) and eng is not None:
             if eng.df is not None and not eng.df.empty:
                 try:

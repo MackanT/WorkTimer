@@ -21,16 +21,16 @@ _app_cores: Dict[str, "AppCore"] = {}
 
 # Process-wide DevOps singleton — shared across all client connections.
 # Prevents re-initializing (and re-syncing) DevOps on every browser reconnect.
-_global_devops_engine = None
-_global_devops_initialized: bool = False
-_global_devops_init_lock: Optional[asyncio.Lock] = None
+_global_tracker_engine = None
+_global_tracker_initialized: bool = False
+_global_tracker_init_lock: Optional[asyncio.Lock] = None
 
 
-def get_global_devops_engine():
+def get_global_tracker_engine():
     """Return the process-wide DevOps engine (or None) without needing a client
     context. Safe to call from plain HTTP endpoints, where AppCore's
     client-scoped lookup would fail with an empty slot stack."""
-    return _global_devops_engine
+    return _global_tracker_engine
 
 
 class AppCore:
@@ -66,11 +66,11 @@ class AppCore:
 
         # Engines — initialized lazily
         self.query_engine = None
-        self.devops_engine = None
+        self.tracker_engine = None
         self._initialized = False
-        self._devops_initialized = False
-        self._devops_last_attempt = 0
-        self._devops_no_customers = False
+        self._tracker_initialized = False
+        self._tracker_last_attempt = 0
+        self._tracker_no_customers = False
 
         self.logger.info("AppCore initialized")
 
@@ -225,7 +225,7 @@ class AppCore:
             self.event_bus.notify(f"Initialization failed: {e}", type_="negative")
             raise
 
-    async def initialize_devops(self):
+    async def initialize_trackers(self):
         """
         Initialize or re-initialize DevOps engine.
         Safe to call multiple times — skips if already initialized.
@@ -233,48 +233,48 @@ class AppCore:
         performs the actual initialization and sync; subsequent clients
         reuse the already-running engine immediately.
         """
-        global _global_devops_engine, _global_devops_initialized, _global_devops_init_lock
+        global _global_tracker_engine, _global_tracker_initialized, _global_tracker_init_lock
 
         if not self._initialized:
             self.logger.debug("Local engines not ready — skipping DevOps init")
             return
-        if self._devops_initialized:
+        if self._tracker_initialized:
             return
 
         # Fast path: global engine is ready — just adopt it
-        if _global_devops_initialized and _global_devops_engine is not None:
-            self.devops_engine = _global_devops_engine
-            self._devops_initialized = True
+        if _global_tracker_initialized and _global_tracker_engine is not None:
+            self.tracker_engine = _global_tracker_engine
+            self._tracker_initialized = True
             self.logger.debug("Reusing existing DevOps engine (already initialized globally)")
             return
 
         # Lazy-create the process-wide init lock (must be done inside the event loop)
-        if _global_devops_init_lock is None:
-            _global_devops_init_lock = asyncio.Lock()
+        if _global_tracker_init_lock is None:
+            _global_tracker_init_lock = asyncio.Lock()
 
-        async with _global_devops_init_lock:
+        async with _global_tracker_init_lock:
             # Re-check inside the lock — another client may have just finished init
-            if _global_devops_initialized and _global_devops_engine is not None:
-                self.devops_engine = _global_devops_engine
-                self._devops_initialized = True
+            if _global_tracker_initialized and _global_tracker_engine is not None:
+                self.tracker_engine = _global_tracker_engine
+                self._tracker_initialized = True
                 self.logger.debug("Reusing existing DevOps engine (initialized while waiting for lock)")
                 return
 
             # If no customers are configured, skip unless explicitly forced
-            if getattr(self, "_devops_no_customers", False):
+            if getattr(self, "_tracker_no_customers", False):
                 self.logger.debug("No DevOps customers configured — skipping retry")
                 return
 
             # Cooldown
             import time
 
-            last_attempt = getattr(self, "_devops_last_attempt", 0)
+            last_attempt = getattr(self, "_tracker_last_attempt", 0)
             if time.time() - last_attempt < 60:
                 self.logger.debug(
                     f"DevOps retry cooldown — {int(60 - (time.time() - last_attempt))}s remaining"
                 )
                 return
-            self._devops_last_attempt = time.time()
+            self._tracker_last_attempt = time.time()
 
             # Quick internet check
             self.logger.info("Checking internet connectivity...")
@@ -284,91 +284,91 @@ class AppCore:
 
             self.logger.info("Internet available — proceeding with DevOps initialization")
 
-            if not self.devops_engine:
+            if not self.tracker_engine:
                 try:
-                    from ..globals import DevOpsEngine
+                    from ..globals import TrackerEngine
 
                     do_logger = self._setup_logger("DevOps")
-                    self.devops_engine = DevOpsEngine(
+                    self.tracker_engine = TrackerEngine(
                         query_engine=self.query_engine, log_engine=do_logger
                     )
                 except Exception as e:
                     self.logger.warning(f"Could not create DevOps engine: {e}")
                     return
 
-            await self._initialize_devops_background()
+            await self._initialize_trackers_background()
 
-    async def _initialize_devops_background(self):
+    async def _initialize_trackers_background(self):
         """
         Run DevOps initialization with timeout.
-        Sets _devops_initialized on success, False on failure — triggering retry next page load.
+        Sets _tracker_initialized on success, False on failure — triggering retry next page load.
         """
-        global _global_devops_engine, _global_devops_initialized
+        global _global_tracker_engine, _global_tracker_initialized
         try:
             self.logger.info("Starting background DevOps initialization")
             await asyncio.wait_for(
-                self.devops_engine.initialize(),
+                self.tracker_engine.initialize(),
                 timeout=30.0,
             )
 
             has_connections = (
-                hasattr(self.devops_engine, "manager")
-                and self.devops_engine.manager is not None
-                and len(self.devops_engine.manager.clients) > 0
+                hasattr(self.tracker_engine, "manager")
+                and self.tracker_engine.manager is not None
+                and len(self.tracker_engine.manager.clients) > 0
             )
 
             if has_connections:
-                self._devops_initialized = True
-                self._devops_no_customers = False
-                _global_devops_engine = self.devops_engine
-                _global_devops_initialized = True
+                self._tracker_initialized = True
+                self._tracker_no_customers = False
+                _global_tracker_engine = self.tracker_engine
+                _global_tracker_initialized = True
                 self.logger.info(
-                    f"DevOps initialized — {len(self.devops_engine.manager.clients)} customer(s) connected"
+                    f"DevOps initialized — {len(self.tracker_engine.manager.clients)} customer(s) connected"
                 )
 
                 # Warm the Kanban board's column-order cache now (once per process) so the
                 # board is correct on its very first render instead of only after a user
                 # opens a work-item dialog (see src/pages/board.py _column_order fallback).
-                from ..ui.devops_handlers import DevOpsWorkItemHandlers
-                DevOpsWorkItemHandlers._preload_started = True
-                await DevOpsWorkItemHandlers(self.devops_engine, self.logger).preload_cached_board_columns()
+                from ..ui.work_item_handlers import WorkItemHandlers
+                WorkItemHandlers._preload_started = True
+                await WorkItemHandlers(self.tracker_engine, self.logger).preload_cached_board_columns()
 
-                asyncio.create_task(self.devops_engine.start_scheduled_updates())
+                asyncio.create_task(self.tracker_engine.start_scheduled_updates())
 
                 try:
                     self.event_bus.emit("devops_refreshed")
                 except Exception:
                     pass
             else:
-                self._devops_initialized = False
-                self._devops_no_customers = True
+                self._tracker_initialized = False
+                self._tracker_no_customers = True
                 self.logger.warning(
                     "DevOps initialize() completed but no customers configured — "
                     "will only retry when a customer is added"
                 )
 
         except asyncio.TimeoutError:
-            self._devops_initialized = False
-            self._devops_no_customers = False
+            self._tracker_initialized = False
+            self._tracker_no_customers = False
             self.logger.warning(
                 "DevOps initialization timed out — will retry on next navigation"
             )
         except Exception as e:
-            self._devops_initialized = False
-            self._devops_no_customers = False
+            self._tracker_initialized = False
+            self._tracker_no_customers = False
             self.logger.warning(f"DevOps initialization failed: {e}")
 
-    def force_devops_reinit(self):
+    def force_tracker_reinit(self):
         """Force DevOps to retry — call this after adding a new DevOps customer."""
-        global _global_devops_engine, _global_devops_initialized
+        global _global_tracker_engine, _global_tracker_initialized
         self.logger.info("DevOps re-init forced — resetting state")
-        self._devops_initialized = False
-        self._devops_no_customers = False
-        self._devops_last_attempt = 0
-        self.devops_engine = None
-        _global_devops_engine = None
-        _global_devops_initialized = False
-        asyncio.create_task(self.initialize_devops())
+        self._tracker_initialized = False
+        self._tracker_no_customers = False
+        self._tracker_last_attempt = 0
+        self.tracker_engine = None
+        _global_tracker_engine = None
+        _global_tracker_initialized = False
+        asyncio.create_task(self.initialize_trackers())
 
     async def _check_internet(self) -> bool:
         """Quick DNS check to see if internet is available. Returns True/False in ~1s."""
@@ -427,12 +427,12 @@ class AppCore:
             if not core._initialized:
                 await core.initialize_local_engines()
 
-        if not core._devops_initialized:
-            if _global_devops_initialized and _global_devops_engine is not None:
-                core.devops_engine = _global_devops_engine
-                core._devops_initialized = True
+        if not core._tracker_initialized:
+            if _global_tracker_initialized and _global_tracker_engine is not None:
+                core.tracker_engine = _global_tracker_engine
+                core._tracker_initialized = True
             else:
-                asyncio.create_task(core.initialize_devops())
+                asyncio.create_task(core.initialize_trackers())
 
         core.apply_theme()
 
@@ -443,9 +443,9 @@ class AppCore:
         # to what's CONFIGURED in the DB whenever the engine isn't ready.
         try:
             has_devops = bool(
-                core.devops_engine
-                and getattr(core.devops_engine, "manager", None)
-                and getattr(core.devops_engine.manager, "clients", None)
+                core.tracker_engine
+                and getattr(core.tracker_engine, "manager", None)
+                and getattr(core.tracker_engine.manager, "clients", None)
             )
             if not has_devops:
                 conns = await core.query_engine.function_db(
@@ -497,9 +497,9 @@ class AppCore:
             core.nav_bar.render()
 
             async def on_navigate():
-                if not core._devops_initialized:
+                if not core._tracker_initialized:
                     core.logger.info("Navigation triggered DevOps retry...")
-                    await core.initialize_devops()
+                    await core.initialize_trackers()
 
             core.nav_bar.on_navigate = on_navigate
 

@@ -96,6 +96,26 @@ def test_get_tracker_credentials_missing(db):
     assert db.get_tracker_credentials("nope") is None
 
 
+def test_tracker_project_column_rename_migration(db):
+    # Simulate a pre-rename database, then run the startup migration.
+    db.execute_query(
+        "insert into customers (customer_name, start_date, wage, "
+        "tracker_project, is_current) values ('C', '2026-01-01', 100, "
+        "'ProjX', 1)"
+    )
+    db.execute_query(
+        "alter table customers rename column tracker_project to devops_project"
+    )
+    db._rename_legacy_columns()
+    cols = db._get_table_columns("customers")
+    assert "tracker_project" in cols and "devops_project" not in cols
+    assert (
+        db.fetch_query("select tracker_project from customers").iloc[0, 0]
+        == "ProjX"
+    )
+    db._rename_legacy_columns()  # idempotent
+
+
 def test_get_customer_tracker_names(db):
     db.insert_tracker("T1", "devops", "org", "pat")
     db.insert_customer("C1", "2026-01-01", 100, tracker_name="T1")

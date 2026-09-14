@@ -1,8 +1,8 @@
 """Azure DevOps tracker module.
 
-`AzureDevOpsProvider` adapts the historical `DevOpsClient` (src/devops.py) to
+`AzureDevOpsProvider` adapts the historical `AzureDevOpsClient` (src/devops.py) to
 the `TrackerProvider` contract. The Azure-specific knowledge that used to live
-in `DevOpsManager` — org-URL building, `System.*` field mapping, PAT-signed
+in `TrackerManager` — org-URL building, `System.*` field mapping, PAT-signed
 attachment fetches — lives here now, so the manager stays provider-neutral.
 
 Kept as a subclass rather than a file move so the battle-tested client code
@@ -17,7 +17,7 @@ import requests
 
 from .base import TrackerCapabilities, TrackerProvider, WORK_ITEM_COLUMNS
 from .registry import register_provider
-from ..devops import DevOpsClient
+from ..tracker_manager import AzureDevOpsClient
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
@@ -46,7 +46,7 @@ def _blankish(val) -> bool:
 
 
 @register_provider
-class AzureDevOpsProvider(DevOpsClient, TrackerProvider):
+class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
     """One customer's Azure DevOps connection, as a pluggable tracker module."""
 
     provider_key = "devops"
@@ -66,7 +66,7 @@ class AzureDevOpsProvider(DevOpsClient, TrackerProvider):
 
     @classmethod
     def from_customer_row(cls, row, log):
-        """Build from a customers row (pat_token + org_url [+ devops_project]).
+        """Build from a customers row (pat_token + org_url [+ tracker_project]).
         Returns None when credentials are missing — the manager skips those."""
         pat = row.get("pat_token")
         org = row.get("org_url")
@@ -76,7 +76,7 @@ class AzureDevOpsProvider(DevOpsClient, TrackerProvider):
             str(pat),
             f"https://dev.azure.com/{str(org).strip()}",
             log,
-            project_name=row.get("devops_project"),
+            project_name=row.get("tracker_project"),
         )
         provider.customer_name = str(row.get("customer_name") or "")
         return provider

@@ -1,7 +1,7 @@
 """The tracker-provider contract.
 
 A provider wraps one customer's connection to one issue tracker (Azure DevOps,
-Jira, ...). The app consumes providers only through `DevOpsManager`, which
+Jira, ...). The app consumes providers only through `TrackerManager`, which
 multiplexes per customer — so a provider never needs to know about any other
 customer or provider.
 
@@ -63,7 +63,7 @@ class TrackerProvider(ABC):
 
     Concrete providers set `provider_key`, register themselves via
     `registry.register_provider`, and implement the abstract methods. Method
-    names intentionally match the historical DevOpsClient surface so the Azure
+    names intentionally match the historical AzureDevOpsClient surface so the Azure
     provider implements most of this by inheritance.
     """
 

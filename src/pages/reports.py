@@ -357,7 +357,7 @@ async def reports_page():
 
     # git_id → work-item title, for the "Top work items" chart.
     id2name = {}
-    _dfd = core.devops_engine.df if core.devops_engine is not None else None
+    _dfd = core.tracker_engine.df if core.tracker_engine is not None else None
     if _dfd is not None and not _dfd.empty and "display_name" in _dfd.columns:
         for _, r in _dfd[["id", "display_name"]].dropna().iterrows():
             id2name[int(r["id"])] = str(r["display_name"])

@@ -4,7 +4,7 @@ import logging
 
 import pandas as pd
 
-from src.devops import DevOpsClient, DevOpsManager, _choose_project, _clean_project
+from src.tracker_manager import AzureDevOpsClient, TrackerManager, _choose_project, _clean_project
 
 
 def test_clean_project_normalises_blanks_and_sentinels():
@@ -58,7 +58,7 @@ class _FakeWit:
 
 
 def _client_with(wit):
-    c = DevOpsClient.__new__(DevOpsClient)  # bypass network __init__
+    c = AzureDevOpsClient.__new__(AzureDevOpsClient)  # bypass network __init__
     c.wit_client = wit
     c.project_name = "MyProject"
     c.log = logging.getLogger("test")
@@ -84,7 +84,7 @@ def test_upload_attachment_returns_none_on_error():
 
 
 def test_fetch_attachment_ssrf_guard():
-    m = DevOpsManager.__new__(DevOpsManager)  # bypass network __init__
+    m = TrackerManager.__new__(TrackerManager)  # bypass network __init__
     m.clients = {}
     m.log = logging.getLogger("test")
     # Not a work-item attachment URL -> rejected outright (no request attempted).

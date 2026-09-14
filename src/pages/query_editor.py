@@ -330,7 +330,7 @@ async def query_editor_page():
         # field in these forms — the customer is fixed by the row being edited).
         if table_name in ("time", "projects"):
             cust = table_row.get("customer_name")
-            eng = core.devops_engine
+            eng = core.tracker_engine
             data_sources["devops_ids"] = (
                 eng.get_work_item_options(cust) if (eng is not None and cust) else []
             )

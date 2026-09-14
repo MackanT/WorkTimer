@@ -18,7 +18,7 @@ def _row(**over):
         "customer_name": "Jira Co",
         "pat_token": "me@example.com:secrettoken",
         "org_url": "myteam.atlassian.net",
-        "devops_project": "ABC",
+        "tracker_project": "ABC",
         "integration_type": "jira",
     }
     base.update(over)

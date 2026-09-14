@@ -2,10 +2,10 @@
 
 from .services import (
     BaseService,
-    DevOpsService,
+    TrackerSyncService,
 )
 
 __all__ = [
     'BaseService',
-    'DevOpsService',
+    'TrackerSyncService',
 ]

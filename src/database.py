@@ -136,7 +136,7 @@ class Database:
                     customer_name text,
                     start_date datetime,
                     wage real,
-                    devops_project text,
+                    tracker_project text,
                     integration_type text default 'devops',
                     tracker_id integer,
                     expected_work_pct real,
@@ -323,6 +323,11 @@ class Database:
                 """)
                 self.log_engine.info("Table 'trackers' created successfully.")
 
+            # Column RENAMES must run before the auto-migration below — it
+            # would otherwise add an empty new column next to the
+            # data-carrying old one.
+            self._rename_legacy_columns()
+
             # Auto-migrate existing databases: add columns introduced in later
             # versions and (re)create missing or outdated triggers. Single
             # source of truth is get_expected_schema().
@@ -343,6 +348,25 @@ class Database:
         except Exception as e:
             self.conn.commit()
             self.log_engine.error(f"Error initializing database: {e}")
+
+    def _rename_legacy_columns(self):
+        """Startup migration: customers.devops_project → tracker_project
+        (the tracker naming sweep). Idempotent; data rides along with the
+        SQLite RENAME COLUMN (≥ 3.25)."""
+        try:
+            if not self._table_exists("customers"):
+                return
+            cols = self._get_table_columns("customers")
+            if "devops_project" in cols and "tracker_project" not in cols:
+                self.execute_query(
+                    "alter table customers "
+                    "rename column devops_project to tracker_project"
+                )
+                self.log_engine.info(
+                    "Renamed customers.devops_project → tracker_project"
+                )
+        except Exception as e:
+            self.log_engine.error(f"Column rename migration failed: {e}")
 
     def _encrypt_plaintext_pats(self):
         """Startup migration: encrypt plaintext pat_token values in customers
@@ -810,7 +834,7 @@ class Database:
         org_url: str = None,
         pat_token: str = None,
         valid_from: str = None,
-        devops_project: str = None,
+        tracker_project: str = None,
         expected_work_pct: float = None,
         billing_round_minutes: int = None,
         color: str = None,
@@ -872,14 +896,14 @@ class Database:
         # Insert new customer row
         self.execute_query(
             """
-            insert into customers (customer_name, start_date, wage, devops_project, expected_work_pct, billing_round_minutes, color, integration_type, tracker_id, valid_from, valid_to, is_current, inserted_at)
+            insert into customers (customer_name, start_date, wage, tracker_project, expected_work_pct, billing_round_minutes, color, integration_type, tracker_id, valid_from, valid_to, is_current, inserted_at)
             values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """,
             (
                 customer_name,
                 start_date,
                 wage,
-                devops_project or None,
+                tracker_project or None,
                 expected_work_pct,
                 billing_round_minutes,
                 color or None,
@@ -1120,14 +1144,14 @@ class Database:
         credentials come from the linked tracker. While the legacy
         per-customer columns still exist (pre-split databases where the drop
         was blocked), they remain the fallback for unlinked customers.
-        Feeds DevOpsEngine.setup_manager."""
+        Feeds TrackerEngine.setup_manager."""
         if "pat_token" in self._get_table_columns("customers"):
             return self.fetch_query(
                 """
                 select distinct c.customer_name,
                        coalesce(nullif(t.pat_token, ''), c.pat_token) as pat_token,
                        coalesce(nullif(t.org_url, ''), c.org_url) as org_url,
-                       c.devops_project,
+                       c.tracker_project,
                        coalesce(t.integration_type, c.integration_type, 'devops')
                            as integration_type
                 from customers c
@@ -1144,7 +1168,7 @@ class Database:
             select distinct c.customer_name,
                    t.pat_token,
                    t.org_url,
-                   c.devops_project,
+                   c.tracker_project,
                    coalesce(t.integration_type, 'devops') as integration_type
             from customers c
             join trackers t on t.tracker_id = c.tracker_id
@@ -1160,7 +1184,7 @@ class Database:
         new_customer_name: str,
         org_url: str = None,
         pat_token: str = None,
-        devops_project: str = None,
+        tracker_project: str = None,
         expected_work_pct: float = None,
         billing_round_minutes: int = None,
         color: str = None,
@@ -1183,10 +1207,10 @@ class Database:
             params.append(
                 self.get_tracker_id(tracker_name) if tracker_name else None
             )
-        if devops_project is not None:
+        if tracker_project is not None:
             # "" clears it (fall back to the org's first project).
-            set_clauses.append("devops_project = ?")
-            params.append(devops_project or None)
+            set_clauses.append("tracker_project = ?")
+            params.append(tracker_project or None)
         if expected_work_pct is not None:
             set_clauses.append("expected_work_pct = ?")
             params.append(expected_work_pct)
@@ -1259,6 +1283,10 @@ class Database:
             (customer_name,),
             data_type="int",
         )
+        if not customer_id:
+            # Silently inserting with customer_id 0 created an orphan that no
+            # page could ever show — fail loudly instead.
+            raise ValueError(f"No active customer named '{customer_name}'")
 
         existing_projects = self.fetch_query(
             """
@@ -1852,7 +1880,7 @@ class Database:
                     ("customer_name", "TEXT", None, None),
                     ("start_date", "DATETIME", None, None),
                     ("wage", "REAL", None, None),
-                    ("devops_project", "TEXT", None, None),
+                    ("tracker_project", "TEXT", None, None),
                     ("integration_type", "TEXT", "'devops'", None),
                     ("tracker_id", "INTEGER", None, None),
                     ("expected_work_pct", "REAL", None, None),

@@ -17,7 +17,7 @@ from nicegui import app, ui
 
 from ..core.app import AppCore
 from ..helpers import UI_STYLES
-from ..ui.devops_forms import open_work_item_dialog
+from ..ui.work_item_forms import open_work_item_dialog
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
 
 # Per-client node-click handler, keyed by client id. A module dict (not
@@ -322,7 +322,7 @@ def create_hierarchy_view(core, get_customer):
     customer (shared with the board). Returns a controller exposing
     render_controls(), render_zoom_controls(), render_content(), set_customer()
     and refresh()."""
-    DO = core.devops_engine
+    DO = core.tracker_engine
     muted = core.theme.get("muted")
 
     state = {

@@ -117,7 +117,7 @@ def _render_tracker_defaults_card(core) -> None:
         save_tracker_defaults,
     )
     from ..trackers.registry import get_provider_class
-    from ..ui.devops_handlers import DevOpsWorkItemHandlers
+    from ..ui.work_item_handlers import WorkItemHandlers
 
     muted = UI_STYLES.get_layout_classes("muted_text")
     try:
@@ -201,14 +201,14 @@ def _render_tracker_defaults_card(core) -> None:
             # Options from a live customer on this tracker, when one exists.
             # Board columns are per work-item type where the cache has them.
             states, columns = [], []
-            eng = core.devops_engine
+            eng = core.tracker_engine
             for cust in _tracker_customers(tname):
                 if eng is not None:
                     try:
                         states = eng.state_options(cust)
                     except Exception:
                         states = []
-                cols_by_type = DevOpsWorkItemHandlers.devops_columns_cache.get(
+                cols_by_type = WorkItemHandlers.devops_columns_cache.get(
                     cust, {}
                 )
                 if wtype != ALL_TYPES and cols_by_type.get(wtype):
@@ -661,7 +661,7 @@ async def _render_devops_contacts_tab(core: AppCore):
                             async def _fetch_members(c=customer):
                                 """Pull the tracker's member list and let the
                                 user tick whom to import as assignees."""
-                                eng = core.devops_engine
+                                eng = core.tracker_engine
                                 manager = (
                                     getattr(eng, "manager", None) if eng else None
                                 )
@@ -1199,11 +1199,11 @@ async def settings_page():
     matching the navigation idiom of the Data Input and Info pages."""
     core = await AppCore.get_or_initialize()
 
-    from ..services.services import DevOpsService
-    _svc = DevOpsService(core)
+    from ..services.services import TrackerSyncService
+    _svc = TrackerSyncService(core)
     # May be None when DevOps init was skipped (no PAT customers / no internet) —
     # the page must still render, just without the sync controls.
-    _eng = core.devops_engine
+    _eng = core.tracker_engine
 
     with toolbar(core.theme):
         with toolbar_group(core.theme, divider_after=True):

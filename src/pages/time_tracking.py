@@ -435,14 +435,14 @@ async def time_tracking_page():
                 )
             ui.button("Close", on_click=on_close).props("flat").classes(btn_classes)
 
-    def _build_devops_selector(devops_engine, c_name, git_id, has_git_id):
+    def _build_devops_selector(tracker_engine, c_name, git_id, has_git_id):
         """Render DevOps ID dropdown + 'Store to DevOps' toggle. Returns (id_input, id_checkbox).
 
         When the project has a default work item, that item and its whole
         subtree (an Epic's features/stories, a Feature's stories) are listed
         first as the recommended picks; everything else follows."""
         id_checkbox = None
-        cust_df = devops_engine.df[devops_engine.df["customer_name"] == c_name]
+        cust_df = tracker_engine.df[tracker_engine.df["customer_name"] == c_name]
         # Newest (highest id) first — most likely related to current work.
         id_options = cust_df[cust_df["state"].isin(["Active", "New"])][
             ["display_name", "id"]
@@ -503,7 +503,7 @@ async def time_tracking_page():
         has_git_id = git_id is not None and git_id > 0
 
         # Check DevOps connection using engine method
-        has_devops = core.devops_engine.has_customer_connection(c_name) if core.devops_engine else False
+        has_devops = core.tracker_engine.has_customer_connection(c_name) if core.tracker_engine else False
 
         # This customer's projects, so the entry can be re-assigned on stop
         # (e.g. started on "generic", meant "specific task").
@@ -616,7 +616,7 @@ async def time_tracking_page():
             id_checkbox = None
             if has_devops:
                 id_input, id_checkbox = _build_devops_selector(
-                    core.devops_engine, c_name, git_id, has_git_id
+                    core.tracker_engine, c_name, git_id, has_git_id
                 )
 
             # Comment input
@@ -757,13 +757,13 @@ async def time_tracking_page():
                     params=(customer_id_int,),
                 )
                 if (
-                    core.devops_engine
-                    and core.devops_engine.manager
+                    core.tracker_engine
+                    and core.tracker_engine.manager
                     and not customer_name_df.empty
                 ):
                     # Blocking API call — keep it off the event loop
                     status, msg = await asyncio.to_thread(
-                        core.devops_engine.manager.save_comment,
+                        core.tracker_engine.manager.save_comment,
                         customer_name=customer_name_df.iloc[0]["customer_name"],
                         comment=comment,
                         git_id=git_id_val,
@@ -811,7 +811,7 @@ async def time_tracking_page():
         p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
         git_id = df.iloc[0]["git_id"] if not df.empty else 0
         has_git_id = git_id is not None and git_id > 0
-        has_devops = core.devops_engine.has_customer_connection(c_name) if core.devops_engine else False
+        has_devops = core.tracker_engine.has_customer_connection(c_name) if core.tracker_engine else False
 
         now = datetime.now()
         one_hour_ago = now - timedelta(hours=1)
@@ -841,7 +841,7 @@ async def time_tracking_page():
             git_id_number_input = None
             if has_devops:
                 id_input, id_checkbox = _build_devops_selector(
-                    core.devops_engine, c_name, git_id, has_git_id
+                    core.tracker_engine, c_name, git_id, has_git_id
                 )
             else:
                 git_id_number_input = (
@@ -1442,7 +1442,7 @@ async def time_tracking_page():
                             )
                             ui.notify(f"Customer '{cn}' disabled", type="positive")
                             core.event_bus.emit("ui_refresh_requested")
-                            core.force_devops_reinit()
+                            core.force_tracker_reinit()
 
                         ui.menu_item("Update customer", on_click=_ctx_update).props(
                             "icon=edit"

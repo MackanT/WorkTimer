@@ -15,7 +15,7 @@ from nicegui import ui
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
-from ..ui.devops_forms import _setup_conditional_visibility, _with_loading
+from ..ui.work_item_forms import _setup_conditional_visibility, _with_loading
 
 _OP_TAB_LABELS = {"reenable": "Re-enable"}
 
@@ -72,7 +72,7 @@ def _render_test_connection_button(core, widgets: dict, visible_fn) -> None:
             "integration_type": itype,
             "org_url": org,
             "pat_token": pat,
-            "devops_project": None,
+            "tracker_project": None,
         }
 
         def _connect():
@@ -267,7 +267,7 @@ async def render_entity_form(
             and (
                 operation in ("disable", "reenable")
                 or bool(kwargs.get("tracker_name"))
-                or bool(kwargs.get("devops_project"))
+                or bool(kwargs.get("tracker_project"))
             )
         )
         try:
@@ -290,14 +290,14 @@ async def render_entity_form(
 
             # A customer's DevOps credentials (or active state) changed — rebuild
             # the DevOps engine so the board/work-item forms pick it up without an
-            # app restart. force_devops_reinit() bypasses the retry cooldown and
+            # app restart. force_tracker_reinit() bypasses the retry cooldown and
             # re-inits in the background.
             if devops_touched:
                 core.logger.info(
                     f"Tracker config changed ({entity_type}.{operation}) — "
                     "re-initializing tracker connections"
                 )
-                core.force_devops_reinit()
+                core.force_tracker_reinit()
         except Exception as e:
             core.logger.error(f"Error in {operation} {entity_type}: {e}")
             ui.notify(f"Error: {e}", type="negative")
@@ -406,7 +406,7 @@ async def render_entity_form(
 def _devops_ids_by_customer(core: AppCore) -> dict:
     """{customer_name: [{"label", "id"}, …]} for the Git-ID picker; {} when
     DevOps isn't connected (the picker then falls back to manual id entry)."""
-    eng = getattr(core, "devops_engine", None)
+    eng = getattr(core, "tracker_engine", None)
     return eng.get_work_item_options() if eng is not None else {}
 
 
@@ -438,7 +438,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 if operation == "update":
                     # For update, we need current values per customer
                     full_df = await QE.query_db(
-                        "SELECT c.customer_name, c.devops_project, "
+                        "SELECT c.customer_name, c.tracker_project, "
                         "c.expected_work_pct, c.billing_round_minutes, c.color, "
                         "t.tracker_name "
                         "FROM customers c "
@@ -448,7 +448,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     data_sources["new_customer_name"] = {}
                     data_sources["tracker_current"] = {}
                     # Current project per customer (preselects the picker).
-                    data_sources["devops_project_current"] = {}
+                    data_sources["tracker_project_current"] = {}
                     data_sources["expected_work_pct"] = {}
                     data_sources["billing_round_minutes"] = {}
                     data_sources["color"] = {}
@@ -458,8 +458,8 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                         data_sources["tracker_current"][cname] = (
                             row["tracker_name"] or ""
                         )
-                        data_sources["devops_project_current"][cname] = (
-                            row["devops_project"] or ""
+                        data_sources["tracker_project_current"][cname] = (
+                            row["tracker_project"] or ""
                         )
                         data_sources["expected_work_pct"][cname] = (
                             float(row["expected_work_pct"])
@@ -471,8 +471,8 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                         )
                         data_sources["color"][cname] = row["color"] or ""
                     # Available projects per customer, from the live connections.
-                    eng = getattr(core, "devops_engine", None)
-                    data_sources["devops_projects"] = (
+                    eng = getattr(core, "tracker_engine", None)
+                    data_sources["tracker_projects"] = (
                         eng.get_available_projects() if eng is not None else {}
                     )
 

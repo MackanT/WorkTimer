@@ -401,12 +401,12 @@ add_data_page:
           default_source: tracker_current
           parent: customer_name
           optional: true
-        - name: "devops_project"
+        - name: "tracker_project"
           label: "Project"
           type: select
           options: []
-          options_source: devops_projects
-          default_source: devops_project_current
+          options_source: tracker_projects
+          default_source: tracker_project_current
           parent: customer_name
           optional: true
         - name: expected_work_pct

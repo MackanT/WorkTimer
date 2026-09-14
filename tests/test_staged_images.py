@@ -1,7 +1,7 @@
 """Staged-image helpers: the add form's bridge for item-scoped attachment
 stores (Jira) — bytes are held until the item exists, then uploaded."""
 
-from src.ui.devops_forms import (
+from src.ui.work_item_forms import (
     _STAGED_IMAGES,
     stage_image,
     strip_staged_image_lines,

@@ -4,7 +4,7 @@ import logging
 
 import pandas as pd
 
-from src.devops import DevOpsManager
+from src.tracker_manager import TrackerManager
 from src.trackers.azure import AzureDevOpsProvider
 
 _LOG = logging.getLogger("worktimer.tests")
@@ -27,14 +27,14 @@ def _fake_provider(items, customer="CustA"):
 
 
 def _empty_manager():
-    return DevOpsManager(
+    return TrackerManager(
         pd.DataFrame(columns=["customer_name", "pat_token", "org_url"]), _LOG
     )
 
 
 def test_manager_skips_customers_without_credentials():
     df = pd.DataFrame([{"customer_name": "A", "pat_token": "", "org_url": ""}])
-    mgr = DevOpsManager(df, _LOG)
+    mgr = TrackerManager(df, _LOG)
     assert mgr.clients == {}
 
 

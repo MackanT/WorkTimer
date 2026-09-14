@@ -1,8 +1,8 @@
 # pandas removed from globals.py -- use local imports where needed
-from .devops import DevOpsManager
+from .tracker_manager import TrackerManager
 
 # Importing a tracker module registers it (see src/trackers/). Imported after
-# devops above — the Azure provider subclasses DevOpsClient, so this order
+# devops above — the Azure provider subclasses AzureDevOpsClient, so this order
 # avoids a circular import.
 from .trackers import azure as _azure_tracker  # noqa: F401
 from .trackers import jira as _jira_tracker  # noqa: F401
@@ -67,7 +67,7 @@ class QueryEngine:
         self.df = await self.function_db("get_query_list")
 
 
-class DevOpsEngine:
+class TrackerEngine:
     def __init__(self, query_engine: QueryEngine, log_engine: logging.Logger):
         self.manager = None
         self.df = None
@@ -75,7 +75,7 @@ class DevOpsEngine:
         self.log = log_engine
         self._scheduled_tasks = []
         self._scheduled_started = False
-        # Serializes update_devops() so a manual sync (settings page) and the
+        # Serializes refresh_tracker_data() so a manual sync (settings page) and the
         # hourly scheduled sync can't interleave DB writes.
         self._update_lock = asyncio.Lock()
         self.last_incremental_sync: datetime.datetime | None = None
@@ -99,7 +99,7 @@ class DevOpsEngine:
                 try:
                     await asyncio.sleep(3600)
                     self.log.info("Running scheduled incremental DevOps update")
-                    await self.update_devops(incremental=True)
+                    await self.refresh_tracker_data(incremental=True)
                 except Exception as e:
                     self.log.error(f"Error in incremental DevOps update: {e}")
                 except asyncio.CancelledError:
@@ -111,7 +111,7 @@ class DevOpsEngine:
                 try:
                     await asyncio.sleep(_seconds_until_next(2))
                     self.log.info("Running scheduled daily full refresh")
-                    await self.update_devops(incremental=False)
+                    await self.refresh_tracker_data(incremental=False)
                     # Loop back immediately — next iteration recalculates time until 2 AM
                 except Exception as e:
                     self.log.error(f"Error in daily full refresh: {e}")
@@ -208,7 +208,7 @@ class DevOpsEngine:
 
             # Always update/rebuild devops data to reflect latest customer info
             self.log.info("Performing incremental DevOps update on startup.")
-            await self.update_devops(incremental=True)
+            await self.refresh_tracker_data(incremental=True)
             await self.load_df()
             self.log.info("DevOps preload complete.")
 
@@ -238,9 +238,9 @@ class DevOpsEngine:
                 lambda v: decrypt_pat(v, self.query_engine.file_name, self.log)
             )
             df = df[df["pat_token"] != ""]
-        # DevOpsManager.__init__ connects to every org (network I/O) — keep it
+        # TrackerManager.__init__ connects to every org (network I/O) — keep it
         # off the event loop so the UI stays responsive during startup.
-        self.manager = await asyncio.to_thread(DevOpsManager, df, self.log)
+        self.manager = await asyncio.to_thread(TrackerManager, df, self.log)
 
     def provider_label(self, customer_name: str | None = None) -> str:
         """The customer's tracker name for UI labels ('Azure DevOps'/'Jira')."""
@@ -291,7 +291,7 @@ class DevOpsEngine:
                 return client.type_hierarchy()
         return DEFAULT_TYPE_HIERARCHY
 
-    async def update_devops(self, incremental: bool = False):
+    async def refresh_tracker_data(self, incremental: bool = False):
         if not self.manager:
             self.log.warning("No DevOps connections available")
             return None
