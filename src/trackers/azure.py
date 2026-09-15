@@ -1,9 +1,10 @@
 """Azure DevOps tracker module.
 
-`AzureDevOpsProvider` adapts the historical `AzureDevOpsClient` (src/devops.py) to
-the `TrackerProvider` contract. The Azure-specific knowledge that used to live
-in `TrackerManager` — org-URL building, `System.*` field mapping, PAT-signed
-attachment fetches — lives here now, so the manager stays provider-neutral.
+`AzureDevOpsProvider` adapts the historical `AzureDevOpsClient`
+(src/tracker_manager.py) to the `TrackerProvider` contract. The Azure-specific
+knowledge that used to live in `TrackerManager` — org-URL building, `System.*`
+field mapping, PAT-signed attachment fetches — lives here now, so the manager
+stays provider-neutral.
 
 Kept as a subclass rather than a file move so the battle-tested client code
 (and its imports in tests) stays put; a future cosmetic pass can relocate it.

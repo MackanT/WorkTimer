@@ -28,7 +28,8 @@ src/pages/add_data.py      Entity-management DIALOGS (customers/trackers/project
 src/trackers/              Pluggable tracker providers: base.py (TrackerProvider ABC,
                            TrackerCapabilities), azure.py, jira.py, registry.py.
                            Customers link to rows in the `trackers` table (credentials
-                           live there, encrypted); `DevOpsManager` multiplexes per customer
+                           live there, encrypted); `TrackerManager`
+                           (src/tracker_manager.py) multiplexes per customer
 src/services/              BaseService + typed services; background threads call these
 src/services/update_checker.py  Daily GitHub update check (see Update Check section)
 config/                    YAML configs for theme, UI layout, navigation, tracker contacts
