@@ -82,8 +82,13 @@ def setup_command_palette(core) -> None:
     async def _build_commands() -> list:
         cmds = []
 
+        # Dropdown-menu nav entries (e.g. Data Input) have no page behind
+        # their path — navigating there 404s. Their dialogs get their own
+        # palette commands below, so skip the "Go to" for them.
+        menu_paths = set(getattr(core.nav_bar, "menu_providers", {}) or {})
+
         for item in (core.ui_config.get("navigation") or {}).values():
-            if not item.get("enabled"):
+            if not item.get("enabled") or item.get("path") in menu_paths:
                 continue
 
             async def _go(p=item["path"]):
@@ -117,8 +122,15 @@ def setup_command_palette(core) -> None:
         # page is showing (no navigation). Seeded with the board's remembered
         # customer; a successful add emits devops_refreshed so an open board
         # reloads.
-        if core.tracker_engine is not None:
-            DO = core.tracker_engine
+        # Prefer the READY global engine: core.tracker_engine only re-adopts
+        # it on the next page render, so after a tracker/customer change the
+        # per-client reference lags until a navigation (the palette would
+        # miss a newly linked tracker's levels).
+        from ..core.app import get_global_tracker_engine
+
+        engine = get_global_tracker_engine() or core.tracker_engine
+        if engine is not None:
+            DO = engine
             # Union of levels across ALL connected trackers (Azure: Epic /
             # Feature / User Story; Jira adds Story / Sub-task). Each command
             # presets a customer whose tracker HAS that level — preferring the
