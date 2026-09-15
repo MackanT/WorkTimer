@@ -1196,7 +1196,7 @@ async def _render_theme_tab(core: AppCore):
 
 async def settings_page():
     """Settings page — toolbar tabs with four sections (DevOps / Tags / Theme / Data),
-    matching the navigation idiom of the Data Input and Info pages."""
+    matching the navigation idiom of the Data Input and Documentation pages."""
     core = await AppCore.get_or_initialize()
 
     from ..services.services import TrackerSyncService

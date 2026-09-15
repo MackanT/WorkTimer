@@ -6,11 +6,22 @@ Welcome to **WorkTimer** — a locally hosted web application for time tracking 
 
 ## Getting Started
 
+### Requirements
+
+- **Python 3.11+** with [`uv`](https://docs.astral.sh/uv/) for running directly, **or**
+- **Docker** for 24/7 operation
+
+First time with `uv`? Install it and sync the dependencies once:
+```powershell
+pip install uv      # then restart your terminal
+uv sync
+```
+
 ### Starting the application
 
 **Option A — Direct Python (recommended for development)**
 ```powershell
-uv run -m src.main
+uv run -m main
 ```
 
 **Option B — Docker (recommended for 24/7 operation)**
@@ -21,20 +32,6 @@ docker compose up -d
 Docker reads `DB_NAME` and `DEBUG_MODE` from a `.env` file in the project root. A default `.env` ships with the project — edit it if you want a different database name or debug output.
 
 Then open **`http://localhost:8080`** in your browser.
-
-#### First-time setup with `uv`
-
-If `uv` is not installed:
-```powershell
-pip install uv
-```
-
-Restart your terminal after installation, then sync dependencies:
-```powershell
-uv sync
-```
-
----
 
 ### First-time setup
 
@@ -61,7 +58,7 @@ WorkTimer has a fixed top navigation bar with the following pages:
 | **Tasks** | Built-in task manager — disabled by default, enable in `config/config_ui.yml` |
 | **Notepad** | Markdown notes organised in a sidebar |
 | **Log** | Real-time application log |
-| **Info** | This guide |
+| **Documentation** | This guide, plus shortcuts, changelog and tracker contacts |
 | **Settings** | Tracker sync/defaults/contacts, tags, theme, and data tools |
 
 ---
@@ -93,18 +90,31 @@ A Kanban view of the connected trackers' work items, from the local cache.
 
 ---
 
+## Reports
+
+A visual analytics dashboard for your tracked time.
+
+- **Filters** — pick customers (one, several, or all) and a period (Day / Week / Month / Year / Custom)
+- **Stat tiles** — hours, billable amount and target utilisation for the selection
+- **Charts** — daily hours trend, hours by project, hours by customer, and top work items, coloured by each customer's colour
+- **Billing rounding** — round the billable tiles/CSV up to an increment, applied *per entry*, *per work item*, *per project* or on the *grand total*; display-only, never written to the database (the default increment comes from *Settings → Data*)
+- **CSV export** — download the current selection for invoicing or further analysis
+
+---
+
 ## Managing data (Data Input dialogs)
 
 Each dialog has operation tabs (Add / Update / Disable / Re-enable — Delete for trackers) and closes on a successful save.
 
 ### Customers
 - **Add** — name, wage, optional tracker link
-- **Update** — rename, link/unlink a tracker, pick the tracker project, expected work %, billing rounding, colour
+- **Update** — rename, link/unlink a tracker, pick the tracker project, expected work %, colour
 - **Disable / Re-enable** — soft-archive without losing historical entries (disabled customers disappear from the board and pickers; their cached items return on re-enable)
 
 ### Trackers
 A tracker is a connection (type + org/site + credentials) that customers link to — several customers can share one.
 - **Add / Update** — fields follow the type: Azure DevOps takes org + PAT, Jira takes site / account email / API token; secret fields show *blank = unchanged*
+- **Token expires** — optional date; when set, WorkTimer shows a sticky warning (once a day, from 30 days out, until you dismiss it) before the PAT / API token runs out, instead of sync silently failing
 - **Test connection** — verifies the credentials immediately and lists the org's projects
 - **Delete** — removes the tracker and detaches its customers
 
@@ -133,6 +143,7 @@ A full SQL editor for custom data analysis.
 - **Edit results** — click any row in the result table to open an edit dialog
 - **Copy results** — disable edit mode to copy rows into memory (csv-format)
 - **Syntax feedback** — the editor highlights errors before you run
+- **Skins** — pick your own editor colour scheme under *Settings → Theme*
 
 ---
 
@@ -162,11 +173,12 @@ Four tabs, matching the app's standard layout:
 Define tags used to categorise work items — icon + colour per tag, add/edit/delete in the table.
 
 ### Theme
-Customise the app colour scheme (Quasar + Tailwind token pairs). Press **Save Theme**, then reload (**Ctrl + R**) to apply.
+- **Theme colours** — customise the app colour scheme (Quasar + Tailwind token pairs). Press **Save Theme**, then reload (**Ctrl + R**) to apply
+- **Query editor skin** — your personal colour scheme for the SQL editor, with a live preview; saved per user
 
 ### Data
 - **Backup** — list of recent backups, *Backup now*, and a browser download
-- **Time & billing defaults** — global rounding / currency / target settings
+- **Time & billing defaults** — global rounding / currency / target settings used by Reports
 - **About** — version and update status
 
 ---
@@ -238,7 +250,7 @@ The database file is volume-mounted so data persists across restarts. See `docke
 - Expected: the encryption key (`data/.pat_key`) never travels with backups — re-enter the credentials on the trackers
 
 **UI not updating**
-- Hard-refresh the browser: **Ctrl + F5**
+- Hard-refresh the browser: **Ctrl + Shift + R** (F5 is reserved by the app)
 - Check the Log page for errors
 
 **Database errors**

@@ -50,8 +50,8 @@ navigation:
     key: log
     enabled: true
   info:
-    label: Info
-    icon: info
+    label: Documentation
+    icon: menu_book
     path: /info
     key: info
     enabled: true
@@ -861,19 +861,19 @@ query:
       secondary_action: None
       button_name: Update
 
-## Info Pages ##
+## Documentation Pages ##
 info_page:
   info:
     meta:
-      icon: info
-      friendly_name: Info
+      icon: menu_book
+      friendly_name: Guide
       file: readme.md
   shortcuts:
     meta:
       icon: keyboard
       friendly_name: Shortcuts
       file: shortcuts.md
-  read_me:
+  changelog:
     meta:
       icon: change_history
       friendly_name: Changelog

@@ -148,7 +148,7 @@ class ConfigUI(BaseModel):
 
     info_page:
         info: {meta: {...}}
-        read_me: {meta: {...}}
+        changelog: {meta: {...}}
     add_data_page:
         customer: {add: {...}, update: {...}}
     """
