@@ -498,7 +498,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 tdf = await QE.query_db(
                     "SELECT tracker_name, "
                     "coalesce(integration_type, 'devops') as integration_type, "
-                    "org_url, pat_token "
+                    "org_url, pat_token, token_expires "
                     "FROM trackers ORDER BY tracker_name"
                 )
                 data_sources["tracker_data"] = (
@@ -521,11 +521,16 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     data_sources["jira_site"] = {}
                     data_sources["jira_email"] = {}
                     data_sources["jira_api_token"] = {}
+                    # Not secret — prefill the stored expiry date as-is.
+                    data_sources["token_expires"] = {}
                     for _, row in tdf.iterrows():
                         tname = row["tracker_name"]
                         itype = row["integration_type"] or "devops"
                         data_sources["new_tracker_name"][tname] = tname
                         data_sources["integration_type_current"][tname] = itype
+                        data_sources["token_expires"][tname] = (
+                            row["token_expires"] or ""
+                        )
                         for key in ("org_url", "pat_token", "jira_site",
                                     "jira_email", "jira_api_token"):
                             data_sources[key][tname] = ""

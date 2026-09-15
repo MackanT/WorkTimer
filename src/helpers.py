@@ -96,6 +96,27 @@ def parse_date_range(date_range_str: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def token_expiry_level(expires, today: date | None = None):
+    """Classify a tracker token's expiry date for the startup warning.
+
+    Returns (level, days_left) where level is "expired" (past), "critical"
+    (≤ 7 days), "warning" (≤ 30 days) or "ok" — or None when the value
+    isn't a parseable YYYY-MM-DD date.
+    """
+    try:
+        exp = date.fromisoformat(str(expires).strip()[:10])
+    except (ValueError, TypeError):
+        return None
+    days = (exp - (today or date.today())).days
+    if days < 0:
+        return ("expired", days)
+    if days <= 7:
+        return ("critical", days)
+    if days <= 30:
+        return ("warning", days)
+    return ("ok", days)
+
+
 # ===== DATA VALIDATION =====
 
 

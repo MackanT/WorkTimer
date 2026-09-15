@@ -140,7 +140,6 @@ class Database:
                     integration_type text default 'devops',
                     tracker_id integer,
                     expected_work_pct real,
-                    billing_round_minutes integer,
                     color text,
                     valid_from datetime,
                     valid_to datetime,
@@ -318,6 +317,7 @@ class Database:
                     integration_type text default 'devops',
                     org_url text,
                     pat_token text,
+                    token_expires date,
                     inserted_at datetime
                 )
                 """)
@@ -976,6 +976,21 @@ class Database:
             pat or "",
         )
 
+    @staticmethod
+    def _clean_expiry(token_expires):
+        """Normalise a token-expiry form value: empty → None, else a valid
+        YYYY-MM-DD string (raises ValueError on anything unparseable, so a
+        typo surfaces at save time instead of silently never warning)."""
+        val = str(token_expires or "").strip()
+        if not val:
+            return None
+        try:
+            return date.fromisoformat(val[:10]).isoformat()
+        except ValueError:
+            raise ValueError(
+                f"Token expiry '{val}' is not a date (use YYYY-MM-DD)"
+            )
+
     def insert_tracker(
         self,
         tracker_name: str,
@@ -985,6 +1000,7 @@ class Database:
         jira_site: str = None,
         jira_email: str = None,
         jira_api_token: str = None,
+        token_expires: str = None,
     ):
         """The Jira form splits credentials into site/email/token fields —
         they pack into the org_url and email:token pat used everywhere else."""
@@ -999,12 +1015,13 @@ class Database:
             pat_token = encrypt_pat(pat_token, self.db_file, self.log_engine)
         self.execute_query(
             "insert into trackers (tracker_name, integration_type, org_url, "
-            "pat_token, inserted_at) values (?, ?, ?, ?, ?)",
+            "pat_token, token_expires, inserted_at) values (?, ?, ?, ?, ?, ?)",
             (
                 tracker_name,
                 integration_type or "devops",
                 org_url,
                 pat_token,
+                self._clean_expiry(token_expires),
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ),
         )
@@ -1020,6 +1037,7 @@ class Database:
         jira_site: str = None,
         jira_email: str = None,
         jira_api_token: str = None,
+        token_expires: str = None,
     ):
         """Empty/None = leave unchanged (clearing credentials is not a thing —
         delete the tracker instead). A partial Jira edit (email OR token)
@@ -1049,6 +1067,9 @@ class Database:
 
             set_clauses.append("pat_token = ?")
             params.append(encrypt_pat(pat_token, self.db_file, self.log_engine))
+        if token_expires:
+            set_clauses.append("token_expires = ?")
+            params.append(self._clean_expiry(token_expires))
         if not set_clauses:
             return
         params.append(tracker_name)
@@ -1888,6 +1909,7 @@ class Database:
                     ("integration_type", "TEXT", "'devops'", None),
                     ("org_url", "TEXT", None, None),
                     ("pat_token", "TEXT", None, None),
+                    ("token_expires", "DATE", None, None),
                     ("inserted_at", "DATETIME", None, None),
                 ],
                 # NOTE: pat_token/org_url (migrated to trackers) and

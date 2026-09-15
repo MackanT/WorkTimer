@@ -1,4 +1,5 @@
 import asyncio
+from datetime import date
 
 from nicegui import ui, app
 from . import (
@@ -233,6 +234,57 @@ async def _setup_spa_shell():
                 pass
 
         asyncio.create_task(_maybe_show_post_update_news())
+
+        # Tracker-token expiry warning — once per browser per day: a tracker
+        # whose token_expires date is within 30 days (or past) raises a toast,
+        # so an expiring PAT / API token gets renewed before sync silently
+        # starts failing. The date is set on the tracker (Data Input →
+        # Trackers); trackers without one are never nagged about.
+        _today_str = str(date.today())
+        if app.storage.user.get("token_expiry_notified") != _today_str:
+
+            async def _check_token_expiry():
+                from ..helpers import token_expiry_level
+
+                try:
+                    df = await core.query_engine.query_db(
+                        "select tracker_name, token_expires from trackers "
+                        "where coalesce(token_expires, '') != ''"
+                    )
+                    notified = False
+                    for _, r in df.iterrows():
+                        lvl = token_expiry_level(r["token_expires"])
+                        if lvl is None or lvl[0] == "ok":
+                            continue
+                        level, days = lvl
+                        when = (
+                            f"expired {-days} day(s) ago" if level == "expired"
+                            else f"expires in {days} day(s)"
+                        )
+                        msg = (
+                            f"Tracker '{r['tracker_name']}' token {when} "
+                            f"({r['token_expires']}) — renew it and update "
+                            "the tracker"
+                        )
+                        # Sticky (timeout 0): an auto-dismissing toast during
+                        # page load is too easy to miss for something this
+                        # consequential.
+                        core.event_bus.notify(
+                            msg,
+                            type_="warning" if level == "warning" else "negative",
+                            close_button="Dismiss",
+                            timeout=0,
+                        )
+                        core.logger.warning(msg)
+                        notified = True
+                    if notified:
+                        # Stamp only when something fired — a date set later
+                        # today should still warn on the next reload.
+                        app.storage.user["token_expiry_notified"] = _today_str
+                except Exception:
+                    pass
+
+            asyncio.create_task(_check_token_expiry())
 
         # Set initial nav-bar state from DB
         try:

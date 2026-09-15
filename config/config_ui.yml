@@ -513,6 +513,10 @@ add_data_page:
           conditional: true
           visible_when:
             integration_type: [jira]
+        - name: token_expires
+          label: "Token expires (YYYY-MM-DD, optional)"
+          type: input
+          optional: true
       action:
         function: "insert_tracker"
         main_action: "Tracker"
@@ -592,6 +596,13 @@ add_data_page:
           conditional: true
           visible_when:
             integration_type: [jira]
+        - name: token_expires
+          label: "Token expires (YYYY-MM-DD, blank = unchanged)"
+          type: input
+          options: []
+          options_source: token_expires
+          optional: true
+          parent: tracker_name
       action:
         function: "update_tracker"
         main_action: "Tracker"
@@ -856,15 +867,10 @@ info_page:
       icon: change_history
       friendly_name: Changelog
       file: changelog.md
-  changelog:
-    meta:
-      icon: read_more
-      friendly_name: Todo
-      file: todo.md
-  devops_contacts:
+  tracker_contacts:
     meta:
       icon: contacts
-      friendly_name: DevOps Contacts
+      friendly_name: Tracker Contacts
       file: devops_contacts.md
 
 ## Log Page ##
