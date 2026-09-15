@@ -5,7 +5,7 @@ import re
 from textwrap import dedent
 from typing import Literal
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 
 class Database:
@@ -342,6 +342,10 @@ class Database:
             # then retire the legacy credential columns once nobody needs them.
             self._migrate_customer_trackers()
             self._drop_legacy_customer_credentials()
+
+            # Per-customer billing rounding retired in 5.0.5 (the global
+            # setting + the Reports-page override cover it).
+            self._drop_retired_columns()
 
             self.conn.commit()
             self.log_engine.info("Database loaded without errors!")
@@ -836,7 +840,6 @@ class Database:
         valid_from: str = None,
         tracker_project: str = None,
         expected_work_pct: float = None,
-        billing_round_minutes: int = None,
         color: str = None,
         integration_type: str = None,
         tracker_name: str = None,
@@ -896,8 +899,8 @@ class Database:
         # Insert new customer row
         self.execute_query(
             """
-            insert into customers (customer_name, start_date, wage, tracker_project, expected_work_pct, billing_round_minutes, color, integration_type, tracker_id, valid_from, valid_to, is_current, inserted_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            insert into customers (customer_name, start_date, wage, tracker_project, expected_work_pct, color, integration_type, tracker_id, valid_from, valid_to, is_current, inserted_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         """,
             (
                 customer_name,
@@ -905,7 +908,6 @@ class Database:
                 wage,
                 tracker_project or None,
                 expected_work_pct,
-                billing_round_minutes,
                 color or None,
                 integration_type or "devops",
                 tracker_id,
@@ -1117,6 +1119,27 @@ class Database:
         except Exception as e:
             self.log_engine.error(f"Legacy credential column drop failed: {e}")
 
+    def _drop_retired_columns(self):
+        """Drop columns whose feature was removed. Currently:
+        customers.billing_round_minutes (5.0.5 — rounding lives in the global
+        time settings plus the Reports-page override, so the per-customer
+        value was dead weight). Idempotent; a SQLite too old for DROP COLUMN
+        (< 3.35) just leaves the column in place, which is harmless."""
+        try:
+            cols = self._get_table_columns("customers")
+            if "billing_round_minutes" not in cols:
+                return
+            with self._conn_lock:
+                self.conn.execute(
+                    "alter table customers drop column billing_round_minutes"
+                )
+                self.conn.commit()
+            self.log_engine.info(
+                "Dropped retired column customers.billing_round_minutes"
+            )
+        except Exception as e:
+            self.log_engine.error(f"Retired column drop failed: {e}")
+
     def get_visible_devops_items(self):
         """Cached work items for CURRENT customers only. A disabled
         customer's rows stay in the devops table (re-enabling restores them
@@ -1186,7 +1209,6 @@ class Database:
         pat_token: str = None,
         tracker_project: str = None,
         expected_work_pct: float = None,
-        billing_round_minutes: int = None,
         color: str = None,
         integration_type: str = None,
         tracker_name: str = None,
@@ -1214,10 +1236,6 @@ class Database:
         if expected_work_pct is not None:
             set_clauses.append("expected_work_pct = ?")
             params.append(expected_work_pct)
-        if billing_round_minutes is not None:
-            # 0 / "" → NULL (no per-customer override; use the global setting).
-            set_clauses.append("billing_round_minutes = ?")
-            params.append(billing_round_minutes or None)
         if color is not None:
             set_clauses.append("color = ?")
             params.append(color or None)
@@ -1872,9 +1890,10 @@ class Database:
                     ("pat_token", "TEXT", None, None),
                     ("inserted_at", "DATETIME", None, None),
                 ],
-                # NOTE: pat_token/org_url deliberately absent — they were
-                # migrated to trackers and dropped; listing them here would
-                # make the auto-migration re-add them.
+                # NOTE: pat_token/org_url (migrated to trackers) and
+                # billing_round_minutes (feature retired in 5.0.5) are
+                # deliberately absent — they were dropped, and listing them
+                # here would make the auto-migration re-add them.
                 "customers": [
                     ("customer_id", "INTEGER", None, None),
                     ("customer_name", "TEXT", None, None),
@@ -1884,7 +1903,6 @@ class Database:
                     ("integration_type", "TEXT", "'devops'", None),
                     ("tracker_id", "INTEGER", None, None),
                     ("expected_work_pct", "REAL", None, None),
-                    ("billing_round_minutes", "INTEGER", None, None),
                     ("color", "TEXT", None, None),
                     ("valid_from", "DATETIME", None, None),
                     ("valid_to", "DATETIME", None, None),
@@ -2520,7 +2538,6 @@ class Database:
                 """
                 select
                      expected_work_pct
-                    ,billing_round_minutes
                     ,color
                 from customers
                 where customer_id = ?

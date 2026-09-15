@@ -439,7 +439,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     # For update, we need current values per customer
                     full_df = await QE.query_db(
                         "SELECT c.customer_name, c.tracker_project, "
-                        "c.expected_work_pct, c.billing_round_minutes, c.color, "
+                        "c.expected_work_pct, c.color, "
                         "t.tracker_name "
                         "FROM customers c "
                         "LEFT JOIN trackers t ON t.tracker_id = c.tracker_id "
@@ -450,7 +450,6 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     # Current project per customer (preselects the picker).
                     data_sources["tracker_project_current"] = {}
                     data_sources["expected_work_pct"] = {}
-                    data_sources["billing_round_minutes"] = {}
                     data_sources["color"] = {}
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
@@ -464,10 +463,6 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                         data_sources["expected_work_pct"][cname] = (
                             float(row["expected_work_pct"])
                             if pd.notna(row["expected_work_pct"]) else 0
-                        )
-                        data_sources["billing_round_minutes"][cname] = (
-                            int(row["billing_round_minutes"])
-                            if pd.notna(row["billing_round_minutes"]) else 0
                         )
                         data_sources["color"][cname] = row["color"] or ""
                     # Available projects per customer, from the live connections.

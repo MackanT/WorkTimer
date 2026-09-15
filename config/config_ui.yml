@@ -362,12 +362,6 @@ add_data_page:
           step: 5
           min: 0
           optional: true
-        - name: billing_round_minutes
-          label: "Billing round (min, 0 = default)"
-          type: number
-          step: 1
-          min: 0
-          optional: true
         - name: color
           label: Colour
           type: color
@@ -416,15 +410,6 @@ add_data_page:
           min: 0
           options: []
           options_source: expected_work_pct
-          parent: customer_name
-          optional: true
-        - name: billing_round_minutes
-          label: "Billing round (min, 0 = default)"
-          type: number
-          step: 1
-          min: 0
-          options: []
-          options_source: billing_round_minutes
           parent: customer_name
           optional: true
         - name: color
@@ -826,13 +811,6 @@ query:
         step: 5
         options: []
         options_source: expected_work_pct
-        optional: true
-      - name: billing_round_minutes
-        label: Billing round (min)
-        type: number
-        step: 1
-        options: []
-        options_source: billing_round_minutes
         optional: true
       - name: color
         label: Colour

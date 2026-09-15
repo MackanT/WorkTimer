@@ -292,8 +292,8 @@ def _render_time_settings_card(core) -> None:
             f"text-sm font-semibold text-{core.theme.get('accent')}"
         )
         ui.label(
-            "Global defaults used by Reports — a customer's own expected % and "
-            "rounding override these where set."
+            "Global defaults used by Reports — a customer's own expected % "
+            "overrides the target where set."
         ).classes("text-xs " + muted + " mb-2")
 
         with ui.row().classes("w-full gap-3 flex-wrap"):
