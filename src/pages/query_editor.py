@@ -531,10 +531,12 @@ async def query_editor_page():
             ) as splitter:
                 splitter.bind_value(app.storage.user, "query_editor_split")
                 with splitter.before:
+                    # Skin is a per-user pick from Settings → Theme (falls back
+                    # to the historical default).
                     editor = ui.codemirror(
                         app.storage.user.get("query_editor_query", ""),
                         language="SQLite",
-                        theme="dracula",
+                        theme=str(app.storage.user.get("query_editor_theme", "dracula")),
                     ).classes("w-full h-full")
                     editor.bind_value(app.storage.user, "query_editor_query")
 

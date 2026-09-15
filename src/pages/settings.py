@@ -19,7 +19,7 @@ import re
 import shutil
 import tempfile
 import yaml
-from nicegui import ui
+from nicegui import app, ui
 from ..core.app import AppCore
 from ..ui.elements import toolbar, toolbar_group
 from ..helpers import UI_STYLES
@@ -1187,6 +1187,59 @@ async def _render_theme_tab(core: AppCore):
 
         with ui.row().classes("gap-3 mt-4"):
             ui.button("Save Theme", icon="save", on_click=_save_theme).props("color=primary")
+
+    # ── Query-editor skin ─────────────────────────────────────────────────────
+    # Per-user (app.storage.user), unlike the app palette above which is shared —
+    # each person picks their own editor colours. The Query Editor reads the
+    # value on every page render, so it applies on the next visit.
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Query editor skin").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
+        ui.label(
+            "Colour scheme for the SQL editor on the Query Editor page. "
+            "Saved per user; the preview below applies immediately."
+        ).classes("text-xs opacity-70 mb-2")
+
+        current = str(app.storage.user.get("query_editor_theme", "dracula"))
+        with ui.row().classes("w-full items-start gap-4"):
+            preview = (
+                ui.codemirror(
+                    "select customer_name,\n"
+                    "       round(sum(cost), 2) as amount\n"
+                    "from time_entries\n"
+                    "group by customer_name\n"
+                    "order by amount desc;",
+                    language="SQLite",
+                )
+                .classes("flex-1")
+                .style("height: 150px; min-width: 16rem;")
+            )
+            # The *Style entries are highlight-style internals, not full skins.
+            names = sorted(
+                (t for t in preview.supported_themes if not t.endswith("Style")),
+                key=str.lower,
+            )
+            if current in names:
+                preview.set_theme(current)
+            else:
+                current = "dracula"
+
+            def _pretty(name: str) -> str:
+                label = re.sub(r"(?<!^)(?=[A-Z])", " ", name).title()
+                return label.replace("Vscode", "VS Code").replace("Bbedit", "BBEdit")
+
+            def _on_skin(e):
+                skin = e.value or "dracula"
+                app.storage.user["query_editor_theme"] = skin
+                preview.set_theme(skin)
+
+            ui.select(
+                {n: _pretty(n) for n in names},
+                value=current,
+                label="Skin",
+                on_change=_on_skin,
+            ).props("outlined dense options-dense").classes("w-56")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
