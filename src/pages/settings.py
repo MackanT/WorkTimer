@@ -633,21 +633,20 @@ async def _render_devops_contacts_tab(core: AppCore):
     selected: dict = {"customer": None}
     contacts_template = path.parent / "devops_contacts.yml.template"
 
-    def _reset_contacts():
-        async def _do():
-            if not contacts_template.exists():
-                ui.notify("Template file not found", type="negative")
-                return
-            if not await _confirm_reset("DevOps contacts"):
-                return
-            shutil.copy2(contacts_template, path)
-            core.config_loader.reload_config("devops_contacts.yml")
-            selected["customer"] = None
-            _refresh_customer_select()
-            _reload_detail()
-            ui.notify("Contacts reset to defaults", type="warning")
-
-        asyncio.create_task(_do())
+    # Async click handler (not a bare asyncio task): NiceGUI keeps the slot
+    # context for awaited handlers, which _confirm_reset's dialog needs.
+    async def _reset_contacts():
+        if not contacts_template.exists():
+            ui.notify("Template file not found", type="negative")
+            return
+        if not await _confirm_reset("DevOps contacts"):
+            return
+        shutil.copy2(contacts_template, path)
+        core.config_loader.reload_config("devops_contacts.yml")
+        selected["customer"] = None
+        _refresh_customer_select()
+        _reload_detail()
+        ui.notify("Contacts reset to defaults", type="warning")
 
     # ── header: customer selector + actions (the panel provides scrolling) ────
     def _on_select(e):
@@ -1135,19 +1134,18 @@ async def _render_devops_tags_tab(core: AppCore):
 
     tags_template = path.parent / "devops_tags.yml.template"
 
-    def _reset_tags():
-        async def _do():
-            if not tags_template.exists():
-                ui.notify("Template file not found", type="negative")
-                return
-            if not await _confirm_reset("DevOps tags"):
-                return
-            shutil.copy2(tags_template, path)
-            core.config_loader.reload_config("devops_tags.yml")
-            _reload_table()
-            ui.notify("Tags reset to defaults", type="warning")
-
-        asyncio.create_task(_do())
+    # Async click handler (not a bare asyncio task): NiceGUI keeps the slot
+    # context for awaited handlers, which _confirm_reset's dialog needs.
+    async def _reset_tags():
+        if not tags_template.exists():
+            ui.notify("Template file not found", type="negative")
+            return
+        if not await _confirm_reset("DevOps tags"):
+            return
+        shutil.copy2(tags_template, path)
+        core.config_loader.reload_config("devops_tags.yml")
+        _reload_table()
+        ui.notify("Tags reset to defaults", type="warning")
 
     # ── panel body ────────────────────────────────────────────────────────────
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
@@ -1194,20 +1192,19 @@ async def _render_theme_tab(core: AppCore):
         ("chip_bg",  "Chip background"),
     ]
 
-    def _reset_theme():
-        async def _do():
-            if not template_path.exists():
-                ui.notify("Template file not found", type="negative")
-                return
-            if not await _confirm_reset("the theme"):
-                return
-            shutil.copy2(template_path, theme_path)
-            core.config_loader.reload_config("config_theme.yml")
-            # Ctrl+R, not F5 — F5 is intentionally suppressed app-wide (query editor
-            # binds it to Execute), so don't advise a shortcut that won't work.
-            ui.notify("Theme reset to defaults — reload the page (Ctrl+R) to apply", type="warning")
-
-        asyncio.create_task(_do())
+    # Async click handler (not a bare asyncio task): NiceGUI keeps the slot
+    # context for awaited handlers, which _confirm_reset's dialog needs.
+    async def _reset_theme():
+        if not template_path.exists():
+            ui.notify("Template file not found", type="negative")
+            return
+        if not await _confirm_reset("the theme"):
+            return
+        shutil.copy2(template_path, theme_path)
+        core.config_loader.reload_config("config_theme.yml")
+        # Ctrl+R, not F5 — F5 is intentionally suppressed app-wide (query editor
+        # binds it to Execute), so don't advise a shortcut that won't work.
+        ui.notify("Theme reset to defaults — reload the page (Ctrl+R) to apply", type="warning")
 
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
         with ui.row().classes("w-full items-center justify-between mb-1"):
