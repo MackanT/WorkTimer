@@ -289,6 +289,7 @@ def render_markdown_toolbar(editor, image_uploader=None):
     with ui.row().classes("w-full items-center gap-1 mb-1 flex-wrap") as toolbar_row:
         _btn("format_bold", "Bold", lambda: md_wrap(editor, "**", "**"))
         _btn("format_italic", "Italic", lambda: md_wrap(editor, "*", "*"))
+        _btn("highlight", "Highlight", lambda: md_wrap(editor, "==", "=="))
         _btn("code", "Inline code", lambda: md_wrap(editor, "`", "`"))
         _sep()
         _btn("format_list_bulleted", "Bullet list", lambda: md_prefix(editor, "- "))

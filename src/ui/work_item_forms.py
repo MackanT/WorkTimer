@@ -556,14 +556,9 @@ async def open_add_work_item_dialog(
                     widgets["customer_name"].on_value_change(_apply_tracker_defaults)
                 _sync_add_header()
 
-                # The customer/type values above are set programmatically, which does
-                # not fire the widgets' "update:model-value" browser event that normally
-                # triggers board-column loading — so call it once here directly.
-                if load_fn:
-                    await load_fn()
-                # The type is a parent-dependent select: its options only
-                # exist AFTER the load above, so the preset value is applied
-                # here (a set against empty options doesn't stick).
+                # The type is a parent-dependent select: refresh loads its
+                # options for the preset customer (a value set against empty
+                # options doesn't stick), then the preset is applied on top.
                 if "work_item_type" in widgets:
                     try:
                         await widgets["work_item_type"].refresh()
@@ -572,7 +567,29 @@ async def open_add_work_item_dialog(
                     if preset_type:
                         widgets["work_item_type"].widget.value = preset_type
                         widgets["work_item_type"].widget.update()
+                # The OTHER parent-dependent selects (state, assigned to,
+                # contact person, parent) have the same blind spot: the
+                # programmatic customer set fires no browser event, so until
+                # something refreshed them they showed their static fallback
+                # options (every tracker's values mixed). Refresh them all
+                # against the current customer once, right here. A blank
+                # customer is safe — the parent-keyed-options guard leaves
+                # the widget untouched then.
+                for _fname, _w in widgets.items():
+                    if _fname != "work_item_type" and getattr(_w, "parent", None) is not None:
+                        try:
+                            await _w.refresh()
+                        except Exception:
+                            pass
                 _snap_type_to_customer()
+                # Board columns are per (customer, work-item TYPE) — in Azure
+                # every backlog level has its own board — so the loader may
+                # only run once the type above is FINAL. The programmatic sets
+                # fire no "update:model-value" browser event, hence the direct
+                # call; calling it any earlier loaded the default type's
+                # columns (a Feature form showed the Story board's columns).
+                if load_fn:
+                    await load_fn()
                 _sync_add_header()
                 _apply_tracker_defaults()
 

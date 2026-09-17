@@ -386,13 +386,25 @@ async def notepad_page():
 
     # ── Toolbar ───────────────────────────────────────────────────────────────
 
+    def _persist_collapsed():
+        # Survives page swaps and restarts — the sidebar shouldn't re-open
+        # every group each time the user comes back to the notepad.
+        try:
+            app.storage.user["notepad_collapsed_groups"] = sorted(
+                state["collapsed_groups"]
+            )
+        except Exception:
+            pass
+
     def collapse_all_groups():
         all_groups = {n.get("group", "") for n in state["notes"] if n.get("group")}
         state["collapsed_groups"] = all_groups
+        _persist_collapsed()
         render_sidebar()
 
     def expand_all_groups():
         state["collapsed_groups"] = set()
+        _persist_collapsed()
         render_sidebar()
 
     def render_toolbar_bar():
@@ -436,6 +448,7 @@ async def notepad_page():
             state["collapsed_groups"].discard(group_name)
         else:
             state["collapsed_groups"].add(group_name)
+        _persist_collapsed()
         render_sidebar()
 
     def render_sidebar():
@@ -1006,7 +1019,12 @@ async def notepad_page():
     # ── Layout ────────────────────────────────────────────────────────────────
 
     state["toolbar_container"] = ui.column().classes("w-full")
-    state["collapsed_groups"] = set()
+    try:
+        state["collapsed_groups"] = set(
+            app.storage.user.get("notepad_collapsed_groups") or []
+        )
+    except Exception:
+        state["collapsed_groups"] = set()
     render_toolbar_bar()
 
     with page_card(scrollable=False):
