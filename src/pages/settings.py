@@ -474,6 +474,159 @@ async def _confirm_reset(what: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _render_description_templates_card(core) -> None:
+    """Per-level description templates for the add-work-item form (the
+    markdown scaffold preloaded into a new Epic / Feature / User Story / …).
+    Saved to config/description_templates.yml — merged over config_ui.yml at
+    load, so the commented main config file is never rewritten."""
+    from ..trackers.registry import available_providers, get_provider_class
+
+    muted = UI_STYLES.get_layout_classes("muted_text")
+    override_path = _config_path(core, "description_templates.yml")
+
+    def _live_field() -> dict:
+        for f in (
+            core.ui_config.get("board_devops_forms", {}).get("add", {}).get("fields")
+            or []
+        ):
+            if isinstance(f, dict) and f.get("name") == "description_editor":
+                return f
+        return {}
+
+    current = dict(_live_field().get("templates") or {})
+
+    # Levels: the union of every registered tracker's hierarchy, plus any
+    # extra keys already carrying a template.
+    levels: list[str] = []
+    for pkey in available_providers():
+        try:
+            for t in get_provider_class(pkey).type_hierarchy():
+                if t not in levels:
+                    levels.append(t)
+        except Exception:
+            pass
+    for k in current:
+        if k not in levels:
+            levels.append(k)
+    if not levels:
+        levels = ["Epic", "Feature", "User Story"]
+
+    drafts: dict = {}
+    sel = {"level": levels[0]}
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Description templates").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
+        ui.label(
+            "The markdown scaffold preloaded into a new work item's description, "
+            "per level. Placeholders: {{today}} inserts the creation date; "
+            "{{source}} and {{contact_person}} (alias {{contact}}) stay in sync "
+            "with the form's dropdowns — the line carrying the placeholder is "
+            "rewritten on change, so keep some label text on it (e.g. "
+            '"**Source:** {{source}}"). Applies to newly opened add dialogs.'
+        ).classes("text-xs " + muted + " mb-2")
+
+        with ui.row().classes("w-full items-center gap-2"):
+            level_sel = ui.select(
+                levels, value=sel["level"], label="Level",
+            ).props("dense outlined options-dense").classes("w-48")
+            ui.space()
+            save_btn = ui.button("Save", icon="save").props(
+                "color=primary no-caps dense"
+            )
+            reset_btn = ui.button("Reset level", icon="restart_alt").props(
+                "flat dense color=primary no-caps"
+            )
+            reset_btn.tooltip("Restore this level's shipped template")
+
+        editor = (
+            ui.codemirror(
+                current.get(sel["level"], ""), language="Markdown", theme="dracula"
+            )
+            .classes("w-full mt-2")
+            .style("height: 280px;")
+        )
+
+        def _on_level(e):
+            # Stash the unsaved edit so switching levels loses nothing.
+            drafts[sel["level"]] = editor.value
+            sel["level"] = e.value
+            editor.value = drafts.get(e.value, current.get(e.value, ""))
+
+        level_sel.on_value_change(_on_level)
+
+        def _save():
+            drafts[sel["level"]] = editor.value
+            try:
+                data = _load_yaml(override_path)
+                tpl = dict(data.get("templates") or {})
+                tpl.update({k: str(v or "") for k, v in drafts.items()})
+                data["templates"] = tpl
+                _save_yaml(override_path, data)
+                live = _live_field()
+                if live:
+                    live["templates"] = {**(live.get("templates") or {}), **tpl}
+                current.update(tpl)
+                # Future clients read the loader's config — remerge it.
+                core.config_loader.reload_config("config_ui.yml")
+                ui.notify(
+                    "Templates saved — applies to newly opened work-item dialogs",
+                    type="positive",
+                )
+            except Exception as ex:
+                core.logger.error(f"Saving description templates failed: {ex}")
+                ui.notify(f"Save failed: {ex}", type="negative")
+
+        save_btn.on("click", _save)
+
+        # NOTE: async handlers bound to the click keep the slot context, so
+        # _confirm_reset can build its dialog — a bare asyncio.create_task
+        # has no slot stack and crashes ui.dialog().
+        async def _reset():
+            lvl = sel["level"]
+            if not await _confirm_reset(f"the {lvl} template"):
+                return
+            try:
+                # Shipped default straight from the pristine config_ui.yml.
+                shipped: dict = {}
+                raw = _load_yaml(_config_path(core, "config_ui.yml"))
+                for f in (
+                    ((raw.get("board_devops_forms") or {}).get("add") or {})
+                    .get("fields") or []
+                ):
+                    if isinstance(f, dict) and f.get("name") == "description_editor":
+                        shipped = dict(f.get("templates") or {})
+                        break
+                data = _load_yaml(override_path)
+                tpl = dict(data.get("templates") or {})
+                tpl.pop(lvl, None)
+                data["templates"] = tpl
+                _save_yaml(override_path, data)
+                default_val = shipped.get(lvl, "")
+                live = _live_field()
+                if live:
+                    live_tpl = dict(live.get("templates") or {})
+                    if default_val:
+                        live_tpl[lvl] = default_val
+                    else:
+                        live_tpl.pop(lvl, None)
+                    live["templates"] = live_tpl
+                if default_val:
+                    current[lvl] = default_val
+                else:
+                    current.pop(lvl, None)
+                drafts.pop(lvl, None)
+                editor.value = default_val
+                core.config_loader.reload_config("config_ui.yml")
+                ui.notify(f"{lvl} template reset to default", type="warning")
+            except Exception as ex:
+                core.logger.error(f"Resetting template failed: {ex}")
+                ui.notify(f"Reset failed: {ex}", type="negative")
+
+        reset_btn.on("click", _reset)
+
+
 async def _render_devops_contacts_tab(core: AppCore):
     """DevOps contacts editor — in-panel customer selector + per-customer detail."""
     path = _config_path(core, "devops_contacts.yml")
@@ -1330,6 +1483,7 @@ async def settings_page():
                 with ui.column().classes("w-full gap-4 p-4"):
                     _render_sync_card()
                     _render_tracker_defaults_card(core)
+                    _render_description_templates_card(core)
                     await _render_devops_contacts_tab(core)
 
         with ui.tab_panel("tags").classes("p-0 h-full"):

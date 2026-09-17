@@ -193,9 +193,14 @@ board_devops_forms:
         optional: False
         parent_fields: [source, contact_person]
         render_function: render_and_sanitize_markdown
+        # Placeholders: {{today}} = creation date; {{source}} / {{contact_person}}
+        # (alias {{contact}}) stay in sync with the form's dropdowns — the line
+        # carrying the placeholder is rewritten when the dropdown changes, so
+        # the lines can be moved or relabelled freely. Editable in the app:
+        # Settings → Trackers → "Description templates".
         templates:
           Epic: |
-            **Created Date:** {today}
+            **Created Date:** {{today}}
 
             ## Strategic Goal
 
@@ -209,7 +214,7 @@ board_devops_forms:
             ## Timeline
 
           Feature: |
-            **Created Date:** {today}
+            **Created Date:** {{today}}
 
             ## Feature Description
 
@@ -223,9 +228,9 @@ board_devops_forms:
             ## Dependencies
 
           User Story: &story_template |
-            **Received Date:** {today}
-            **Source:**
-            **Contact:**
+            **Received Date:** {{today}}
+            **Source:** {{source}}
+            **Contact:** {{contact_person}}
 
             ## Problem
 

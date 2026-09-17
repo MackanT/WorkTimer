@@ -21,6 +21,7 @@ config/task_visuals.yml
 config/config_notepad.yml
 config/tracker_defaults.yml
 config/time_settings.yml
+config/description_templates.yml
 
 data/.storage_secret
 data/.pat_key

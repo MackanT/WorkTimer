@@ -276,6 +276,23 @@ class ConfigDevOpsContacts(BaseModel):
 ## Configuration Loader ##
 
 
+def merge_description_templates(ui_yaml: dict, overrides: dict) -> None:
+    """Overlay per-level description templates (Settings → Trackers →
+    "Description templates") onto the add form's description_editor field,
+    in place. Only string values are taken; unknown levels are added."""
+    clean = {k: v for k, v in (overrides or {}).items() if isinstance(v, str)}
+    if not clean:
+        return
+    fields = (
+        ((ui_yaml.get("board_devops_forms") or {}).get("add") or {}).get("fields")
+        or []
+    )
+    for field in fields:
+        if isinstance(field, dict) and field.get("name") == "description_editor":
+            field["templates"] = {**(field.get("templates") or {}), **clean}
+            return
+
+
 @dataclass
 class _ConfigSpec:
     """Declarative spec for a single YAML config file."""
@@ -415,6 +432,13 @@ class ConfigLoader:
                 **overrides,
             }
 
+        # Optional per-install description-template override written by
+        # Settings → Trackers → "Description templates" (same pattern).
+        dt_override = self.config_folder / "description_templates.yml"
+        if dt_override.exists():
+            dt = self._load_yaml("description_templates.yml", required=False) or {}
+            merge_description_templates(ui_yaml, dt.get("templates") or {})
+
         self.configs["ui"] = ConfigUI(**ui_yaml)
         self.configs["query"] = QueryConfig(**{"query": ui_yaml.get("query", {})})
         tasks_yaml = ui_yaml.get("task", {})
@@ -455,6 +479,15 @@ class ConfigLoader:
         Args:
             filename: The config filename (e.g. 'devops_contacts.yml').
         """
+        # The UI config (and the small override files merged into it) is
+        # loaded outside the spec registry.
+        if filename in (
+            "config_ui.yml",
+            "time_settings.yml",
+            "description_templates.yml",
+        ):
+            self._load_ui_config()
+            return
         for spec in self._REGISTRY:
             if spec.filename == filename:
                 self._load_spec(spec)

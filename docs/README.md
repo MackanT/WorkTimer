@@ -128,7 +128,7 @@ A tracker is a connection (type + org/site + credentials) that customers link to
 ### Work items
 Created from the Board/Hierarchy ＋ or the palette, for any level of the customer's tracker:
 - Markdown descriptions with live preview and image insert/paste
-- Parent pre-selection and per-level description templates
+- Parent pre-selection and per-level description templates (editable in *Settings → Trackers*)
 - Per-tracker/per-type field defaults apply automatically (see Settings)
 
 ---
@@ -167,6 +167,7 @@ Four tabs, matching the app's standard layout:
 ### Trackers
 - **Synchronisation** — incremental/full sync buttons with last-sync times
 - **Work-item form defaults** — prefills for State, Priority, Initial board column, Source and Contact person, per tracker **and per work-item type** ("All types" as the base, a specific type overriding it per field)
+- **Description templates** — edit the markdown scaffold preloaded into a new work item's description, per level (Epic / Feature / User Story / …). Placeholders: `{{today}}` inserts the creation date; `{{source}}` and `{{contact_person}}` (alias `{{contact}}`) stay in sync with the form's dropdowns — the line carrying the placeholder is rewritten on change, so it can be moved or relabelled freely (keep some label text on it, e.g. `**Source:** {{source}}`)
 - **Contacts** — per-customer contacts and assignees used in the work-item forms. The **cloud button** on Assignees fetches the project's members from the tracker (tick whom to import); a **Default Assignee** can be picked per customer
 
 ### Tags

@@ -478,41 +478,10 @@ class WorkItemHandlers:
             )
             # Note: Preview updates automatically via parent-child binding with polling
 
-        # Set up field updaters
-        if editor_widget and (source_widget or contact_widget):
-
-            def update_editor_field(field_name, new_value):
-                """Update a specific field in the markdown editor."""
-                current_text = editor_widget.value or ""
-                pattern = rf"^(\*\*{re.escape(field_name)}:\*\*)(.*)$"
-
-                match = re.search(pattern, current_text, re.MULTILINE)
-                if match:
-                    replacement = rf"\1 {new_value}"
-                    updated_text = re.sub(
-                        pattern,
-                        replacement,
-                        current_text,
-                        count=1,
-                        flags=re.MULTILINE,
-                    )
-                    editor_widget.value = updated_text
-                    editor_widget.update()
-                    # Note: preview will be updated automatically by on_value_change handler
-
-            if source_widget:
-
-                def on_source_change(e):
-                    update_editor_field("Source", source_widget.value or "")
-
-                source_widget.on("update:model-value", on_source_change)
-
-            if contact_widget:
-
-                def on_contact_change(e):
-                    update_editor_field("Contact", contact_widget.value or "")
-
-                contact_widget.on("update:model-value", on_contact_change)
+        # Source/Contact → description sync lives in
+        # helpers.setup_template_handling ({{placeholder}}-aware, with a
+        # legacy **Source:**/**Contact:** fallback) — a second hardcoded
+        # updater here used to duplicate it.
 
         return load_columns_for_customer
 
