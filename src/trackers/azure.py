@@ -62,7 +62,8 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
     @classmethod
     def capabilities(cls) -> TrackerCapabilities:
         return TrackerCapabilities(
-            board_columns=True, hierarchy=True, comments=True, attachments=True
+            board_columns=True, hierarchy=True, comments=True, attachments=True,
+            branches=True,
         )
 
     @classmethod

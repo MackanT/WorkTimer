@@ -140,7 +140,10 @@ def _render_tracker_defaults_card(core) -> None:
             "Prefills for new work items, per tracker AND work-item type — "
             "'All types' applies everywhere, a specific type overrides it "
             "per field. Fields a tracker or level doesn't use are ignored "
-            "(for Jira, state IS the board column, so no column default)."
+            "(for Jira, state IS the board column, so no column default). "
+            "The branch name template drives the create-branch dialog and "
+            "auto-create: {{type}}, {{id}} and {{title}} fill in, e.g. "
+            "feat/{{id}}-{{title}}."
         ).classes("text-xs " + muted + " mb-2")
 
         if not trackers:
@@ -195,6 +198,10 @@ def _render_tracker_defaults_card(core) -> None:
             contact_in = ui.input(label="Contact person").props(
                 "dense outlined clearable"
             ).classes("w-52")
+            branch_in = ui.input(
+                label="Branch name template",
+                placeholder="{{type}}/{{id}}-{{title}}",
+            ).props("dense outlined clearable").classes("w-64")
 
         def _load_for(tname, wtype):
             vals = (stored.get(tname) or {}).get(wtype) or {}
@@ -228,6 +235,13 @@ def _render_tracker_defaults_card(core) -> None:
             ))
             source_in.value = vals.get("source")
             contact_in.value = vals.get("contact_person") or ""
+            # Branch template only where the tracker can create branches.
+            cls = get_provider_class(trackers.get(tname) or "devops")
+            supports_branches = bool(
+                cls and getattr(cls.capabilities(), "branches", False)
+            )
+            branch_in.set_visibility(supports_branches)
+            branch_in.value = vals.get("branch_template") or ""
 
         def _save():
             tname = tracker_sel.value
@@ -244,6 +258,10 @@ def _render_tracker_defaults_card(core) -> None:
                 ),
                 "source": source_in.value or None,
                 "contact_person": (contact_in.value or "").strip() or None,
+                "branch_template": (
+                    (branch_in.value or "").strip() or None
+                    if branch_in.visible else None
+                ),
             }
             vals = {k: v for k, v in vals.items() if v is not None}
             entry = stored.setdefault(tname, {})

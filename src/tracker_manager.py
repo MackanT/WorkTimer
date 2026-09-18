@@ -9,6 +9,16 @@ import re
 import requests
 import base64
 import json
+from urllib.parse import quote
+
+
+def _branch_artifact_url(project_id, repo_id, branch_name) -> str:
+    """The vstfs artifact URL that links a git branch to a work item (what
+    Azure DevOps' own "create branch" button writes): the whole
+    '{project}/{repo}/GB{branch}' id percent-encoded, slashes included."""
+    return "vstfs:///Git/Ref/" + quote(
+        f"{project_id}/{repo_id}/GB{branch_name}", safe=""
+    )
 
 
 def _clean_project(val):
@@ -84,6 +94,28 @@ class TrackerManager:
             name: list(client.available_projects)
             for name, client in self.clients.items()
         }
+
+    def list_repositories(self, customer_name):
+        """Git repos for a customer's tracker (empty where unsupported)."""
+        client = self._get_client(customer_name)
+        return client.list_repositories() if client else []
+
+    def list_branches(self, customer_name, repo_id):
+        """Branch names in one of a customer's repos ([] where unsupported)."""
+        client = self._get_client(customer_name)
+        return client.list_branches(repo_id) if client else []
+
+    def create_branch(
+        self, customer_name, repo_id, project_id, branch_name,
+        source_branch, work_item_id=None,
+    ):
+        """Create a work-item-linked branch on a customer's tracker."""
+        client = self._get_client(customer_name)
+        if not client:
+            return (False, f"No tracker connection for {customer_name}")
+        return client.create_branch(
+            repo_id, project_id, branch_name, source_branch, work_item_id
+        )
 
     def upload_attachment(self, customer_name, file_name, content,
                           work_item_id=None):
@@ -274,6 +306,8 @@ class AzureDevOpsClient:
         self.configured_project = _clean_project(project_name)
         # All project names in the org, cached at connect() for the picker.
         self.available_projects = []
+        # Git repos of the project, cached on first list_repositories().
+        self._repos_cache = None
 
     def connect(self):
         # Create a connection to the Azure DevOps organization
@@ -319,6 +353,174 @@ class AzureDevOpsClient:
             self.log.error("Connection not established. Call connect() first.")
             raise Exception("Connection not established. Call connect() first.")
         return self.connection.clients.get_work_item_tracking_client()
+
+    # ── git branches ──────────────────────────────────────────────────────
+    def list_repositories(self):
+        """Git repos in this client's project for the create-branch dialog:
+        [{id, name, default_branch, project_id}], the repo matching the
+        project name first. Cached after the first fetch. Requires a PAT
+        with Code (Read) scope — an empty list on a working connection
+        usually means the scope is missing."""
+        if self._repos_cache is not None:
+            return self._repos_cache
+        try:
+            resp = requests.get(
+                f"{self.organization_url}/{self.project_name}"
+                "/_apis/git/repositories?api-version=7.0",
+                auth=("", self.personal_access_token),
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                self.log.warning(
+                    f"Repository listing failed ({resp.status_code}) — "
+                    "the PAT may lack Code (Read) scope"
+                )
+                return []
+            repos = [
+                {
+                    "id": r["id"],
+                    "name": r.get("name", ""),
+                    "default_branch": (
+                        r.get("defaultBranch") or "refs/heads/main"
+                    ).replace("refs/heads/", ""),
+                    "project_id": (r.get("project") or {}).get("id", ""),
+                }
+                for r in resp.json().get("value", [])
+                if not r.get("isDisabled")
+            ]
+            # The repo named like the project is almost always the target.
+            repos.sort(
+                key=lambda r: (
+                    r["name"].lower() != str(self.project_name).lower(),
+                    r["name"].lower(),
+                )
+            )
+            self._repos_cache = repos
+            return repos
+        except Exception as e:
+            self.log.error(f"Repository listing failed: {e}")
+            return []
+
+    def list_branches(self, repo_id):
+        """Branch names in a repo, default-branch conventions first ([] on
+        error). Feeds the base-branch picker."""
+        try:
+            resp = requests.get(
+                f"{self.organization_url}/{self.project_name}"
+                f"/_apis/git/repositories/{repo_id}/refs"
+                "?filter=heads/&api-version=7.0",
+                auth=("", self.personal_access_token),
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                return []
+            names = [
+                v["name"].replace("refs/heads/", "")
+                for v in resp.json().get("value", [])
+                if str(v.get("name", "")).startswith("refs/heads/")
+            ]
+            names.sort(key=lambda n: (n not in ("main", "master"), n.lower()))
+            return names
+        except Exception as e:
+            self.log.error(f"Branch listing failed: {e}")
+            return []
+
+    def create_branch(
+        self, repo_id, project_id, branch_name, source_branch, work_item_id=None
+    ):
+        """Create refs/heads/{branch_name} at the tip of `source_branch` and
+        link it to the work item (shows under the item's Development area,
+        like Azure DevOps' own "create branch" button). Requires a PAT with
+        Code (Read & Write) scope. Returns (ok, message)."""
+        base = (
+            f"{self.organization_url}/{self.project_name}"
+            f"/_apis/git/repositories/{repo_id}"
+        )
+        auth = ("", self.personal_access_token)
+        branch_name = str(branch_name).strip().strip("/")
+        source_branch = str(source_branch).strip().replace("refs/heads/", "")
+        try:
+            resp = requests.get(
+                f"{base}/refs?filter=heads/{source_branch}&api-version=7.0",
+                auth=auth,
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                return (
+                    False,
+                    f"Could not read the repo ({resp.status_code}) — "
+                    "the PAT may lack Code scope",
+                )
+            tip = next(
+                (
+                    v
+                    for v in resp.json().get("value", [])
+                    if v.get("name") == f"refs/heads/{source_branch}"
+                ),
+                None,
+            )
+            if tip is None:
+                return (False, f"Source branch '{source_branch}' not found")
+
+            resp = requests.post(
+                f"{base}/refs?api-version=7.0",
+                json=[
+                    {
+                        "name": f"refs/heads/{branch_name}",
+                        "oldObjectId": "0" * 40,
+                        "newObjectId": tip["objectId"],
+                    }
+                ],
+                auth=auth,
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                return (
+                    False,
+                    f"Branch create failed ({resp.status_code}) — the PAT "
+                    "may lack Code (Read & Write) scope",
+                )
+            result = (resp.json().get("value") or [{}])[0]
+            if not result.get("success"):
+                reason = result.get("customMessage") or result.get(
+                    "updateStatus", "refused"
+                )
+                return (False, f"Branch create refused: {reason}")
+
+            if work_item_id and project_id:
+                try:
+                    self.wit_client.update_work_item(
+                        [
+                            {
+                                "op": "add",
+                                "path": "/relations/-",
+                                "value": {
+                                    "rel": "ArtifactLink",
+                                    "url": _branch_artifact_url(
+                                        project_id, repo_id, branch_name
+                                    ),
+                                    "attributes": {"name": "Branch"},
+                                },
+                            }
+                        ],
+                        int(work_item_id),
+                        project=self.project_name,
+                    )
+                except Exception as e:
+                    self.log.error(f"Branch link failed for #{work_item_id}: {e}")
+                    return (
+                        True,
+                        f"Branch '{branch_name}' created, but linking it to "
+                        f"#{work_item_id} failed: {e}",
+                    )
+
+            self.log.info(
+                f"Created branch '{branch_name}' (linked to #{work_item_id})"
+            )
+            return (True, f"Branch '{branch_name}' created and linked")
+        except Exception as e:
+            self.log.error(f"Branch creation failed: {e}")
+            return (False, f"Branch creation failed: {e}")
 
     def upload_attachment(self, file_name, content, work_item_id=None):
         """Upload `content` (bytes) as a project attachment and return its URL,

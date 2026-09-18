@@ -19,16 +19,19 @@ class WorkItemHandlers:
     devops_columns_cache = defaultdict(dict)
     _preload_started = False
 
-    def __init__(self, DO, LOG):
+    def __init__(self, DO, LOG, config_folder=None):
         """
         Initialize DevOps handlers.
 
         Args:
             DO: TrackerEngine instance
             LOG: Logger instance
+            config_folder: config dir for the branch-template lookup
+                (falls back to ./config when not given)
         """
         self.DO = DO
         self.LOG = LOG
+        self.config_folder = config_folder
 
         if not WorkItemHandlers._preload_started:
             WorkItemHandlers._preload_started = True
@@ -209,11 +212,69 @@ class WorkItemHandlers:
                             f"Could not set initial board column: {col_msg}"
                         )
 
+        if success and wid.get("create_branch"):
+            id_match = re.search(r"ID (\d+)", message)
+            if id_match:
+                br_ok, br_msg = await self._auto_create_branch(
+                    customer_name, work_item_type,
+                    int(id_match.group(1)), title,
+                    template=wid.get("branch_name"),
+                    source_branch=wid.get("branch_source"),
+                )
+                (self.LOG.info if br_ok else self.LOG.warning)(br_msg)
+                message = f"{message} · {br_msg}"
+
         if success:
             self.LOG.info(message)
         else:
             self.LOG.error(message)
         return success, message
+
+    async def _auto_create_branch(
+        self, customer_name, work_item_type, work_item_id, title,
+        template=None, source_branch=None,
+    ):
+        """Branch for a just-created item: the first repo (the project's own
+        sorts first), the form's base branch (repo default when blank), the
+        name resolved from the form's template — which falls back to the
+        tracker's configured branch template. Returns (ok, message)."""
+        from pathlib import Path
+
+        from ..tracker_defaults import defaults_for, load_tracker_defaults
+        from ..trackers.base import suggest_branch_name
+
+        try:
+            mgr = self.DO.manager
+            repos = await asyncio.to_thread(mgr.list_repositories, customer_name)
+            if not repos:
+                return False, (
+                    "Branch not created — no repositories found "
+                    "(the PAT may lack Code scope)"
+                )
+            repo = repos[0]
+            tpl = str(template or "").strip()
+            if not tpl:
+                try:
+                    tracker_map = await self.DO.query_engine.function_db(
+                        "get_customer_tracker_names"
+                    )
+                    tpl = defaults_for(
+                        load_tracker_defaults(
+                            self.config_folder or Path("config")
+                        ),
+                        tracker_map.get(customer_name, ""),
+                        work_item_type,
+                    ).get("branch_template")
+                except Exception:
+                    tpl = None
+            name = suggest_branch_name(work_item_type, work_item_id, title, tpl)
+            source = str(source_branch or "").strip() or repo["default_branch"]
+            return await asyncio.to_thread(
+                mgr.create_branch, customer_name, repo["id"],
+                repo["project_id"], name, source, work_item_id,
+            )
+        except Exception as e:
+            return False, f"Branch creation failed: {e}"
 
     async def update_work_item(self, widgets):
         """

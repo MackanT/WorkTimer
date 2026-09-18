@@ -186,6 +186,26 @@ board_devops_forms:
         type: switch
         optional: False
         default: True
+      # Hidden for trackers without branch support (capability-gated in the
+      # dialog); creates a linked branch right after the item. Name/base
+      # appear when the switch is on: the name holds the tracker's branch
+      # template ({{type}}/{{id}}/{{title}} resolve once the item exists),
+      # the base dropdown lists the target repo's branches.
+      - name: create_branch
+        label: Auto-create git branch
+        type: switch
+        optional: True
+        default: False
+      - name: branch_name
+        label: "Branch name ({{id}}, {{title}}, {{type}} fill in)"
+        type: input
+        optional: True
+      - name: branch_source
+        label: Base branch
+        type: select
+        options: []
+        with_input: true
+        optional: True
       - name: description_editor
         label: Description
         type: editor_with_preview
@@ -251,6 +271,7 @@ board_devops_forms:
       - [contact_person, source]
       - [state, priority, board_column]
       - [tags]
+      - [create_branch, branch_name, branch_source]
       - [description_editor]
     action:
       function: add_work_item

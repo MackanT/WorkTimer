@@ -10,6 +10,7 @@ with exactly the `WORK_ITEM_COLUMNS` schema. Everything downstream (the board,
 hierarchy, search, work-item pickers, reports) renders from that frame.
 """
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -56,6 +57,32 @@ class TrackerCapabilities:
     # False when state and board column are the SAME axis (Jira: status is
     # the column) — the UI then hides the redundant board-column input.
     distinct_board_column: bool = True
+    # The tracker hosts git repos and can create a branch linked to a work
+    # item (Azure Repos). Jira's branches live in Bitbucket/GitHub, out of
+    # reach of its API — so the UI hides the button there.
+    branches: bool = False
+
+
+def suggest_branch_name(item_type, item_id, title, template=None) -> str:
+    """Branch name for a work item. With no template:
+    '<level>/<id>-<title-slug>' ('User Story' → 'story'). A template (the
+    tracker's per-type "Branch name template" setting) may place
+    {{type}}, {{id}} and {{title}} freely, e.g. 'feat/{{id}}-{{title}}'.
+    Editable in the dialog — a starting point, not an enforced convention."""
+    words = str(item_type or "").strip().lower().split()
+    type_part = re.sub(r"[^a-z0-9]+", "", words[-1]) if words else ""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(title or "").lower()).strip("-")[:40]
+    slug = slug.rstrip("-")
+    tpl = str(template or "").strip()
+    if tpl:
+        out = re.sub(r"\{\{\s*type\s*\}\}", type_part or "item", tpl)
+        out = re.sub(r"\{\{\s*id\s*\}\}", str(item_id), out)
+        out = re.sub(r"\{\{\s*title\s*\}\}", slug, out)
+        out = re.sub(r"-{2,}", "-", out).strip("-/ ")
+        if out:
+            return out
+    head = f"{type_part or 'item'}/{item_id}"
+    return f"{head}-{slug}" if slug else head
 
 
 class TrackerProvider(ABC):
@@ -100,6 +127,24 @@ class TrackerProvider(ABC):
         """(True, [display names]) of people usable as assignees on this
         connection, or (False, msg). Default: not supported."""
         return (False, "Member listing is not supported for this tracker")
+
+    def list_repositories(self) -> list:
+        """Git repos available for branch creation: [{id, name,
+        default_branch, project_id}]. Empty where the tracker hosts none
+        (capabilities().branches gates the UI)."""
+        return []
+
+    def list_branches(self, repo_id) -> list:
+        """Branch names in a repo (for the base-branch picker). Empty where
+        unsupported."""
+        return []
+
+    def create_branch(
+        self, repo_id, project_id, branch_name, source_branch, work_item_id=None
+    ):
+        """Create a branch from the source branch's tip and link it to the
+        work item. (ok, message). Default: not supported."""
+        return (False, "Branch creation is not supported for this tracker")
 
     def state_options(self) -> list:
         """State names for this tracker's work items, offered by the State

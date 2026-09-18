@@ -259,6 +259,127 @@ async def open_work_item_dialog(
                 else:
                     _cust_badge.props("color=primary outline")
                 ui.space()
+                if getattr(tracker_caps, "branches", False):
+
+                    async def _open_branch_dialog():
+                        manager = getattr(core.tracker_engine, "manager", None)
+                        if manager is None:
+                            ui.notify("No tracker connection", type="warning")
+                            return
+                        repos = await asyncio.to_thread(
+                            manager.list_repositories, customer
+                        )
+                        if not repos:
+                            ui.notify(
+                                "No repositories found — the PAT may lack "
+                                "Code (Read & Write) scope",
+                                type="warning",
+                            )
+                            return
+                        from ..tracker_defaults import (
+                            defaults_for,
+                            load_tracker_defaults,
+                        )
+                        from ..trackers.base import suggest_branch_name
+
+                        # Naming template from the tracker's per-type
+                        # defaults (Settings → Trackers), when configured.
+                        branch_tpl = None
+                        try:
+                            tracker_map = await core.query_engine.function_db(
+                                "get_customer_tracker_names"
+                            )
+                            branch_tpl = defaults_for(
+                                load_tracker_defaults(
+                                    core.config_loader.config_folder
+                                ),
+                                tracker_map.get(customer, ""),
+                                item_type,
+                            ).get("branch_template")
+                        except Exception:
+                            branch_tpl = None
+
+                        with ui.dialog() as bdlg, ui.card().classes("w-[30rem]"):
+                            ui.label("Create branch").classes(
+                                "text-sm font-semibold"
+                            )
+                            ui.label(
+                                "Creates the branch from the source branch's "
+                                f"tip and links it to #{item_id} (shows under "
+                                "the item's Development area)."
+                            ).classes("text-xs text-grey-5")
+                            repo_sel = ui.select(
+                                {r["id"]: r["name"] for r in repos},
+                                value=repos[0]["id"],
+                                label="Repository",
+                            ).props("dense outlined options-dense").classes("w-full")
+                            name_in = ui.input(
+                                "Branch name",
+                                value=suggest_branch_name(
+                                    item_type, item_id, title, branch_tpl
+                                ),
+                            ).props("dense outlined").classes("w-full")
+                            src_in = ui.input(
+                                "Source branch", value=repos[0]["default_branch"]
+                            ).props("dense outlined").classes("w-full")
+
+                            def _on_repo(e):
+                                r = next(
+                                    (x for x in repos if x["id"] == e.value), None
+                                )
+                                if r:
+                                    src_in.value = r["default_branch"]
+
+                            repo_sel.on_value_change(_on_repo)
+
+                            with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                                ui.button("Cancel", on_click=bdlg.close).props(
+                                    "flat dense color=grey-6"
+                                )
+                                _cb_btn = ui.button(
+                                    "Create", icon="call_split"
+                                ).props("dense color=primary")
+
+                                async def _create_branch():
+                                    r = next(
+                                        (
+                                            x for x in repos
+                                            if x["id"] == repo_sel.value
+                                        ),
+                                        None,
+                                    )
+                                    bname = (name_in.value or "").strip()
+                                    sbranch = (src_in.value or "").strip()
+                                    if not r or not bname or not sbranch:
+                                        ui.notify(
+                                            "Repository, branch name and "
+                                            "source branch are required",
+                                            type="negative",
+                                        )
+                                        return
+                                    ok, msg = await asyncio.to_thread(
+                                        manager.create_branch, customer,
+                                        r["id"], r["project_id"], bname,
+                                        sbranch, item_id,
+                                    )
+                                    ui.notify(
+                                        msg,
+                                        type="positive" if ok else "negative",
+                                    )
+                                    if ok:
+                                        bdlg.close()
+
+                                _cb_btn.on(
+                                    "click", _with_loading(_cb_btn, _create_branch)
+                                )
+                        bdlg.on("hide", lambda: bdlg.delete())
+                        bdlg.open()
+
+                    ui.button(
+                        icon="call_split", on_click=_open_branch_dialog
+                    ).props("flat dense color=primary").tooltip(
+                        "Create a linked git branch"
+                    )
                 ui.button(icon="open_in_new", on_click=_open_in_devops).props(
                     "flat dense color=primary"
                 ).tooltip(f"Open in {tracker_label}")
@@ -475,9 +596,9 @@ async def open_add_work_item_dialog(
                             sw.widget.update()
                     # State IS the board column for some trackers (Jira) —
                     # hide the redundant Initial Board Column input there.
+                    caps = core.tracker_engine.capabilities(cust_now)
                     bc = widgets.get("board_column")
                     if bc is not None:
-                        caps = core.tracker_engine.capabilities(cust_now)
                         bc.widget.set_visibility(caps.distinct_board_column)
                         if not caps.distinct_board_column and bc.widget.value:
                             bc.widget.value = None
@@ -544,16 +665,107 @@ async def open_add_work_item_dialog(
 
                     asyncio.create_task(_run())
 
+                # ── auto-create branch (switch + name template + base) ────
+                # The switch shows only for a customer whose tracker hosts
+                # repos; name/base appear while it's ON. The name field holds
+                # the branch TEMPLATE ({{id}}/{{title}} resolve only once the
+                # item exists); the base dropdown lists the target repo's
+                # branches, default branch preselected.
+                branch_state = {"customer": None, "auto_name": None}
+
+                def _sync_branch_fields(_e=None):
+                    cb = widgets.get("create_branch")
+                    if cb is None:
+                        return
+                    nb = widgets.get("branch_name")
+                    sb = widgets.get("branch_source")
+                    cw = widgets.get("customer_name")
+                    cust_now = cw.widget.value if cw else None
+                    supported = False
+                    if cust_now and core.tracker_engine is not None:
+                        supported = getattr(
+                            core.tracker_engine.capabilities(cust_now),
+                            "branches", False,
+                        )
+                    cb.widget.set_visibility(supported)
+                    if not supported and cb.widget.value:
+                        cb.widget.value = False
+                        cb.widget.update()
+                    show = bool(supported and cb.widget.value)
+                    for w in (nb, sb):
+                        if w is not None:
+                            w.widget.set_visibility(show)
+                    if not show:
+                        return
+
+                    async def _load():
+                        from ..tracker_defaults import (
+                            defaults_for,
+                            load_tracker_defaults,
+                        )
+
+                        try:
+                            tracker_map = await core.query_engine.function_db(
+                                "get_customer_tracker_names"
+                            )
+                            tw = widgets.get("work_item_type")
+                            tpl = defaults_for(
+                                load_tracker_defaults(
+                                    core.config_loader.config_folder
+                                ),
+                                tracker_map.get(cust_now, ""),
+                                tw.widget.value if tw else None,
+                            ).get("branch_template") or "{{type}}/{{id}}-{{title}}"
+                        except Exception:
+                            tpl = "{{type}}/{{id}}-{{title}}"
+                        # Follow the tracker/type template until the user
+                        # edits the field.
+                        if nb is not None and (
+                            not nb.widget.value
+                            or nb.widget.value == branch_state["auto_name"]
+                        ):
+                            nb.widget.value = tpl
+                            nb.widget.update()
+                        branch_state["auto_name"] = tpl
+
+                        if sb is not None and branch_state["customer"] != cust_now:
+                            manager = getattr(core.tracker_engine, "manager", None)
+                            repos = (
+                                await asyncio.to_thread(
+                                    manager.list_repositories, cust_now
+                                )
+                                if manager else []
+                            )
+                            branch_state["customer"] = cust_now
+                            if repos:
+                                branches = await asyncio.to_thread(
+                                    manager.list_branches, cust_now, repos[0]["id"]
+                                )
+                                default_b = repos[0]["default_branch"]
+                                sb.widget.options = branches or [default_b]
+                                sb.widget.value = (
+                                    default_b if default_b in sb.widget.options
+                                    else sb.widget.options[0]
+                                )
+                                sb.widget.update()
+
+                    asyncio.create_task(_load())
+
+                if "create_branch" in widgets:
+                    widgets["create_branch"].on_value_change(_sync_branch_fields)
+
                 if "work_item_type" in widgets:
                     widgets["work_item_type"].on_value_change(_sync_add_header)
                     # Per-type defaults follow the level selection.
                     widgets["work_item_type"].on_value_change(
                         _apply_tracker_defaults
                     )
+                    widgets["work_item_type"].on_value_change(_sync_branch_fields)
                 if "customer_name" in widgets:
                     widgets["customer_name"].on_value_change(_sync_add_header)
                     widgets["customer_name"].on_value_change(_snap_type_to_customer)
                     widgets["customer_name"].on_value_change(_apply_tracker_defaults)
+                    widgets["customer_name"].on_value_change(_sync_branch_fields)
                 _sync_add_header()
 
                 # The type is a parent-dependent select: refresh loads its
@@ -592,6 +804,7 @@ async def open_add_work_item_dialog(
                     await load_fn()
                 _sync_add_header()
                 _apply_tracker_defaults()
+                _sync_branch_fields()
 
                 # Pre-parent the new item (hierarchy ＋ on a focused node).
                 # Same pattern as the update dialog's work_item pre-fill:
@@ -751,7 +964,10 @@ async def render_devops_form(
             return
 
         try:
-            item_handlers = WorkItemHandlers(core.tracker_engine, core.logger)
+            item_handlers = WorkItemHandlers(
+                core.tracker_engine, core.logger,
+                config_folder=core.config_loader.config_folder,
+            )
             if operation == "add":
                 wid_title = widgets.get("work_item_title")
                 success, message = await item_handlers.add_work_item(widgets)
@@ -892,7 +1108,10 @@ async def render_devops_form(
 
         helpers.setup_template_handling(widgets)
         _setup_conditional_visibility(widgets, fields_by_name, hidden)
-        item_handlers_setup = WorkItemHandlers(core.tracker_engine, core.logger)
+        item_handlers_setup = WorkItemHandlers(
+            core.tracker_engine, core.logger,
+            config_folder=core.config_loader.config_folder,
+        )
         if operation == "add":
             load_fn = item_handlers_setup.setup_add_tab_handlers(widgets)
         else:

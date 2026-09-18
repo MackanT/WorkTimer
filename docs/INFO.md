@@ -84,6 +84,7 @@ A Kanban view of the connected trackers' work items, from the local cache.
 - **Customer tabs** switch between connected customers; type chips follow the customer's tracker levels (Azure: Epic/Feature/User Story; Jira: Epic/Story/Sub-task)
 - **Drag a card** between columns to move it (Azure: board column; Jira: a workflow status transition)
 - **Click a card** to open the full dialog — description (markdown editor + preview), state/assignee/priority, comments, image insert/paste, and an *Open in tracker* link
+- **Create branch** (Azure DevOps) — the branch button in the card dialog creates a git branch in Azure Repos from a source branch's tip and links it to the work item (its Development area); repo, name and source are editable, with a `story/123-title` style suggestion prefilled. The naming is configurable per tracker/type (see Settings), and the add form has an **Auto-create git branch** switch — turning it on reveals the branch-name template and a base-branch dropdown (repo default preselected), and the branch is made right after the item
 - **Search** filters by title, assignee, state, column, id, description and the parent chain; *Incl. done* extends to closed items
 - **＋** adds a work item with the current customer/type preset
 - The **Hierarchy** toggle renders the same data as a tree, coloured by board column, with story-progress rollups and a Focus selector; ＋ pre-parents under the focused node
@@ -166,7 +167,7 @@ Four tabs, matching the app's standard layout:
 
 ### Trackers
 - **Synchronisation** — incremental/full sync buttons with last-sync times
-- **Work-item form defaults** — prefills for State, Priority, Initial board column, Source and Contact person, per tracker **and per work-item type** ("All types" as the base, a specific type overriding it per field)
+- **Work-item form defaults** — prefills for State, Priority, Initial board column, Source and Contact person, per tracker **and per work-item type** ("All types" as the base, a specific type overriding it per field); plus the **Branch name template** (`{{type}}`, `{{id}}`, `{{title}}` — e.g. `feat/{{id}}-{{title}}`) used by branch creation
 - **Description templates** — edit the markdown scaffold preloaded into a new work item's description, per level (Epic / Feature / User Story / …). Placeholders: `{{today}}` inserts the creation date; `{{source}}` and `{{contact_person}}` (alias `{{contact}}`) stay in sync with the form's dropdowns — the line carrying the placeholder is rewritten on change, so it can be moved or relabelled freely (keep some label text on it, e.g. `**Source:** {{source}}`)
 - **Contacts** — per-customer contacts and assignees used in the work-item forms. The **cloud button** on Assignees fetches the project's members from the tracker (tick whom to import); a **Default Assignee** can be picked per customer
 
@@ -199,7 +200,7 @@ Real-time view of all application events.
 WorkTimer speaks to **Azure DevOps** and **Jira Cloud** through per-tracker connections; different customers can use different trackers side by side.
 
 1. *Data Input → Trackers → Add*:
-   - **Azure DevOps** — org name (e.g. `my-org`, not the full URL) + a PAT with *Work Items: Read, Write, Manage* scope
+   - **Azure DevOps** — org name (e.g. `my-org`, not the full URL) + a PAT with *Work Items: Read, Write, Manage* scope (add *Code: Read & Write* if you want to create branches from work items)
    - **Jira** — the site (`yoursite.atlassian.net`), your Atlassian account email, and an API token (create one at *id.atlassian.com → Security → API tokens*)
 2. Hit **Test connection** — it should list the org's projects
 3. *Data Input → Customers → Update* — link the customer to the tracker and pick its project

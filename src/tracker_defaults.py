@@ -19,8 +19,12 @@ from pathlib import Path
 
 import yaml
 
-# Fields a tracker default can prefill on the add form.
-DEFAULT_FIELDS = ("state", "priority", "board_column", "source", "contact_person")
+# Fields a tracker default can prefill on the add form. branch_template is
+# consumed by the create-branch dialog / auto-create, not the form itself.
+DEFAULT_FIELDS = (
+    "state", "priority", "board_column", "source", "contact_person",
+    "branch_template",
+)
 
 # The catch-all level key.
 ALL_TYPES = "*"
