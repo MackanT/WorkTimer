@@ -55,6 +55,43 @@ def _current_version() -> str:
         return "unknown"
 
 
+def github_issue_url(kind: str) -> str:
+    """Prefilled GitHub new-issue link ('bug' or anything else = feature
+    request), carrying the environment details a report always needs
+    (app version, Docker vs direct). No API, no tokens — the user submits
+    the issue themselves in the browser."""
+    import os
+    from urllib.parse import urlencode
+
+    in_docker = bool(os.getenv("WORKTIMER_DOCKER")) or os.path.exists("/.dockerenv")
+    env = (
+        f"WorkTimer v{_current_version()} · "
+        f"{'Docker' if in_docker else 'direct Python'}"
+    )
+    if kind == "bug":
+        params = {
+            "title": "[Bug] ",
+            "labels": "bug",
+            "body": (
+                "## What happened\n\n\n"
+                "## What I expected\n\n\n"
+                "## Steps to reproduce\n\n1. \n\n"
+                f"---\n_{env}_\n"
+            ),
+        }
+    else:
+        params = {
+            "title": "[Feature] ",
+            "labels": "enhancement",
+            "body": (
+                "## The idea\n\n\n"
+                "## Why it helps\n\n\n"
+                f"---\n_{env}_\n"
+            ),
+        }
+    return f"https://github.com/mackant/worktimer/issues/new?{urlencode(params)}"
+
+
 def extract_whats_new(changelog_text: str, since_version: str) -> str:
     """The changelog sections for versions strictly newer than `since_version`,
     as markdown ('### x.y.z (date)' headings and their bodies). Empty string

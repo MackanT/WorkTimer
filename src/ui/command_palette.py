@@ -258,6 +258,25 @@ def setup_command_palette(core) -> None:
             "action": _backup,
         })
 
+        # Feedback → prefilled GitHub new-issue forms (version + run mode
+        # included); the user reviews and submits in the browser.
+        from ..services.update_checker import github_issue_url
+
+        for kind, lbl, icon, kw in (
+            ("bug", "Report a bug", "bug_report", "issue problem error github"),
+            ("feature", "Request a feature", "lightbulb", "idea improvement github"),
+        ):
+
+            async def _open_issue(k=kind):
+                ui.navigate.to(github_issue_url(k), new_tab=True)
+
+            cmds.append({
+                "label": lbl,
+                "icon": icon,
+                "keywords": kw,
+                "action": _open_issue,
+            })
+
         # Data-management shortcuts — one command per entity operation from
         # the config (customer/tracker/project/…): opens the entity dialog
         # right over the current page, on the right operation tab with its
