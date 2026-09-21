@@ -359,8 +359,13 @@ def _render_time_settings_card(core) -> None:
 
 
 async def _render_about_card(core) -> None:
-    """App version + update status (reuses the cached daily update check)."""
-    from ..services.update_checker import _current_version, check_for_update
+    """App version + update status (reuses the cached daily update check),
+    plus prefilled GitHub links for bug reports / feature requests."""
+    from ..services.update_checker import (
+        _current_version,
+        check_for_update,
+        github_issue_url,
+    )
 
     muted = UI_STYLES.get_layout_classes("muted_text")
     version = _current_version()
@@ -384,6 +389,21 @@ async def _render_about_card(core) -> None:
             ui.label(f"WorkTimer v{version}").classes("text-sm text-white")
             ui.icon(status_icon, size="xs").classes(f"{status_cls} shrink-0")
             ui.label(status_txt).classes("text-xs " + muted)
+        # Opens GitHub's new-issue form prefilled (version + run mode
+        # included) — the user reviews and submits it there.
+        with ui.row().classes("items-center gap-2 mt-2"):
+            ui.button(
+                "Report a bug", icon="bug_report",
+                on_click=lambda: ui.navigate.to(
+                    github_issue_url("bug"), new_tab=True
+                ),
+            ).props("outline dense no-caps color=primary")
+            ui.button(
+                "Request a feature", icon="lightbulb",
+                on_click=lambda: ui.navigate.to(
+                    github_issue_url("feature"), new_tab=True
+                ),
+            ).props("outline dense no-caps color=primary")
 
 
 # ── Quasar colour palette offered in dropdowns ──────────────────────────────

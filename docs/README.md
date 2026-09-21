@@ -181,7 +181,7 @@ Define tags used to categorise work items — icon + colour per tag, add/edit/de
 ### Data
 - **Backup** — list of recent backups, *Backup now*, and a browser download
 - **Time & billing defaults** — global rounding / currency / target settings used by Reports
-- **About** — version and update status
+- **About** — version and update status, plus **Report a bug** / **Request a feature** buttons that open a prefilled GitHub issue (app version and run mode filled in; also available from the command palette)
 
 ---
 
