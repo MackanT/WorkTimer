@@ -8,7 +8,7 @@ Full time tracking interface with customer/project cards, timers, and DevOps int
 - Granular updates where possible (update_time_tracker) vs full rebuilds (render_time_tracker)
 """
 
-from nicegui import ui
+from nicegui import app, context, ui
 import asyncio
 import pandas as pd
 from datetime import datetime, timedelta
@@ -91,6 +91,51 @@ class PageState:
 # ============================================================================
 # Helper Functions
 # ============================================================================
+
+
+def recommended_first(cust_df: pd.DataFrame, selectable_labels: list, default_id) -> tuple:
+    """Order work-item options so the project's default item and its whole
+    subtree come first (BFS: the item, then children, then grandchildren —
+    each level newest-id first), the remaining options after, original order
+    kept.
+
+    Returns (ordered_labels, recommended_count) — the first `recommended_count`
+    entries belong to the default item's subtree, so callers can mark them.
+
+    `cust_df` is the customer's full work-item frame (all states, so parent
+    chains stay intact); `selectable_labels` are the display names actually
+    offered in the dropdown. Unknown/missing default → order unchanged."""
+    try:
+        default_id = int(default_id)
+    except (TypeError, ValueError):
+        return selectable_labels, 0
+
+    children: dict = {}
+    labels_by_id: dict = {}
+    for _, r in cust_df.iterrows():
+        try:
+            rid = int(r["id"])
+        except (TypeError, ValueError):
+            continue
+        labels_by_id[rid] = r.get("display_name")
+        pid = r.get("parent_id")
+        if pid is not None and not pd.isna(pid):
+            children.setdefault(int(pid), []).append(rid)
+
+    order, seen = [], set()
+    queue = [default_id]
+    while queue:
+        cur = queue.pop(0)
+        if cur in seen:
+            continue
+        seen.add(cur)
+        order.append(cur)
+        queue.extend(sorted(children.get(cur, []), reverse=True))
+
+    selectable = set(selectable_labels)
+    rec = [labels_by_id[i] for i in order if labels_by_id.get(i) in selectable]
+    rec_set = set(rec)
+    return rec + [lbl for lbl in selectable_labels if lbl not in rec_set], len(rec)
 
 
 def format_value(value: float, is_time: bool) -> str:
@@ -310,7 +355,11 @@ async def time_tracking_page():
         state.edit_mode_enabled = not state.edit_mode_enabled
 
         if state.edit_mode_enabled:
-            core.event_bus.notify("Edit mode: Use ↑↓ arrows to reorder", type_="info")
+            core.event_bus.notify(
+                "Edit mode: drag rows to reorder (or use the arrows); "
+                "the sort button orders a customer's projects by usage",
+                type_="info",
+            )
             await render_time_tracker()
             edit_button.set_text("Save Order")
             edit_button.props("color=primary")
@@ -386,17 +435,32 @@ async def time_tracking_page():
                 )
             ui.button("Close", on_click=on_close).props("flat").classes(btn_classes)
 
-    def _build_devops_selector(devops_engine, c_name, git_id, has_git_id):
-        """Render DevOps ID dropdown + 'Store to DevOps' toggle. Returns (id_input, id_checkbox)."""
+    def _build_devops_selector(tracker_engine, c_name, git_id, has_git_id):
+        """Render DevOps ID dropdown + 'Store to DevOps' toggle. Returns (id_input, id_checkbox).
+
+        When the project has a default work item, that item and its whole
+        subtree (an Epic's features/stories, a Feature's stories) are listed
+        first as the recommended picks; everything else follows."""
         id_checkbox = None
-        id_options = devops_engine.df[
-            (devops_engine.df["customer_name"] == c_name)
-            & (devops_engine.df["state"].isin(["Active", "New"]))
-        ][["display_name", "id"]].dropna()
+        cust_df = tracker_engine.df[tracker_engine.df["customer_name"] == c_name]
+        # Newest (highest id) first — most likely related to current work.
+        id_options = cust_df[cust_df["state"].isin(["Active", "New"])][
+            ["display_name", "id"]
+        ].dropna().sort_values("id", ascending=False)
+        options = id_options["display_name"].tolist()
+        rec_count = 0
+        if has_git_id:
+            options, rec_count = recommended_first(cust_df, options, git_id)
+        # Dict options: the VALUE stays the clean display name (what
+        # extract_devops_id parses and preselection matches); the LABEL marks
+        # the default item's subtree with a star so related items stand out.
+        option_map = {
+            o: (f"★ {o}" if i < rec_count else o) for i, o in enumerate(options)
+        }
         id_input = ui.select(
-            id_options["display_name"].tolist(),
+            option_map,
             with_input=True,
-            label="DevOps-ID",
+            label="Tracker-ID",
         ).classes("w-full -mb-2")
         if has_git_id:
             match = id_options[id_options["id"] == git_id]
@@ -405,7 +469,7 @@ async def time_tracking_page():
             def toggle_switch():
                 id_checkbox.value = not id_checkbox.value
                 id_checkbox.update()
-            ui.label("Store to DevOps").on("click", toggle_switch).classes("cursor-pointer")
+            ui.label("Store to tracker").on("click", toggle_switch).classes("cursor-pointer")
             id_checkbox = ui.switch(value=has_git_id).props("dense")
         return id_input, id_checkbox
 
@@ -439,7 +503,7 @@ async def time_tracking_page():
         has_git_id = git_id is not None and git_id > 0
 
         # Check DevOps connection using engine method
-        has_devops = core.devops_engine.has_customer_connection(c_name) if core.devops_engine else False
+        has_devops = core.tracker_engine.has_customer_connection(c_name) if core.tracker_engine else False
 
         # This customer's projects, so the entry can be re-assigned on stop
         # (e.g. started on "generic", meant "specific task").
@@ -552,7 +616,7 @@ async def time_tracking_page():
             id_checkbox = None
             if has_devops:
                 id_input, id_checkbox = _build_devops_selector(
-                    core.devops_engine, c_name, git_id, has_git_id
+                    core.tracker_engine, c_name, git_id, has_git_id
                 )
 
             # Comment input
@@ -649,7 +713,18 @@ async def time_tracking_page():
             return
 
         # Unchecked - show dialog for saving comment/DevOps
-        checkbox = event.sender
+        await open_stop_dialog_for(customer_id_int, project_id_int, event.sender)
+
+    async def open_stop_dialog_for(customer_id_int, project_id_int, checkbox=None):
+        """The stop-a-timer flow (comment / project / stop-time dialog) — shared
+        by the checkbox uncheck and the command palette. `checkbox` is the row's
+        checkbox so cancel/save keep its visual state truthful in both flows."""
+
+        def _sync_checkbox(value: bool):
+            nonlocal ignore_next_checkbox_event
+            if checkbox is not None and checkbox.value != value:
+                ignore_next_checkbox_event = True
+                checkbox.set_value(value)
 
         async def handle_save(
             git_id_val, comment, store_to_devops, new_project_id=None, end_time=None
@@ -666,6 +741,7 @@ async def time_tracking_page():
                     end_time=end_time,
                 )
                 await on_timer_stopped(customer_id_int, project_id_int)
+                _sync_checkbox(False)  # palette flow: box is still checked
 
                 core.event_bus.notify("Entry saved successfully!", type_="positive")
 
@@ -681,13 +757,13 @@ async def time_tracking_page():
                     params=(customer_id_int,),
                 )
                 if (
-                    core.devops_engine
-                    and core.devops_engine.manager
+                    core.tracker_engine
+                    and core.tracker_engine.manager
                     and not customer_name_df.empty
                 ):
                     # Blocking API call — keep it off the event loop
                     status, msg = await asyncio.to_thread(
-                        core.devops_engine.manager.save_comment,
+                        core.tracker_engine.manager.save_comment,
                         customer_name=customer_name_df.iloc[0]["customer_name"],
                         comment=comment,
                         git_id=git_id_val,
@@ -701,12 +777,11 @@ async def time_tracking_page():
                 "delete_time_row", customer_id_int, project_id_int
             )
             await on_timer_stopped(customer_id_int, project_id_int)
+            _sync_checkbox(False)
 
         def handle_close():
-            """Close dialog without saving - reset checkbox."""
-            nonlocal ignore_next_checkbox_event
-            ignore_next_checkbox_event = True
-            checkbox.set_value(True)
+            """Close dialog without saving - the timer keeps running."""
+            _sync_checkbox(True)
 
         await show_time_entry_dialog(
             customer_id=customer_id_int,
@@ -736,7 +811,7 @@ async def time_tracking_page():
         p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
         git_id = df.iloc[0]["git_id"] if not df.empty else 0
         has_git_id = git_id is not None and git_id > 0
-        has_devops = core.devops_engine.has_customer_connection(c_name) if core.devops_engine else False
+        has_devops = core.tracker_engine.has_customer_connection(c_name) if core.tracker_engine else False
 
         now = datetime.now()
         one_hour_ago = now - timedelta(hours=1)
@@ -766,7 +841,7 @@ async def time_tracking_page():
             git_id_number_input = None
             if has_devops:
                 id_input, id_checkbox = _build_devops_selector(
-                    core.devops_engine, c_name, git_id, has_git_id
+                    core.tracker_engine, c_name, git_id, has_git_id
                 )
             else:
                 git_id_number_input = (
@@ -1100,7 +1175,40 @@ async def time_tracking_page():
                     (UI_STYLES.get_inline_style("time_tracking", "project_row") or "")
                     + " display: grid; grid-template-columns: auto 1fr auto; gap: 0.5rem; width: 100%;"
                 )
-            ):
+            ) as project_row_el:
+                if state.edit_mode_enabled:
+                    # Drag a row onto another to reorder (arrows still work);
+                    # the light line shows where it lands (insert before).
+                    project_row_el.props('draggable="true"').classes(
+                        "cursor-move"
+                    )
+                    project_row_el.on(
+                        "dragstart",
+                        lambda _, c=int(customer_id), i=project_index: (
+                            proj_drag.update(customer_id=c, index=i)
+                        ),
+                    )
+                    project_row_el.on(
+                        "dragover",
+                        js_handler=(
+                            "(e) => { e.preventDefault(); "
+                            "e.currentTarget.classList.add('wt-drop-above'); }"
+                        ),
+                    )
+                    project_row_el.on(
+                        "dragleave",
+                        js_handler=(
+                            "(e) => { if (!e.currentTarget.contains("
+                            "e.relatedTarget)) e.currentTarget"
+                            ".classList.remove('wt-drop-above'); }"
+                        ),
+                    )
+                    project_row_el.on(
+                        "drop",
+                        lambda _, c=int(customer_id), i=project_index: (
+                            asyncio.create_task(_drop_project(c, i))
+                        ),
+                    )
                 # Show arrows in edit mode, checkbox in normal mode
                 if state.edit_mode_enabled:
 
@@ -1179,6 +1287,34 @@ async def time_tracking_page():
                     ui.menu_item("Add time entry", on_click=_open_manual).props("icon=add_circle")
                     ui.menu_item("Start from past time", on_click=_open_manual_start).props("icon=history")
                     ui.menu_item("Manage entries", on_click=_open_manage).props("icon=edit_note")
+                    ui.separator()
+
+                    async def _open_update_project(
+                        cn=str(project["customer_name"]),
+                        pn=str(project["project_name"]),
+                    ):
+                        await open_quick_add(
+                            "project",
+                            operation="update",
+                            presets={"customer_name": cn, "project_name": pn},
+                        )
+
+                    async def _disable_project(
+                        cn=str(project["customer_name"]),
+                        pn=str(project["project_name"]),
+                    ):
+                        # Direct action — reversible via the Projects
+                        # dialog's Re-enable tab.
+                        await core.query_engine.function_db(
+                            "disable_project",
+                            customer_name=cn,
+                            project_name=pn,
+                        )
+                        ui.notify(f"Project '{pn}' disabled", type="positive")
+                        core.event_bus.emit("ui_refresh_requested")
+
+                    ui.menu_item("Update project", on_click=_open_update_project).props("icon=edit")
+                    ui.menu_item("Disable project", on_click=_disable_project).props("icon=block")
 
         async def make_customer_card(
             customer_id, customer_name, group, customer_index=None, total_customers=None
@@ -1239,6 +1375,18 @@ async def time_tracking_page():
                                         x and customer_index < total_customers - 1
                                     ),
                                 )
+                                ui.button(
+                                    icon="sort",
+                                    on_click=lambda _, c=int(customer_id): (
+                                        asyncio.create_task(
+                                            _sort_projects_by_usage(c)
+                                        )
+                                    ),
+                                ).props("flat dense size=sm").classes(
+                                    f"text-{core.theme.get('accent')}"
+                                ).tooltip(
+                                    "Sort projects by usage (last 60 days)"
+                                )
 
                         if cust_colors.get(customer_name):
                             ui.element("div").style(
@@ -1270,11 +1418,59 @@ async def time_tracking_page():
                         )
                     )
 
+                    # Right-click the header: manage THIS customer (same
+                    # pattern as the project rows' context menu).
+                    with ui.context_menu():
+
+                        async def _ctx_update(cn=str(customer_name)):
+                            await open_quick_add(
+                                "customer",
+                                presets={"customer_name": cn},
+                                operation="update",
+                            )
+
+                        async def _ctx_add_project(cn=str(customer_name)):
+                            await open_quick_add(
+                                "project", presets={"customer_name": cn}
+                            )
+
+                        async def _ctx_disable(cn=str(customer_name)):
+                            # Direct action, no dialog — reversible via the
+                            # Customers dialog's Re-enable tab.
+                            await core.query_engine.function_db(
+                                "disable_customer", customer_name=cn
+                            )
+                            ui.notify(f"Customer '{cn}' disabled", type="positive")
+                            core.event_bus.emit("ui_refresh_requested")
+                            core.force_tracker_reinit()
+
+                        ui.menu_item("Update customer", on_click=_ctx_update).props(
+                            "icon=edit"
+                        )
+                        ui.menu_item(
+                            "Add project", on_click=_ctx_add_project
+                        ).props("icon=add_circle")
+                        ui.menu_item("Disable customer", on_click=_ctx_disable).props(
+                            "icon=block"
+                        )
+
                 ui.separator().classes(
                     UI_STYLES.get_layout_classes("divider_row")
                 )
 
                 with entity_card_content():
+                    # Quick-add project for THIS customer (pre-filled) — under
+                    # the divider so it clearly belongs to the project list.
+                    ui.button(
+                        "Add project",
+                        icon="add",
+                        on_click=lambda cn=str(customer_name): asyncio.create_task(
+                            open_quick_add("project", presets={"customer_name": cn})
+                        ),
+                    ).props("flat dense size=sm no-caps").classes(
+                        f"text-{core.theme.get('muted')} self-start"
+                    )
+
                     # Merge/init project order
                     customer_projects = group.sort_values("project_sort_order")
                     db_ordered = [
@@ -1317,12 +1513,44 @@ async def time_tracking_page():
         customers_list = list(
             zip(customers_from_db["customer_id"], customers_from_db["customer_name"])
         )
+
+        # Customers with no projects yet are absent from the joined frame —
+        # append them so they show as (empty) cards ready for "Add project".
+        all_cust = await core.query_engine.query_db(
+            "select customer_id, customer_name, color, "
+            "coalesce(sort_order, 999) as so "
+            "from customers where is_current = 1 "
+            "order by so, customer_name"
+        )
+        if not all_cust.empty:
+            known_ids = {int(c[0]) for c in customers_list}
+            for _, r in all_cust.iterrows():
+                if int(r["customer_id"]) not in known_ids:
+                    customers_list.append(
+                        (int(r["customer_id"]), r["customer_name"])
+                    )
+            # Colour dots follow renames/edits — refresh on every rebuild.
+            cust_colors.clear()
+            cust_colors.update({
+                r["customer_name"]: r["color"]
+                for _, r in all_cust.iterrows()
+                if r["color"]
+            })
+
         current_ids = {c[0] for c in customers_list}
 
         # Initialize customer order if needed
         if not state.customer_order or {c[0] for c in state.customer_order} != current_ids:
             state.customer_order.clear()
             state.customer_order.extend(customers_list)
+        else:
+            # Same customers, but a RENAME keeps the id — refresh the cached
+            # names, or the card keeps showing the old one until a reload.
+            id_to_name = {int(cid): name for cid, name in customers_list}
+            state.customer_order[:] = [
+                (cid, id_to_name.get(int(cid), name))
+                for cid, name in state.customer_order
+            ]
 
         # Rebuild container
         container.clear()
@@ -1332,15 +1560,38 @@ async def time_tracking_page():
                 for cust_idx, (customer_id, customer_name) in enumerate(
                     state.customer_order
                 ):
+                    # An empty group is fine: the card renders header + the
+                    # "Add project" button, so new customers are visible.
                     group = df[df["customer_id"] == customer_id]
-                    if not group.empty:
-                        await make_customer_card(
-                            customer_id,
-                            customer_name,
-                            group,
-                            customer_index=cust_idx,
-                            total_customers=total_customers,
-                        )
+                    await make_customer_card(
+                        customer_id,
+                        customer_name,
+                        group,
+                        customer_index=cust_idx,
+                        total_customers=total_customers,
+                    )
+
+                # Ghost card — a dashed "new customer" placeholder (mirrors
+                # the board drop-zone look); click opens the add dialog.
+                with (
+                    ui.card()
+                    .props("flat")
+                    .classes(
+                        "rounded-md items-center justify-center "
+                        "cursor-pointer shrink-0 mb-2 gap-1"
+                    )
+                    .style(
+                        "border: 2px dashed rgba(148, 163, 184, 0.35);"
+                        " background: transparent; min-height: 140px;"
+                        " min-width: 220px; align-self: stretch;"
+                    )
+                    .on(
+                        "click",
+                        lambda: asyncio.create_task(open_quick_add("customer")),
+                    )
+                ):
+                    ui.icon("add", size="md").classes("text-grey-6")
+                    ui.label("Add customer").classes("text-grey-6 text-sm")
 
         core.logger.debug("Completed render_time_tracker (full rebuild)")
 
@@ -1385,6 +1636,66 @@ async def time_tracking_page():
 
     container = ui.scroll_area().classes("wt-page-content w-full")
 
+    # Stable host for the quick-add entity dialogs: created OUTSIDE `container`
+    # so the full rebuild after a save (ui_refresh_requested → container.clear)
+    # doesn't destroy a dialog that is still open.
+    _quick_add_host = ui.element("div").classes("hidden")
+
+    # Drag-and-drop project reordering (edit mode) — same HTML5 drag pattern
+    # as the board's cards; state.project_orders is the single source.
+    proj_drag: dict = {"customer_id": None, "index": None}
+
+    async def _drop_project(customer_id: int, target_index: int):
+        src = proj_drag.get("index")
+        same_customer = proj_drag.get("customer_id") == customer_id
+        proj_drag["customer_id"] = None
+        proj_drag["index"] = None
+        if not same_customer or src is None or src == target_index:
+            return
+        projects = state.project_orders.get(customer_id)
+        if not projects or not (0 <= src < len(projects)):
+            return
+        item = projects.pop(src)
+        projects.insert(min(target_index, len(projects)), item)
+        await render_time_tracker()
+
+    async def _sort_projects_by_usage(customer_id: int):
+        """One-click ordering by logged time in the last 60 days (most first;
+        unused projects keep their current relative order at the bottom).
+        Deliberately manual — an auto-reordering list ruins muscle memory."""
+        rows = await core.query_engine.query_db(
+            "select project_id, sum(coalesce(total_time, "
+            "(julianday('now', 'localtime') - julianday(start_time)) * 24)) as h "
+            "from time where customer_id = ? "
+            "and date(start_time) >= date('now', '-60 days') "
+            "group by project_id",
+            params=(customer_id,),
+        )
+        usage = (
+            {int(r["project_id"]): float(r["h"] or 0) for _, r in rows.iterrows()}
+            if not rows.empty
+            else {}
+        )
+        projects = state.project_orders.get(customer_id)
+        if not projects:
+            return
+        projects.sort(key=lambda p: -usage.get(int(p[0]), 0.0))  # stable
+        await render_time_tracker()
+        ui.notify(
+            "Sorted by last 60 days of logged time — Save Order to keep it",
+            type="info",
+        )
+
+    async def open_quick_add(
+        entity: str, presets: dict = None, operation: str = "add"
+    ):
+        from .add_data import open_entity_dialog
+
+        with _quick_add_host:
+            await open_entity_dialog(
+                core, entity, operation=operation, presets=presets
+            )
+
     # Pre-create dialog shells so they exist in the proper slot context at page load.
     # The show_* functions clear + rebuild the card body and then open the dialog.
     with ui.dialog().props("persistent") as _manual_dialog:
@@ -1403,14 +1714,60 @@ async def time_tracking_page():
         "time_tracking", value_refresh_timer, midnight_refresh_timer
     )
 
-    # Refresh displayed values when data changes elsewhere — the query editor
-    # (row edits) and add-data forms emit "ui_refresh_requested" on submit.
+    # Rebuild when data changes elsewhere — the query editor (row edits) and
+    # the entity dialogs emit "ui_refresh_requested" on submit. A FULL rebuild:
+    # the quick-add dialogs create customers/projects while this page is open,
+    # and the granular value update can't add new cards/rows.
     def _on_ui_refresh(**_):
-        asyncio.create_task(update_time_tracker())
+        if _page_is_live():
+            asyncio.create_task(render_time_tracker())
 
     core.event_bus.register_unique(
         "ui_refresh_requested", _on_ui_refresh, key="time_tracking_page"
     )
 
+    # ── command-palette integration ────────────────────────────────────────
+    # The palette can start/stop timers from any page: a start emits
+    # "timer_state_changed" (full rebuild so the checkbox state is truthful);
+    # a stop is handed over as a pending request — the event covers "already on
+    # this page", the storage flag covers arriving via navigation. The flag is
+    # only cleared after the dialog actually opened, so a stale handler from a
+    # previous page render failing can't swallow the request.
+    #
+    # Event handlers run as bare asyncio tasks with no slot context, so:
+    #  - the client is captured here (app.storage.client would raise), and
+    #  - a liveness guard makes registrations from departed page renders exit
+    #    silently (register_unique replaces them, but an emit can race the swap).
+    page_client = context.client
+
+    def _page_is_live() -> bool:
+        try:
+            return container.id in page_client.elements
+        except Exception:
+            return False
+
+    async def _maybe_open_pending_stop():
+        pending = page_client.storage.get("palette_stop")
+        if not pending or not _page_is_live():
+            return
+        cid, pid = int(pending[0]), int(pending[1])
+        await open_stop_dialog_for(cid, pid, checkbox_refs.get((cid, pid)))
+        page_client.storage["palette_stop"] = None
+
+    def _on_timer_state_changed(**_):
+        if _page_is_live():
+            asyncio.create_task(render_time_tracker())
+
+    def _on_palette_stop(**_):
+        asyncio.create_task(_maybe_open_pending_stop())
+
+    core.event_bus.register_unique(
+        "timer_state_changed", _on_timer_state_changed, key="time_tracking_page"
+    )
+    core.event_bus.register_unique(
+        "palette_stop_timer", _on_palette_stop, key="time_tracking_page"
+    )
+
     await render_time_tracker()
     await update_tab_indicator_now()  # Populate active-timer chips on initial load
+    await _maybe_open_pending_stop()  # Palette stop request that navigated here

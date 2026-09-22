@@ -13,32 +13,35 @@ from collections import defaultdict
 from .. import helpers
 
 
-class DevOpsWorkItemHandlers:
+class WorkItemHandlers:
     """Handlers for DevOps work item operations."""
 
     devops_columns_cache = defaultdict(dict)
     _preload_started = False
 
-    def __init__(self, DO, LOG):
+    def __init__(self, DO, LOG, config_folder=None):
         """
         Initialize DevOps handlers.
 
         Args:
-            DO: DevOpsEngine instance
+            DO: TrackerEngine instance
             LOG: Logger instance
+            config_folder: config dir for the branch-template lookup
+                (falls back to ./config when not given)
         """
         self.DO = DO
         self.LOG = LOG
+        self.config_folder = config_folder
 
-        if not DevOpsWorkItemHandlers._preload_started:
-            DevOpsWorkItemHandlers._preload_started = True
+        if not WorkItemHandlers._preload_started:
+            WorkItemHandlers._preload_started = True
             asyncio.ensure_future(self._background_work())
 
     async def _background_work(self):
         # A form can be opened before DevOps init finishes — don't crash the
         # preload task on a missing manager; app.py re-runs it after init.
         if not self.DO or not self.DO.manager:
-            DevOpsWorkItemHandlers._preload_started = False
+            WorkItemHandlers._preload_started = False
             return
         await self.preload_cached_board_columns()
 
@@ -66,7 +69,10 @@ class DevOpsWorkItemHandlers:
         client = self.DO.manager._get_client(customer_name)
         if not client:
             return None
-        col_status, columns = client.get_board_columns_via_team_autodetect(
+        fetch_columns = getattr(client, "get_board_columns_via_team_autodetect", None)
+        if fetch_columns is None:
+            return None  # provider has no board-column API — cache stays empty
+        col_status, columns = fetch_columns(
             board_type=board_types.get(board_type, "Stories")
         )
         self.devops_columns_cache[customer_name][board_type] = columns
@@ -113,29 +119,76 @@ class DevOpsWorkItemHandlers:
             "System.AssignedTo": wid.get("assigned_to", ""),
         }
 
+        # Staged images (item-scoped attachment stores like Jira): the initial
+        # create must not carry the temporary /staged_image/ URLs — they're
+        # stripped here and swapped in right after the item exists.
+        # Lazy import: work_item_forms imports this module.
+        from .work_item_forms import strip_staged_image_lines, take_staged_images
+
+        has_staged = "/staged_image/" in (description or "")
         create_kwargs = dict(
             customer_name=customer_name,
             title=title,
-            description=description,
+            description=(
+                strip_staged_image_lines(description)
+                if has_staged
+                else description
+            ),
             additional_fields=additional_fields,
             markdown=True,
         )
 
-        # Handle parent relationship (only for Features and User Stories)
-        if work_item_type in ("Feature", "User Story"):
+        # Parent applies to every level below the hierarchy root (Azure:
+        # Feature/User Story; Jira: Story/Sub-task).
+        root_type = self.DO.type_hierarchy(customer_name)[0]
+        if work_item_type != root_type:
             parent_id = None
             if wid.get("parent_name"):
                 parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
             create_kwargs["parent"] = parent_id
 
-        create_fn = {
-            "Epic": self.DO.manager.create_epic,
-            "Feature": self.DO.manager.create_feature,
-            "User Story": self.DO.manager.create_user_story,
-        }.get(work_item_type, self.DO.manager.create_user_story)
-
+        # Provider-neutral create: type_key routes inside each provider, so
+        # Jira's Story/Sub-task work without an Azure-name dispatch table.
         # API calls are blocking — keep them off the event loop.
-        success, message = await asyncio.to_thread(create_fn, **create_kwargs)
+        success, message = await asyncio.to_thread(
+            self.DO.manager.create_item, type_key=work_item_type, **create_kwargs
+        )
+
+        if success and has_staged:
+            # Upload the staged images to the new item and rewrite the
+            # description with the real attachment URLs (consumes the stage
+            # only now, so a failed create keeps the staged bytes intact).
+            id_match = re.search(r"ID (\d+)", message)
+            staged = take_staged_images(description) if id_match else []
+            if staged:
+                new_id = int(id_match.group(1))
+                fixed = description
+                for temp_url, file_name, content in staged:
+                    real_url = await asyncio.to_thread(
+                        self.DO.manager.upload_attachment,
+                        customer_name, file_name, content, new_id,
+                    )
+                    if real_url:
+                        fixed = fixed.replace(temp_url, real_url)
+                    else:
+                        # Drop the dead temporary reference entirely.
+                        fixed = re.sub(
+                            rf"^\s*!\[[^\]]*\]\({re.escape(temp_url)}\)\s*$",
+                            "", fixed, flags=re.M,
+                        )
+                        self.LOG.warning(
+                            f"Staged image upload failed for '{file_name}' "
+                            f"on new item {new_id}"
+                        )
+                ok, msg = await asyncio.to_thread(
+                    self.DO.manager.update_work_item_fields,
+                    customer_name, new_id,
+                    {"System.Description": fixed}, markdown=True,
+                )
+                if not ok:
+                    self.LOG.warning(
+                        f"Could not attach staged images to {new_id}: {msg}"
+                    )
 
         if success:
             board_column = wid.get("board_column")
@@ -159,11 +212,69 @@ class DevOpsWorkItemHandlers:
                             f"Could not set initial board column: {col_msg}"
                         )
 
+        if success and wid.get("create_branch"):
+            id_match = re.search(r"ID (\d+)", message)
+            if id_match:
+                br_ok, br_msg = await self._auto_create_branch(
+                    customer_name, work_item_type,
+                    int(id_match.group(1)), title,
+                    template=wid.get("branch_name"),
+                    source_branch=wid.get("branch_source"),
+                )
+                (self.LOG.info if br_ok else self.LOG.warning)(br_msg)
+                message = f"{message} · {br_msg}"
+
         if success:
             self.LOG.info(message)
         else:
             self.LOG.error(message)
         return success, message
+
+    async def _auto_create_branch(
+        self, customer_name, work_item_type, work_item_id, title,
+        template=None, source_branch=None,
+    ):
+        """Branch for a just-created item: the first repo (the project's own
+        sorts first), the form's base branch (repo default when blank), the
+        name resolved from the form's template — which falls back to the
+        tracker's configured branch template. Returns (ok, message)."""
+        from pathlib import Path
+
+        from ..tracker_defaults import defaults_for, load_tracker_defaults
+        from ..trackers.base import suggest_branch_name
+
+        try:
+            mgr = self.DO.manager
+            repos = await asyncio.to_thread(mgr.list_repositories, customer_name)
+            if not repos:
+                return False, (
+                    "Branch not created — no repositories found "
+                    "(the PAT may lack Code scope)"
+                )
+            repo = repos[0]
+            tpl = str(template or "").strip()
+            if not tpl:
+                try:
+                    tracker_map = await self.DO.query_engine.function_db(
+                        "get_customer_tracker_names"
+                    )
+                    tpl = defaults_for(
+                        load_tracker_defaults(
+                            self.config_folder or Path("config")
+                        ),
+                        tracker_map.get(customer_name, ""),
+                        work_item_type,
+                    ).get("branch_template")
+                except Exception:
+                    tpl = None
+            name = suggest_branch_name(work_item_type, work_item_id, title, tpl)
+            source = str(source_branch or "").strip() or repo["default_branch"]
+            return await asyncio.to_thread(
+                mgr.create_branch, customer_name, repo["id"],
+                repo["project_id"], name, source, work_item_id,
+            )
+        except Exception as e:
+            return False, f"Branch creation failed: {e}"
 
     async def update_work_item(self, widgets):
         """
@@ -428,41 +539,10 @@ class DevOpsWorkItemHandlers:
             )
             # Note: Preview updates automatically via parent-child binding with polling
 
-        # Set up field updaters
-        if editor_widget and (source_widget or contact_widget):
-
-            def update_editor_field(field_name, new_value):
-                """Update a specific field in the markdown editor."""
-                current_text = editor_widget.value or ""
-                pattern = rf"^(\*\*{re.escape(field_name)}:\*\*)(.*)$"
-
-                match = re.search(pattern, current_text, re.MULTILINE)
-                if match:
-                    replacement = rf"\1 {new_value}"
-                    updated_text = re.sub(
-                        pattern,
-                        replacement,
-                        current_text,
-                        count=1,
-                        flags=re.MULTILINE,
-                    )
-                    editor_widget.value = updated_text
-                    editor_widget.update()
-                    # Note: preview will be updated automatically by on_value_change handler
-
-            if source_widget:
-
-                def on_source_change(e):
-                    update_editor_field("Source", source_widget.value or "")
-
-                source_widget.on("update:model-value", on_source_change)
-
-            if contact_widget:
-
-                def on_contact_change(e):
-                    update_editor_field("Contact", contact_widget.value or "")
-
-                contact_widget.on("update:model-value", on_contact_change)
+        # Source/Contact → description sync lives in
+        # helpers.setup_template_handling ({{placeholder}}-aware, with a
+        # legacy **Source:**/**Contact:** fallback) — a second hardcoded
+        # updater here used to duplicate it.
 
         return load_columns_for_customer
 

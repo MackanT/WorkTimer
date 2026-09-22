@@ -148,7 +148,7 @@ class ConfigUI(BaseModel):
 
     info_page:
         info: {meta: {...}}
-        read_me: {meta: {...}}
+        changelog: {meta: {...}}
     add_data_page:
         customer: {add: {...}, update: {...}}
     """
@@ -274,6 +274,23 @@ class ConfigDevOpsContacts(BaseModel):
 
 
 ## Configuration Loader ##
+
+
+def merge_description_templates(ui_yaml: dict, overrides: dict) -> None:
+    """Overlay per-level description templates (Settings → Trackers →
+    "Description templates") onto the add form's description_editor field,
+    in place. Only string values are taken; unknown levels are added."""
+    clean = {k: v for k, v in (overrides or {}).items() if isinstance(v, str)}
+    if not clean:
+        return
+    fields = (
+        ((ui_yaml.get("board_devops_forms") or {}).get("add") or {}).get("fields")
+        or []
+    )
+    for field in fields:
+        if isinstance(field, dict) and field.get("name") == "description_editor":
+            field["templates"] = {**(field.get("templates") or {}), **clean}
+            return
 
 
 @dataclass
@@ -403,6 +420,25 @@ class ConfigLoader:
     def _load_ui_config(self) -> None:
         """Load config_ui.yml and extract ui, query, and tasks sub-configs."""
         ui_yaml = self._load_yaml("config_ui.yml", required=True)
+
+        # Optional per-install override written by Settings → "Time & billing".
+        # Kept as its own small file so the app never rewrites the heavily
+        # commented config_ui.yml; keys here win over its time_settings block.
+        ts_override = self.config_folder / "time_settings.yml"
+        if ts_override.exists():
+            overrides = self._load_yaml("time_settings.yml", required=False) or {}
+            ui_yaml["time_settings"] = {
+                **(ui_yaml.get("time_settings") or {}),
+                **overrides,
+            }
+
+        # Optional per-install description-template override written by
+        # Settings → Trackers → "Description templates" (same pattern).
+        dt_override = self.config_folder / "description_templates.yml"
+        if dt_override.exists():
+            dt = self._load_yaml("description_templates.yml", required=False) or {}
+            merge_description_templates(ui_yaml, dt.get("templates") or {})
+
         self.configs["ui"] = ConfigUI(**ui_yaml)
         self.configs["query"] = QueryConfig(**{"query": ui_yaml.get("query", {})})
         tasks_yaml = ui_yaml.get("task", {})
@@ -443,6 +479,15 @@ class ConfigLoader:
         Args:
             filename: The config filename (e.g. 'devops_contacts.yml').
         """
+        # The UI config (and the small override files merged into it) is
+        # loaded outside the spec registry.
+        if filename in (
+            "config_ui.yml",
+            "time_settings.yml",
+            "description_templates.yml",
+        ):
+            self._load_ui_config()
+            return
         for spec in self._REGISTRY:
             if spec.filename == filename:
                 self._load_spec(spec)

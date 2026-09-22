@@ -9,10 +9,20 @@ import re
 import requests
 import base64
 import json
+from urllib.parse import quote
+
+
+def _branch_artifact_url(project_id, repo_id, branch_name) -> str:
+    """The vstfs artifact URL that links a git branch to a work item (what
+    Azure DevOps' own "create branch" button writes): the whole
+    '{project}/{repo}/GB{branch}' id percent-encoded, slashes included."""
+    return "vstfs:///Git/Ref/" + quote(
+        f"{project_id}/{repo_id}/GB{branch_name}", safe=""
+    )
 
 
 def _clean_project(val):
-    """Normalise a stored devops_project value to a non-empty str, or None.
+    """Normalise a stored tracker_project value to a non-empty str, or None.
     Guards against pandas NaN and the string sentinels used elsewhere."""
     if val is None:
         return None
@@ -34,7 +44,7 @@ def _choose_project(configured, available):
     return available[0] if available else None
 
 
-class DevOpsManager:
+class TrackerManager:
     """Provider-neutral multiplexer: one TrackerProvider per customer.
 
     Which provider a customer gets is resolved from the customers table's
@@ -44,7 +54,7 @@ class DevOpsManager:
 
     def __init__(self, df, log):
         # Imported here, not at module top: provider modules import this module
-        # (the Azure provider subclasses DevOpsClient below), so a top-level
+        # (the Azure provider subclasses AzureDevOpsClient below), so a top-level
         # import would be circular.
         from .trackers.registry import create_provider_for_row
 
@@ -71,11 +81,11 @@ class DevOpsManager:
         Get DevOps client for customer, logging warning if not found.
 
         Returns:
-            DevOpsClient or None
+            AzureDevOpsClient or None
         """
         client = self.clients.get(customer_name)
         if not client:
-            self.log.warning(f"No DevOps connection for {customer_name}")
+            self.log.warning(f"No tracker connection for {customer_name}")
         return client
 
     def get_available_projects(self):
@@ -85,11 +95,37 @@ class DevOpsManager:
             for name, client in self.clients.items()
         }
 
-    def upload_attachment(self, customer_name, file_name, content):
-        """Upload bytes as a DevOps attachment for a customer's project; returns
-        the attachment URL or None."""
+    def list_repositories(self, customer_name):
+        """Git repos for a customer's tracker (empty where unsupported)."""
         client = self._get_client(customer_name)
-        return client.upload_attachment(file_name, content) if client else None
+        return client.list_repositories() if client else []
+
+    def list_branches(self, customer_name, repo_id):
+        """Branch names in one of a customer's repos ([] where unsupported)."""
+        client = self._get_client(customer_name)
+        return client.list_branches(repo_id) if client else []
+
+    def create_branch(
+        self, customer_name, repo_id, project_id, branch_name,
+        source_branch, work_item_id=None,
+    ):
+        """Create a work-item-linked branch on a customer's tracker."""
+        client = self._get_client(customer_name)
+        if not client:
+            return (False, f"No tracker connection for {customer_name}")
+        return client.create_branch(
+            repo_id, project_id, branch_name, source_branch, work_item_id
+        )
+
+    def upload_attachment(self, customer_name, file_name, content,
+                          work_item_id=None):
+        """Upload bytes as a tracker attachment for a customer; returns the
+        attachment URL or None. `work_item_id` targets item-scoped stores
+        (Jira); project-scoped providers ignore it."""
+        client = self._get_client(customer_name)
+        if not client:
+            return None
+        return client.upload_attachment(file_name, content, work_item_id)
 
     def fetch_attachment(self, url):
         """Fetch an attachment's bytes via whichever connected provider owns the
@@ -101,16 +137,24 @@ class DevOpsManager:
                 return client.fetch_attachment(url)
         return None
 
+    def list_members(self, customer_name):
+        """People usable as assignees on a customer's tracker connection.
+        (True, [display names]) or (False, msg)."""
+        client = self._get_client(customer_name)
+        if not client:
+            return (False, f"No tracker connection for {customer_name}")
+        return client.list_members()
+
     def save_comment(self, customer_name, comment, git_id):
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.add_comment_to_work_item(git_id, comment)
 
     def get_workitem_level(self, customer_name, level=None, work_item_id=None):
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.get_workitem_level(level, work_item_id)
 
     def get_description(self, customer_name, work_item_id):
@@ -120,14 +164,14 @@ class DevOpsManager:
         """
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}", "markdown", {})
+            return (False, f"No tracker connection for {customer_name}", "markdown", {})
         return client.get_work_item_description(work_item_id)
 
     def get_comments(self, customer_name, work_item_id):
         """Return a work item's comments. (True, [ {author,date,text}, ... ]) or (False, msg)."""
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.get_work_item_comments(work_item_id)
 
     def get_work_item_url(self, customer_name, work_item_id):
@@ -143,7 +187,7 @@ class DevOpsManager:
         """Update multiple fields of a work item. Returns (True, msg) or (False, msg)."""
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.update_work_item_fields(work_item_id, fields, markdown)
 
     def create_user_story(
@@ -157,7 +201,7 @@ class DevOpsManager:
     ):
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.create_user_story(
             title, description, additional_fields, markdown, parent
         )
@@ -172,7 +216,7 @@ class DevOpsManager:
     ):
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.create_epic(title, description, additional_fields, markdown)
 
     def create_feature(
@@ -186,7 +230,7 @@ class DevOpsManager:
     ):
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.create_feature(
             title, description, additional_fields, markdown, parent
         )
@@ -222,12 +266,18 @@ class DevOpsManager:
         """
         frames = []
         for customer_name, client in self.clients.items():
-            df = client.fetch_work_items(
-                min_id=max_ids.get(customer_name) if max_ids else None,
-                min_changed_date=(
-                    changed_dates.get(customer_name) if changed_dates else None
-                ),
-            )
+            # One provider's failure must never abort the whole preload — that
+            # would blank every customer's board, not just the broken one.
+            try:
+                df = client.fetch_work_items(
+                    min_id=max_ids.get(customer_name) if max_ids else None,
+                    min_changed_date=(
+                        changed_dates.get(customer_name) if changed_dates else None
+                    ),
+                )
+            except Exception as e:
+                self.log.error(f"Work-item fetch failed for {customer_name}: {e}")
+                continue
             if df is not None and not df.empty:
                 frames.append(df)
 
@@ -240,11 +290,11 @@ class DevOpsManager:
         """Move a work item to a board column."""
         client = self._get_client(customer_name)
         if not client:
-            return (False, f"No DevOps connection for {customer_name}")
+            return (False, f"No tracker connection for {customer_name}")
         return client.set_board_column(work_item_id, column_name)
 
 
-class DevOpsClient:
+class AzureDevOpsClient:
     def __init__(
         self, personal_access_token, organization_url, log, project_name=None
     ):
@@ -256,6 +306,8 @@ class DevOpsClient:
         self.configured_project = _clean_project(project_name)
         # All project names in the org, cached at connect() for the picker.
         self.available_projects = []
+        # Git repos of the project, cached on first list_repositories().
+        self._repos_cache = None
 
     def connect(self):
         # Create a connection to the Azure DevOps organization
@@ -302,10 +354,179 @@ class DevOpsClient:
             raise Exception("Connection not established. Call connect() first.")
         return self.connection.clients.get_work_item_tracking_client()
 
-    def upload_attachment(self, file_name, content):
+    # ── git branches ──────────────────────────────────────────────────────
+    def list_repositories(self):
+        """Git repos in this client's project for the create-branch dialog:
+        [{id, name, default_branch, project_id}], the repo matching the
+        project name first. Cached after the first fetch. Requires a PAT
+        with Code (Read) scope — an empty list on a working connection
+        usually means the scope is missing."""
+        if self._repos_cache is not None:
+            return self._repos_cache
+        try:
+            resp = requests.get(
+                f"{self.organization_url}/{self.project_name}"
+                "/_apis/git/repositories?api-version=7.0",
+                auth=("", self.personal_access_token),
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                self.log.warning(
+                    f"Repository listing failed ({resp.status_code}) — "
+                    "the PAT may lack Code (Read) scope"
+                )
+                return []
+            repos = [
+                {
+                    "id": r["id"],
+                    "name": r.get("name", ""),
+                    "default_branch": (
+                        r.get("defaultBranch") or "refs/heads/main"
+                    ).replace("refs/heads/", ""),
+                    "project_id": (r.get("project") or {}).get("id", ""),
+                }
+                for r in resp.json().get("value", [])
+                if not r.get("isDisabled")
+            ]
+            # The repo named like the project is almost always the target.
+            repos.sort(
+                key=lambda r: (
+                    r["name"].lower() != str(self.project_name).lower(),
+                    r["name"].lower(),
+                )
+            )
+            self._repos_cache = repos
+            return repos
+        except Exception as e:
+            self.log.error(f"Repository listing failed: {e}")
+            return []
+
+    def list_branches(self, repo_id):
+        """Branch names in a repo, default-branch conventions first ([] on
+        error). Feeds the base-branch picker."""
+        try:
+            resp = requests.get(
+                f"{self.organization_url}/{self.project_name}"
+                f"/_apis/git/repositories/{repo_id}/refs"
+                "?filter=heads/&api-version=7.0",
+                auth=("", self.personal_access_token),
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                return []
+            names = [
+                v["name"].replace("refs/heads/", "")
+                for v in resp.json().get("value", [])
+                if str(v.get("name", "")).startswith("refs/heads/")
+            ]
+            names.sort(key=lambda n: (n not in ("main", "master"), n.lower()))
+            return names
+        except Exception as e:
+            self.log.error(f"Branch listing failed: {e}")
+            return []
+
+    def create_branch(
+        self, repo_id, project_id, branch_name, source_branch, work_item_id=None
+    ):
+        """Create refs/heads/{branch_name} at the tip of `source_branch` and
+        link it to the work item (shows under the item's Development area,
+        like Azure DevOps' own "create branch" button). Requires a PAT with
+        Code (Read & Write) scope. Returns (ok, message)."""
+        base = (
+            f"{self.organization_url}/{self.project_name}"
+            f"/_apis/git/repositories/{repo_id}"
+        )
+        auth = ("", self.personal_access_token)
+        branch_name = str(branch_name).strip().strip("/")
+        source_branch = str(source_branch).strip().replace("refs/heads/", "")
+        try:
+            resp = requests.get(
+                f"{base}/refs?filter=heads/{source_branch}&api-version=7.0",
+                auth=auth,
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                return (
+                    False,
+                    f"Could not read the repo ({resp.status_code}) — "
+                    "the PAT may lack Code scope",
+                )
+            tip = next(
+                (
+                    v
+                    for v in resp.json().get("value", [])
+                    if v.get("name") == f"refs/heads/{source_branch}"
+                ),
+                None,
+            )
+            if tip is None:
+                return (False, f"Source branch '{source_branch}' not found")
+
+            resp = requests.post(
+                f"{base}/refs?api-version=7.0",
+                json=[
+                    {
+                        "name": f"refs/heads/{branch_name}",
+                        "oldObjectId": "0" * 40,
+                        "newObjectId": tip["objectId"],
+                    }
+                ],
+                auth=auth,
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                return (
+                    False,
+                    f"Branch create failed ({resp.status_code}) — the PAT "
+                    "may lack Code (Read & Write) scope",
+                )
+            result = (resp.json().get("value") or [{}])[0]
+            if not result.get("success"):
+                reason = result.get("customMessage") or result.get(
+                    "updateStatus", "refused"
+                )
+                return (False, f"Branch create refused: {reason}")
+
+            if work_item_id and project_id:
+                try:
+                    self.wit_client.update_work_item(
+                        [
+                            {
+                                "op": "add",
+                                "path": "/relations/-",
+                                "value": {
+                                    "rel": "ArtifactLink",
+                                    "url": _branch_artifact_url(
+                                        project_id, repo_id, branch_name
+                                    ),
+                                    "attributes": {"name": "Branch"},
+                                },
+                            }
+                        ],
+                        int(work_item_id),
+                        project=self.project_name,
+                    )
+                except Exception as e:
+                    self.log.error(f"Branch link failed for #{work_item_id}: {e}")
+                    return (
+                        True,
+                        f"Branch '{branch_name}' created, but linking it to "
+                        f"#{work_item_id} failed: {e}",
+                    )
+
+            self.log.info(
+                f"Created branch '{branch_name}' (linked to #{work_item_id})"
+            )
+            return (True, f"Branch '{branch_name}' created and linked")
+        except Exception as e:
+            self.log.error(f"Branch creation failed: {e}")
+            return (False, f"Branch creation failed: {e}")
+
+    def upload_attachment(self, file_name, content, work_item_id=None):
         """Upload `content` (bytes) as a project attachment and return its URL,
         which can be embedded in a work-item description (e.g. ![](url)). Returns
-        None on failure."""
+        None on failure. `work_item_id` is accepted for provider parity and
+        ignored — ADO attachments are project-scoped."""
         try:
             # create_attachment streams via data.read(), so it needs a file-like
             # object — wrap the raw bytes in BytesIO.
@@ -660,6 +881,37 @@ class DevOpsClient:
             self.log.error(f"Error updating work item {work_item_id}: {e}")
             return (False, f"Error updating work item {work_item_id}: {e}")
 
+    def list_members(self):
+        """Display names of the project's team members (union of all its
+        teams), for the assignee-import flow. (True, names) or (False, msg)."""
+        try:
+            token = base64.b64encode(
+                f":{self.personal_access_token}".encode("ascii")
+            ).decode("ascii")
+            headers = {"Authorization": f"Basic {token}"}
+            teams = requests.get(
+                f"{self.organization_url}/_apis/projects/{self.project_name}"
+                "/teams?api-version=7.1",
+                headers=headers, timeout=20,
+            ).json().get("value", [])
+            names: dict = {}
+            for team in teams:
+                members = requests.get(
+                    f"{self.organization_url}/_apis/projects/"
+                    f"{self.project_name}/teams/{team['id']}/members"
+                    "?api-version=7.1",
+                    headers=headers, timeout=20,
+                ).json().get("value", [])
+                for member in members:
+                    ident = member.get("identity") or {}
+                    display = ident.get("displayName")
+                    if display and not ident.get("isContainer"):
+                        names[display.lower()] = display
+            return (True, sorted(names.values()))
+        except Exception as e:
+            self.log.error(f"Member listing failed: {e}")
+            return (False, f"Error listing members: {e}")
+
     def set_board_column(self, work_item_id: int, column_name: str) -> tuple:
         """Move a work item to a board column via the hidden Kanban.Column field.
 
@@ -774,4 +1026,4 @@ class DevOpsClient:
             self.log.error(f"Fallback board column fetch failed: {e}")
             return (False, f"Error: {e}")
 
-    # DevOpsManager should not itself implement update logic; calls go to DevOpsClient
+    # TrackerManager should not itself implement update logic; calls go to AzureDevOpsClient

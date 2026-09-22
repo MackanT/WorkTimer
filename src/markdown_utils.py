@@ -48,6 +48,10 @@ MARKDOWN_DARK_MODE_CSS = """
     .wt-md th { background-color: #2d2d2d; font-weight: bold; }
     .wt-md strong { font-weight: bold; color: #ffffff; }
     .wt-md em { font-style: italic; }
+    .wt-md mark { background-color: #fde047; color: #1a1a1a; padding: 0 3px; border-radius: 3px; }
+    /* Tailwind's preflight makes img display:block, which shoves an image in
+       a list item below its bullet — restore inline flow inside rendered md. */
+    .wt-md img { display: inline-block; max-width: 100%; vertical-align: middle; }
     .wt-md hr { border: none; border-top: 2px solid #555; margin: 2em 0; }
     .wt-md a { color: #64b5f6; text-decoration: none; }
     .wt-md a:hover { text-decoration: underline; }
@@ -85,6 +89,7 @@ def render_and_sanitize_markdown(text: str) -> str:
             "nl2br",
             "sane_lists",
             "pymdownx.tilde",
+            "pymdownx.mark",
             "pymdownx.tasklist",
             "pymdownx.highlight",
             "pymdownx.superfences",
@@ -135,6 +140,7 @@ def render_and_sanitize_markdown(text: str) -> str:
         "del",
         "s",
         "ins",
+        "mark",
     ]
     allowed_attrs = {
         "a": ["href", "title", "target"],
@@ -181,7 +187,9 @@ def render_and_sanitize_markdown(text: str) -> str:
         return m.group(1) + "/devops_attachment?url=" + _urlquote(m.group(2), safe="") + m.group(3)
 
     cleaned_html = re.sub(
-        r'(<img\b[^>]*\bsrc=")(https://[^"]*/_apis/wit/attachments/[^"]*)(")',
+        r'(<img\b[^>]*\bsrc=")'
+        r'(https://[^"]*(?:/_apis/wit/attachments/|/rest/api/3/attachment/)[^"]*)'
+        r'(")',
         _proxy_devops_attachment,
         cleaned_html,
     )

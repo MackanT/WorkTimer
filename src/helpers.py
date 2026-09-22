@@ -96,6 +96,27 @@ def parse_date_range(date_range_str: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def token_expiry_level(expires, today: date | None = None):
+    """Classify a tracker token's expiry date for the startup warning.
+
+    Returns (level, days_left) where level is "expired" (past), "critical"
+    (≤ 7 days), "warning" (≤ 30 days) or "ok" — or None when the value
+    isn't a parseable YYYY-MM-DD date.
+    """
+    try:
+        exp = date.fromisoformat(str(expires).strip()[:10])
+    except (ValueError, TypeError):
+        return None
+    days = (exp - (today or date.today())).days
+    if days < 0:
+        return ("expired", days)
+    if days <= 7:
+        return ("critical", days)
+    if days <= 30:
+        return ("warning", days)
+    return ("ok", days)
+
+
 # ===== DATA VALIDATION =====
 
 
@@ -303,12 +324,82 @@ def parse_widget_values(widgets: dict) -> dict:
 
 # ===== FORM CONFIG PLUMBING =====
 
+# {{placeholder}} syntax for description templates. Friendlier aliases map
+# to the real form-field names ({{contact}} == {{contact_person}}).
+_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+_TEMPLATE_ALIASES = {"contact": "contact_person", "date": "today"}
+
+
+def _canon_placeholder(name: str) -> str:
+    return _TEMPLATE_ALIASES.get(name, name)
+
+
+def fill_template(template: str, values: dict) -> str:
+    """Replace {{field}} placeholders (and the legacy single-brace {today} /
+    {field} forms) with values. 'today' is always available; an UNKNOWN
+    {{placeholder}} stays literal, so a typo is visible instead of silently
+    vanishing."""
+    vals = {"today": str(date.today())}
+    for k, v in (values or {}).items():
+        vals[k] = "" if v is None else str(v)
+
+    def _sub(m: re.Match) -> str:
+        return vals.get(_canon_placeholder(m.group(1)), m.group(0))
+
+    out = _TEMPLATE_PLACEHOLDER_RE.sub(_sub, template or "")
+    for k, v in vals.items():
+        out = out.replace("{" + k + "}", v)
+    return out
+
+
+def template_has_field(template: str, field_name: str) -> bool:
+    """True when the raw template carries a {{placeholder}} resolving to
+    `field_name` (aliases included)."""
+    return any(
+        _canon_placeholder(n) == field_name
+        for n in _TEMPLATE_PLACEHOLDER_RE.findall(template or "")
+    )
+
+
+def sync_template_text(text: str, raw_template: str, values: dict) -> str:
+    """Refresh every placeholder-carrying line of `text` from the RAW
+    template with the current `values`.
+
+    Each raw line with at least one {{placeholder}} is located in `text` by
+    its literal parts (every placeholder wildcarded — so multiple
+    placeholders per line, moved lines and relabelled lines all work), then
+    replaced with the freshly rendered line. A line with no literal text at
+    all can't be found again once values replaced it and is skipped — keep
+    some label text on placeholder lines."""
+    out = text or ""
+    for raw_line in (raw_template or "").splitlines():
+        if not _TEMPLATE_PLACEHOLDER_RE.search(raw_line):
+            continue
+        # split() with the capturing group interleaves [lit, name, lit, …]
+        literals = _TEMPLATE_PLACEHOLDER_RE.split(raw_line)[0::2]
+        if not any(lit.strip() for lit in literals):
+            continue  # nothing to anchor on
+        pattern = re.compile(
+            "^" + ".*".join(re.escape(lit) for lit in literals) + "$",
+            re.MULTILINE,
+        )
+        m = pattern.search(out)
+        if m is None:
+            continue
+        out = out[: m.start()] + fill_template(raw_line, values) + out[m.end():]
+    return out
+
 
 def setup_template_handling(widgets: dict) -> None:
-    """Set up template handling for codemirror widgets with templates.
+    """Wire the description editor's per-type templates to the form.
 
-    Args:
-        widgets: Dictionary of widget instances
+    A type change reloads the template through fill_template ({{today}},
+    {{source}}, {{contact_person}}, …). A dropdown change re-renders the
+    placeholder-carrying lines from the raw template with the current
+    values (sync_template_text) — position-independent, so templates can be
+    rearranged and relabelled freely, with several placeholders per line.
+    Templates without a placeholder for a field fall back to the legacy
+    hardcoded **Source:** / **Contact:** line convention.
     """
     # Find codemirror widgets with template info
     template_widgets = {}
@@ -334,52 +425,46 @@ def setup_template_handling(widgets: dict) -> None:
             templates = template_info["templates"]
             parent_fields = template_info["parent_fields"]
 
+            values = {
+                f: (widgets[f].value if widgets.get(f) is not None else "")
+                for f in parent_fields
+            }
+
             if parent_field_changed:
-                # Only update specific parent field placeholder, don't reload entire template
-                current_content = widget.value or ""
-                parent_widget = widgets.get(parent_field_changed)
-
-                if parent_widget and parent_field_changed in parent_fields:
-                    # Update specific lines that contain the field placeholder
-                    lines = current_content.split("\n")
-                    updated_lines = []
-
-                    for line in lines:
-                        # Look for lines that mention the field (e.g., "**Source:**" or "**Contact:**")
-                        if parent_field_changed == "source" and "**Source:**" in line:
-                            updated_lines.append(
-                                f"**Source:** {parent_widget.value or ''}"
-                            )
-                        elif (
-                            parent_field_changed == "contact_person"
-                            and "**Contact:**" in line
-                        ):
-                            updated_lines.append(
-                                f"**Contact:** {parent_widget.value or ''}"
-                            )
-                        else:
-                            updated_lines.append(line)
-
-                    widget.value = "\n".join(updated_lines)
-            else:
-                # Full template reload (only when work_item_type changes)
+                if parent_field_changed not in parent_fields:
+                    continue
                 template_content = templates.get(current_type, "")
-
+                text = widget.value or ""
+                if template_has_field(template_content, parent_field_changed):
+                    # Re-render the placeholder-carrying lines from the raw
+                    # template with the CURRENT dropdown values.
+                    widget.value = sync_template_text(
+                        text, template_content, values
+                    )
+                else:
+                    # Legacy templates without a {{placeholder}}: the old
+                    # hardcoded label-line convention.
+                    parent_widget = widgets.get(parent_field_changed)
+                    value = str(
+                        (parent_widget.value if parent_widget is not None else "")
+                        or ""
+                    )
+                    label = {
+                        "source": "**Source:**",
+                        "contact_person": "**Contact:**",
+                    }.get(parent_field_changed)
+                    if label:
+                        lines = text.split("\n")
+                        for i, line in enumerate(lines):
+                            if label in line:
+                                lines[i] = f"{label} {value}"
+                                break
+                        widget.value = "\n".join(lines)
+            else:
+                # Full template reload (only when work_item_type changes).
+                template_content = templates.get(current_type, "")
                 if template_content:
-                    # Replace {today} placeholder
-                    content = template_content.replace("{today}", str(date.today()))
-
-                    # Replace parent field placeholders if they exist
-                    for parent_field in parent_fields:
-                        parent_widget = widgets.get(parent_field)
-                        if parent_widget and parent_widget.value:
-                            placeholder = "{" + parent_field + "}"
-                            content = content.replace(
-                                placeholder, str(parent_widget.value)
-                            )
-
-                    # Update the editor content
-                    widget.value = content
+                    widget.value = fill_template(template_content, values)
 
     # Bind to work_item_type changes (full template reload)
     work_item_type_widget.on_value_change(lambda e: update_templates(e, None))

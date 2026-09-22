@@ -27,6 +27,10 @@ class NavigationBar:
         self.on_navigate = None
         self._active_timers_row = None
         self._update_badge = None
+        # {nav path: [(label, icon, async_handler), …]} — a nav item with an
+        # entry here renders as a dropdown menu (opens dialogs) instead of a
+        # page link. Set BEFORE render() (e.g. the Data entity menu).
+        self.menu_providers: dict = {}
 
     def render(self) -> None:
         """
@@ -66,6 +70,26 @@ class NavigationBar:
 
                     # Navigation buttons
                     for item in nav_items:
+                        menu_entries = self.menu_providers.get(item["path"])
+                        if menu_entries:
+                            # Dropdown item — opens dialogs over the current
+                            # page instead of navigating anywhere.
+                            button = ui.button(
+                                item["label"], icon=item["icon"]
+                            ).props("flat")
+                            button.classes(
+                                f"text-{nav_text} hover:bg-{nav_hover} shrink-0"
+                            )
+                            with button:
+                                with ui.menu().props("auto-close"):
+                                    for m_label, m_icon, m_handler in menu_entries:
+                                        with ui.menu_item(on_click=m_handler):
+                                            with ui.row().classes(
+                                                "items-center gap-2 no-wrap"
+                                            ):
+                                                ui.icon(m_icon, size="xs")
+                                                ui.label(m_label)
+                            continue
 
                         def create_click_handler(path):
                             def handler():
@@ -140,27 +164,47 @@ class NavigationBar:
         """Legacy shim — delegates to set_active_timers."""
         self.set_active_timers(tooltip_lines or [] if active else [])
 
-    def set_update_available(self, version: str | None) -> None:
+    def set_update_available(self, version: str | None, on_click=None) -> None:
         """Show or hide the update badge in the nav bar right side.
 
         Args:
             version: Latest version string to display, or None/empty to hide.
+            on_click: optional handler (e.g. a what's-new preview) — makes the
+                badge clickable.
         """
         if self._update_badge is None:
             return
         self._update_badge.clear()
         if not version:
             return
+        # Tell the user the right update command for HOW they run the app:
+        # Docker needs a rebuild (new dependencies!), bare metal just pulls
+        # (uv run syncs dependencies automatically).
+        import os
+
+        in_docker = bool(os.getenv("WORKTIMER_DOCKER")) or os.path.exists(
+            "/.dockerenv"
+        )
+        update_cmd = (
+            "docker compose up -d --build"
+            if in_docker
+            else "git pull, then restart (uv run syncs dependencies)"
+        )
         with self._update_badge:
             ui.icon("upgrade", size="xs").classes("text-amber-400 shrink-0")
-            (
+            pill = (
                 ui.label(f"v{version} available")
                 .classes(
                     "text-xs text-amber-300 border border-amber-600"
                     " px-2 py-0.5 rounded-full whitespace-nowrap"
                 )
-                .tooltip("Update with: git pull (then restart the app)")
+                .tooltip(
+                    f"Update with: {update_cmd}"
+                    + (" — click to see what's new" if on_click else "")
+                )
             )
+            if on_click:
+                pill.classes("cursor-pointer").on("click", on_click)
 
     def set_active(self, path: str, theme: dict):
         """Update the active navigation button"""

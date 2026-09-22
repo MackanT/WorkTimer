@@ -9,12 +9,12 @@ v2 — Live mode:
 
 import asyncio
 import math
-from nicegui import ui, app
+from nicegui import app, context, ui
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
-from ..ui.devops_handlers import DevOpsWorkItemHandlers
-from ..ui.devops_forms import open_work_item_dialog, render_devops_form
+from ..ui.work_item_handlers import WorkItemHandlers
+from ..ui.work_item_forms import open_add_work_item_dialog, open_work_item_dialog
 from ..trackers.base import DEFAULT_TYPE_HIERARCHY
 from .hierarchy import create_hierarchy_view
 
@@ -33,7 +33,7 @@ _BOARD_CSS = """<style>
 async def board_page():
     """DevOps Board — Kanban view of work items from local cache."""
     core = await AppCore.get_or_initialize()
-    DO = core.devops_engine
+    DO = core.tracker_engine
     muted = core.theme.get("muted")  # theme muted-text token
 
     # Inject once per client — SPA re-visits would stack duplicate <style> blocks.
@@ -94,6 +94,10 @@ async def board_page():
         filter_state["customer"] = (
             _saved_cust if _saved_cust in customer_names else customer_names[0]
         )
+        # Preferred level for THIS customer's tracker (Jira's leaf is Sub-task
+        # but its working level is Story; Azure's leaf User Story is both).
+        if DO is not None:
+            filter_state["type"] = DO.preferred_type(filter_state["customer"])
 
     # Per-customer indicator colours (shown as a dot on the customer tabs).
     cust_colors: dict = {}
@@ -118,7 +122,7 @@ async def board_page():
     # Without this, the first render derives order from df insertion order which is arbitrary.
     for _cn in customer_names:
         for _wt in _work_item_types(_cn):
-            _c = DevOpsWorkItemHandlers.devops_columns_cache.get(_cn, {}).get(_wt)
+            _c = WorkItemHandlers.devops_columns_cache.get(_cn, {}).get(_wt)
             if _c:
                 known_cols[(_cn, _wt)] = list(_c)
 
@@ -126,7 +130,7 @@ async def board_page():
     def _column_order(customer: str, item_type: str) -> list[str]:
         """Return ordered column list; once a column is known it stays visible."""
         key = (customer, item_type)
-        cached = DevOpsWorkItemHandlers.devops_columns_cache.get(customer, {}).get(item_type)
+        cached = WorkItemHandlers.devops_columns_cache.get(customer, {}).get(item_type)
         if cached:
             result = list(cached)
             for c in known_cols.get(key, []):
@@ -197,11 +201,12 @@ async def board_page():
 
         # Free-text search across each card's visible fields (title, assignee,
         # state, board column, and #id) — case-insensitive substring match.
-        # Descriptions aren't in the df, so they're not searched.
+        # Descriptions are cached as plain text during sync, so they match too.
         query = (filter_state.get("search") or "").strip().lower()
         if query:
             cols = [
-                c for c in ("title", "assigned_to", "state", "board_column")
+                c for c in ("title", "assigned_to", "state", "board_column",
+                            "description")
                 if c in DO.df.columns
             ]
             haystack = DO.df[cols].fillna("").astype(str).agg(" ".join, axis=1)
@@ -387,121 +392,27 @@ async def board_page():
             priority_colors=PRIORITY_COLORS, priority_labels=PRIORITY_LABELS,
         )
 
-    # ── add-item dialog (full add form) ───────────────────────────────────────
-    async def _open_add_dialog():
-        """Open the full DevOps add form in a dialog."""
-        add_cfg = (
-            core.ui_config
-            .get("board_devops_forms", {})
-            .get("add", {})
+    # ── add-item dialog (shared, page-independent — see work_item_forms) ─────────
+    async def _open_add_dialog(preset_type: str | None = None,
+                               preset_parent: str | None = None):
+        """Open the shared add form seeded with the board's current customer /
+        type. `preset_type`/`preset_parent` come from the hierarchy's ＋ button
+        (add a child under the focused node)."""
+
+        async def _after():
+            await _reload_board_data(show_notify=False)
+            # When adding from the hierarchy view, redraw its graph so the new
+            # node appears immediately.
+            if view_state["view"] == "hierarchy":
+                await hier.refresh()
+
+        await open_add_work_item_dialog(
+            core,
+            preset_customer=filter_state.get("customer"),
+            preset_type=preset_type or filter_state.get("type", "User Story"),
+            preset_parent=preset_parent,
+            on_success=_after,
         )
-
-        with ui.dialog().props("maximized") as dlg:
-            with (
-                ui.card()
-                .style(DIALOG_CARD_STYLE)
-                .props("flat bordered")
-            ):
-                form_actions: dict = {"submit": None}
-
-                async def _submit_from_header():
-                    submit_fn = form_actions.get("submit")
-                    if submit_fn:
-                        await submit_fn()
-
-                # Match the update dialog look with a top context bar.
-                with ui.row().classes("items-center gap-2 no-wrap w-full").style(
-                    "padding: 0.6rem 0.8rem; flex-shrink: 0;"
-                ):
-                    ui.icon("add_circle", size="16px").classes("text-primary shrink-0")
-                    ui.label("New Work Item").classes(f"text-{muted} text-xs uppercase tracking-wide shrink-0")
-                    ui.label("·").classes(f"text-{muted} text-xs shrink-0")
-                    type_label = ui.label(filter_state.get("type", "User Story")).classes(f"text-{muted} text-xs shrink-0")
-                    customer_label = ui.label(filter_state.get("customer", "")).classes("text-sm font-semibold flex-1").style(
-                        "overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-                    )
-                    ui.space()
-                    ui.button("Add", icon="save", on_click=_submit_from_header).props("dense color=primary")
-                    ui.button("Cancel", icon="close", on_click=dlg.close).props("flat dense color=grey-6")
-                ui.separator()
-
-                async def _on_add_success():
-                    dlg.close()
-                    await _reload_board_data(show_notify=False)
-
-                result = await render_devops_form(
-                    core, "add", add_cfg,
-                    on_success=_on_add_success,
-                    show_internal_header=False,
-                )
-
-                _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
-                form_actions["submit"] = submit_fn
-
-                if widgets:
-                    cust = filter_state.get("customer")
-                    if cust and "customer_name" in widgets:
-                        widgets["customer_name"].widget.value = cust
-                        widgets["customer_name"].widget.update()
-                    wtype = filter_state.get("type", "User Story")
-                    if wtype and "work_item_type" in widgets:
-                        widgets["work_item_type"].widget.value = wtype
-                        widgets["work_item_type"].widget.update()
-
-                    def _sync_add_header(_e=None):
-                        if "work_item_type" in widgets:
-                            type_label.set_text(str(widgets["work_item_type"].widget.value or "User Story"))
-                        if "customer_name" in widgets:
-                            customer_label.set_text(str(widgets["customer_name"].widget.value or ""))
-
-                    if "work_item_type" in widgets:
-                        widgets["work_item_type"].on_value_change(_sync_add_header)
-                    if "customer_name" in widgets:
-                        widgets["customer_name"].on_value_change(_sync_add_header)
-                    _sync_add_header()
-
-                    # The customer/type values above are set programmatically, which does
-                    # not fire the widgets' "update:model-value" browser event that normally
-                    # triggers board-column loading — so call it once here directly.
-                    if load_fn:
-                        await load_fn()
-
-                    # Image insert (button + paste) on the Description editor —
-                    # parity with the update dialog. Here the customer is chosen
-                    # in the form and can change, so resolve it at upload time and
-                    # keep the paste target in sync when it changes.
-                    desc = widgets.get("description_editor")
-                    cust_w = widgets.get("customer_name")
-                    if (
-                        desc is not None and cust_w is not None
-                        and hasattr(desc, "enable_image_upload")
-                        and core.devops_engine is not None
-                    ):
-                        async def _add_image_uploader(name, content):
-                            cust_now = cust_w.widget.value
-                            if not cust_now:
-                                ui.notify("Pick a customer first", type="warning")
-                                return None
-                            return await asyncio.to_thread(
-                                core.devops_engine.upload_attachment,
-                                cust_now, name, content,
-                            )
-
-                        desc.enable_image_upload(
-                            _add_image_uploader,
-                            paste_endpoint="/upload_devops_image",
-                            paste_fields={"customer": cust_w.widget.value or ""},
-                        )
-
-                        def _sync_paste_customer(_e=None):
-                            desc.update_paste_fields(
-                                "/upload_devops_image",
-                                {"customer": cust_w.widget.value or ""},
-                            )
-
-                        cust_w.on_value_change(_sync_paste_customer)
-
-        dlg.open()
 
     # ── card renderer ──────────────────────────────────────────────────────────
     def _render_card(row: dict):
@@ -611,7 +522,7 @@ async def board_page():
         if not cust:
             with ui.column().classes("items-center justify-center w-full").style("padding: 4rem;"):
                 ui.icon("view_kanban", size="xl").classes(f"text-{muted}")
-                ui.label("No customers with DevOps data available.").classes(f"text-{muted} mt-2")
+                ui.label("No customers with tracker data available.").classes(f"text-{muted} mt-2")
             return
 
         data = _board_data()
@@ -804,20 +715,52 @@ async def board_page():
         else:
             hier.render_controls()
 
+    async def _open_add_from_hierarchy():
+        """＋ in the hierarchy view: when a node is focused, pre-select it as the
+        parent and default the new item to the next level down (Epic → Feature,
+        Feature → User Story). Whole-tree or leaf focus opens a plain add."""
+        focus = hier.get_focus()
+        levels = list(
+            DO.type_hierarchy(filter_state["customer"])
+            if DO is not None else DEFAULT_TYPE_HIERARCHY
+        )
+        child_type = None
+        if focus and focus["type"] in levels:
+            idx = levels.index(focus["type"])
+            if idx + 1 < len(levels):
+                child_type = levels[idx + 1]
+        if focus and child_type:
+            await _open_add_dialog(
+                preset_type=child_type, preset_parent=focus["display_name"]
+            )
+        else:
+            await _open_add_dialog()
+
     @ui.refreshable
     def render_view_actions():
         if view_state["view"] == "board":
+            async def _open_add_plain():
+                # Zero-arg wrapper — a bare _open_add_dialog reference would let
+                # NiceGUI pass the click event into preset_type.
+                await _open_add_dialog()
+
             ui.button(icon="refresh", on_click=_on_refresh).props(
                 "flat dense color=white"
             ).tooltip("Reload from local DB (no API call)")
-            ui.button(icon="add", on_click=_open_add_dialog).props(
+            ui.button(icon="add", on_click=_open_add_plain).props(
                 "flat dense color=white"
-            ).tooltip("Add new DevOps work item")
+            ).tooltip("Add new work item")
         else:
             hier.render_zoom_controls()
             ui.button(icon="refresh", on_click=hier.refresh).props(
                 "flat dense color=white"
             ).tooltip("Reload from local cache")
+            ui.button(icon="add", on_click=_open_add_from_hierarchy).props(
+                "flat dense color=white"
+            ).tooltip(
+                "Add work item — created under the focused item when a focus "
+                "is selected"
+            )
 
     with toolbar(core.theme):
         with toolbar_group(core.theme, divider_after=True):
@@ -847,6 +790,15 @@ async def board_page():
                 async def _on_customer_change(e):
                     filter_state["customer"] = e.value
                     app.storage.user["devops_customer"] = e.value
+                    # Trackers differ in type names (User Story vs Story) — a
+                    # stale type from the previous customer would blank the
+                    # board, so snap to the new tracker's preferred level.
+                    types = _work_item_types(e.value)
+                    if filter_state["type"] not in types:
+                        filter_state["type"] = (
+                            DO.preferred_type(e.value) if DO is not None else types[0]
+                        )
+                    render_type_chips.refresh()
                     render_board.refresh()
                     render_done_zone.refresh()
                     hier.set_customer(e.value)
@@ -866,8 +818,25 @@ async def board_page():
         render_view_actions()
 
     # Reload the board when a DevOps sync completes elsewhere (settings page
-    # emits "devops_refreshed" after manual incremental/full syncs).
+    # emits "devops_refreshed" after manual syncs; the background tracker
+    # init emits it when the connections land).
+    page_client = context.client
+
     def _on_devops_refreshed(**_):
+        # Page built BEFORE the background init finished (engine/df missing)?
+        # The customer tabs and closures can't be rebuilt by a soft refresh —
+        # reload this page once, now that data exists (the automatic version
+        # of the manual F5 that used to be needed).
+        eng = core.tracker_engine
+        if (DO is None or not customer_names) and eng is not None:
+            if eng.df is not None and not eng.df.empty:
+                try:
+                    if board_container.id in page_client.elements:
+                        with page_client:
+                            ui.navigate.reload()
+                except Exception:
+                    pass  # page gone or client disconnected — nothing to do
+                return
         asyncio.create_task(_reload_board_data(show_notify=False))
 
     core.event_bus.register_unique(

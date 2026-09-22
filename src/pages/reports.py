@@ -23,7 +23,8 @@ from ..ui.elements import toolbar, toolbar_group, page_card, segmented_chips
 _PERIODS = ["Day", "Week", "Month", "Year", "Custom"]
 
 # Billing-rounding basis for the report's billable tiles + CSV (display-only,
-# never written to the DB). The increment comes from the customer/global setting.
+# never written to the DB). The increment defaults to the global time settings
+# and is adjustable on the page.
 _ROUND_BASES = {
     "off": "No rounding",
     "entry": "Per entry",
@@ -357,14 +358,14 @@ async def reports_page():
 
     # git_id → work-item title, for the "Top work items" chart.
     id2name = {}
-    _dfd = core.devops_engine.df if core.devops_engine is not None else None
+    _dfd = core.tracker_engine.df if core.tracker_engine is not None else None
     if _dfd is not None and not _dfd.empty and "display_name" in _dfd.columns:
         for _, r in _dfd[["id", "display_name"]].dropna().iterrows():
             id2name[int(r["id"])] = str(r["display_name"])
 
-    # Per-customer settings: expected work %, billing rounding override, colour.
+    # Per-customer settings: expected work %, colour.
     meta_df = await QE.query_db(
-        "SELECT customer_name, expected_work_pct, billing_round_minutes, color "
+        "SELECT customer_name, expected_work_pct, color "
         "FROM customers WHERE is_current = 1"
     )
     cust_meta = {}
@@ -373,8 +374,6 @@ async def reports_page():
             cust_meta[r["customer_name"]] = {
                 "expected": (float(r["expected_work_pct"])
                              if pd.notna(r["expected_work_pct"]) else None),
-                "round": (int(r["billing_round_minutes"])
-                          if pd.notna(r["billing_round_minutes"]) else 0),
                 "color": (r["color"] or None),
             }
 
@@ -385,13 +384,6 @@ async def reports_page():
         vals = [cust_meta.get(c, {}).get("expected") for c in targets]
         vals = [v for v in vals if v is not None]
         return sum(vals) if vals else default_target
-
-    def _customer_round(sel):
-        # A single selected customer contributes its own rounding default;
-        # any other selection (none / several) uses the global default.
-        if len(sel) == 1:
-            return cust_meta.get(sel[0], {}).get("round") or default_round
-        return default_round
 
     def _sel_label():
         return ", ".join(state["customers"]) if state["customers"] else "All"
@@ -412,8 +404,7 @@ async def reports_page():
     _init_basis = _saved_basis if _saved_basis in _ROUND_BASES else "off"
     _saved_min = app.storage.user.get("report_round_minutes")
     _init_round = (
-        int(_saved_min) if isinstance(_saved_min, (int, float))
-        else _customer_round(_init_custs)
+        int(_saved_min) if isinstance(_saved_min, (int, float)) else default_round
     )
     _month = helpers.get_range_for("Month")
     state = {
@@ -687,11 +678,6 @@ async def reports_page():
         sel = [c for c in (e.value or []) if c in names]
         state["customers"] = sel
         app.storage.user["report_customers"] = sel
-        # A single selection seeds the rounding increment from that customer's
-        # setting (the "to nearest (min)" input can still override it).
-        state["round"] = _customer_round(sel)
-        app.storage.user["report_round_minutes"] = state["round"]
-        render_round_input.refresh()
         cust_select.props(f'display-value="{_cust_display()}"')
         cust_select.update()
         await _load()
@@ -711,14 +697,13 @@ async def reports_page():
         app.storage.user["report_round_minutes"] = state["round"]
         await _load()
 
-    @ui.refreshable
     def render_round_input():
         ui.number(
             value=state["round"], min=0, step=5, on_change=_on_round_minutes,
             label="round up to (min)",
         ).props("dense outlined").classes("w-32 shrink-0").tooltip(
-            f"Round up to the next N minutes (0 = off; mode: {mode}). Seeded from a "
-            "single selected customer's setting; edit to override."
+            f"Round up to the next N minutes (0 = off; mode: {mode}). Defaults to "
+            "the global setting (Settings → Data); edit to override."
         )
 
     @ui.refreshable

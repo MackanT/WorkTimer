@@ -19,6 +19,10 @@ _PYPROJECT_URL = (
     "https://raw.githubusercontent.com/mackant/worktimer"
     "/refs/heads/main/pyproject.toml"
 )
+_CHANGELOG_URL = (
+    "https://raw.githubusercontent.com/mackant/worktimer"
+    "/refs/heads/main/docs/CHANGELOG.md"
+)
 _CHECK_INTERVAL = timedelta(hours=24)
 
 # Process-level cache so multiple clients don't re-trigger the network call
@@ -49,6 +53,65 @@ def _current_version() -> str:
             return tomllib.load(f)["project"]["version"]
     except Exception:
         return "unknown"
+
+
+def github_issue_url(kind: str) -> str:
+    """Prefilled GitHub new-issue link ('bug' or anything else = feature
+    request), carrying the environment details a report always needs
+    (app version, Docker vs direct). No API, no tokens — the user submits
+    the issue themselves in the browser."""
+    import os
+    from urllib.parse import urlencode
+
+    in_docker = bool(os.getenv("WORKTIMER_DOCKER")) or os.path.exists("/.dockerenv")
+    env = (
+        f"WorkTimer v{_current_version()} · "
+        f"{'Docker' if in_docker else 'direct Python'}"
+    )
+    if kind == "bug":
+        params = {
+            "title": "[Bug] ",
+            "labels": "bug",
+            "body": (
+                "## What happened\n\n\n"
+                "## What I expected\n\n\n"
+                "## Steps to reproduce\n\n1. \n\n"
+                f"---\n_{env}_\n"
+            ),
+        }
+    else:
+        params = {
+            "title": "[Feature] ",
+            "labels": "enhancement",
+            "body": (
+                "## The idea\n\n\n"
+                "## Why it helps\n\n\n"
+                f"---\n_{env}_\n"
+            ),
+        }
+    return f"https://github.com/mackant/worktimer/issues/new?{urlencode(params)}"
+
+
+def extract_whats_new(changelog_text: str, since_version: str) -> str:
+    """The changelog sections for versions strictly newer than `since_version`,
+    as markdown ('### x.y.z (date)' headings and their bodies). Empty string
+    when there is nothing newer (or nothing parseable)."""
+    import re
+
+    out = []
+    for sec in re.split(r"(?m)^### ", changelog_text or "")[1:]:
+        m = re.match(r"(\d+\.\d+\.\d+)", sec)
+        if m and _is_newer(m.group(1), since_version):
+            out.append("### " + sec.rstrip())
+    return "\n\n".join(out)
+
+
+def fetch_remote_changelog_blocking() -> str:
+    """Blocking fetch of main's CHANGELOG.md — run in a thread executor. Used
+    by the update badge's what's-new preview (the local changelog predates the
+    version the badge is announcing)."""
+    with urllib.request.urlopen(_CHANGELOG_URL, timeout=5) as resp:
+        return resp.read().decode("utf-8")
 
 
 def _fetch_latest_blocking() -> str:

@@ -1,11 +1,12 @@
 # pandas removed from globals.py -- use local imports where needed
-from .devops import DevOpsManager
+from .tracker_manager import TrackerManager
 
 # Importing a tracker module registers it (see src/trackers/). Imported after
-# devops above — the Azure provider subclasses DevOpsClient, so this order
+# devops above — the Azure provider subclasses AzureDevOpsClient, so this order
 # avoids a circular import.
 from .trackers import azure as _azure_tracker  # noqa: F401
-from .trackers.base import DEFAULT_TYPE_HIERARCHY
+from .trackers import jira as _jira_tracker  # noqa: F401
+from .trackers.base import DEFAULT_STATE_OPTIONS, DEFAULT_TYPE_HIERARCHY
 from .database import Database
 from dataclasses import dataclass
 import asyncio
@@ -66,7 +67,7 @@ class QueryEngine:
         self.df = await self.function_db("get_query_list")
 
 
-class DevOpsEngine:
+class TrackerEngine:
     def __init__(self, query_engine: QueryEngine, log_engine: logging.Logger):
         self.manager = None
         self.df = None
@@ -74,7 +75,7 @@ class DevOpsEngine:
         self.log = log_engine
         self._scheduled_tasks = []
         self._scheduled_started = False
-        # Serializes update_devops() so a manual sync (settings page) and the
+        # Serializes refresh_tracker_data() so a manual sync (settings page) and the
         # hourly scheduled sync can't interleave DB writes.
         self._update_lock = asyncio.Lock()
         self.last_incremental_sync: datetime.datetime | None = None
@@ -98,7 +99,7 @@ class DevOpsEngine:
                 try:
                     await asyncio.sleep(3600)
                     self.log.info("Running scheduled incremental DevOps update")
-                    await self.update_devops(incremental=True)
+                    await self.refresh_tracker_data(incremental=True)
                 except Exception as e:
                     self.log.error(f"Error in incremental DevOps update: {e}")
                 except asyncio.CancelledError:
@@ -110,7 +111,7 @@ class DevOpsEngine:
                 try:
                     await asyncio.sleep(_seconds_until_next(2))
                     self.log.info("Running scheduled daily full refresh")
-                    await self.update_devops(incremental=False)
+                    await self.refresh_tracker_data(incremental=False)
                     # Loop back immediately — next iteration recalculates time until 2 AM
                 except Exception as e:
                     self.log.error(f"Error in daily full refresh: {e}")
@@ -147,11 +148,15 @@ class DevOpsEngine:
         or {} when no manager. Feeds the customer form's project picker."""
         return self.manager.get_available_projects() if self.manager else {}
 
-    def upload_attachment(self, customer_name, file_name, content):
-        """Upload bytes as a DevOps attachment for a customer; returns the URL or
-        None. Used to embed pasted/inserted images in work-item descriptions."""
+    def upload_attachment(self, customer_name, file_name, content,
+                          work_item_id=None):
+        """Upload bytes as a tracker attachment for a customer; returns the URL
+        or None. Used to embed pasted/inserted images in work-item
+        descriptions. `work_item_id` targets item-scoped stores (Jira)."""
         return (
-            self.manager.upload_attachment(customer_name, file_name, content)
+            self.manager.upload_attachment(
+                customer_name, file_name, content, work_item_id
+            )
             if self.manager
             else None
         )
@@ -167,9 +172,14 @@ class DevOpsEngine:
         """
         if self.df is None or self.df.empty:
             return [] if customer_name is not None else {}
-        active = self.df[self.df["state"].isin(["Active", "New"])]
+        # Provider-neutral "open item" filter — state NAMES differ per tracker
+        # (ADO: Active/New..., Jira: To Do/In Progress...), so exclude the
+        # done-ish ones instead of whitelisting Azure's.
+        active = self.df[~self.df["state"].isin(["Resolved", "Closed", "Removed", "Done"])]
         if customer_name is not None:
             active = active[active["customer_name"] == customer_name]
+        # Newest (highest id) first — most likely related to current work.
+        active = active.sort_values("id", ascending=False)
 
         def _row_option(row):
             if pd.isna(row.get("id")) or pd.isna(row.get("display_name")):
@@ -198,7 +208,7 @@ class DevOpsEngine:
 
             # Always update/rebuild devops data to reflect latest customer info
             self.log.info("Performing incremental DevOps update on startup.")
-            await self.update_devops(incremental=True)
+            await self.refresh_tracker_data(incremental=True)
             await self.load_df()
             self.log.info("DevOps preload complete.")
 
@@ -214,15 +224,61 @@ class DevOpsEngine:
             self.log.error(f"Error starting DevOps scheduled tasks: {e}")
 
     async def setup_manager(self):
-        df = await self.query_engine.query_db(
-            "select distinct customer_name, pat_token, org_url, devops_project, "
-            "coalesce(integration_type, 'devops') as integration_type "
-            "from customers where pat_token is not null and pat_token != '' "
-            "and org_url is not null and org_url != '' and is_current = 1"
-        )
-        # DevOpsManager.__init__ connects to every org (network I/O) — keep it
+        # A customer's connection comes from its linked tracker; the legacy
+        # per-customer columns remain the fallback for unlinked customers
+        # (pre-migration rows, or an unfinished setup).
+        df = await self.query_engine.function_db("get_tracker_connections")
+        # PATs are stored encrypted at rest — providers need the real token.
+        # An undecryptable value becomes '' (backup restored without its key),
+        # so that customer is skipped with a clear log line.
+        if not df.empty:
+            from .pat_crypto import decrypt_pat
+
+            df["pat_token"] = df["pat_token"].map(
+                lambda v: decrypt_pat(v, self.query_engine.file_name, self.log)
+            )
+            df = df[df["pat_token"] != ""]
+        # TrackerManager.__init__ connects to every org (network I/O) — keep it
         # off the event loop so the UI stays responsive during startup.
-        self.manager = await asyncio.to_thread(DevOpsManager, df, self.log)
+        self.manager = await asyncio.to_thread(TrackerManager, df, self.log)
+
+    def provider_label(self, customer_name: str | None = None) -> str:
+        """The customer's tracker name for UI labels ('Azure DevOps'/'Jira')."""
+        if self.manager and customer_name in (self.manager.clients or {}):
+            return self.manager.clients[customer_name].display_name
+        return "Tracker"
+
+    def capabilities(self, customer_name: str | None = None):
+        """The customer's tracker capabilities; permissive defaults when the
+        customer has no connected provider (UI then behaves as before)."""
+        from .trackers.base import TrackerCapabilities
+
+        if self.manager and customer_name in (self.manager.clients or {}):
+            return self.manager.clients[customer_name].capabilities()
+        return TrackerCapabilities()
+
+    def state_options(self, customer_name: str | None = None) -> list:
+        """State names for a customer's tracker (Jira: its project statuses,
+        cached on the provider after the first fetch). May do one blocking
+        HTTP call on a cache miss — call via to_thread from async code."""
+        if self.manager and customer_name in (self.manager.clients or {}):
+            try:
+                states = self.manager.clients[customer_name].state_options()
+                if states:
+                    return list(states)
+            except Exception as e:
+                self.log.error(f"State options failed for {customer_name}: {e}")
+        return list(DEFAULT_STATE_OPTIONS)
+
+    def preferred_type(self, customer_name: str | None = None) -> str:
+        """The default board level for a customer's tracker (User Story for
+        DevOps, Story for Jira — its Sub-task leaf is auxiliary)."""
+        if self.manager:
+            if customer_name and customer_name in self.manager.clients:
+                return self.manager.clients[customer_name].preferred_type()
+            for client in self.manager.clients.values():
+                return client.preferred_type()
+        return DEFAULT_TYPE_HIERARCHY[-1]
 
     def type_hierarchy(self, customer_name: str | None = None) -> tuple:
         """Work-item levels root → leaf for a customer's tracker (falls back to
@@ -235,7 +291,7 @@ class DevOpsEngine:
                 return client.type_hierarchy()
         return DEFAULT_TYPE_HIERARCHY
 
-    async def update_devops(self, incremental: bool = False):
+    async def refresh_tracker_data(self, incremental: bool = False):
         if not self.manager:
             self.log.warning("No DevOps connections available")
             return None
@@ -313,7 +369,9 @@ class DevOpsEngine:
             self.log.error(f"Error when updating the devops data: {devops_df}")
 
     async def load_df(self):
-        df = await self.query_engine.query_db("select * from devops")
+        # Current customers only — a disabled customer's cached items stay
+        # in the table but disappear from the board/pickers until re-enabled.
+        df = await self.query_engine.function_db("get_visible_devops_items")
         self.df = df if not df.empty else None
         if self.df is None:
             self.log.warning("DevOps dataframe is empty")

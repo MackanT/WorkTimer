@@ -330,7 +330,7 @@ async def query_editor_page():
         # field in these forms — the customer is fixed by the row being edited).
         if table_name in ("time", "projects"):
             cust = table_row.get("customer_name")
-            eng = core.devops_engine
+            eng = core.tracker_engine
             data_sources["devops_ids"] = (
                 eng.get_work_item_options(cust) if (eng is not None and cust) else []
             )
@@ -531,10 +531,12 @@ async def query_editor_page():
             ) as splitter:
                 splitter.bind_value(app.storage.user, "query_editor_split")
                 with splitter.before:
+                    # Skin is a per-user pick from Settings → Theme (falls back
+                    # to the historical default).
                     editor = ui.codemirror(
                         app.storage.user.get("query_editor_query", ""),
                         language="SQLite",
-                        theme="dracula",
+                        theme=str(app.storage.user.get("query_editor_theme", "dracula")),
                     ).classes("w-full h-full")
                     editor.bind_value(app.storage.user, "query_editor_query")
 

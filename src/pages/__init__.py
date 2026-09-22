@@ -1,7 +1,7 @@
 """Available Pages"""
 
 from .time_tracking import time_tracking_page
-from .add_data import add_data_page
+from .add_data import open_entity_dialog
 from .board import board_page
 from .reports import reports_page
 from .query_editor import query_editor_page
@@ -15,7 +15,7 @@ from .root import root_page
 __all__ = [
     "root_page",
     "time_tracking_page",
-    "add_data_page",
+    "open_entity_dialog",
     "board_page",
     "reports_page",
     "query_editor_page",

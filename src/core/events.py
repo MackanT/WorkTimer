@@ -249,7 +249,8 @@ class EventBus:
         message: str,
         type_: str = "info",
         position: str = "bottom",
-        close_button: bool = False,
+        close_button: bool | str = False,
+        timeout: float | None = None,
     ):
         """
         Show a notification from any thread.
@@ -260,7 +261,9 @@ class EventBus:
             message: Notification text
             type_: 'info', 'positive', 'negative', 'warning'
             position: 'top', 'bottom', 'left', 'right', 'center', etc.
-            close_button: Whether to show a close button
+            close_button: Whether to show a close button (or its label)
+            timeout: Seconds before auto-dismiss; 0 = sticky until closed;
+                None = NiceGUI's default
 
         Example:
             # From a worker thread:
@@ -271,7 +274,11 @@ class EventBus:
             return
 
         def show_notification():
-            ui.notify(message, type=type_, position=position, close_button=close_button)
+            kwargs = {} if timeout is None else {"timeout": timeout}
+            ui.notify(
+                message, type=type_, position=position,
+                close_button=close_button, **kwargs,
+            )
 
         # Same rule as emit(): entering the slot context from a background thread
         # corrupts the NiceGUI slot stack — schedule onto the main loop instead.

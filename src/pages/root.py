@@ -1,11 +1,11 @@
 import asyncio
+from datetime import date
 
 from nicegui import ui, app
 from . import (
     time_tracking_page,
     log_page,
     query_editor_page,
-    add_data_page,
     board_page,
     reports_page,
     tasks_page,
@@ -14,6 +14,7 @@ from . import (
     settings_page,
 )
 from ..core.app import AppCore
+from ..ui.command_palette import setup_command_palette
 
 
 # Layout CSS injected per-client (ui.add_head_html must run inside a page context).
@@ -78,6 +79,13 @@ html, body { overflow: hidden !important; }
     min-height: 0 !important;
 }
 
+/* Drag-and-drop indicators (notepad sidebar, time-tracker project rows):
+   a light line above the row the dragged item would land BEFORE, and a
+   dashed outline on containers it would drop INTO (group headers). Toggled
+   client-side on dragover/dragleave — no server round-trips. */
+.wt-drop-above { box-shadow: 0 -2px 0 0 rgba(255, 255, 255, 0.75) !important; }
+.wt-drop-into { outline: 1px dashed rgba(255, 255, 255, 0.55) !important; outline-offset: -1px; }
+
 /* Hide scrollbar on horizontally-scrollable rows while keeping scroll functionality */
 .wt-nav-scroll::-webkit-scrollbar,
 .wt-toolbar-scroll::-webkit-scrollbar { display: none; }
@@ -97,17 +105,32 @@ html, body { overflow: hidden !important; }
     height: 100% !important;
     min-height: 0 !important;
 }
+
 </style>
 <script>
-requestAnimationFrame(function () {
-    var pc = document.querySelector('.q-page-container');
-    if (pc) {
-        var h = parseFloat(getComputedStyle(pc).paddingTop);
+/* Keep --wt-nav-h equal to the real header height. A single
+   requestAnimationFrame raced Vue's mount (first paint can happen before
+   or after Quasar renders the header depending on load timing), leaving
+   the 68px fallback and a blank band under the nav. Poll until the header
+   exists, measure it directly, and re-measure whenever its size changes
+   (timer pills / update badge add a row). */
+(function () {
+    function sync(hd) {
+        var h = hd.offsetHeight;
         if (h > 0) {
             document.documentElement.style.setProperty('--wt-nav-h', h + 'px');
         }
     }
-});
+    var poll = setInterval(function () {
+        var hd = document.querySelector('.q-header');
+        if (hd) {
+            clearInterval(poll);
+            sync(hd);
+            new ResizeObserver(function () { sync(hd); }).observe(hd);
+        }
+    }, 50);
+    setTimeout(function () { clearInterval(poll); }, 15000);
+})();
 document.addEventListener('keydown', function (e) {
     if (e.key === 'F5') e.preventDefault();
 });
@@ -120,6 +143,7 @@ async def _setup_spa_shell():
     ui.add_head_html(_LAYOUT_CSS)
     core = await AppCore.get_or_initialize()
     core.nav_bar.render()
+    setup_command_palette(core)  # global Ctrl+K — one dialog + binding per client
 
     # Register timer indicator — once per client
     if not app.storage.client.get("timer_indicator_registered", False):
@@ -130,17 +154,137 @@ async def _setup_spa_shell():
 
         core.event_bus.register("active_timer_count_changed", _on_timer_count_changed)
 
-        # Background update check — fires once per process per 24 h
+        # ── What's-new dialog (shared by the update badge + post-update popup) ──
+        # Built inside a shell-level host: callers run as background tasks with
+        # no slot context, so the target slot must be entered explicitly.
+        _whats_new_host = ui.element("div").classes("hidden")
+
+        def _show_whats_new(md_text: str, title: str):
+            with _whats_new_host, ui.dialog() as dlg, ui.card().classes(
+                "rounded-lg"
+            ).style(
+                "min-width: 480px; max-width: min(720px, 92vw);"
+            ):
+                with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                    ui.icon("new_releases", size="sm").classes("text-amber-400")
+                    ui.label(title).classes("text-base font-semibold flex-1")
+                    ui.button(icon="close", on_click=dlg.close).props(
+                        "flat dense round color=grey-6"
+                    )
+                with ui.scroll_area().classes("w-full").style("max-height: 60vh;"):
+                    ui.markdown(md_text)
+            dlg.on("hide", lambda: dlg.delete())  # shell-lived — don't accumulate
+            dlg.open()
+
+        # Background update check — fires once per process per 24 h. The badge
+        # is clickable: it fetches main's changelog (the local one predates the
+        # announced version) and shows the sections newer than this install.
         async def _check_for_update():
-            from ..services.update_checker import check_for_update
+            from ..services.update_checker import (
+                check_for_update,
+                extract_whats_new,
+                fetch_remote_changelog_blocking,
+            )
             try:
                 result = await check_for_update()
                 if result["available"]:
-                    core.nav_bar.set_update_available(result["latest"])
+
+                    async def _show_remote_whats_new():
+                        try:
+                            loop = asyncio.get_event_loop()
+                            text = await loop.run_in_executor(
+                                None, fetch_remote_changelog_blocking
+                            )
+                            news = extract_whats_new(text, result["current"])
+                        except Exception:
+                            news = ""
+                        _show_whats_new(
+                            news or "_Could not load the changelog._",
+                            f"What's new in v{result['latest']}",
+                        )
+
+                    core.nav_bar.set_update_available(
+                        result["latest"], on_click=_show_remote_whats_new
+                    )
             except Exception:
                 pass
 
         asyncio.create_task(_check_for_update())
+
+        # Post-update popup — once per install after a version change: show the
+        # local changelog sections between the last-seen version and this one.
+        async def _maybe_show_post_update_news():
+            from pathlib import Path
+
+            from ..services.update_checker import _current_version, extract_whats_new
+
+            try:
+                current = _current_version()
+                last_seen = app.storage.general.get("last_seen_version")
+                app.storage.general["last_seen_version"] = current
+                if not last_seen or last_seen == current or current == "unknown":
+                    return  # first run ever, or no change — no popup
+                changelog = (
+                    Path(__file__).parent.parent.parent / "docs" / "CHANGELOG.md"
+                ).read_text(encoding="utf-8")
+                news = extract_whats_new(changelog, last_seen)
+                if news:
+                    _show_whats_new(news, f"WorkTimer updated to v{current}")
+            except Exception:
+                pass
+
+        asyncio.create_task(_maybe_show_post_update_news())
+
+        # Tracker-token expiry warning — once per browser per day: a tracker
+        # whose token_expires date is within 30 days (or past) raises a toast,
+        # so an expiring PAT / API token gets renewed before sync silently
+        # starts failing. The date is set on the tracker (Data Input →
+        # Trackers); trackers without one are never nagged about.
+        _today_str = str(date.today())
+        if app.storage.user.get("token_expiry_notified") != _today_str:
+
+            async def _check_token_expiry():
+                from ..helpers import token_expiry_level
+
+                try:
+                    df = await core.query_engine.query_db(
+                        "select tracker_name, token_expires from trackers "
+                        "where coalesce(token_expires, '') != ''"
+                    )
+                    notified = False
+                    for _, r in df.iterrows():
+                        lvl = token_expiry_level(r["token_expires"])
+                        if lvl is None or lvl[0] == "ok":
+                            continue
+                        level, days = lvl
+                        when = (
+                            f"expired {-days} day(s) ago" if level == "expired"
+                            else f"expires in {days} day(s)"
+                        )
+                        msg = (
+                            f"Tracker '{r['tracker_name']}' token {when} "
+                            f"({r['token_expires']}) — renew it and update "
+                            "the tracker"
+                        )
+                        # Sticky (timeout 0): an auto-dismissing toast during
+                        # page load is too easy to miss for something this
+                        # consequential.
+                        core.event_bus.notify(
+                            msg,
+                            type_="warning" if level == "warning" else "negative",
+                            close_button="Dismiss",
+                            timeout=0,
+                        )
+                        core.logger.warning(msg)
+                        notified = True
+                    if notified:
+                        # Stamp only when something fired — a date set later
+                        # today should still warn on the next reload.
+                        app.storage.user["token_expiry_notified"] = _today_str
+                except Exception:
+                    pass
+
+            asyncio.create_task(_check_token_expiry())
 
         # Set initial nav-bar state from DB
         try:
@@ -165,7 +309,6 @@ async def _setup_spa_shell():
     ui.sub_pages(
         {
             "/time": time_tracking_page,
-            "/add_data": add_data_page,
             "/board": board_page,
             "/reports": reports_page,
             "/query_editor": query_editor_page,
@@ -188,14 +331,13 @@ async def root_page():
 
 # ============================================================================
 # Direct Access Pages (for refresh support)
-# These allow refreshing on /time, /add_data, etc. without 404 errors.
+# These allow refreshing on /time, /board, etc. without 404 errors.
 # Every route renders the same SPA shell, which routes to the matching sub-page
 # — registered in a loop instead of nine identical handler functions.
 # ============================================================================
 
 _SPA_ROUTES = [
     "/time",
-    "/add_data",
     "/board",
     "/reports",
     "/query_editor",

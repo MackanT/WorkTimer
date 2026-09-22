@@ -1,150 +1,234 @@
 """
-Add Data Page
+Entity management dialogs (formerly the Data Input page).
 
-Data input interface for creating new customers, projects, tasks, bonuses, and DevOps work items.
-Uses V2 architecture with per-client AppCore and event-driven updates.
-Fully config-driven using config_ui.yml structure.
+Customers, trackers, projects and bonuses are managed in dialogs that open
+right over whatever page is showing — from the nav bar's Data menu or a
+palette command — instead of a dedicated page. Fully config-driven from
+config_ui.yml's add_data_page section (kept under its historical key).
 """
 
+import asyncio
 import copy
-import os
-import sqlite3
-import tempfile
 import pandas as pd
 from datetime import date
-from nicegui import ui, events
+from nicegui import ui
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
-from ..ui.elements import (
-    toolbar,
-    toolbar_group,
-    entity_card_shell,
-    entity_card_header,
-    entity_card_content,
-)
+from ..ui.work_item_forms import _setup_conditional_visibility, _with_loading
+
+_OP_TAB_LABELS = {"reenable": "Re-enable"}
+
+# Field types that take the full form width in the two-column grid.
+_WIDE_FIELD_TYPES = {"textarea", "editor_with_preview", "devops_id"}
 
 
-async def add_data_page():
-    """Add Data page - for creating new entities
+def _render_test_connection_button(core, widgets: dict, visible_fn) -> None:
+    """'Test connection' on the tracker forms: builds a provider from the
+    CURRENT form values (falling back to the stored, decrypted credentials
+    for fields left blank/unchanged on the update form) and calls its
+    connect() — a credential typo surfaces here instead of as a background
+    re-init failure minutes later."""
 
-    Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
-    Direct access to /add_data is handled by redirect in root.py
-    """
+    async def _test():
+        vals = {
+            n: (w.value or "") for n, w in widgets.items() if visible_fn(n)
+        }
+        itype = str(vals.get("integration_type") or "devops")
+        org = str(vals.get("org_url") or vals.get("jira_site") or "").strip()
+        email = str(vals.get("jira_email") or "").strip()
+        token = str(vals.get("jira_api_token") or "").strip()
+        pat = str(vals.get("pat_token") or "").strip()
+        if pat.startswith("enc:"):
+            pat = ""  # the update form's encrypted prefill — use stored
 
-    core = await AppCore.get_or_initialize()
+        # Update form: anything blank falls back to the stored credentials.
+        tname = str(vals.get("tracker_name") or "").strip()
+        needs_stored = not org or (
+            not (email and token) if itype == "jira" else not pat
+        )
+        if tname and needs_stored:
+            stored = await core.query_engine.function_db(
+                "get_tracker_credentials", tname
+            )
+            if stored:
+                _stype, s_org, s_pat = stored
+                org = org or s_org
+                if itype == "jira":
+                    s_email, _, s_token = s_pat.partition(":")
+                    email = email or s_email
+                    token = token or s_token
+                else:
+                    pat = pat or s_pat
 
-    add_data_page_config = core.ui_config.get("add_data_page", {})
+        if itype == "jira":
+            pat = f"{email}:{token}" if email and token else ""
+        if not org or not pat:
+            ui.notify("Fill in the connection fields first", type="warning")
+            return
 
-    BUILD_FUNCTIONS = {
-        "render_entity_tabs": render_entity_tabs,
-        "render_database_tabs": render_database_tabs,
+        row = {
+            "customer_name": tname or "connection test",
+            "integration_type": itype,
+            "org_url": org,
+            "pat_token": pat,
+            "tracker_project": None,
+        }
+
+        def _connect():
+            from ..trackers.registry import create_provider_for_row
+
+            provider = create_provider_for_row(row, core.logger)
+            if provider is None:
+                raise Exception("credentials look incomplete")
+            provider.connect()
+            return provider.available_projects
+
+        try:
+            projects = await asyncio.to_thread(_connect)
+        except Exception as e:
+            ui.notify(f"Connection failed: {e}", type="negative")
+            return
+        shown = ", ".join(map(str, projects[:5]))
+        if len(projects) > 5:
+            shown += f" … (+{len(projects) - 5})"
+        ui.notify(f"Connected — projects: {shown}", type="positive")
+
+    btn = ui.button("Test connection", icon="wifi_tethering").props("outline")
+    btn.on("click", _with_loading(btn, _test))
+
+
+def entity_sections(core) -> dict:
+    """{entity_key: section} for the configured manageable entities —
+    feeds the nav bar's Data menu and the palette's shortcuts."""
+    return {
+        name: sec
+        for name, sec in (core.ui_config.get("add_data_page") or {}).items()
+        if sec.get("meta", {}).get("build_function") == "render_entity_tabs"
     }
 
-    # ========================================================================
-    # Toolbar Controls
-    # ========================================================================
-    def render_toolbar():
-        """Render control panel - stable across data refreshes."""
-        with toolbar(core.theme):
-            with toolbar_group(core.theme, divider_after=True):
-                ui.icon("input", size="md").classes(f"text-{core.theme.get('accent')}")
-                ui.label("Data Input").classes(
-                    helpers.UI_STYLES.get_layout_classes("page_title")
-                )
-            with (
-                ui.tabs(value="customer")
-                .props(
-                    f'horizontal dense active-color="{core.theme.get("accent")}" indicator-color="{core.theme.get("accent")}"'
-                )
-                .classes(helpers.UI_STYLES.get_layout_classes("tab_label"))
-            ) as main_tabs:
-                for page_dict, page_section in add_data_page_config.items():
-                    p_data = page_section.get("meta", {})
-                    icon = p_data.get("icon", "warning")
-                    label = p_data.get("friendly_name", page_dict)
-                    ui.tab(page_dict, label=label, icon=icon)
 
-        return main_tabs
-
-    main_tabs = render_toolbar()
-
-    # Wire up tab change to trigger refresh
-    async def on_tab_change(e):
-        tab_name = e.value
-        # Refresh all forms in the newly visible tab
-        if (
-            hasattr(core, "_entity_refresh_fns")
-            and tab_name in core._entity_refresh_fns
-        ):
-            for op, refresh_fn in core._entity_refresh_fns[tab_name].items():
-                if refresh_fn:
-                    try:
-                        await refresh_fn()
-                        core.logger.debug(f"Refreshed {tab_name}.{op} on tab change")
-                    except Exception as err:
-                        core.logger.error(f"Error refreshing {tab_name}.{op}: {err}")
-
-    main_tabs.on_value_change(on_tab_change)
-
-    start_tab = next(iter(add_data_page_config))
-
-    with (
-        ui.tab_panels(main_tabs, value=start_tab)
-        .props("vertical")
-        .classes("wt-page-content w-full")
-        .style(
-            "background: transparent;"
-        )
-    ):
-        for page_dict, page_section in add_data_page_config.items():
-            p_data = page_section.get("meta", {})
-            build_fn_name = p_data.get("build_function")
-
-            with ui.tab_panel(page_dict):
-                if build_fn_name and build_fn_name in BUILD_FUNCTIONS:
-                    build_fn = BUILD_FUNCTIONS[build_fn_name]
-                    await build_fn(
-                        core,
-                        page_dict,
-                        p_data.get("options", []),
-                        add_data_page_config,
-                    )
-                else:
-                    core.logger.warning(
-                        f"No build function '{build_fn_name}' found for {page_dict}"
-                    )
-                    ui.label("Configuration error: build function not found").classes(
-                        "text-warning"
-                    )
-
-
-async def render_entity_tabs(
-    core: AppCore, entity_type: str, operations: list, page_config: dict
+async def open_entity_dialog(
+    core: AppCore,
+    entity_type: str,
+    operation: str = None,
+    presets: dict = None,
 ):
-    """Render sub-tabs for entity operations (Add/Update/Disable/Reenable)"""
-    entity_config = page_config.get(entity_type, {})
+    """Open the management dialog for one entity: operation tabs
+    (Add/Update/…) on top, the active operation's form below in a two-column
+    grid. `operation` preselects a tab; `presets` ({field_name: value})
+    pre-fills fields of that tab (e.g. the customer for a project add) —
+    focus goes to the first field that is NOT preset."""
+    section = core.ui_config.get("add_data_page", {}).get(entity_type, {})
+    meta = section.get("meta", {})
+    operations = list(meta.get("options", []))
+    if not operations:
+        ui.notify(f"No forms configured for '{entity_type}'", type="warning")
+        return None
 
-    # Initialize storage for refresh functions
-    if not hasattr(core, "_entity_refresh_fns"):
-        core._entity_refresh_fns = {}
-    core._entity_refresh_fns.setdefault(entity_type, {})
+    # Dialog-local registry: a submit refreshes the sibling operation forms,
+    # and the preselected operation's first field gets keyboard focus.
+    registry: dict = {"refresh": {}, "first": {}}
 
-    with ui.row(wrap=False):
-        for op in operations:
-            refresh_fn = await render_entity_form(
-                core=core,
-                entity_type=entity_type,
-                operation=op,
-                form_config=entity_config.get(op, {}),
+    accent = core.theme.get("accent")
+    with ui.dialog() as dlg, ui.card().props("flat bordered").classes(
+        "rounded-lg"
+    ).style("width: min(860px, 95vw); max-width: 95vw; padding: 0;"):
+        with ui.row().classes("items-center gap-2 no-wrap w-full").style(
+            "padding: 0.6rem 0.8rem 0;"
+        ):
+            ui.icon(meta.get("icon", "input"), size="sm").classes(f"text-{accent}")
+            ui.label(
+                meta.get("friendly_name", entity_type.capitalize())
+            ).classes("text-base font-semibold flex-1")
+            ui.button(icon="close", on_click=dlg.close).props(
+                "flat dense round color=grey-6"
             )
-            core._entity_refresh_fns[entity_type][op] = refresh_fn
+        with (
+            ui.tabs()
+            .props(
+                f'dense align=center active-color="{accent}" '
+                f'indicator-color="{accent}" no-caps'
+            )
+            .classes("w-full")
+        ) as op_tabs:
+            for op in operations:
+                ui.tab(op, label=_OP_TAB_LABELS.get(op, op.capitalize()))
+        ui.separator()
+        with ui.tab_panels(
+            op_tabs,
+            value=operation if operation in operations else operations[0],
+        ).classes("w-full").style("background: transparent;"):
+            for op in operations:
+                with ui.tab_panel(op).style("padding: 1rem;"):
+                    registry["refresh"][op] = await render_entity_form(
+                        core=core,
+                        entity_type=entity_type,
+                        operation=op,
+                        form_config=section.get(op, {}),
+                        registry=registry,
+                    )
+
+    registry["close"] = dlg.close  # a successful submit closes the dialog
+    dlg.on("hide", lambda: dlg.delete())  # transient — never accumulates
+    dlg.open()
+
+    target_op = operation if operation in operations else operations[0]
+    op_widgets = registry.get("widgets", {}).get(target_op, {})
+
+    if presets:
+        # Walk fields in FORM order (parents precede their children), and for
+        # a parent-dependent preset field load its options BEFORE setting the
+        # value — such a select starts empty, and a value outside the current
+        # options doesn't stick (that lost the project preselect).
+        for fname, dw in op_widgets.items():
+            if fname not in presets:
+                continue
+            if getattr(dw, "parent", None) is not None:
+                try:
+                    await dw.refresh()
+                except Exception:
+                    pass
+            try:
+                dw.widget.value = presets[fname]
+                dw.widget.update()
+            except Exception:
+                pass
+        # Programmatic sets don't fire the browser event that reloads the
+        # remaining dependent dropdowns — refresh them now.
+        for fname, dw in op_widgets.items():
+            if fname in presets:
+                continue
+            if getattr(dw, "parent", None) is not None:
+                try:
+                    await dw.refresh()
+                except Exception:
+                    pass
+
+    focus_widget = registry["first"].get(target_op)
+    if presets:
+        for fname, dw in op_widgets.items():
+            if fname not in presets:
+                focus_widget = dw.widget
+                break
+    if focus_widget is not None:
+        await asyncio.sleep(0.15)  # let the dialog render in the browser
+        try:
+            focus_widget.run_method("focus")
+        except Exception:
+            pass  # focus is a nicety
+    return dlg
 
 
 async def render_entity_form(
-    core: AppCore, entity_type: str, operation: str, form_config: dict
+    core: AppCore,
+    entity_type: str,
+    operation: str,
+    form_config: dict,
+    registry: dict,
 ):
-    """Render a single entity form based on config"""
+    """Render a single entity form based on config. `registry` is the host
+    dialog's {"refresh": {op: fn}, "first": {op: widget}} shared state."""
     # Deep-copy: the config dicts are shared process-wide; assign_dynamic_options
     # writes options into the field dicts, which must not leak across clients.
     fields = copy.deepcopy(form_config.get("fields", []))
@@ -157,18 +241,34 @@ async def render_entity_form(
     dynamic_widgets = []
     parent_map = {}
 
+    def _visible(name):
+        w = widgets.get(name)
+        return w is not None and getattr(w.widget, "visible", True)
+
     async def on_submit():
-        required_fields = [f["name"] for f in fields if not f.get("optional", False)]
+        # Hidden fields (visible_when for another tracker type) neither
+        # validate nor submit — their stale values must not reach the DB.
+        required_fields = [
+            f["name"]
+            for f in fields
+            if not f.get("optional", False) and _visible(f["name"])
+        ]
         if not helpers.check_input(widgets, required_fields):
             return
-        kwargs = {name: widget.value for name, widget in widgets.items()}
+        kwargs = {
+            name: widget.value
+            for name, widget in widgets.items()
+            if _visible(name)
+        }
         # Snapshot before the values get cleared below — used to decide whether
-        # this customer change touched DevOps credentials (see re-init at the end).
-        devops_touched = entity_type == "customer" and (
-            operation in ("disable", "reenable")
-            or bool(kwargs.get("pat_token"))
-            or bool(kwargs.get("org_url"))
-            or bool(kwargs.get("devops_project"))
+        # this change touched tracker connections (see re-init at the end).
+        devops_touched = entity_type == "tracker" or (
+            entity_type == "customer"
+            and (
+                operation in ("disable", "reenable")
+                or bool(kwargs.get("tracker_name"))
+                or bool(kwargs.get("tracker_project"))
+            )
         )
         try:
             await core.query_engine.function_db(action["function"], **kwargs)
@@ -181,112 +281,116 @@ async def render_entity_form(
             core.logger.info(msg_1)
             if msg_2:
                 core.logger.info(msg_2)
-            for widget in widgets.values():
-                if hasattr(widget, "value"):
-                    widget.value = "" if isinstance(widget.value, str) else None
-            if (
-                hasattr(core, "_entity_refresh_fns")
-                and entity_type in core._entity_refresh_fns
-            ):
-                core.logger.debug(f"Refreshing all {entity_type} tabs")
-                for op, refresh_fn in core._entity_refresh_fns[entity_type].items():
-                    if refresh_fn:
-                        try:
-                            await refresh_fn()
-                            core.logger.debug(f"Refreshed {entity_type}.{op}")
-                        except Exception as e:
-                            core.logger.error(
-                                f"Error refreshing {entity_type}.{op}: {e}"
-                            )
+            # A successful submit closes the dialog (it self-deletes on hide,
+            # so no field clearing / sibling refresh is needed).
+            close_fn = registry.get("close")
+            if close_fn:
+                close_fn()
             core.event_bus.emit("ui_refresh_requested")
 
             # A customer's DevOps credentials (or active state) changed — rebuild
             # the DevOps engine so the board/work-item forms pick it up without an
-            # app restart. force_devops_reinit() bypasses the retry cooldown and
+            # app restart. force_tracker_reinit() bypasses the retry cooldown and
             # re-inits in the background.
             if devops_touched:
                 core.logger.info(
-                    f"Customer DevOps config changed ({operation}) — re-initializing DevOps"
+                    f"Tracker config changed ({entity_type}.{operation}) — "
+                    "re-initializing tracker connections"
                 )
-                core.force_devops_reinit()
+                core.force_tracker_reinit()
         except Exception as e:
             core.logger.error(f"Error in {operation} {entity_type}: {e}")
             ui.notify(f"Error: {e}", type="negative")
 
-    with entity_card_shell():
-        with entity_card_header():
-            with ui.element("div").style(
-                "display:flex; align-items:center; gap:0.25rem; overflow:hidden;"
-            ):
-                ui.label(operation.capitalize()).classes(
-                    helpers.UI_STYLES.get_widget_style("time_tracking_customer_name")[
-                        "classes"
-                    ]
-                ).style(
-                    "overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left;"
+    # Per-cycle cache: without it, every child-widget refresh re-ran all
+    # of prepare_data_sources' queries. refresh_all_widgets() invalidates
+    # it once per cycle so data stays fresh after submits/tab changes.
+    _sources_cache: dict = {"data": None}
+
+    async def data_fetcher(source_key, parent_val=None):
+        if _sources_cache["data"] is None:
+            _sources_cache["data"] = await prepare_data_sources(
+                core, entity_type, operation
+            )
+        fresh = _sources_cache["data"]
+        if source_key not in fresh:
+            return [] if parent_val is not None else ""
+        data = fresh[source_key]
+        if parent_val and isinstance(data, dict):
+            return data.get(parent_val, [])
+        elif isinstance(data, list):
+            return data
+        elif isinstance(data, dict):
+            return data
+        return [] if parent_val is not None else ""
+
+    with ui.column().classes("w-full gap-4"):
+        # Two-column field grid — halves the form height and fills the card
+        # instead of the old one-per-row stack. Wide types span both columns.
+        with ui.grid(columns=2).classes("w-full gap-3"):
+            for field in fields:
+                field_type = field.get("type", "input")
+                field_name = field["name"]
+                parent_field = field.get("parent")
+                parent_widget = (
+                    parent_map.get(parent_field) if parent_field else None
                 )
-                ui.space()
-                ui.button(icon="save", on_click=on_submit).props("color=primary")
 
-        ui.separator().classes(
-            helpers.UI_STYLES.get_layout_classes("divider_row")
-        )
-
-        with entity_card_content():
-            # Per-cycle cache: without it, every child-widget refresh re-ran all
-            # of prepare_data_sources' queries. refresh_all_widgets() invalidates
-            # it once per cycle so data stays fresh after submits/tab changes.
-            _sources_cache: dict = {"data": None}
-
-            async def data_fetcher(source_key, parent_val=None):
-                if _sources_cache["data"] is None:
-                    _sources_cache["data"] = await prepare_data_sources(
-                        core, entity_type, operation
+                widget_class = WIDGET_CLASSES.get(field_type)
+                if not widget_class:
+                    core.logger.warning(
+                        f"Unknown field type '{field_type}' for '{field_name}' — skipping"
                     )
-                fresh = _sources_cache["data"]
-                if source_key not in fresh:
-                    return [] if parent_val is not None else ""
-                data = fresh[source_key]
-                if parent_val and isinstance(data, dict):
-                    return data.get(parent_val, [])
-                elif isinstance(data, list):
-                    return data
-                elif isinstance(data, dict):
-                    return data
-                return [] if parent_val is not None else ""
+                    continue
 
-            with ui.column().classes("w-full gap-2"):
-                for field in fields:
-                    field_type = field.get("type", "input")
-                    field_name = field["name"]
-                    parent_field = field.get("parent")
-                    parent_widget = (
-                        parent_map.get(parent_field) if parent_field else None
-                    )
+                dw = widget_class(
+                    name=field_name,
+                    data_fetcher=data_fetcher,
+                    options_source=field.get("options_source", ""),
+                    parent=parent_widget,
+                    label=field.get("label", field_name),
+                    initial_value=field.get("default"),
+                    field_config=field,
+                )
+                dw.widget.classes("w-full")
+                if field_type in _WIDE_FIELD_TYPES:
+                    dw.widget.classes("col-span-2")
+                widgets[field_name] = dw
+                parent_map[field_name] = dw
+                dynamic_widgets.append(dw)
 
-                    widget_class = WIDGET_CLASSES.get(field_type)
-                    if not widget_class:
-                        core.logger.warning(
-                            f"Unknown field type '{field_type}' for '{field_name}' — skipping"
-                        )
-                        continue
+        with ui.row().classes("w-full justify-end gap-2"):
+            if entity_type == "tracker" and operation in ("add", "update"):
+                _render_test_connection_button(core, widgets, _visible)
 
-                    widget_width = helpers.UI_STYLES.get_widget_width(
-                        field.get("size", "standard")
-                    )
-                    dw = widget_class(
-                        name=field_name,
-                        data_fetcher=data_fetcher,
-                        options_source=field.get("options_source", ""),
-                        parent=parent_widget,
-                        label=field.get("label", field_name),
-                        initial_value=field.get("default"),
-                        field_config=field,
-                    )
-                    dw.widget.classes(widget_width)
-                    widgets[field_name] = dw
-                    parent_map[field_name] = dw
-                    dynamic_widgets.append(dw)
+            save_btn = ui.button(
+                action.get("button_name", "Save"), icon="save"
+            ).props("color=primary")
+
+            async def _submit_with_spinner():
+                save_btn.props("loading")
+                try:
+                    await on_submit()
+                finally:
+                    try:
+                        save_btn.props(remove="loading")
+                    except Exception:
+                        pass
+
+            save_btn.on("click", _submit_with_spinner)
+
+    # visible_when conditions (per-type credential fields on the tracker
+    # forms) — same mechanism the work-item forms use.
+    _setup_conditional_visibility(
+        widgets, {f["name"]: f for f in fields}, set()
+    )
+
+    # Widgets (field order preserved) and first field per form — the dialog
+    # uses these for presets and keyboard focus.
+    registry.setdefault("widgets", {})[operation] = widgets
+    registry.setdefault("first", {})[operation] = (
+        dynamic_widgets[0].widget if dynamic_widgets else None
+    )
 
     async def refresh_all_widgets():
         try:
@@ -302,7 +406,7 @@ async def render_entity_form(
 def _devops_ids_by_customer(core: AppCore) -> dict:
     """{customer_name: [{"label", "id"}, …]} for the Git-ID picker; {} when
     DevOps isn't connected (the picker then falls back to manual id entry)."""
-    eng = getattr(core, "devops_engine", None)
+    eng = getattr(core, "tracker_engine", None)
     return eng.get_work_item_options() if eng is not None else {}
 
 
@@ -313,6 +417,15 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
     try:
         if entity_type == "customer":
+            # Trackers a customer can link to (credentials live on the
+            # tracker entity, not the customer).
+            tdf = await QE.query_db(
+                "SELECT tracker_name FROM trackers ORDER BY tracker_name"
+            )
+            data_sources["tracker_data"] = (
+                tdf["tracker_name"].tolist() if not tdf.empty else []
+            )
+
             if operation in ["update", "disable"]:
                 # Get active customers
                 df = await QE.query_db(
@@ -325,38 +438,36 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 if operation == "update":
                     # For update, we need current values per customer
                     full_df = await QE.query_db(
-                        "SELECT customer_name, org_url, pat_token, devops_project, "
-                        "expected_work_pct, billing_round_minutes, color "
-                        "FROM customers WHERE is_current = 1"
+                        "SELECT c.customer_name, c.tracker_project, "
+                        "c.expected_work_pct, c.color, "
+                        "t.tracker_name "
+                        "FROM customers c "
+                        "LEFT JOIN trackers t ON t.tracker_id = c.tracker_id "
+                        "WHERE c.is_current = 1"
                     )
-                    data_sources["org_url"] = {}
-                    data_sources["pat_token"] = {}
                     data_sources["new_customer_name"] = {}
+                    data_sources["tracker_current"] = {}
                     # Current project per customer (preselects the picker).
-                    data_sources["devops_project_current"] = {}
+                    data_sources["tracker_project_current"] = {}
                     data_sources["expected_work_pct"] = {}
-                    data_sources["billing_round_minutes"] = {}
                     data_sources["color"] = {}
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
-                        data_sources["org_url"][cname] = row["org_url"] or ""
-                        data_sources["pat_token"][cname] = row["pat_token"] or ""
                         data_sources["new_customer_name"][cname] = cname
-                        data_sources["devops_project_current"][cname] = (
-                            row["devops_project"] or ""
+                        data_sources["tracker_current"][cname] = (
+                            row["tracker_name"] or ""
+                        )
+                        data_sources["tracker_project_current"][cname] = (
+                            row["tracker_project"] or ""
                         )
                         data_sources["expected_work_pct"][cname] = (
                             float(row["expected_work_pct"])
                             if pd.notna(row["expected_work_pct"]) else 0
                         )
-                        data_sources["billing_round_minutes"][cname] = (
-                            int(row["billing_round_minutes"])
-                            if pd.notna(row["billing_round_minutes"]) else 0
-                        )
                         data_sources["color"][cname] = row["color"] or ""
                     # Available projects per customer, from the live connections.
-                    eng = getattr(core, "devops_engine", None)
-                    data_sources["devops_projects"] = (
+                    eng = getattr(core, "tracker_engine", None)
+                    data_sources["tracker_projects"] = (
                         eng.get_available_projects() if eng is not None else {}
                     )
 
@@ -375,6 +486,68 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
             # Today's date for start_date
             data_sources["today"] = date.today().isoformat()
+
+        elif entity_type == "tracker":
+            # Registered tracker providers feed the "Type" selector — a new
+            # provider module (e.g. Jira) appears here automatically.
+            from ..trackers.registry import available_providers
+
+            data_sources["integration_types"] = available_providers()
+
+            if operation in ("update", "delete"):
+                tdf = await QE.query_db(
+                    "SELECT tracker_name, "
+                    "coalesce(integration_type, 'devops') as integration_type, "
+                    "org_url, pat_token, token_expires "
+                    "FROM trackers ORDER BY tracker_name"
+                )
+                data_sources["tracker_data"] = (
+                    tdf["tracker_name"].tolist() if not tdf.empty else []
+                )
+                if operation == "update":
+                    from ..pat_crypto import decrypt_pat
+
+                    db_file = core.query_engine.file_name
+                    data_sources["new_tracker_name"] = {}
+                    data_sources["integration_type_current"] = {}
+                    # Credential prefills are PER TYPE, and the SECRET fields
+                    # (PAT / API token) always prefill blank — blank means
+                    # "keep the stored one", and showing the enc: blob would
+                    # only suggest a wrong format. The always-"" maps still
+                    # matter: switching trackers clears a typed-but-unsaved
+                    # value via the parent refresh.
+                    data_sources["org_url"] = {}
+                    data_sources["pat_token"] = {}
+                    data_sources["jira_site"] = {}
+                    data_sources["jira_email"] = {}
+                    data_sources["jira_api_token"] = {}
+                    # Not secret — prefill the stored expiry date as-is.
+                    data_sources["token_expires"] = {}
+                    for _, row in tdf.iterrows():
+                        tname = row["tracker_name"]
+                        itype = row["integration_type"] or "devops"
+                        data_sources["new_tracker_name"][tname] = tname
+                        data_sources["integration_type_current"][tname] = itype
+                        data_sources["token_expires"][tname] = (
+                            row["token_expires"] or ""
+                        )
+                        for key in ("org_url", "pat_token", "jira_site",
+                                    "jira_email", "jira_api_token"):
+                            data_sources[key][tname] = ""
+                        if itype == "jira":
+                            data_sources["jira_site"][tname] = (
+                                row["org_url"] or ""
+                            )
+                            # The email half of the packed credential is not
+                            # secret — prefill it.
+                            pat = decrypt_pat(
+                                row["pat_token"] or "", db_file, core.logger
+                            )
+                            data_sources["jira_email"][tname] = (
+                                pat.partition(":")[0]
+                            )
+                        else:
+                            data_sources["org_url"][tname] = row["org_url"] or ""
 
         elif entity_type == "project":
             # Get active customers
@@ -479,167 +652,3 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
     return data_sources
 
-
-
-
-async def render_database_tabs(
-    core: AppCore, entity_type: str, operations: list, page_config: dict
-):
-    """Render database management tabs (Compare and Update)
-
-    Args:
-        core: AppCore instance
-        entity_type: Entity type (unused, for signature compatibility)
-        operations: List of operations (unused, for signature compatibility)
-        page_config: Page configuration dict (unused, for signature compatibility)
-    """
-    from ..database import Database
-
-    # Get database name from settings
-    db_name = core.settings.db_path
-
-    with (
-        ui.tabs()
-        .props("inline-label align=left")
-        .classes(helpers.UI_STYLES.get_layout_classes("full_width")) as db_tabs
-    ):
-        ui.tab("compare", label="Compare")
-        ui.tab("update", label="Update")
-
-    with ui.tab_panels(db_tabs, value="compare").classes(
-        helpers.UI_STYLES.get_layout_classes("full_width")
-    ):
-        # Compare tab
-        with ui.tab_panel("compare"):
-            with (
-                ui.card()
-                .classes(
-                    helpers.UI_STYLES.get_card_classes("xs", "card").replace(
-                        "mx-auto", "ml-0"
-                    )
-                )
-                .style("max-height: 82vh; overflow-y: auto;")
-            ):
-                ui.label(
-                    "Upload a .db file to compare with the main database."
-                ).classes(helpers.UI_STYLES.get_layout_classes("title"))
-
-                db_deltas = ui.codemirror("", language="SQL", theme="dracula").classes(
-                    "w-full h-96"
-                )
-
-                def handle_upload(e: events.UploadEventArguments):
-                    ui.notify(f"File uploaded: {e.name}", color="positive")
-                    uploaded_path = None
-                    try:
-                        with tempfile.NamedTemporaryFile(
-                            delete=False, suffix=".db"
-                        ) as tmp:
-                            tmp.write(e.content.read())
-                            uploaded_path = tmp.name
-
-                        sync_sql = Database.generate_sync_sql(db_name, uploaded_path)
-                        db_deltas.set_content(sync_sql)
-                    except Exception as ex:
-                        core.logger.error(f"Error comparing databases: {ex}")
-                        ui.notify(f"Error: {ex}", type="negative")
-                    finally:
-                        # Clean up temp file even when the comparison fails
-                        if uploaded_path and os.path.exists(uploaded_path):
-                            os.remove(uploaded_path)
-
-                ui.upload(on_upload=handle_upload).props("accept=.db").classes(
-                    "q-pa-xs q-ma-xs"
-                )
-
-        # Update tab
-        with ui.tab_panel("update"):
-            with (
-                ui.card()
-                .classes(
-                    helpers.UI_STYLES.get_card_classes("xs", "card").replace(
-                        "mx-auto", "ml-0"
-                    )
-                )
-                .style("max-height: 82vh; overflow-y: auto;")
-            ):
-                ui.label("Run SQL queries on uploaded database").classes(
-                    helpers.UI_STYLES.get_layout_classes("title")
-                )
-
-                query_editor = ui.codemirror(
-                    "", language="SQL", theme="dracula"
-                ).classes("w-full h-48")
-
-                result_display = ui.codemirror(
-                    "", language="text", theme="dracula"
-                ).classes("w-full h-96")
-
-                uploaded_db_path = None
-
-                def handle_db_upload(e: events.UploadEventArguments):
-                    nonlocal uploaded_db_path
-                    ui.notify(f"Database uploaded: {e.name}", color="positive")
-                    try:
-                        # Drop the previous upload's temp file before replacing it
-                        if uploaded_db_path and os.path.exists(uploaded_db_path):
-                            os.remove(uploaded_db_path)
-                        with tempfile.NamedTemporaryFile(
-                            delete=False, suffix=".db"
-                        ) as tmp:
-                            tmp.write(e.content.read())
-                            uploaded_db_path = tmp.name
-                        core.logger.info(
-                            f"Database uploaded to: {uploaded_db_path}"
-                        )
-                    except Exception as ex:
-                        core.logger.error(f"Error uploading database: {ex}")
-                        ui.notify(f"Error: {ex}", type="negative")
-
-                async def execute_query():
-                    if not uploaded_db_path:
-                        ui.notify("Please upload a database first", type="warning")
-                        return
-
-                    query = query_editor.value
-                    if not query:
-                        ui.notify("Please enter a query", type="warning")
-                        return
-
-                    try:
-                        conn = sqlite3.connect(uploaded_db_path)
-                        try:
-                            if query.strip().upper().startswith("SELECT"):
-                                # Read query - show results
-                                df = pd.read_sql_query(query, conn)
-                                result_display.set_content(df.to_string())
-                                ui.notify(f"Query returned {len(df)} rows", type="positive")
-                            else:
-                                # Write query - execute and show rows affected
-                                cursor = conn.cursor()
-                                cursor.execute(query)
-                                conn.commit()
-                                rows_affected = cursor.rowcount
-                                result_display.set_content(
-                                    f"Query executed successfully. Rows affected: {rows_affected}"
-                                )
-                                ui.notify(
-                                    f"Query executed. {rows_affected} rows affected",
-                                    type="positive",
-                                )
-                            core.logger.info("Query executed successfully")
-                        finally:
-                            conn.close()
-                    except Exception as ex:
-                        core.logger.error(f"Error executing query: {ex}")
-                        result_display.set_content(f"Error: {ex}")
-                        ui.notify(f"Error: {ex}", type="negative")
-
-                ui.upload(on_upload=handle_db_upload).props("accept=.db").classes(
-                    "q-pa-xs q-ma-xs"
-                )
-
-                with ui.row().classes("gap-2 mt-2"):
-                    ui.button(
-                        "Execute Query", icon="play_arrow", on_click=execute_query
-                    ).props("color=primary")

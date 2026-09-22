@@ -1,8 +1,8 @@
 """
-Info Page (V2)
+Documentation Page (route: /info)
 
-Display application information, configuration, and statistics.
-Uses V2 architecture with per-client AppCore and event-driven updates.
+Renders the markdown files under docs/ (guide, shortcuts, changelog,
+tracker contacts) as tabs, driven by the `info_page` section of config_ui.yml.
 """
 
 from nicegui import ui
@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 async def info_page():
-    """Info page - displays application information
+    """Documentation page - renders the docs/ markdown files as tabs
 
     Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
     Direct access to /info is handled by redirect in root.py
@@ -32,8 +32,8 @@ async def info_page():
 
         with toolbar(core.theme):
             with toolbar_group(core.theme, divider_after=True):
-                ui.icon("info", size="md").classes(f"text-{core.theme.get('accent')}")
-                ui.label("Info").classes(UI_STYLES.get_layout_classes("page_title"))
+                ui.icon("menu_book", size="md").classes(f"text-{core.theme.get('accent')}")
+                ui.label("Documentation").classes(UI_STYLES.get_layout_classes("page_title"))
             with (
                 ui.tabs(value="info")
                 .props(

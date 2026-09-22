@@ -96,6 +96,18 @@ def filename_from_title(title: str) -> str:
     return f"{slug or 'untitled'}.md"
 
 
+def _note_order_key(n: dict):
+    """Sidebar order: pinned first, then explicit drag-drop order, then
+    title (so legacy '0. ' prefixes still work as a fallback)."""
+    so = n.get("sort_order")
+    manual = (
+        so
+        if isinstance(so, (int, float)) and not isinstance(so, bool)
+        else float("inf")
+    )
+    return (not n.get("pinned", False), manual, (n.get("title") or "").lower())
+
+
 def load_notes(notes_dir: Path, meta: dict) -> list[dict]:
     """Load all regular .md files (excluding notes_meta.json)."""
     notes = []
@@ -113,8 +125,8 @@ def load_notes(notes_dir: Path, meta: dict) -> list[dict]:
             }
         )
 
-    # Sort: pinned first, then alphabetical
-    notes.sort(key=lambda n: (not n.get("pinned", False), n["title"].lower()))
+    # Sort: pinned first, then manual order, then alphabetical
+    notes.sort(key=_note_order_key)
     return notes
 
 
@@ -374,13 +386,25 @@ async def notepad_page():
 
     # ── Toolbar ───────────────────────────────────────────────────────────────
 
+    def _persist_collapsed():
+        # Survives page swaps and restarts — the sidebar shouldn't re-open
+        # every group each time the user comes back to the notepad.
+        try:
+            app.storage.user["notepad_collapsed_groups"] = sorted(
+                state["collapsed_groups"]
+            )
+        except Exception:
+            pass
+
     def collapse_all_groups():
         all_groups = {n.get("group", "") for n in state["notes"] if n.get("group")}
         state["collapsed_groups"] = all_groups
+        _persist_collapsed()
         render_sidebar()
 
     def expand_all_groups():
         state["collapsed_groups"] = set()
+        _persist_collapsed()
         render_sidebar()
 
     def render_toolbar_bar():
@@ -424,6 +448,7 @@ async def notepad_page():
             state["collapsed_groups"].discard(group_name)
         else:
             state["collapsed_groups"].add(group_name)
+        _persist_collapsed()
         render_sidebar()
 
     def render_sidebar():
@@ -445,24 +470,62 @@ async def notepad_page():
                 group = note.get("group") or ""
                 groups.setdefault(group, []).append((orig_idx, note))
 
-            for group_name, group_notes in groups.items():
+            def _ancestor_collapsed(name: str) -> bool:
+                # "A/B/C" is hidden while "A" or "A/B" is collapsed.
+                parts = name.split("/")
+                return any(
+                    "/".join(parts[:i]) in state["collapsed_groups"]
+                    for i in range(1, len(parts))
+                )
+
+            # Ungrouped first, then paths case-insensitively — which lines
+            # subgroups ("A/B") up right under their parent ("A").
+            ordered_names = sorted(groups, key=lambda g: (g != "", g.lower()))
+
+            for group_name in ordered_names:
+                group_notes = groups[group_name]
+                depth = group_name.count("/") if group_name else 0
                 if group_name:
+                    if _ancestor_collapsed(group_name):
+                        continue  # a collapsed parent hides the whole subtree
                     is_collapsed = group_name in state["collapsed_groups"]
                     with (
                         ui.row()
                         .classes(
                             "w-full items-center gap-1 mt-2 mb-1 px-1 cursor-pointer"
                         )
+                        .style(f"padding-left: {depth * 0.9}rem;")
                         .on("click", lambda _, g=group_name: toggle_group_collapse(g))
-                    ):
+                        .on(
+                            "dragover",
+                            js_handler=(
+                                "(e) => { e.preventDefault(); "
+                                "e.currentTarget.classList.add('wt-drop-into'); }"
+                            ),
+                        )
+                        .on(
+                            "dragleave",
+                            js_handler=(
+                                "(e) => { if (!e.currentTarget.contains("
+                                "e.relatedTarget)) e.currentTarget"
+                                ".classList.remove('wt-drop-into'); }"
+                            ),
+                        )
+                        .on(
+                            "drop",
+                            lambda _, g=group_name: _move_note(g, None),
+                        )
+                    ) as _hdr:
                         ui.icon(
                             "chevron_right" if is_collapsed else "expand_more",
                             size="xs",
                         ).classes(UI_STYLES.get_layout_classes("muted_text"))
-                        ui.label(group_name).classes(
+                        ui.label(group_name.split("/")[-1]).classes(
                             UI_STYLES.get_layout_classes("group_header_text")
                         )
                         ui.separator().classes("flex-1")
+                    if depth:
+                        _hdr.tooltip(group_name)
 
                     if is_collapsed:
                         continue  # skip rendering notes in this group
@@ -488,7 +551,42 @@ async def notepad_page():
                     with (
                         ui.row()
                         .classes(base_classes)
+                        # padding (not margin): margin widened the w-full row
+                        # and produced a sliver of horizontal scroll.
+                        .style(
+                            f"padding-left: {0.5 + depth * 0.9}rem;"
+                            if depth
+                            else ""
+                        )
+                        .props('draggable="true"')
                         .on("click", lambda _, idx=orig_idx: select_note(idx))
+                        .on(
+                            "dragstart",
+                            lambda _, fn=note["filename"]: note_drag.update(
+                                filename=fn
+                            ),
+                        )
+                        .on(
+                            "dragover",
+                            js_handler=(
+                                "(e) => { e.preventDefault(); "
+                                "e.currentTarget.classList.add('wt-drop-above'); }"
+                            ),
+                        )
+                        .on(
+                            "dragleave",
+                            js_handler=(
+                                "(e) => { if (!e.currentTarget.contains("
+                                "e.relatedTarget)) e.currentTarget"
+                                ".classList.remove('wt-drop-above'); }"
+                            ),
+                        )
+                        .on(
+                            "drop",
+                            lambda _, g=group_name, fn=note["filename"]: (
+                                _move_note(g, fn)
+                            ),
+                        )
                     ):
                         if note.get("pinned"):
                             ui.icon("push_pin", size="xs").classes(
@@ -539,7 +637,7 @@ async def notepad_page():
                             ui.label("Group").classes(UI_STYLES.get_layout_classes("context_menu_label"))
                             group_input = (
                                 ui.input(
-                                    placeholder="Group name...",
+                                    placeholder="Group… (A/B nests)",
                                     value=note.get("group", ""),
                                 )
                                 .props("dense outlined")
@@ -769,6 +867,63 @@ async def notepad_page():
 
     # ── Note actions ──────────────────────────────────────────────────────────
 
+    def _resort_notes():
+        """Re-sort the in-memory list (pinned → manual order → title) and
+        keep the active selection pointing at the same note."""
+        active = active_note()
+        ext = [n for n in state["notes"] if n["external"]]
+        reg = [n for n in state["notes"] if not n["external"]]
+        reg.sort(key=_note_order_key)
+        state["notes"] = ext + reg
+        if active in state["notes"]:
+            state["active_index"] = state["notes"].index(active)
+
+    # Drag-and-drop ordering: dropping a note on another note inserts it
+    # before that note (adopting its group); dropping on a group header
+    # appends to that group's end.
+    note_drag = {"filename": None}
+
+    def _move_note(target_group: str, before_fn: str | None):
+        dragged_fn = note_drag.get("filename")
+        note_drag["filename"] = None
+        if not dragged_fn or dragged_fn == before_fn:
+            return
+        dragged = next(
+            (n for n in state["notes"] if n["filename"] == dragged_fn), None
+        )
+        if dragged is None or dragged.get("external"):
+            return
+        target_group = (target_group or "").strip()
+        group_notes = [
+            n
+            for n in state["notes"]
+            if not n.get("external")
+            and (n.get("group") or "") == target_group
+            and n["filename"] != dragged_fn
+        ]
+        pos = len(group_notes)
+        if before_fn:
+            pos = next(
+                (
+                    i
+                    for i, n in enumerate(group_notes)
+                    if n["filename"] == before_fn
+                ),
+                len(group_notes),
+            )
+        group_notes.insert(pos, dragged)
+        dragged["group"] = target_group
+        update_note_meta(
+            notes_dir, state["meta"], dragged_fn, group=target_group
+        )
+        for i, n in enumerate(group_notes):
+            n["sort_order"] = i
+            update_note_meta(
+                notes_dir, state["meta"], n["filename"], sort_order=i
+            )
+        _resort_notes()
+        render_sidebar()
+
     def set_note_color(filename: str, color: str):
         update_note_meta(notes_dir, state["meta"], filename, color=color)
         note = next((n for n in state["notes"] if n["filename"] == filename), None)
@@ -790,15 +945,7 @@ async def notepad_page():
         new_pinned = not note.get("pinned", False)
         update_note_meta(notes_dir, state["meta"], filename, pinned=new_pinned)
         note["pinned"] = new_pinned
-        # Re-sort: pinned notes float to top
-        ext = [n for n in state["notes"] if n["external"]]
-        reg = [n for n in state["notes"] if not n["external"]]
-        reg.sort(key=lambda n: (not n.get("pinned", False), n["title"].lower()))
-        state["notes"] = ext + reg
-        # Restore active index after re-sort
-        active = active_note()
-        if active:
-            state["active_index"] = state["notes"].index(active)
+        _resort_notes()
         render_sidebar()
 
     def set_note_group(filename: str, group: str):
@@ -872,7 +1019,12 @@ async def notepad_page():
     # ── Layout ────────────────────────────────────────────────────────────────
 
     state["toolbar_container"] = ui.column().classes("w-full")
-    state["collapsed_groups"] = set()
+    try:
+        state["collapsed_groups"] = set(
+            app.storage.user.get("notepad_collapsed_groups") or []
+        )
+    except Exception:
+        state["collapsed_groups"] = set()
     render_toolbar_bar()
 
     with page_card(scrollable=False):
@@ -894,8 +1046,14 @@ async def notepad_page():
                     on_change=lambda e: on_search_change(e.value),
                 ).props("dense outlined clearable").classes("w-full mb-2")
 
-                # Notes list container — only this gets cleared/re-rendered
-                state["sidebar_container"] = ui.column().classes("w-full gap-1")
+                # Notes list container — only this gets cleared/re-rendered.
+                # overflow-x hidden: nested-group indentation must never add
+                # a horizontal scrollbar.
+                state["sidebar_container"] = (
+                    ui.column()
+                    .classes("w-full gap-1")
+                    .style("overflow-x: hidden;")
+                )
 
             # Main content
             with ui.column().classes("flex-1 overflow-auto p-6").style("height: 100%;"):

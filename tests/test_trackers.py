@@ -9,7 +9,7 @@ import pandas as pd
 from src.trackers.azure import AzureDevOpsProvider
 from src.trackers.base import DEFAULT_TYPE_HIERARCHY, WORK_ITEM_COLUMNS
 from src.trackers.registry import create_provider_for_row, get_provider_class
-from src.devops import DevOpsManager
+from src.tracker_manager import TrackerManager
 
 _log = logging.getLogger("test_trackers")
 
@@ -19,7 +19,7 @@ def _row(**over):
         "customer_name": "Acme",
         "pat_token": "secret",
         "org_url": "acme-org",
-        "devops_project": None,
+        "tracker_project": None,
         "integration_type": "devops",
     }
     base.update(over)
@@ -80,6 +80,7 @@ def test_fetch_work_items_normalizes_to_canonical_schema(monkeypatch):
             "System.BoardColumnDone": True,
             "System.AssignedTo": {"displayName": "Dev"},
             "Microsoft.VSTS.Common.Priority": 2,
+            "System.Description": "<p>Fix the <b>login&nbsp;flow</b></p>",
         }),
         SimpleNamespace(id=3, fields={"System.WorkItemType": "Task"}),  # filtered
     ]
@@ -96,6 +97,9 @@ def test_fetch_work_items_normalizes_to_canonical_schema(monkeypatch):
     assert story["parent_id"] == 1
     assert story["board_column_done"] == 1
     assert story["assigned_to"] == "Dev"
+    # Description cached as searchable plain text: tags stripped, entities decoded.
+    assert story["description"] == "Fix the login flow"
+    assert epic["description"] == ""
 
 
 def test_fetch_work_items_empty_result(monkeypatch):
@@ -110,7 +114,7 @@ def test_fetch_work_items_empty_result(monkeypatch):
 def test_manager_builds_clients_via_registry(monkeypatch):
     monkeypatch.setattr(AzureDevOpsProvider, "connect", lambda self: None)
     df = pd.DataFrame([_row(), _row(customer_name="Beta", org_url="beta-org")])
-    mgr = DevOpsManager(df, _log)
+    mgr = TrackerManager(df, _log)
     assert set(mgr.clients) == {"Acme", "Beta"}
     assert all(isinstance(c, AzureDevOpsProvider) for c in mgr.clients.values())
 
@@ -121,13 +125,13 @@ def test_manager_skips_unknown_provider_and_failed_connect(monkeypatch):
 
     monkeypatch.setattr(AzureDevOpsProvider, "connect", _boom)
     df = pd.DataFrame([_row(), _row(customer_name="J", integration_type="jira")])
-    mgr = DevOpsManager(df, _log)
+    mgr = TrackerManager(df, _log)
     assert mgr.clients == {}  # jira unknown, Acme failed to connect
 
 
 def test_manager_concats_provider_frames(monkeypatch):
     monkeypatch.setattr(AzureDevOpsProvider, "connect", lambda self: None)
-    mgr = DevOpsManager(pd.DataFrame([_row()]), _log)
+    mgr = TrackerManager(pd.DataFrame([_row()]), _log)
     fake = pd.DataFrame([dict.fromkeys(WORK_ITEM_COLUMNS, None)])
     monkeypatch.setattr(
         mgr.clients["Acme"], "fetch_work_items", lambda **kw: fake
@@ -139,13 +143,13 @@ def test_manager_concats_provider_frames(monkeypatch):
 # ── compat + migration ──────────────────────────────────────────────────────
 
 def test_legacy_imports_still_work():
-    from src.devops import DevOpsClient, DevOpsManager as M, _choose_project  # noqa
+    from src.tracker_manager import AzureDevOpsClient, TrackerManager as M, _choose_project  # noqa
 
-    assert issubclass(AzureDevOpsProvider, DevOpsClient)
+    assert issubclass(AzureDevOpsProvider, AzureDevOpsClient)
 
 
 def test_old_db_gains_integration_type_column(tmp_path, null_logger):
-    """A pre-5.0.5 customers table must gain integration_type (default devops)."""
+    """A pre-5.0.4 customers table must gain integration_type (default devops)."""
     from src.database import Database
 
     path = str(tmp_path / "old.db")

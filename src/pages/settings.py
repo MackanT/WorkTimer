@@ -1,13 +1,14 @@
 """
 Settings Page
 
-Sidebar-navigation layout with three sections:
-  - DevOps Contacts   (customer list / contact detail)
-  - DevOps Tags       (tag table + add/edit dialog)
-  - Theme             (colour pickers for the app palette)
+Toolbar-tab layout (the app's standard idiom) with four sections:
+  - DevOps  (sync controls + per-customer contacts/assignees)
+  - Tags    (work-item tag table + add/edit dialog)
+  - Theme   (colour pickers for the app palette)
+  - Data    (database backup, time & billing defaults, about/version)
 
-Add and Reset buttons live next to each section name in the left sidebar.
-DevOps sync buttons live in the toolbar.
+Each section renders as cards with a consistent accent header; per-section
+actions (Add / Reset / Save) live inside the section they affect.
 """
 
 from pathlib import Path
@@ -18,9 +19,9 @@ import re
 import shutil
 import tempfile
 import yaml
-from nicegui import ui
+from nicegui import app, ui
 from ..core.app import AppCore
-from ..ui.elements import toolbar, toolbar_group, page_card
+from ..ui.elements import toolbar, toolbar_group
 from ..helpers import UI_STYLES
 
 
@@ -38,18 +39,20 @@ def _prune_backups(backups_dir: Path, keep: int = 10) -> None:
             pass
 
 
-def open_backup_dialog(core) -> None:
-    """Database backup dialog: back up to the local backups/ folder (auto-synced
-    via OneDrive) or download a copy. Uses SQLite's online backup, safe live."""
+def _render_backup_card(core) -> None:
+    """Database backup as a Settings card: back up to the local backups/ folder
+    (auto-synced via OneDrive) or download a copy. SQLite online backup, safe live."""
     backups_dir = Path(core.settings.db_path).resolve().parent.parent / "backups"
     muted = UI_STYLES.get_layout_classes("muted_text")
 
-    with ui.dialog() as dlg, ui.card().style("min-width: 460px; max-width: 92vw;"):
-        ui.label("Database backup").classes("text-lg font-semibold")
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Database backup").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
         ui.label(
             "Consistent copies, safe while the app runs. Saved to a backups/ "
             "folder next to the database; the newest 10 are kept."
-        ).classes("text-sm " + muted)
+        ).classes("text-xs " + muted)
 
         list_col = ui.column().classes("w-full gap-0 mt-2 max-h-60 overflow-auto")
 
@@ -95,16 +98,313 @@ def open_backup_dialog(core) -> None:
                     os.remove(tmp)
 
         with ui.row().classes("w-full justify-end gap-2 mt-3"):
-            ui.button("Close", on_click=dlg.close).props("flat")
             ui.button("Download", icon="download", on_click=_download).props(
-                "outline color=primary no-caps"
+                "outline color=primary no-caps dense"
             ).tooltip("Save a copy via your browser's download")
             ui.button("Backup now", icon="save", on_click=_backup_now).props(
-                "color=primary no-caps"
+                "color=primary no-caps dense"
             ).tooltip("Save a copy to the backups/ folder next to the database")
 
         _refresh()
-    dlg.open()
+
+def _render_tracker_defaults_card(core) -> None:
+    """Per-tracker prefills for the add-work-item form (state, priority,
+    initial column, source, contact). Saved to config/tracker_defaults.yml;
+    the add dialog reads the file fresh, so changes apply immediately."""
+    from ..tracker_defaults import (
+        ALL_TYPES,
+        load_tracker_defaults,
+        save_tracker_defaults,
+    )
+    from ..trackers.registry import get_provider_class
+    from ..ui.work_item_handlers import WorkItemHandlers
+
+    muted = UI_STYLES.get_layout_classes("muted_text")
+    try:
+        tdf = core.query_engine.db.fetch_query(
+            "select tracker_name, coalesce(integration_type,'devops') as itype "
+            "from trackers order by tracker_name"
+        )
+        trackers = (
+            dict(zip(tdf["tracker_name"], tdf["itype"])) if not tdf.empty else {}
+        )
+        cust_map = core.query_engine.db.get_customer_tracker_names()
+    except Exception:
+        trackers, cust_map = {}, {}
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Work-item form defaults").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
+        ui.label(
+            "Prefills for new work items, per tracker AND work-item type — "
+            "'All types' applies everywhere, a specific type overrides it "
+            "per field. Fields a tracker or level doesn't use are ignored "
+            "(for Jira, state IS the board column, so no column default). "
+            "The branch name template drives the create-branch dialog and "
+            "auto-create: {{type}}, {{id}} and {{title}} fill in, e.g. "
+            "feat/{{id}}-{{title}}."
+        ).classes("text-xs " + muted + " mb-2")
+
+        if not trackers:
+            ui.label("No trackers configured yet.").classes("text-xs " + muted)
+            return
+
+        stored = load_tracker_defaults(core.config_loader.config_folder)
+        src_field = next(
+            (
+                f
+                for f in core.ui_config.get("board_devops_forms", {})
+                .get("add", {})
+                .get("fields", [])
+                if f.get("name") == "source"
+            ),
+            {},
+        )
+        source_options = list(src_field.get("options") or [])
+
+        def _tracker_customers(tname):
+            return [c for c, t in cust_map.items() if t == tname]
+
+        def _tracker_levels(tname):
+            cls = get_provider_class(trackers.get(tname) or "devops")
+            levels = list(cls.type_hierarchy()) if cls else []
+            return {ALL_TYPES: "All types", **{lv: lv for lv in levels}}
+
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            tracker_sel = ui.select(
+                list(trackers), label="Tracker", value=next(iter(trackers))
+            ).props("dense outlined").classes("w-64")
+            type_sel = ui.select(
+                _tracker_levels(next(iter(trackers))),
+                label="Work item type", value=ALL_TYPES,
+            ).props("dense outlined").classes("w-44")
+
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            state_in = ui.select(
+                [], label="State", with_input=True, new_value_mode="add-unique"
+            ).props("dense outlined clearable").classes("w-44")
+            prio_in = ui.select(
+                [1, 2, 3, 4], label="Priority"
+            ).props("dense outlined clearable").classes("w-32")
+            col_in = ui.select(
+                [], label="Initial board column", with_input=True,
+                new_value_mode="add-unique",
+            ).props("dense outlined clearable").classes("w-52")
+            source_in = ui.select(
+                source_options, label="Source", with_input=True,
+                new_value_mode="add-unique",
+            ).props("dense outlined clearable").classes("w-40")
+            contact_in = ui.input(label="Contact person").props(
+                "dense outlined clearable"
+            ).classes("w-52")
+            branch_in = ui.input(
+                label="Branch name template",
+                placeholder="{{type}}/{{id}}-{{title}}",
+            ).props("dense outlined clearable").classes("w-64")
+
+        def _load_for(tname, wtype):
+            vals = (stored.get(tname) or {}).get(wtype) or {}
+            # Options from a live customer on this tracker, when one exists.
+            # Board columns are per work-item type where the cache has them.
+            states, columns = [], []
+            eng = core.tracker_engine
+            for cust in _tracker_customers(tname):
+                if eng is not None:
+                    try:
+                        states = eng.state_options(cust)
+                    except Exception:
+                        states = []
+                cols_by_type = WorkItemHandlers.devops_columns_cache.get(
+                    cust, {}
+                )
+                if wtype != ALL_TYPES and cols_by_type.get(wtype):
+                    columns = list(cols_by_type[wtype])
+                else:
+                    columns = sorted(
+                        {c for lst in cols_by_type.values() for c in lst}
+                    )
+                if states or columns:
+                    break
+            state_in.set_options(states or [], value=vals.get("state"))
+            prio_in.value = vals.get("priority")
+            is_jira = trackers.get(tname) == "jira"
+            col_in.set_visibility(not is_jira)
+            col_in.set_options(columns or [], value=(
+                None if is_jira else vals.get("board_column")
+            ))
+            source_in.value = vals.get("source")
+            contact_in.value = vals.get("contact_person") or ""
+            # Branch template only where the tracker can create branches.
+            cls = get_provider_class(trackers.get(tname) or "devops")
+            supports_branches = bool(
+                cls and getattr(cls.capabilities(), "branches", False)
+            )
+            branch_in.set_visibility(supports_branches)
+            branch_in.value = vals.get("branch_template") or ""
+
+        def _save():
+            tname = tracker_sel.value
+            wtype = type_sel.value or ALL_TYPES
+            if not tname:
+                return
+            vals = {
+                "state": state_in.value or None,
+                "priority": int(prio_in.value) if prio_in.value else None,
+                "board_column": (
+                    col_in.value or None
+                    if trackers.get(tname) != "jira"
+                    else None
+                ),
+                "source": source_in.value or None,
+                "contact_person": (contact_in.value or "").strip() or None,
+                "branch_template": (
+                    (branch_in.value or "").strip() or None
+                    if branch_in.visible else None
+                ),
+            }
+            vals = {k: v for k, v in vals.items() if v is not None}
+            entry = stored.setdefault(tname, {})
+            if vals:
+                entry[wtype] = vals
+            else:
+                entry.pop(wtype, None)
+            if not entry:
+                stored.pop(tname, None)
+            try:
+                save_tracker_defaults(core.config_loader.config_folder, stored)
+                level = "all types" if wtype == ALL_TYPES else wtype
+                ui.notify(
+                    f"Defaults saved for '{tname}' ({level})", type="positive"
+                )
+            except Exception as ex:
+                core.logger.error(f"Saving tracker defaults failed: {ex}")
+                ui.notify(f"Save failed: {ex}", type="negative")
+
+        def _on_tracker_change(e):
+            type_sel.set_options(_tracker_levels(e.value), value=ALL_TYPES)
+            _load_for(e.value, ALL_TYPES)
+
+        tracker_sel.on_value_change(_on_tracker_change)
+        type_sel.on_value_change(
+            lambda e: _load_for(tracker_sel.value, e.value or ALL_TYPES)
+        )
+        _load_for(tracker_sel.value, ALL_TYPES)
+
+        with ui.row().classes("w-full justify-end mt-2"):
+            ui.button("Save", icon="save", on_click=_save).props(
+                "color=primary no-caps dense"
+            )
+
+
+def _render_time_settings_card(core) -> None:
+    """Edit the global time/billing defaults (the config's time_settings block).
+
+    Saved to config/time_settings.yml — a small override file merged over
+    config_ui.yml at load — so the commented main config is never rewritten."""
+    ts = dict(core.ui_config.get("time_settings") or {})
+    muted = UI_STYLES.get_layout_classes("muted_text")
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Time & billing defaults").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
+        ui.label(
+            "Global defaults used by Reports — a customer's own expected % "
+            "overrides the target where set."
+        ).classes("text-xs " + muted + " mb-2")
+
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            round_in = ui.number(
+                label="Default rounding (min)", min=0, step=5,
+                value=int(ts.get("rounding_minutes", 0) or 0),
+            ).props("dense outlined").classes("w-44")
+            mode_in = ui.select(
+                ["up", "nearest", "down"], label="Rounding mode",
+                value=str(ts.get("rounding_mode", "up") or "up"),
+            ).props("dense outlined").classes("w-36")
+            currency_in = ui.input(
+                label="Currency suffix", value=str(ts.get("currency", "") or ""),
+            ).props("dense outlined").classes("w-32")
+            hours_in = ui.number(
+                label="Target hours/day", min=0, step=0.5,
+                value=float(ts.get("target_hours_per_day", 8) or 8),
+            ).props("dense outlined").classes("w-36")
+            pct_in = ui.number(
+                label="Target %", min=0, step=5,
+                value=float(ts.get("target_percent", 100) or 100),
+            ).props("dense outlined").classes("w-32")
+
+        def _save():
+            values = {
+                "rounding_minutes": int(round_in.value or 0),
+                "rounding_mode": str(mode_in.value or "up"),
+                "currency": str(currency_in.value or ""),
+                "target_hours_per_day": float(hours_in.value or 8),
+                "target_percent": float(pct_in.value or 100),
+            }
+            try:
+                _save_yaml(_config_path(core, "time_settings.yml"), values)
+                # Live for this session too — Reports reads core.ui_config.
+                core.ui_config["time_settings"] = values
+                ui.notify("Time & billing defaults saved", type="positive")
+            except Exception as ex:
+                core.logger.error(f"Saving time settings failed: {ex}")
+                ui.notify(f"Save failed: {ex}", type="negative")
+
+        with ui.row().classes("w-full justify-end mt-2"):
+            ui.button("Save", icon="save", on_click=_save).props(
+                "color=primary no-caps dense"
+            )
+
+
+async def _render_about_card(core) -> None:
+    """App version + update status (reuses the cached daily update check),
+    plus prefilled GitHub links for bug reports / feature requests."""
+    from ..services.update_checker import (
+        _current_version,
+        check_for_update,
+        github_issue_url,
+    )
+
+    muted = UI_STYLES.get_layout_classes("muted_text")
+    version = _current_version()
+    status_txt, status_icon, status_cls = "Update check unavailable", "help", muted
+    try:
+        result = await check_for_update()
+        if result.get("available"):
+            status_txt = f"v{result['latest']} available — update with git pull"
+            status_icon, status_cls = "upgrade", "text-amber-400"
+        else:
+            status_txt = "Up to date"
+            status_icon, status_cls = "check_circle", "text-green-500"
+    except Exception:
+        pass
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("About").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
+        with ui.row().classes("items-center gap-2 mt-1"):
+            ui.label(f"WorkTimer v{version}").classes("text-sm text-white")
+            ui.icon(status_icon, size="xs").classes(f"{status_cls} shrink-0")
+            ui.label(status_txt).classes("text-xs " + muted)
+        # Opens GitHub's new-issue form prefilled (version + run mode
+        # included) — the user reviews and submits it there.
+        with ui.row().classes("items-center gap-2 mt-2"):
+            ui.button(
+                "Report a bug", icon="bug_report",
+                on_click=lambda: ui.navigate.to(
+                    github_issue_url("bug"), new_tab=True
+                ),
+            ).props("outline dense no-caps color=primary")
+            ui.button(
+                "Request a feature", icon="lightbulb",
+                on_click=lambda: ui.navigate.to(
+                    github_issue_url("feature"), new_tab=True
+                ),
+            ).props("outline dense no-caps color=primary")
+
 
 # ── Quasar colour palette offered in dropdowns ──────────────────────────────
 QUASAR_COLORS = [
@@ -212,31 +512,202 @@ async def _confirm_reset(what: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def _render_devops_contacts_tab(core: AppCore, reg: dict):
-    # reg["list_container"] must be set by settings_page before calling this.
+def _render_description_templates_card(core) -> None:
+    """Per-level description templates for the add-work-item form (the
+    markdown scaffold preloaded into a new Epic / Feature / User Story / …).
+    Saved to config/description_templates.yml — merged over config_ui.yml at
+    load, so the commented main config file is never rewritten."""
+    from ..trackers.registry import available_providers, get_provider_class
+
+    muted = UI_STYLES.get_layout_classes("muted_text")
+    override_path = _config_path(core, "description_templates.yml")
+
+    def _live_field() -> dict:
+        for f in (
+            core.ui_config.get("board_devops_forms", {}).get("add", {}).get("fields")
+            or []
+        ):
+            if isinstance(f, dict) and f.get("name") == "description_editor":
+                return f
+        return {}
+
+    current = dict(_live_field().get("templates") or {})
+
+    # Levels: the union of every registered tracker's hierarchy, plus any
+    # extra keys already carrying a template.
+    levels: list[str] = []
+    for pkey in available_providers():
+        try:
+            for t in get_provider_class(pkey).type_hierarchy():
+                if t not in levels:
+                    levels.append(t)
+        except Exception:
+            pass
+    for k in current:
+        if k not in levels:
+            levels.append(k)
+    if not levels:
+        levels = ["Epic", "Feature", "User Story"]
+
+    drafts: dict = {}
+    sel = {"level": levels[0]}
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Description templates").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
+        ui.label(
+            "The markdown scaffold preloaded into a new work item's description, "
+            "per level. Placeholders: {{today}} inserts the creation date; "
+            "{{source}} and {{contact_person}} (alias {{contact}}) stay in sync "
+            "with the form's dropdowns — the line carrying the placeholder is "
+            "rewritten on change, so keep some label text on it (e.g. "
+            '"**Source:** {{source}}"). Applies to newly opened add dialogs.'
+        ).classes("text-xs " + muted + " mb-2")
+
+        with ui.row().classes("w-full items-center gap-2"):
+            level_sel = ui.select(
+                levels, value=sel["level"], label="Level",
+            ).props("dense outlined options-dense").classes("w-48")
+            ui.space()
+            save_btn = ui.button("Save", icon="save").props(
+                "color=primary no-caps dense"
+            )
+            reset_btn = ui.button("Reset level", icon="restart_alt").props(
+                "flat dense color=primary no-caps"
+            )
+            reset_btn.tooltip("Restore this level's shipped template")
+
+        editor = (
+            ui.codemirror(
+                current.get(sel["level"], ""), language="Markdown", theme="dracula"
+            )
+            .classes("w-full mt-2")
+            .style("height: 280px;")
+        )
+
+        def _on_level(e):
+            # Stash the unsaved edit so switching levels loses nothing.
+            drafts[sel["level"]] = editor.value
+            sel["level"] = e.value
+            editor.value = drafts.get(e.value, current.get(e.value, ""))
+
+        level_sel.on_value_change(_on_level)
+
+        def _save():
+            drafts[sel["level"]] = editor.value
+            try:
+                data = _load_yaml(override_path)
+                tpl = dict(data.get("templates") or {})
+                tpl.update({k: str(v or "") for k, v in drafts.items()})
+                data["templates"] = tpl
+                _save_yaml(override_path, data)
+                live = _live_field()
+                if live:
+                    live["templates"] = {**(live.get("templates") or {}), **tpl}
+                current.update(tpl)
+                # Future clients read the loader's config — remerge it.
+                core.config_loader.reload_config("config_ui.yml")
+                ui.notify(
+                    "Templates saved — applies to newly opened work-item dialogs",
+                    type="positive",
+                )
+            except Exception as ex:
+                core.logger.error(f"Saving description templates failed: {ex}")
+                ui.notify(f"Save failed: {ex}", type="negative")
+
+        save_btn.on("click", _save)
+
+        # NOTE: async handlers bound to the click keep the slot context, so
+        # _confirm_reset can build its dialog — a bare asyncio.create_task
+        # has no slot stack and crashes ui.dialog().
+        async def _reset():
+            lvl = sel["level"]
+            if not await _confirm_reset(f"the {lvl} template"):
+                return
+            try:
+                # Shipped default straight from the pristine config_ui.yml.
+                shipped: dict = {}
+                raw = _load_yaml(_config_path(core, "config_ui.yml"))
+                for f in (
+                    ((raw.get("board_devops_forms") or {}).get("add") or {})
+                    .get("fields") or []
+                ):
+                    if isinstance(f, dict) and f.get("name") == "description_editor":
+                        shipped = dict(f.get("templates") or {})
+                        break
+                data = _load_yaml(override_path)
+                tpl = dict(data.get("templates") or {})
+                tpl.pop(lvl, None)
+                data["templates"] = tpl
+                _save_yaml(override_path, data)
+                default_val = shipped.get(lvl, "")
+                live = _live_field()
+                if live:
+                    live_tpl = dict(live.get("templates") or {})
+                    if default_val:
+                        live_tpl[lvl] = default_val
+                    else:
+                        live_tpl.pop(lvl, None)
+                    live["templates"] = live_tpl
+                if default_val:
+                    current[lvl] = default_val
+                else:
+                    current.pop(lvl, None)
+                drafts.pop(lvl, None)
+                editor.value = default_val
+                core.config_loader.reload_config("config_ui.yml")
+                ui.notify(f"{lvl} template reset to default", type="warning")
+            except Exception as ex:
+                core.logger.error(f"Resetting template failed: {ex}")
+                ui.notify(f"Reset failed: {ex}", type="negative")
+
+        reset_btn.on("click", _reset)
+
+
+async def _render_devops_contacts_tab(core: AppCore):
+    """DevOps contacts editor — in-panel customer selector + per-customer detail."""
     path = _config_path(core, "devops_contacts.yml")
     selected: dict = {"customer": None}
     contacts_template = path.parent / "devops_contacts.yml.template"
 
-    def _reset_contacts():
-        async def _do():
-            if not contacts_template.exists():
-                ui.notify("Template file not found", type="negative")
-                return
-            if not await _confirm_reset("DevOps contacts"):
-                return
-            shutil.copy2(contacts_template, path)
-            core.config_loader.reload_config("devops_contacts.yml")
-            selected["customer"] = None
-            _rebuild_customer_list()
+    # Async click handler (not a bare asyncio task): NiceGUI keeps the slot
+    # context for awaited handlers, which _confirm_reset's dialog needs.
+    async def _reset_contacts():
+        if not contacts_template.exists():
+            ui.notify("Template file not found", type="negative")
+            return
+        if not await _confirm_reset("DevOps contacts"):
+            return
+        shutil.copy2(contacts_template, path)
+        core.config_loader.reload_config("devops_contacts.yml")
+        selected["customer"] = None
+        _refresh_customer_select()
+        _reload_detail()
+        ui.notify("Contacts reset to defaults", type="warning")
+
+    # ── header: customer selector + actions (the panel provides scrolling) ────
+    def _on_select(e):
+        if e.value and e.value != selected["customer"]:
+            selected["customer"] = e.value
             _reload_detail()
-            ui.notify("Contacts reset to defaults", type="warning")
 
-        asyncio.create_task(_do())
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-3"):
+        with ui.row().classes("w-full items-center gap-2 no-wrap"):
+            cust_select = (
+                ui.select([], label="Customer", on_change=_on_select)
+                .props("dense outlined")
+                .classes("flex-1")
+            )
+            ui.button(
+                "Add customer", icon="add",
+                on_click=lambda: add_cust_dlg.open(),
+            ).props("outline color=primary no-caps dense")
+            ui.button(icon="restart_alt", on_click=_reset_contacts).props(
+                "flat dense color=primary"
+            ).tooltip("Reset contacts to the template")
 
-    # ── detail view ───────────────────────────────────────────────────────────
-    with ui.scroll_area().classes("w-full h-full"):
-        detail_col = ui.column().classes("w-full p-4 gap-4")
+    detail_col = ui.column().classes("w-full gap-4")
 
     # ── Add-customer dialog ───────────────────────────────────────────────────
     with ui.dialog() as add_cust_dlg, ui.card():
@@ -263,7 +734,7 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
                 new_cust_in.value = ""
                 add_cust_dlg.close()
                 selected["customer"] = name
-                _rebuild_customer_list()
+                _refresh_customer_select()
                 _reload_detail()
                 ui.notify(f"Customer '{name}' added", type="positive")
 
@@ -271,43 +742,20 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
                 "color=primary dense"
             )
 
-    # ── expose actions for sidebar ────────────────────────────────────────────
-    reg["add"]   = add_cust_dlg.open
-    reg["reset"] = _reset_contacts
-
     # ── rebuild helpers ───────────────────────────────────────────────────────
-    def _rebuild_customer_list():
-        list_container = reg["list_container"]
-        list_container.clear()
+    def _refresh_customer_select():
         dd = _load_yaml(path)
-        with list_container:
-            for cust_name in dd.get("customers", {}).keys():
-                is_sel = selected["customer"] == cust_name
-                bg = f"bg-{core.theme.get('toolbar_bg')}" if is_sel else ""
-                with ui.element("div").classes(
-                    f"w-full pl-7 pr-2 py-1.5 cursor-pointer flex items-center gap-1 "
-                    f"hover:bg-slate-700 {bg}"
-                ).on("click", lambda n=cust_name: _select_customer(n)):
-                    ui.icon("person", size="xs").classes(
-                        f"text-{core.theme.get('muted')} shrink-0"
-                    )
-                    ui.label(cust_name).classes("text-sm text-white truncate")
-
-    reg["rebuild"] = _rebuild_customer_list
-
-    def _select_customer(name: str):
-        selected["customer"] = name
-        if switch := reg.get("switch_to_contacts"):
-            switch()
-        _rebuild_customer_list()
-        _reload_detail()
+        names = list(dd.get("customers", {}).keys())
+        if selected["customer"] not in names:
+            selected["customer"] = names[0] if names else None
+        cust_select.set_options(names, value=selected["customer"])
 
     def _reload_detail():
         detail_col.clear()
         customer = selected["customer"]
         if not customer:
             with detail_col:
-                ui.label("Select a customer from the left panel to edit.").classes(
+                ui.label("No customers yet — use Add customer above.").classes(
                     UI_STYLES.get_layout_classes("muted_text_sm")
                 )
             return
@@ -327,7 +775,7 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
                     _save_yaml(path, ddd)
                     core.config_loader.reload_config("devops_contacts.yml")
                     selected["customer"] = None
-                    _rebuild_customer_list()
+                    _refresh_customer_select()
                     _reload_detail()
                     ui.notify(f"Deleted '{c}'", type="warning")
 
@@ -398,6 +846,118 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
                             "dense flat color=primary"
                         )
 
+                        if field_key == "assignees":
+
+                            async def _fetch_members(c=customer):
+                                """Pull the tracker's member list and let the
+                                user tick whom to import as assignees."""
+                                eng = core.tracker_engine
+                                manager = (
+                                    getattr(eng, "manager", None) if eng else None
+                                )
+                                if manager is None or c not in getattr(
+                                    manager, "clients", {}
+                                ):
+                                    ui.notify(
+                                        "No live tracker connection for "
+                                        "this customer",
+                                        type="warning",
+                                    )
+                                    return
+                                ok, res = await asyncio.to_thread(
+                                    manager.list_members, c
+                                )
+                                if not ok:
+                                    ui.notify(
+                                        f"Fetch failed: {res}", type="negative"
+                                    )
+                                    return
+                                if not res:
+                                    ui.notify("No members found", type="info")
+                                    return
+                                existing = set(
+                                    (
+                                        _load_yaml(path)
+                                        .get("customers", {})
+                                        .get(c, {}) or {}
+                                    ).get("assignees") or []
+                                )
+                                with ui.dialog() as mdlg, ui.card().classes(
+                                    "rounded-lg"
+                                ).style("min-width: 380px; max-width: 90vw;"):
+                                    ui.label(
+                                        f"Tracker members — {c}"
+                                    ).classes("text-sm font-semibold")
+                                    ui.label(
+                                        "Tick whom to add to the assignee "
+                                        "list (already-added are locked)."
+                                    ).classes(
+                                        UI_STYLES.get_layout_classes(
+                                            "muted_text_xs"
+                                        )
+                                    )
+                                    boxes = {}
+                                    with ui.column().classes(
+                                        "gap-0 mt-2 w-full"
+                                    ).style(
+                                        "max-height: 50vh; overflow-y: auto;"
+                                    ):
+                                        for name in res:
+                                            already = name in existing
+                                            cb = ui.checkbox(
+                                                name, value=already
+                                            ).props("dense")
+                                            if already:
+                                                cb.props("disable")
+                                            boxes[name] = (cb, already)
+
+                                    def _import():
+                                        ddd = _load_yaml(path)
+                                        lst = (
+                                            ddd.setdefault("customers", {})
+                                            .setdefault(c, {})
+                                            .setdefault("assignees", [])
+                                        )
+                                        added = 0
+                                        for nm, (cb, already) in boxes.items():
+                                            if (
+                                                cb.value
+                                                and not already
+                                                and nm not in lst
+                                            ):
+                                                lst.append(nm)
+                                                added += 1
+                                        _save_yaml(path, ddd)
+                                        core.config_loader.reload_config(
+                                            "devops_contacts.yml"
+                                        )
+                                        mdlg.close()
+                                        _reload_detail()
+                                        ui.notify(
+                                            f"Imported {added} member(s)",
+                                            type="positive",
+                                        )
+
+                                    with ui.row().classes(
+                                        "w-full justify-end gap-2 mt-2"
+                                    ):
+                                        ui.button(
+                                            "Cancel", on_click=mdlg.close
+                                        ).props("flat")
+                                        ui.button(
+                                            "Import selected",
+                                            icon="download",
+                                            on_click=_import,
+                                        ).props("color=primary")
+                                mdlg.on("hide", lambda: mdlg.delete())
+                                mdlg.open()
+
+                            ui.button(
+                                icon="cloud_download", on_click=_fetch_members
+                            ).props("dense flat color=primary").tooltip(
+                                "Fetch members from the tracker"
+                            )
+
             with ui.card().props("flat bordered").classes("w-full rounded-lg p-3"):
                 ui.label("Default Assignee").classes(
                     f"text-sm font-semibold text-{core.theme.get('accent')} mb-2"
@@ -424,7 +984,7 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
                         "color=primary dense flat"
                     ).tooltip("Save default")
 
-    _rebuild_customer_list()
+    _refresh_customer_select()
     _reload_detail()
 
 
@@ -433,7 +993,7 @@ async def _render_devops_contacts_tab(core: AppCore, reg: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def _render_devops_tags_tab(core: AppCore, reg: dict):
+async def _render_devops_tags_tab(core: AppCore):
     path = _config_path(core, "devops_tags.yml")
     table_container = ui.element("div").classes("w-full")
 
@@ -558,7 +1118,7 @@ async def _render_devops_tags_tab(core: AppCore, reg: dict):
         tags = data.get("devops_tags", [])
         with table_container:
             if not tags:
-                ui.label("No tags yet — use Add Tag in the sidebar.").classes(
+                ui.label("No tags yet — use Add tag above.").classes(
                     UI_STYLES.get_layout_classes("muted_text_sm")
                 )
                 return
@@ -612,26 +1172,32 @@ async def _render_devops_tags_tab(core: AppCore, reg: dict):
 
     tags_template = path.parent / "devops_tags.yml.template"
 
-    def _reset_tags():
-        async def _do():
-            if not tags_template.exists():
-                ui.notify("Template file not found", type="negative")
-                return
-            if not await _confirm_reset("DevOps tags"):
-                return
-            shutil.copy2(tags_template, path)
-            core.config_loader.reload_config("devops_tags.yml")
-            _reload_table()
-            ui.notify("Tags reset to defaults", type="warning")
-
-        asyncio.create_task(_do())
-
-    # ── expose actions for sidebar ────────────────────────────────────────────
-    reg["add"]   = _open_add
-    reg["reset"] = _reset_tags
+    # Async click handler (not a bare asyncio task): NiceGUI keeps the slot
+    # context for awaited handlers, which _confirm_reset's dialog needs.
+    async def _reset_tags():
+        if not tags_template.exists():
+            ui.notify("Template file not found", type="negative")
+            return
+        if not await _confirm_reset("DevOps tags"):
+            return
+        shutil.copy2(tags_template, path)
+        core.config_loader.reload_config("devops_tags.yml")
+        _reload_table()
+        ui.notify("Tags reset to defaults", type="warning")
 
     # ── panel body ────────────────────────────────────────────────────────────
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        with ui.row().classes("w-full items-center justify-between mb-2"):
+            ui.label("Work-item tags").classes(
+                f"text-sm font-semibold text-{core.theme.get('accent')}"
+            )
+            with ui.row().classes("gap-1 shrink-0"):
+                ui.button("Add tag", icon="add", on_click=_open_add).props(
+                    "outline color=primary no-caps dense"
+                )
+                ui.button(icon="restart_alt", on_click=_reset_tags).props(
+                    "flat dense color=primary"
+                ).tooltip("Reset tags to the template")
         _reload_table()
 
 
@@ -640,7 +1206,7 @@ async def _render_devops_tags_tab(core: AppCore, reg: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def _render_theme_tab(core: AppCore, reg: dict):
+async def _render_theme_tab(core: AppCore):
     theme_path = _config_path(core, "config_theme.yml")
     template_path = theme_path.parent / "config_theme.yml.template"
     data = _load_yaml(theme_path)
@@ -664,24 +1230,28 @@ async def _render_theme_tab(core: AppCore, reg: dict):
         ("chip_bg",  "Chip background"),
     ]
 
-    def _reset_theme():
-        async def _do():
-            if not template_path.exists():
-                ui.notify("Template file not found", type="negative")
-                return
-            if not await _confirm_reset("the theme"):
-                return
-            shutil.copy2(template_path, theme_path)
-            core.config_loader.reload_config("config_theme.yml")
-            # Ctrl+R, not F5 — F5 is intentionally suppressed app-wide (query editor
-            # binds it to Execute), so don't advise a shortcut that won't work.
-            ui.notify("Theme reset to defaults — reload the page (Ctrl+R) to apply", type="warning")
-
-        asyncio.create_task(_do())
-
-    reg["reset"] = _reset_theme
+    # Async click handler (not a bare asyncio task): NiceGUI keeps the slot
+    # context for awaited handlers, which _confirm_reset's dialog needs.
+    async def _reset_theme():
+        if not template_path.exists():
+            ui.notify("Template file not found", type="negative")
+            return
+        if not await _confirm_reset("the theme"):
+            return
+        shutil.copy2(template_path, theme_path)
+        core.config_loader.reload_config("config_theme.yml")
+        # Ctrl+R, not F5 — F5 is intentionally suppressed app-wide (query editor
+        # binds it to Execute), so don't advise a shortcut that won't work.
+        ui.notify("Theme reset to defaults — reload the page (Ctrl+R) to apply", type="warning")
 
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        with ui.row().classes("w-full items-center justify-between mb-1"):
+            ui.label("Theme colours").classes(
+                f"text-sm font-semibold text-{core.theme.get('accent')}"
+            )
+            ui.button(icon="restart_alt", on_click=_reset_theme).props(
+                "flat dense color=primary"
+            ).tooltip("Reset theme to the template")
         ui.label(
             "Each colour picker saves both the hex value (for Quasar components) "
             "and the nearest Tailwind token (for class-based styling) simultaneously."
@@ -806,6 +1376,59 @@ async def _render_theme_tab(core: AppCore, reg: dict):
         with ui.row().classes("gap-3 mt-4"):
             ui.button("Save Theme", icon="save", on_click=_save_theme).props("color=primary")
 
+    # ── Query-editor skin ─────────────────────────────────────────────────────
+    # Per-user (app.storage.user), unlike the app palette above which is shared —
+    # each person picks their own editor colours. The Query Editor reads the
+    # value on every page render, so it applies on the next visit.
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Query editor skin").classes(
+            f"text-sm font-semibold text-{core.theme.get('accent')}"
+        )
+        ui.label(
+            "Colour scheme for the SQL editor on the Query Editor page. "
+            "Saved per user; the preview below applies immediately."
+        ).classes("text-xs opacity-70 mb-2")
+
+        current = str(app.storage.user.get("query_editor_theme", "dracula"))
+        with ui.row().classes("w-full items-start gap-4"):
+            preview = (
+                ui.codemirror(
+                    "select customer_name,\n"
+                    "       round(sum(cost), 2) as amount\n"
+                    "from time_entries\n"
+                    "group by customer_name\n"
+                    "order by amount desc;",
+                    language="SQLite",
+                )
+                .classes("flex-1")
+                .style("height: 150px; min-width: 16rem;")
+            )
+            # The *Style entries are highlight-style internals, not full skins.
+            names = sorted(
+                (t for t in preview.supported_themes if not t.endswith("Style")),
+                key=str.lower,
+            )
+            if current in names:
+                preview.set_theme(current)
+            else:
+                current = "dracula"
+
+            def _pretty(name: str) -> str:
+                label = re.sub(r"(?<!^)(?=[A-Z])", " ", name).title()
+                return label.replace("Vscode", "VS Code").replace("Bbedit", "BBEdit")
+
+            def _on_skin(e):
+                skin = e.value or "dracula"
+                app.storage.user["query_editor_theme"] = skin
+                preview.set_theme(skin)
+
+            ui.select(
+                {n: _pretty(n) for n in names},
+                value=current,
+                label="Skin",
+                on_change=_on_skin,
+            ).props("outlined dense options-dense").classes("w-56")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Page entry point
@@ -813,82 +1436,52 @@ async def _render_theme_tab(core: AppCore, reg: dict):
 
 
 async def settings_page():
-    """Settings page — sidebar navigation with three configuration sections."""
+    """Settings page — toolbar tabs with four sections (DevOps / Tags / Theme / Data),
+    matching the navigation idiom of the Data Input and Documentation pages."""
     core = await AppCore.get_or_initialize()
 
-    contacts_reg: dict = {}
-    tags_reg:     dict = {}
-    theme_reg:    dict = {}
-
-    panel_refs: dict = {}
-    row_refs:   dict = {}
-    state = {"active": "contacts", "contacts_expanded": True}
-
-    # These dicts hold element refs that are populated during sidebar render,
-    # then used in _toggle_contacts / _switch which are called at click-time.
-    _expand_icon: dict  = {}   # {"el": ui.icon}
-    _sub_list:    dict  = {}   # {"el": ui.element}
-
-    def _switch(section: str):
-        state["active"] = section
-        for k, panel in panel_refs.items():
-            if k == section:
-                panel.classes(remove="hidden")
-            else:
-                panel.classes("hidden")
-        for k, row_el in row_refs.items():
-            if k == section:
-                row_el.classes("bg-slate-700", remove="hover:bg-slate-700")
-            else:
-                row_el.classes("hover:bg-slate-700", remove="bg-slate-700")
-
-    def _toggle_contacts():
-        if state["active"] != "contacts":
-            # switching to contacts always expands
-            _switch("contacts")
-            state["contacts_expanded"] = True
-            _sub_list["el"].classes(remove="hidden")
-            _expand_icon["el"].set_name("expand_more")
-        else:
-            # already on contacts — toggle expand
-            state["contacts_expanded"] = not state["contacts_expanded"]
-            if state["contacts_expanded"]:
-                _sub_list["el"].classes(remove="hidden")
-                _expand_icon["el"].set_name("expand_more")
-            else:
-                _sub_list["el"].classes("hidden")
-                _expand_icon["el"].set_name("chevron_right")
-
-    from ..services.services import DevOpsService
-    _svc = DevOpsService(core)
+    from ..services.services import TrackerSyncService
+    _svc = TrackerSyncService(core)
     # May be None when DevOps init was skipped (no PAT customers / no internet) —
     # the page must still render, just without the sync controls.
-    _eng = core.devops_engine
+    _eng = core.tracker_engine
 
     with toolbar(core.theme):
-        with toolbar_group(core.theme, divider_after=False):
+        with toolbar_group(core.theme, divider_after=True):
             ui.icon("tune", size="md").classes(f"text-{core.theme.get('accent')}")
             ui.label("Settings").classes(UI_STYLES.get_layout_classes("page_title"))
 
-        ui.element("div").classes("flex-1")
-
-        with toolbar_group(core.theme, divider_after=True):
-            ui.button(
-                "Backup", icon="backup", on_click=lambda: open_backup_dialog(core)
-            ).props("flat dense no-caps color=primary").tooltip(
-                "Back up the database (local folder or download)"
+        with (
+            ui.tabs(value="devops")
+            .props(
+                f'horizontal dense active-color="{core.theme.get("accent")}" '
+                f'indicator-color="{core.theme.get("accent")}"'
             )
+            .classes(UI_STYLES.get_layout_classes("tab_label"))
+        ) as main_tabs:
+            ui.tab("devops", label="Trackers", icon="cloud_sync")
+            ui.tab("tags", label="Tags", icon="label")
+            ui.tab("theme", label="Theme", icon="color_lens")
+            ui.tab("data", label="Data", icon="storage")
 
-        with toolbar_group(core.theme, divider_after=False):
+    def _render_sync_card():
+        """DevOps sync controls — moved out of the toolbar into the section."""
+        with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+            ui.label("Synchronisation").classes(
+                f"text-sm font-semibold text-{core.theme.get('accent')}"
+            )
             if _eng is None:
-                ui.label("DevOps not configured").classes(
-                    UI_STYLES.get_layout_classes("muted_text_xs")
-                ).tooltip("Add a customer with PAT token + org URL to enable syncing")
-            else:
+                ui.label(
+                    "No tracker configured — add a customer with a PAT token and "
+                    "org URL to enable syncing."
+                ).classes(UI_STYLES.get_layout_classes("muted_text_xs") + " mt-1")
+                return
+
+            with ui.row().classes("w-full items-center gap-3 no-wrap mt-1"):
                 _sync_lbl = ui.label(
                     f"incr: {_fmt_time(_eng.last_incremental_sync)}  ·  "
                     f"full: {_fmt_time(_eng.last_full_sync)}"
-                ).classes(UI_STYLES.get_layout_classes("muted_text_xs"))
+                ).classes(UI_STYLES.get_layout_classes("muted_text_xs") + " flex-1")
 
                 def _refresh_sync_labels():
                     try:
@@ -908,120 +1501,39 @@ async def settings_page():
                     _refresh_sync_labels()
 
                 ui.button("Incremental", icon="sync", on_click=_run_incr).props(
-                    "color=primary dense outline"
+                    "color=primary dense outline no-caps"
                 )
                 ui.button("Full Sync", icon="cloud_download", on_click=_run_full).props(
-                    "color=primary dense outline"
+                    "color=primary dense outline no-caps"
                 )
 
-    with page_card(scrollable=False):
-        with ui.row().classes("w-full h-full gap-0 overflow-hidden"):
+    with (
+        ui.tab_panels(main_tabs, value="devops")
+        .props("vertical")
+        .classes("wt-page-content w-full")
+        .style("background: transparent;")
+    ):
+        with ui.tab_panel("devops").classes("p-0 h-full"):
+            with ui.scroll_area().classes("w-full h-full"):
+                with ui.column().classes("w-full gap-4 p-4"):
+                    _render_sync_card()
+                    _render_tracker_defaults_card(core)
+                    _render_description_templates_card(core)
+                    await _render_devops_contacts_tab(core)
 
-            # ── Left sidebar ──────────────────────────────────────────────────
-            with ui.element("div").classes(
-                "w-56 h-full flex flex-col shrink-0 py-1 overflow-y-auto"
-            ).style("border-right: 1px solid #475569"):
+        with ui.tab_panel("tags").classes("p-0 h-full"):
+            with ui.scroll_area().classes("w-full h-full"):
+                with ui.column().classes("w-full gap-4 p-4"):
+                    await _render_devops_tags_tab(core)
 
-                # ── CONTACTS (accordion row) ──────────────────────────────────
-                with ui.row().classes(
-                    "w-full items-center px-2 py-2.5 gap-1.5 cursor-pointer bg-slate-700"
-                ).on("click", _toggle_contacts) as contacts_row:
+        with ui.tab_panel("theme").classes("p-0 h-full"):
+            with ui.scroll_area().classes("w-full h-full"):
+                with ui.column().classes("w-full gap-4 p-4"):
+                    await _render_theme_tab(core)
 
-                    exp_icon = ui.icon("expand_more", size="xs").classes(
-                        f"text-{core.theme.get('accent')} shrink-0"
-                    )
-                    ui.icon("contacts", size="xs").classes(
-                        f"text-{core.theme.get('muted')} shrink-0"
-                    )
-                    ui.label("DevOps Contacts").classes(
-                        "text-sm text-white flex-1 truncate leading-tight"
-                    )
-                    with ui.row().classes("gap-0 shrink-0"):
-                        ui.button(
-                            icon="add",
-                            on_click=lambda: contacts_reg.get("add") and contacts_reg["add"](),
-                        ).props("flat dense round size=xs color=primary").tooltip("Add customer")
-                        ui.button(
-                            icon="restart_alt",
-                            on_click=lambda: contacts_reg.get("reset") and contacts_reg["reset"](),
-                        ).props("flat dense round size=xs color=primary").tooltip("Reset")
-
-                row_refs["contacts"] = contacts_row
-                _expand_icon["el"]   = exp_icon
-
-                # ── customer sub-list ─────────────────────────────────────────
-                contacts_sub = ui.element("div").classes("w-full")
-                contacts_reg["list_container"] = contacts_sub
-                _sub_list["el"] = contacts_sub
-
-                ui.separator().classes("my-0.5 mx-3")
-
-                # ── TAGS (plain row) ──────────────────────────────────────────
-                with ui.row().classes(
-                    "w-full items-center px-2 py-2.5 gap-1.5 cursor-pointer hover:bg-slate-700"
-                ).on("click", lambda: _switch("tags")) as tags_row:
-                    ui.icon("label", size="xs").classes(
-                        f"text-{core.theme.get('muted')} shrink-0"
-                    )
-                    ui.label("DevOps Tags").classes(
-                        "text-sm text-white flex-1 truncate leading-tight"
-                    )
-                    with ui.row().classes("gap-0 shrink-0"):
-                        ui.button(
-                            icon="add",
-                            on_click=lambda: tags_reg.get("add") and tags_reg["add"](),
-                        ).props("flat dense round size=xs color=primary").tooltip("Add tag")
-                        ui.button(
-                            icon="restart_alt",
-                            on_click=lambda: tags_reg.get("reset") and tags_reg["reset"](),
-                        ).props("flat dense round size=xs color=primary").tooltip("Reset")
-
-                row_refs["tags"] = tags_row
-
-                ui.separator().classes("my-0.5 mx-3")
-
-                # ── THEME (plain row) ─────────────────────────────────────────
-                with ui.row().classes(
-                    "w-full items-center px-2 py-2.5 gap-1.5 cursor-pointer hover:bg-slate-700"
-                ).on("click", lambda: _switch("theme")) as theme_row:
-                    ui.icon("color_lens", size="xs").classes(
-                        f"text-{core.theme.get('muted')} shrink-0"
-                    )
-                    ui.label("Theme").classes(
-                        "text-sm text-white flex-1 truncate leading-tight"
-                    )
-                    with ui.row().classes("gap-0 shrink-0"):
-                        ui.button(
-                            icon="restart_alt",
-                            on_click=lambda: theme_reg.get("reset") and theme_reg["reset"](),
-                        ).props("flat dense round size=xs color=primary").tooltip("Reset")
-
-                row_refs["theme"] = theme_row
-
-            # ── Right panels (pre-rendered, toggled via hidden class) ─────────
-            with ui.element("div").classes("flex-1 h-full overflow-hidden relative"):
-
-                # Contacts — active by default
-                with ui.element("div").classes("absolute inset-0") as p:
-                    await _render_devops_contacts_tab(core, contacts_reg)
-                panel_refs["contacts"] = p
-
-                # Tags
-                with ui.element("div").classes("absolute inset-0 hidden") as p:
-                    with ui.scroll_area().classes("w-full h-full"):
-                        with ui.column().classes("w-full gap-4 p-4"):
-                            await _render_devops_tags_tab(core, tags_reg)
-                panel_refs["tags"] = p
-
-                # Theme
-                with ui.element("div").classes("absolute inset-0 hidden") as p:
-                    with ui.scroll_area().classes("w-full h-full"):
-                        with ui.column().classes("w-full gap-4 p-4"):
-                            await _render_theme_tab(core, theme_reg)
-                panel_refs["theme"] = p
-
-    # wire switch callback so customer clicks work from any panel
-    contacts_reg["switch_to_contacts"] = lambda: _switch("contacts")
-    # populate the sidebar customer list after all panels are rendered
-    if contacts_reg.get("rebuild"):
-        contacts_reg["rebuild"]()
+        with ui.tab_panel("data").classes("p-0 h-full"):
+            with ui.scroll_area().classes("w-full h-full"):
+                with ui.column().classes("w-full gap-4 p-4"):
+                    _render_backup_card(core)
+                    _render_time_settings_card(core)
+                    await _render_about_card(core)

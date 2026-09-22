@@ -50,8 +50,8 @@ navigation:
     key: log
     enabled: true
   info:
-    label: Info
-    icon: info
+    label: Documentation
+    icon: menu_book
     path: /info
     key: info
     enabled: true
@@ -83,10 +83,16 @@ board_devops_forms:
       - name: work_item_type
         label: Work Item Type
         type: select
+        # Options follow the selected customer's tracker (Azure: Epic/Feature/
+        # User Story; Jira: Epic/Story/Sub-task). Static options are the
+        # no-data fallback; the dialog snaps an invalid value to the tracker's
+        # preferred level (no default_source — that would clobber presets).
         options:
           - Epic
           - Feature
           - User Story
+        options_source: work_item_types
+        parent: customer_name
         default: User Story
         optional: False
       - name: work_item_title
@@ -96,12 +102,16 @@ board_devops_forms:
       - name: state
         label: State
         type: select
+        # Per-customer via the tracker (Jira: project statuses); static list
+        # is the fallback. An invalid default is snapped in the dialog.
         options:
           - New
           - Active
           - Resolved
           - Closed
           - Removed
+        options_source: work_item_states
+        parent: customer_name
         default: New
         optional: False
       - name: source
@@ -117,7 +127,7 @@ board_devops_forms:
         optional: True
         conditional: true
         visible_when:
-          work_item_type: [User Story]
+          work_item_type: [User Story, Story]
       - name: contact_person
         label: Contact Person
         type: select
@@ -128,7 +138,7 @@ board_devops_forms:
         parent: customer_name
         conditional: true
         visible_when:
-          work_item_type: [User Story]
+          work_item_type: [User Story, Story]
       - name: assigned_to
         label: Assigned To
         type: select
@@ -153,7 +163,7 @@ board_devops_forms:
         parent: customer_name
         conditional: true
         visible_when:
-          work_item_type: [Feature, User Story]
+          work_item_type: [Feature, User Story, Story, Sub-task]
       - name: priority
         label: Priority
         type: select
@@ -176,6 +186,26 @@ board_devops_forms:
         type: switch
         optional: False
         default: True
+      # Hidden for trackers without branch support (capability-gated in the
+      # dialog); creates a linked branch right after the item. Name/base
+      # appear when the switch is on: the name holds the tracker's branch
+      # template ({{type}}/{{id}}/{{title}} resolve once the item exists),
+      # the base dropdown lists the target repo's branches.
+      - name: create_branch
+        label: Auto-create git branch
+        type: switch
+        optional: True
+        default: False
+      - name: branch_name
+        label: "Branch name ({{id}}, {{title}}, {{type}} fill in)"
+        type: input
+        optional: True
+      - name: branch_source
+        label: Base branch
+        type: select
+        options: []
+        with_input: true
+        optional: True
       - name: description_editor
         label: Description
         type: editor_with_preview
@@ -183,9 +213,14 @@ board_devops_forms:
         optional: False
         parent_fields: [source, contact_person]
         render_function: render_and_sanitize_markdown
+        # Placeholders: {{today}} = creation date; {{source}} / {{contact_person}}
+        # (alias {{contact}}) stay in sync with the form's dropdowns — the line
+        # carrying the placeholder is rewritten when the dropdown changes, so
+        # the lines can be moved or relabelled freely. Editable in the app:
+        # Settings → Trackers → "Description templates".
         templates:
           Epic: |
-            **Created Date:** {today}
+            **Created Date:** {{today}}
 
             ## Strategic Goal
 
@@ -199,7 +234,7 @@ board_devops_forms:
             ## Timeline
 
           Feature: |
-            **Created Date:** {today}
+            **Created Date:** {{today}}
 
             ## Feature Description
 
@@ -212,10 +247,10 @@ board_devops_forms:
 
             ## Dependencies
 
-          User Story: |
-            **Received Date:** {today}
-            **Source:** 
-            **Contact:** 
+          User Story: &story_template |
+            **Received Date:** {{today}}
+            **Source:** {{source}}
+            **Contact:** {{contact_person}}
 
             ## Problem
 
@@ -228,12 +263,15 @@ board_devops_forms:
 
             ## Validation
 
+          # Jira's working level shares the User Story template.
+          Story: *story_template
     rows:
       - [customer_name, work_item_type, work_item_title]
       - [parent_name, assigned_to]
       - [contact_person, source]
       - [state, priority, board_column]
       - [tags]
+      - [create_branch, branch_name, branch_source]
       - [description_editor]
     action:
       function: add_work_item
@@ -259,12 +297,16 @@ board_devops_forms:
       - name: state
         label: State
         type: select
+        # Per-customer via the tracker (Jira: project statuses); static list
+        # is the fallback.
         options:
           - New
           - Active
           - Resolved
           - Closed
           - Removed
+        options_source: work_item_states
+        parent: customer_name
         optional: True
       - name: assigned_to
         label: Assigned To
@@ -334,24 +376,16 @@ add_data_page:
           options: []
           options_source: today
           optional: false
-        - name: org_url
-          label: DevOps Org. URL
-          type: input
-          optional: true
-        - name: pat_token
-          label: DevOps PAT
-          type: input
+        - name: tracker_name
+          label: Tracker
+          type: select
+          options: []
+          options_source: tracker_data
           optional: true
         - name: expected_work_pct
           label: Expected work %
           type: number
           step: 5
-          min: 0
-          optional: true
-        - name: billing_round_minutes
-          label: "Billing round (min, 0 = default)"
-          type: number
-          step: 1
           min: 0
           optional: true
         - name: color
@@ -379,26 +413,20 @@ add_data_page:
           options_source: new_customer_name
           optional: false
           parent: customer_name
-        - name: "org_url"
-          label: "DevOps Org. URL"
-          type: input
-          options: []
-          options_source: org_url
-          optional: true
-          parent: customer_name
-        - name: "pat_token"
-          label: "DevOps PAT"
-          type: input
-          options: []
-          options_source: pat_token
-          optional: true
-          parent: customer_name
-        - name: "devops_project"
-          label: "DevOps Project"
+        - name: tracker_name
+          label: Tracker
           type: select
           options: []
-          options_source: devops_projects
-          default_source: devops_project_current
+          options_source: tracker_data
+          default_source: tracker_current
+          parent: customer_name
+          optional: true
+        - name: "tracker_project"
+          label: "Project"
+          type: select
+          options: []
+          options_source: tracker_projects
+          default_source: tracker_project_current
           parent: customer_name
           optional: true
         - name: expected_work_pct
@@ -408,15 +436,6 @@ add_data_page:
           min: 0
           options: []
           options_source: expected_work_pct
-          parent: customer_name
-          optional: true
-        - name: billing_round_minutes
-          label: "Billing round (min, 0 = default)"
-          type: number
-          step: 1
-          min: 0
-          options: []
-          options_source: billing_round_minutes
           parent: customer_name
           optional: true
         - name: color
@@ -469,6 +488,175 @@ add_data_page:
         - update
         - disable
         - reenable
+
+  ### Tracker connections (customers link to one via the Tracker field) ###
+  tracker:
+    add:
+      fields:
+        - name: tracker_name
+          label: Name
+          type: input
+          optional: false
+        - name: integration_type
+          label: Type
+          type: select
+          options: []
+          options_source: integration_types
+          default: devops
+          optional: false
+        - name: org_url
+          label: "DevOps organisation"
+          type: input
+          optional: false
+          conditional: true
+          visible_when:
+            integration_type: [devops]
+        - name: pat_token
+          label: "Personal Access Token (PAT)"
+          type: input
+          optional: false
+          conditional: true
+          visible_when:
+            integration_type: [devops]
+        - name: jira_site
+          label: "Jira site (yoursite.atlassian.net)"
+          type: input
+          optional: false
+          conditional: true
+          visible_when:
+            integration_type: [jira]
+        - name: jira_email
+          label: "Atlassian account email"
+          type: input
+          optional: false
+          conditional: true
+          visible_when:
+            integration_type: [jira]
+        - name: jira_api_token
+          label: "API token"
+          type: input
+          optional: false
+          conditional: true
+          visible_when:
+            integration_type: [jira]
+        - name: token_expires
+          label: "Token expires (YYYY-MM-DD, optional)"
+          type: input
+          optional: true
+      action:
+        function: "insert_tracker"
+        main_action: "Tracker"
+        main_param: "tracker_name"
+        secondary_action: "added"
+        button_name: "Add"
+    update:
+      fields:
+        - name: tracker_name
+          label: Name
+          type: select
+          options: []
+          options_source: tracker_data
+          optional: false
+        - name: new_tracker_name
+          label: New Name
+          type: input
+          options: []
+          options_source: new_tracker_name
+          optional: true
+          parent: tracker_name
+        - name: integration_type
+          label: Type
+          type: select
+          options: []
+          options_source: integration_types
+          default_source: integration_type_current
+          parent: tracker_name
+          optional: true
+        - name: org_url
+          label: "DevOps organisation"
+          type: input
+          options: []
+          options_source: org_url
+          optional: true
+          parent: tracker_name
+          conditional: true
+          visible_when:
+            integration_type: [devops]
+        - name: pat_token
+          label: "Personal Access Token (blank = unchanged)"
+          type: input
+          options: []
+          options_source: pat_token
+          optional: true
+          parent: tracker_name
+          conditional: true
+          visible_when:
+            integration_type: [devops]
+        - name: jira_site
+          label: "Jira site (yoursite.atlassian.net)"
+          type: input
+          options: []
+          options_source: jira_site
+          optional: true
+          parent: tracker_name
+          conditional: true
+          visible_when:
+            integration_type: [jira]
+        - name: jira_email
+          label: "Atlassian account email"
+          type: input
+          options: []
+          options_source: jira_email
+          optional: true
+          parent: tracker_name
+          conditional: true
+          visible_when:
+            integration_type: [jira]
+        - name: jira_api_token
+          label: "API token (blank = unchanged)"
+          type: input
+          options: []
+          options_source: jira_api_token
+          optional: true
+          parent: tracker_name
+          conditional: true
+          visible_when:
+            integration_type: [jira]
+        - name: token_expires
+          label: "Token expires (YYYY-MM-DD, blank = unchanged)"
+          type: input
+          options: []
+          options_source: token_expires
+          optional: true
+          parent: tracker_name
+      action:
+        function: "update_tracker"
+        main_action: "Tracker"
+        main_param: "tracker_name"
+        secondary_action: "updated"
+        button_name: "Update"
+    delete:
+      fields:
+        - name: tracker_name
+          label: Name
+          type: select
+          options: []
+          options_source: tracker_data
+          optional: false
+      action:
+        function: "delete_tracker"
+        main_action: "Tracker"
+        main_param: "tracker_name"
+        secondary_action: "deleted"
+        button_name: "Delete"
+    meta:
+      icon: cable
+      friendly_name: Trackers
+      build_function: render_entity_tabs
+      options:
+        - add
+        - update
+        - delete
 
   ### Project Information ###
   project:
@@ -654,31 +842,12 @@ query:
       button_name: "Update"
   customers:
     fields:
-      - name: pat_token
-        label: PAT Token
-        type: input
-        options: []
-        options_source: pat_token
-        optional: true
-      - name: org_url
-        label: Organization URL
-        type: input
-        options: []
-        options_source: org_url
-        optional: true
       - name: expected_work_pct
         label: Expected work %
         type: number
         step: 5
         options: []
         options_source: expected_work_pct
-        optional: true
-      - name: billing_round_minutes
-        label: Billing round (min)
-        type: number
-        step: 1
-        options: []
-        options_source: billing_round_minutes
         optional: true
       - name: color
         label: Colour
@@ -707,27 +876,27 @@ query:
       secondary_action: None
       button_name: Update
 
-## Info Pages ##
+## Documentation Pages ##
 info_page:
   info:
     meta:
-      icon: info
-      friendly_name: Info
+      icon: menu_book
+      friendly_name: Guide
       file: readme.md
-  read_me:
+  shortcuts:
+    meta:
+      icon: keyboard
+      friendly_name: Shortcuts
+      file: shortcuts.md
+  changelog:
     meta:
       icon: change_history
       friendly_name: Changelog
       file: changelog.md
-  changelog:
-    meta:
-      icon: read_more
-      friendly_name: Todo
-      file: todo.md
-  devops_contacts:
+  tracker_contacts:
     meta:
       icon: contacts
-      friendly_name: DevOps Contacts
+      friendly_name: Tracker Contacts
       file: devops_contacts.md
 
 ## Log Page ##

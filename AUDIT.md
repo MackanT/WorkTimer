@@ -6,6 +6,8 @@
 > §1–§6 in full; §7.1–7.8 (incl. schema single-sourcing with startup auto-migration and the backdated-bonus trigger); §8.1–8.10 (**§7.4/§8.1 done**: the legacy `make_input_row` form factory and its binding machinery were deleted outright — every remaining caller was a dead fallback — with a new `datetime` widget covering the last config type, and conditional field visibility restored in the DynamicWidget path where it had silently stopped working; helpers.py split into `ui_styles.py` + `markdown_utils.py` with back-compat re-exports; task card moved into tasks.py taking the `Task` dataclass); and §9 (incl. `update_customer`/`update_project` None-wipe hardening and checkbox-stamp robustness).
 > Deliberately left as-is: mixed SQL keyword casing (§7.9 — pure churn) and the `extract_table_name` first-`from` regex (§9 — guarded by the editable-table whitelist).
 
+> **5.1.0 addendum (2026-09-14):** re-verified before the user-base grows — all of the above holds. Note the internal naming this audit uses was renamed in 5.1.0 (the release cycle formerly numbered 5.0.5): `src/devops.py` → `tracker_manager.py` (`DevOpsManager` → `TrackerManager`, `DevOpsClient` → `AzureDevOpsClient`), `src/ui/devops_forms.py` → `work_item_forms.py`, `devops_handlers.py` → `work_item_handlers.py`, `DevOpsEngine` → `TrackerEngine`, `core.devops_engine` → `core.tracker_engine`, and `customers.devops_project` → `tracker_project` (auto-migrated). The §5 security items are in place (localhost bind + `HOST` override, per-install storage secret, protocol-restricted bleach) and credentials are now Fernet-encrypted at rest in the `trackers` table.
+
 ---
 
 ## Summary
