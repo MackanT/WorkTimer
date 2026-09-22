@@ -11,9 +11,17 @@ Welcome to **WorkTimer** — a locally hosted web application for time tracking 
 - **Python 3.11+** with [`uv`](https://docs.astral.sh/uv/) for running directly, **or**
 - **Docker** for 24/7 operation
 
-First time with `uv`? Install it and sync the dependencies once:
+### Install
+
 ```powershell
-pip install uv      # then restart your terminal
+# 1. Get the code
+git clone https://github.com/MackanT/worktimer
+cd worktimer
+
+# 2. Install uv (first time only — then restart your terminal)
+pip install uv
+
+# 3. Sync the dependencies
 uv sync
 ```
 
@@ -26,10 +34,10 @@ uv run -m main
 
 **Option B — Docker (recommended for 24/7 operation)**
 ```powershell
-docker compose up -d
+docker compose up -d --build
 ```
 
-Docker reads `DB_NAME` and `DEBUG_MODE` from a `.env` file in the project root. A default `.env` ships with the project — edit it if you want a different database name or debug output.
+Both options read `DB_NAME` and `DEBUG_MODE` from a `.env` file in the project root. The app runs fine without one (defaults: `worktimer.db`, port 8080) — to customise, copy `.env.template` to `.env` and edit it; `.env` is gitignored, so each install keeps its own settings.
 
 Then open **`http://localhost:8080`** in your browser.
 
@@ -218,9 +226,12 @@ Sync schedule (background):
 
 ## Docker deployment
 
+Needs Docker (e.g. Docker Desktop). The image builds locally from the cloned
+repo — no registry involved:
+
 ```powershell
-# Start (detached)
-docker compose up -d
+# First start, and after every `git pull` (build + run detached)
+docker compose up -d --build
 
 # View live logs
 docker compose logs -f
@@ -229,7 +240,9 @@ docker compose logs -f
 docker compose down
 ```
 
-The database file is volume-mounted so data persists across restarts. See `docker-compose.yml` for the mount path.
+The database file is volume-mounted so data persists across restarts and
+rebuilds. See `docker-compose.yml` for the mount path, and the `.env` file
+for the database name.
 
 ---
 
