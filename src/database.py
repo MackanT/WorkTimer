@@ -343,7 +343,7 @@ class Database:
             self._migrate_customer_trackers()
             self._drop_legacy_customer_credentials()
 
-            # Per-customer billing rounding retired in 5.0.5 (the global
+            # Per-customer billing rounding retired in 5.1.0 (the global
             # setting + the Reports-page override cover it).
             self._drop_retired_columns()
 
@@ -1142,7 +1142,7 @@ class Database:
 
     def _drop_retired_columns(self):
         """Drop columns whose feature was removed. Currently:
-        customers.billing_round_minutes (5.0.5 — rounding lives in the global
+        customers.billing_round_minutes (5.1.0 — rounding lives in the global
         time settings plus the Reports-page override, so the per-customer
         value was dead weight). Idempotent; a SQLite too old for DROP COLUMN
         (< 3.35) just leaves the column in place, which is harmless."""
@@ -1913,7 +1913,7 @@ class Database:
                     ("inserted_at", "DATETIME", None, None),
                 ],
                 # NOTE: pat_token/org_url (migrated to trackers) and
-                # billing_round_minutes (feature retired in 5.0.5) are
+                # billing_round_minutes (feature retired in 5.1.0) are
                 # deliberately absent — they were dropped, and listing them
                 # here would make the auto-migration re-add them.
                 "customers": [

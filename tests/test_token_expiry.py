@@ -76,7 +76,7 @@ def test_invalid_expiry_date_raises(tmp_path, null_logger):
 
 
 def test_token_expires_column_added_on_startup(tmp_path, null_logger):
-    """A pre-5.0.5 trackers table lacks token_expires; the schema
+    """A pre-5.1.0 trackers table lacks token_expires; the schema
     auto-migration must add it."""
     path = str(tmp_path / "t.db")
     db = Database(path, null_logger)

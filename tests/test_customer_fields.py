@@ -1,4 +1,4 @@
-"""Tests for the per-customer fields (expected %, colour) and the 5.0.5
+"""Tests for the per-customer fields (expected %, colour) and the 5.1.0
 retirement of billing_round_minutes."""
 
 import sqlite3
@@ -70,7 +70,7 @@ def test_update_customer_updates_new_fields_and_leaves_others(tmp_path, null_log
 
 
 def test_billing_round_minutes_column_dropped_on_startup(tmp_path, null_logger):
-    """A pre-5.0.5 database carries customers.billing_round_minutes; the
+    """A pre-5.1.0 database carries customers.billing_round_minutes; the
     startup migration must drop it (and not re-add it via the schema
     auto-migration)."""
     path = str(tmp_path / "c.db")

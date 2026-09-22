@@ -149,7 +149,7 @@ def test_legacy_imports_still_work():
 
 
 def test_old_db_gains_integration_type_column(tmp_path, null_logger):
-    """A pre-5.0.5 customers table must gain integration_type (default devops)."""
+    """A pre-5.0.4 customers table must gain integration_type (default devops)."""
     from src.database import Database
 
     path = str(tmp_path / "old.db")

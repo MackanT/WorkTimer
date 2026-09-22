@@ -7,7 +7,7 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
-### 5.0.5 (2026-xx-xx)
+### 5.1.0 (2026-09-22)
 - **Features**
   - ad **Jira tracker support** — a full Jira Cloud (REST v3) provider alongside Azure DevOps; different customers can use different trackers side by side. Reads: issues land in the same board / hierarchy / search / `#` find / time-linking as DevOps items, with types normalised to Epic / Story / Sub-task (Bugs and Tasks show at Story level), status as the board column, named priorities → 1–4, and issue keys shown in titles. Writes: create (the project's real issue types resolved per level, parent links included), field updates (priority, assignee via display name, tags → labels), comments, and board moves / state changes as workflow **transitions** — a forbidden move fails with the allowed target statuses listed. Board type chips, State dropdowns, templates, parent pickers and the timer's work-item lists all follow the selected customer's tracker; since a Jira issue's status IS its board column, the redundant column inputs are hidden for Jira. One provider's outage degrades to that customer only.
   - ad **markdown ⇄ ADF fidelity** — Jira descriptions and comments written from WorkTimer convert to real ADF: headings, bullet/numbered lists, **tables**, **task lists** (`- [ ]` → real Jira checkboxes), quotes, fenced code blocks with language, rules, bold/italic/inline code/links and images. Reading converts back to the same markdown, so editing a Jira description in WorkTimer round-trips its structure instead of flattening it. Verified live against a Jira Cloud site; constructs outside that set (panels, nested lists) flatten to text.
