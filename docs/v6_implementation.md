@@ -125,7 +125,8 @@ passes.
 |---|---|
 | `pages/reports.py` | **done** — 10 statements → 7 methods (`get_current_customers`, `report_totals`, `report_hours_for_rounding`, `report_hours_by_project` / `_customer` / `_day` / `_work_item`). Proven frame-identical to the original SQL, dtypes included (108 comparisons); pinned in [tests/test_char_reports.py](../tests/test_char_reports.py) (15 tests, mutation-checked). |
 | `pages/time_tracking.py` | **done** — 15 statements → 10 new methods + 2 reused (`get_current_customers`, `get_customer_name`); repeats collapsed (the name lookup appeared 3×, the running-timer check 2×). Proven identical to the original SQL (260 comparisons, incl. nonexistent ids); pinned in [tests/test_char_time_tracking.py](../tests/test_char_time_tracking.py) (12 tests, mutation-checked). |
-| `pages/add_data.py` | next |
+| `pages/add_data.py` | **done** — 11 statements → 8 methods (the current-customer-name lookup appeared 3×; both enabled-project queries share one). Proven identical (10 comparisons); pinned in [tests/test_char_entity_dialogs.py](../tests/test_char_entity_dialogs.py) (7 tests, mutation-checked). |
+| `pages/tasks.py` | next |
 
 ### 0.3 One clock
 
@@ -204,7 +205,11 @@ oracle — except for reviewed diffs, each already marked in its test:
   - per-project billing rounding groups by project *name*, so two customers'
     same-named projects round as one unit;
   - "no work item" is `0` from manual entries but `NULL` from stopped timers,
-    so per-work-item rounding splits untagged time into two units.
+    so per-work-item rounding splits untagged time into two units;
+  - entity-dialog customer dropdowns follow SQLite's row order — creation
+    order, with a wage change moving the customer last. Postgres guarantees no
+    order, so this one *must* be decided (alphabetical or the user's sort
+    order).
 - **Pinned bugs, fixed by the new schema** (found in 0.2; one root cause — a
   wage change issues a new `customer_id`, entries keep the old one, and the
   Time Tracker asks with the current one). Phase 2 looks entries up through the
@@ -212,7 +217,10 @@ oracle — except for reviewed diffs, each already marked in its test:
   - a timer **running across a wage change** is invisible to the tracker;
     ticking it starts a second timer while the first runs on;
   - **"Manage entries"** omits entries logged before a raise;
-  - **"Sort by usage"** ignores usage logged before a raise.
+  - **"Sort by usage"** ignores usage logged before a raise;
+  - a disabled project **cannot be re-enabled** from the dialog while another
+    customer has an enabled project of the same name (matched by name, not
+    key).
 
 **Return shapes keep today's column names**, aliased in the SQL
 (`duration_hours as total_time`), so no page changes during the port. The
@@ -241,7 +249,11 @@ Steps:
 4. **Everything else**, method by method: projects, bonuses, tasks, trackers,
    saved queries, and the tracker sync's writes into `work_items`.
 5. **Reads and reports:** port the (now consolidated) report queries to
-   Postgres dialect; totals per currency; soft-deleted rows excluded.
+   Postgres dialect; totals per currency; soft-deleted rows excluded. **Every
+   query without an `ORDER BY` gets one** — Postgres guarantees no row order,
+   and SQLite's incidental order is what users see today. Phase 0.2 marks
+   these methods "(unordered)" in their docstrings; where the order is
+   visible (dialog dropdowns), choose it deliberately.
 6. **Timestamps:** UTC storage; local presentation through `clock` and
    `users.timezone`.
 7. **Delete semantics:** soft delete where the plan says; hard delete for

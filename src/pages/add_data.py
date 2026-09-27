@@ -419,32 +419,21 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
         if entity_type == "customer":
             # Trackers a customer can link to (credentials live on the
             # tracker entity, not the customer).
-            tdf = await QE.query_db(
-                "SELECT tracker_name FROM trackers ORDER BY tracker_name"
-            )
+            tdf = await QE.function_db("get_tracker_names")
             data_sources["tracker_data"] = (
                 tdf["tracker_name"].tolist() if not tdf.empty else []
             )
 
             if operation in ["update", "disable"]:
                 # Get active customers
-                df = await QE.query_db(
-                    "SELECT customer_name FROM customers WHERE is_current = 1"
-                )
+                df = await QE.function_db("get_current_customer_names")
                 data_sources["customer_data"] = (
                     df["customer_name"].tolist() if not df.empty else []
                 )
 
                 if operation == "update":
                     # For update, we need current values per customer
-                    full_df = await QE.query_db(
-                        "SELECT c.customer_name, c.tracker_project, "
-                        "c.expected_work_pct, c.color, "
-                        "t.tracker_name "
-                        "FROM customers c "
-                        "LEFT JOIN trackers t ON t.tracker_id = c.tracker_id "
-                        "WHERE c.is_current = 1"
-                    )
+                    full_df = await QE.function_db("get_current_customer_details")
                     data_sources["new_customer_name"] = {}
                     data_sources["tracker_current"] = {}
                     # Current project per customer (preselects the picker).
@@ -473,13 +462,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
             elif operation == "reenable":
                 # Get customers that are disabled and have no active entry
-                df = await QE.query_db(
-                    """SELECT DISTINCT customer_name FROM customers
-                       WHERE is_current = 0
-                       AND customer_name NOT IN (
-                           SELECT customer_name FROM customers WHERE is_current = 1
-                       )"""
-                )
+                df = await QE.function_db("get_disabled_customer_names")
                 data_sources["customer_data"] = sorted(
                     df["customer_name"].tolist() if not df.empty else []
                 )
@@ -495,12 +478,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
             data_sources["integration_types"] = available_providers()
 
             if operation in ("update", "delete"):
-                tdf = await QE.query_db(
-                    "SELECT tracker_name, "
-                    "coalesce(integration_type, 'devops') as integration_type, "
-                    "org_url, pat_token, token_expires "
-                    "FROM trackers ORDER BY tracker_name"
-                )
+                tdf = await QE.function_db("get_trackers")
                 data_sources["tracker_data"] = (
                     tdf["tracker_name"].tolist() if not tdf.empty else []
                 )
@@ -551,9 +529,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
         elif entity_type == "project":
             # Get active customers
-            df = await QE.query_db(
-                "SELECT customer_id, customer_name FROM customers WHERE is_current = 1"
-            )
+            df = await QE.function_db("get_current_customer_names")
             data_sources["customer_data"] = (
                 df["customer_name"].tolist() if not df.empty else []
             )
@@ -564,11 +540,8 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
             if operation in ["update", "disable"]:
                 # Get active projects grouped by customer (for parent-dependent dropdown)
-                grouped_df = await QE.query_db(
-                    """SELECT p.project_name, c.customer_name
-                       FROM projects p
-                       JOIN customers c ON p.customer_id = c.customer_id
-                       WHERE p.is_current = 1"""
+                grouped_df = await QE.function_db(
+                    "get_current_projects_with_customer"
                 )
                 project_names_by_cust: dict = {}
                 for _, row in grouped_df.iterrows():
@@ -583,11 +556,8 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
                 if operation == "update":
                     # Get project details per project for auto-population
-                    full_df = await QE.query_db(
-                        """SELECT p.project_name, p.git_id, c.customer_name
-                           FROM projects p
-                           JOIN customers c ON p.customer_id = c.customer_id
-                           WHERE p.is_current = 1"""
+                    full_df = await QE.function_db(
+                        "get_current_projects_with_customer"
                     )
                     devops_by_cust = _devops_ids_by_customer(core)
                     data_sources["new_project_name"] = {}
@@ -608,14 +578,8 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
             elif operation == "reenable":
                 # Disabled projects grouped by customer (excluding any now-active ones)
-                dis_df = await QE.query_db(
-                    """SELECT DISTINCT p.project_name, c.customer_name
-                       FROM projects p
-                       JOIN customers c ON p.customer_id = c.customer_id
-                       WHERE p.is_current = 0
-                       AND p.project_name NOT IN (
-                           SELECT project_name FROM projects WHERE is_current = 1
-                       )"""
+                dis_df = await QE.function_db(
+                    "get_disabled_projects_with_customer"
                 )
                 project_names_by_cust = {}
                 for _, row in dis_df.iterrows():
@@ -631,12 +595,8 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
 
         elif entity_type == "bonus":
             # Get active customers and projects
-            cust_df = await QE.query_db(
-                "SELECT customer_name FROM customers WHERE is_current = 1"
-            )
-            proj_df = await QE.query_db(
-                "SELECT project_name FROM projects WHERE is_current = 1"
-            )
+            cust_df = await QE.function_db("get_current_customer_names")
+            proj_df = await QE.function_db("get_current_project_names")
             data_sources["customer_data"] = (
                 cust_df["customer_name"].tolist() if not cust_df.empty else []
             )

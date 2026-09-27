@@ -1922,7 +1922,7 @@ class Database:
     def get_logged_project_info(self, customer_id: int, project_id: int):
         """customer_name and project_name as recorded on the pair's time
         entries, plus the project's default work item (git_id). Empty when the
-        pair has no entries."""
+        pair has no entries (unordered)."""
         return self.fetch_query(
             """
             select distinct t.customer_name, t.project_name, p.git_id
@@ -1934,7 +1934,7 @@ class Database:
         )
 
     def get_running_timers(self):
-        """customer_id and project_id of every running timer."""
+        """customer_id and project_id of every running timer (unordered)."""
         return self.fetch_query(
             "select customer_id, project_id from time where end_time is null"
         )
@@ -1982,7 +1982,7 @@ class Database:
 
     def get_recent_project_hours(self, customer_id: int):
         """Hours per project (project_id, h) for a customer over the last 60
-        days, running timers counted up to now."""
+        days, running timers counted up to now (unordered)."""
         return self.fetch_query(
             "select project_id, sum(coalesce(total_time, "
             "(julianday('now', 'localtime') - julianday(start_time)) * 24)) as h "
@@ -1990,6 +1990,83 @@ class Database:
             "and date(start_time) >= date('now', '-60 days') "
             "group by project_id",
             (customer_id,),
+        )
+
+    def get_current_customer_names(self):
+        """customer_name of every current customer (unordered — the entity
+        dialogs list them in this order)."""
+        return self.fetch_query(
+            "SELECT customer_name FROM customers WHERE is_current = 1"
+        )
+
+    def get_current_customer_details(self):
+        """Update-customer dialog prefills for every current customer:
+        customer_name, tracker_project, expected_work_pct, color and the
+        linked tracker_name (unordered)."""
+        return self.fetch_query(
+            "SELECT c.customer_name, c.tracker_project, "
+            "c.expected_work_pct, c.color, "
+            "t.tracker_name "
+            "FROM customers c "
+            "LEFT JOIN trackers t ON t.tracker_id = c.tracker_id "
+            "WHERE c.is_current = 1"
+        )
+
+    def get_disabled_customer_names(self):
+        """customer_name of customers that can be re-enabled — disabled, with
+        no current row under the same name (unordered)."""
+        return self.fetch_query(
+            """SELECT DISTINCT customer_name FROM customers
+               WHERE is_current = 0
+               AND customer_name NOT IN (
+                   SELECT customer_name FROM customers WHERE is_current = 1
+               )"""
+        )
+
+    def get_current_project_names(self):
+        """project_name of every enabled project (unordered)."""
+        return self.fetch_query(
+            "SELECT project_name FROM projects WHERE is_current = 1"
+        )
+
+    def get_current_projects_with_customer(self):
+        """project_name, git_id and customer_name of every enabled project
+        (unordered — the entity dialogs list them in this order)."""
+        return self.fetch_query(
+            """SELECT p.project_name, p.git_id, c.customer_name
+               FROM projects p
+               JOIN customers c ON p.customer_id = c.customer_id
+               WHERE p.is_current = 1"""
+        )
+
+    def get_disabled_projects_with_customer(self):
+        """project_name and customer_name of projects that can be re-enabled —
+        disabled, with no enabled project of the same name (unordered)."""
+        return self.fetch_query(
+            """SELECT DISTINCT p.project_name, c.customer_name
+               FROM projects p
+               JOIN customers c ON p.customer_id = c.customer_id
+               WHERE p.is_current = 0
+               AND p.project_name NOT IN (
+                   SELECT project_name FROM projects WHERE is_current = 1
+               )"""
+        )
+
+    def get_tracker_names(self):
+        """tracker_name of every tracker, by name."""
+        return self.fetch_query(
+            "SELECT tracker_name FROM trackers ORDER BY tracker_name"
+        )
+
+    def get_trackers(self):
+        """Every tracker, by name: tracker_name, integration_type (default
+        'devops'), org_url, pat_token (as stored — encrypted) and
+        token_expires."""
+        return self.fetch_query(
+            "SELECT tracker_name, "
+            "coalesce(integration_type, 'devops') as integration_type, "
+            "org_url, pat_token, token_expires "
+            "FROM trackers ORDER BY tracker_name"
         )
 
     ### Report Operations ###
@@ -2032,7 +2109,8 @@ class Database:
     def report_hours_for_rounding(self, start: str, end: str, customers, basis: str):
         """Hours per billing-rounding unit (column h, positive only): one row
         per entry for basis 'entry'; per project name for 'project'; otherwise
-        per work item, with untagged time as one group."""
+        per work item, grouped on COALESCE(git_id, -1) — so untagged time
+        stored as 0 and as NULL form separate units (unordered)."""
         where, params = self._report_filter(start, end, customers)
         dur = self._REPORT_DUR
         if basis == "entry":
