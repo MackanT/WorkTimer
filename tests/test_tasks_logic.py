@@ -2,12 +2,11 @@
 
 import inspect
 
+from src.database import Database
 from src.pages.tasks import (
-    SORT_QUERIES,
     Task,
     create_task_card,
     extract_task_id,
-    get_sort_query,
 )
 
 
@@ -18,14 +17,14 @@ def test_extract_task_id():
 
 def test_sort_queries_single_source():
     # The toolbar select derives its options from these keys (§8.6).
-    assert len(SORT_QUERIES) == 9
-    assert get_sort_query("unknown fallback").startswith("ORDER BY")
+    assert len(Database.TASK_SORTS) == 9
+    assert Database.task_sort_clause("unknown fallback").startswith("ORDER BY")
 
 
 def test_due_date_sorts_nulls_last_both_directions():
     """Fixed §1.7 — NULL due dates go to the bottom regardless of direction."""
-    earliest = get_sort_query("Due Date (Earliest First)")
-    latest = get_sort_query("Due Date (Latest First)")
+    earliest = Database.task_sort_clause("Due Date (Earliest First)")
+    latest = Database.task_sort_clause("Due Date (Latest First)")
     assert "CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC" in earliest
     assert "CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC" in latest
     assert earliest.rstrip().endswith("due_date ASC")

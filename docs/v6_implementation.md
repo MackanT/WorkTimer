@@ -126,7 +126,8 @@ passes.
 | `pages/reports.py` | **done** — 10 statements → 7 methods (`get_current_customers`, `report_totals`, `report_hours_for_rounding`, `report_hours_by_project` / `_customer` / `_day` / `_work_item`). Proven frame-identical to the original SQL, dtypes included (108 comparisons); pinned in [tests/test_char_reports.py](../tests/test_char_reports.py) (15 tests, mutation-checked). |
 | `pages/time_tracking.py` | **done** — 15 statements → 10 new methods + 2 reused (`get_current_customers`, `get_customer_name`); repeats collapsed (the name lookup appeared 3×, the running-timer check 2×). Proven identical to the original SQL (260 comparisons, incl. nonexistent ids); pinned in [tests/test_char_time_tracking.py](../tests/test_char_time_tracking.py) (12 tests, mutation-checked). |
 | `pages/add_data.py` | **done** — 11 statements → 8 methods (the current-customer-name lookup appeared 3×; both enabled-project queries share one). Proven identical (10 comparisons); pinned in [tests/test_char_entity_dialogs.py](../tests/test_char_entity_dialogs.py) (7 tests, mutation-checked). |
-| `pages/tasks.py` | next |
+| `pages/tasks.py` | **done** — 5 statements → 2 new methods (`get_tasks`, `get_task_titles`) + 3 reused; the page's `SORT_QUERIES` map moved verbatim to `Database.TASK_SORTS` (still the toolbar's single source of truth; `test_tasks_logic.py` retargeted). Proven identical (28 comparisons; the map is identical up to whitespace inside the two multi-line priority clauses). Pinned in [tests/test_char_tasks.py](../tests/test_char_tasks.py) (8 tests, mutation-checked — incl. a simulated Postgres NULL order). |
+| `ui/command_palette.py` | next |
 
 ### 0.3 One clock
 
@@ -253,7 +254,11 @@ Steps:
    query without an `ORDER BY` gets one** — Postgres guarantees no row order,
    and SQLite's incidental order is what users see today. Phase 0.2 marks
    these methods "(unordered)" in their docstrings; where the order is
-   visible (dialog dropdowns), choose it deliberately.
+   visible (dialog dropdowns), choose it deliberately. **NULL ordering
+   flips:** SQLite sorts NULLs first in ascending order, Postgres last. Every
+   `ORDER BY` on a nullable column needs an explicit `NULLS FIRST` to keep
+   today's order — the Tasks "Status", "Customer" and "Project" sorts are the
+   known cases, pinned in `test_char_tasks.py`.
 6. **Timestamps:** UTC storage; local presentation through `clock` and
    `users.timezone`.
 7. **Delete semantics:** soft delete where the plan says; hard delete for

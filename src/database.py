@@ -1688,6 +1688,49 @@ class Database:
             self.log_engine.error(f"Failed to get tasks: {e}")
             return pd.DataFrame()
 
+    # Task sort orders, keyed by the label the Tasks toolbar shows — single
+    # source of truth: the toolbar derives its options from these keys, so the
+    # two can't drift apart. NULL due-dates always sort last (CASE ... ASC puts
+    # the 1-bucket after the 0-bucket).
+    TASK_SORTS = {
+        "Due Date (Earliest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC, due_date ASC",
+        "Due Date (Latest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC, due_date DESC",
+        "Priority (High to Low)": """ORDER BY CASE priority
+            WHEN 'Critical' THEN 1 WHEN 'High' THEN 2
+            WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END ASC""",
+        "Priority (Low to High)": """ORDER BY CASE priority
+            WHEN 'Critical' THEN 1 WHEN 'High' THEN 2
+            WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END DESC""",
+        "Status": "ORDER BY completed ASC, due_date ASC",
+        "Customer": "ORDER BY customer_name ASC, due_date ASC",
+        "Project": "ORDER BY project_name ASC, due_date ASC",
+        "Created (Newest First)": "ORDER BY created_at DESC",
+        "Created (Oldest First)": "ORDER BY created_at ASC",
+    }
+
+    @classmethod
+    def task_sort_clause(cls, sort_by: str) -> str:
+        """ORDER BY clause for a sort label; due date ascending when unknown."""
+        return cls.TASK_SORTS.get(sort_by, "ORDER BY due_date ASC")
+
+    def get_tasks(
+        self, sort_by: str = "Due Date (Earliest First)", show_completed: bool = False
+    ):
+        """Every task — open ones only unless show_completed — ordered by the
+        sort label (see TASK_SORTS)."""
+        where_clause = "" if show_completed else "WHERE completed = 0"
+        return self.fetch_query(
+            f"""
+            SELECT * FROM tasks
+            {where_clause}
+            {self.task_sort_clause(sort_by)}
+            """
+        )
+
+    def get_task_titles(self):
+        """task_id and title of every task, by title."""
+        return self.fetch_query("SELECT task_id, title FROM tasks ORDER BY title")
+
     ### Query Operations ###
 
     def get_query_list(self):

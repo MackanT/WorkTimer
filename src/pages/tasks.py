@@ -16,6 +16,7 @@ import re
 from nicegui import ui
 
 from ..core.app import AppCore
+from ..database import Database
 from ..helpers import UI_STYLES
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
 from ..ui.dynamic_widgets import WIDGET_CLASSES, DynamicDropDown
@@ -133,17 +134,12 @@ async def get_customer_project_data(core: AppCore) -> dict:
     """
     try:
         # Get active customers (same query as add_data.py)
-        df = await core.query_engine.query_db(
-            "SELECT customer_id, customer_name FROM customers WHERE is_current = 1"
-        )
+        df = await core.query_engine.function_db("get_current_customer_names")
         customer_data = df["customer_name"].tolist() if not df.empty else []
 
         # Get active projects grouped by customer (same approach as add_data.py)
-        grouped_df = await core.query_engine.query_db(
-            """SELECT p.project_name, c.customer_name
-               FROM projects p
-               JOIN customers c ON p.customer_id = c.customer_id
-               WHERE p.is_current = 1"""
+        grouped_df = await core.query_engine.function_db(
+            "get_current_projects_with_customer"
         )
 
         project_names_by_cust = {}
@@ -167,30 +163,6 @@ async def get_customer_project_data(core: AppCore) -> dict:
 # ============================================================================
 
 
-# Sort options — single source of truth: the toolbar select derives its options
-# from these keys, so the two can't drift apart.
-# NULL due-dates always sort last (CASE ... ASC puts the 1-bucket after the 0-bucket).
-SORT_QUERIES = {
-    "Due Date (Earliest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC, due_date ASC",
-    "Due Date (Latest First)": "ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END ASC, due_date DESC",
-    "Priority (High to Low)": """ORDER BY CASE priority
-        WHEN 'Critical' THEN 1 WHEN 'High' THEN 2
-        WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END ASC""",
-    "Priority (Low to High)": """ORDER BY CASE priority
-        WHEN 'Critical' THEN 1 WHEN 'High' THEN 2
-        WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END DESC""",
-    "Status": "ORDER BY completed ASC, due_date ASC",
-    "Customer": "ORDER BY customer_name ASC, due_date ASC",
-    "Project": "ORDER BY project_name ASC, due_date ASC",
-    "Created (Newest First)": "ORDER BY created_at DESC",
-    "Created (Oldest First)": "ORDER BY created_at ASC",
-}
-
-
-def get_sort_query(sort_by: str) -> str:
-    return SORT_QUERIES.get(sort_by, "ORDER BY due_date ASC")
-
-
 async def fetch_tasks(
     core: AppCore,
     sort_by: str = "Due Date (Earliest First)",
@@ -198,15 +170,7 @@ async def fetch_tasks(
 ) -> list[Task]:
     """Fetch tasks from database and return Task objects."""
     try:
-        where_clause = "" if show_completed else "WHERE completed = 0"
-
-        query = f"""
-            SELECT * FROM tasks 
-            {where_clause}
-            {get_sort_query(sort_by)}
-        """
-
-        df = await core.query_engine.query_db(query)
+        df = await core.query_engine.function_db("get_tasks", sort_by, show_completed)
 
         if df is None or df.empty:
             return []
@@ -800,7 +764,7 @@ async def tasks_page():
         with toolbar(core.theme):
             with toolbar_group(core.theme, "Sort", divider_after=True):
                 page_state["sort_select"] = ui.select(
-                    options=list(SORT_QUERIES),
+                    options=list(Database.TASK_SORTS),
                     value="Due Date (Earliest First)",
                     on_change=lambda: refresh_tasks(),
                 ).classes(SORT_SELECT_WIDTH)
@@ -1044,9 +1008,7 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
 
             async def task_data_fetcher(field_name, task_selector_value):
                 if field_name == "task_list":
-                    tasks_df = await core.query_engine.query_db(
-                        "SELECT task_id, title FROM tasks ORDER BY title"
-                    )
+                    tasks_df = await core.query_engine.function_db("get_task_titles")
                     if tasks_df is not None and not tasks_df.empty:
                         return [
                             f"{r['title']} (ID: {r['task_id']})"
@@ -1060,11 +1022,9 @@ async def render_update_form(core: AppCore, page_state: dict, refresh_callback):
                 if not match:
                     return None
 
-                task_df = await core.query_engine.query_db(
-                    "SELECT * FROM tasks WHERE task_id = ?", params=(match,)
-                )
-                if task_df is not None and not task_df.empty:
-                    return task_df.iloc[0].get(field_name, "")
+                task = await core.query_engine.function_db("get_task_by_id", match)
+                if task is not None:
+                    return task.get(field_name, "")
                 return None
 
             async def refresh_field_value(widget, field_name, selector_value):
