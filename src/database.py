@@ -351,6 +351,9 @@ class Database:
             # Customer settings cleared by a raise before 5.1.2 (idempotent).
             self._restore_settings_cleared_by_raises()
 
+            # Entries that lost their project but kept its name (idempotent).
+            self._relink_entries_that_lost_their_project()
+
             self.conn.commit()
             self.log_engine.info("Database loaded without errors!")
         except Exception as e:
@@ -448,6 +451,42 @@ class Database:
                     )
         except Exception as e:
             self.log_engine.error(f"Error restoring customer settings: {e}")
+
+    def _relink_entries_that_lost_their_project(self):
+        """Startup migration: some older entries have project_id 0 (or NULL)
+        but still carry their project_name. They count on Reports, which group
+        by name, yet vanish from the Time Tracker and "Manage entries", which
+        join on the id. Re-link each one — but only when exactly one project of
+        that name exists under the entry's customer. The customer is matched by
+        name, so an entry logged before a raise still finds its projects (they
+        moved to the new customer id). Anything ambiguous is left alone.
+        Idempotent."""
+        match = """
+            from projects p
+            join customers pc on pc.customer_id = p.customer_id
+            join customers tc on tc.customer_id = time.customer_id
+            where p.project_name = time.project_name
+              and pc.customer_name = tc.customer_name
+        """
+        try:
+            with self._conn_lock:
+                cursor = self.conn.execute(
+                    f"""
+                    update time
+                    set project_id = (select p.project_id {match})
+                    where coalesce(project_id, 0) = 0
+                      and project_name is not null
+                      and (select count(*) {match}) = 1
+                    """
+                )
+                if cursor.rowcount:
+                    self.conn.commit()
+                    self.log_engine.info(
+                        f"Re-linked {cursor.rowcount} time entry(ies) to the project "
+                        "named on the entry"
+                    )
+        except Exception as e:
+            self.log_engine.error(f"Error re-linking entries to their project: {e}")
 
     def _rename_legacy_columns(self):
         """Startup migration: customers.devops_project → tracker_project

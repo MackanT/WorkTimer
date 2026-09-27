@@ -10,7 +10,8 @@ A modern web-based time tracking application with built-in task management and A
 ### 5.1.2 (2026-09-27)
 - **Bug Fixes**
   - fx **a raise no longer resets the customer's settings.** Entering a raise (adding the customer again with a new wage) created the customer's new version without its colour, expected work % and tracker project — and with no project set, the tracker silently switched to the organisation's first project, so the Board, the sync and new work items went to the wrong project. A raise now keeps every setting you leave blank. Settings already cleared this way are restored automatically on the next start.
-  - fx **editing a time entry logged before a raise** (query editor → row edit): the project list was empty, and saving could strip the entry of its project so that it vanished from the Time Tracker. The dialog now lists the customer's projects, and a save naming a project that doesn't exist is refused instead of clearing it. Entries that already lost their project can't be restored automatically — the original project is no longer recorded.
+  - fx **editing a time entry logged before a raise** (query editor → row edit): the project list was empty, and saving could strip the entry of its project so that it vanished from the Time Tracker. The dialog now lists the customer's projects, and a save naming a project that doesn't exist is refused instead of clearing it.
+  - fx **time entries that lost their project are re-linked.** Some older entries had no project any more but still carried the project's name, so they counted on Reports but were missing from the Time Tracker and "Manage entries". On the next start each is re-linked, when exactly one project of that name exists for its customer; anything ambiguous is left untouched. (Entries whose project name was cleared as well can't be restored automatically.)
 
 ### 5.1.1 (2026-09-27)
 - **Bug Fixes**
