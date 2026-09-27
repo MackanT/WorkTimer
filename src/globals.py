@@ -60,9 +60,6 @@ class QueryEngine:
         func = getattr(self.db, func_name)
         return await asyncio.to_thread(func, *args, **kwargs)
 
-    async def query_db(self, query: str, params: tuple = ()):
-        return await asyncio.to_thread(self.db.smart_query, query, params)
-
     async def refresh(self):
         self.df = await self.function_db("get_query_list")
 

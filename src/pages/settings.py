@@ -121,10 +121,7 @@ def _render_tracker_defaults_card(core) -> None:
 
     muted = UI_STYLES.get_layout_classes("muted_text")
     try:
-        tdf = core.query_engine.db.fetch_query(
-            "select tracker_name, coalesce(integration_type,'devops') as itype "
-            "from trackers order by tracker_name"
-        )
+        tdf = core.query_engine.db.get_tracker_types()
         trackers = (
             dict(zip(tdf["tracker_name"], tdf["itype"])) if not tdf.empty else {}
         )

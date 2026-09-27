@@ -1,7 +1,8 @@
 """Characterisation tests: the remaining single reads — the app shell's token
-expiry warning (root.py), the tracker sync's watermarks (globals.py) and the
-work-item form's customer colour (work_item_forms.py) — pinned as they behave
-in 5.1.x now that they live in the data layer.
+expiry warning (root.py), the tracker sync's watermarks (globals.py), the
+work-item form's customer colour (work_item_forms.py) and Settings' tracker
+types (settings.py) — pinned as they behave in 5.1.x now that they live in
+the data layer.
 
 Part of the Postgres-port oracle (docs/v6_implementation.md, Phase 0.2).
 Everything goes through public ``Database`` methods — no SQL in this file.
@@ -23,6 +24,17 @@ def test_tracker_expiries_list_only_trackers_with_a_date(db):
 
     assert set(zip(df["tracker_name"], df["token_expires"])) == {
         ("Ops DevOps", "2026-10-15"), ("Alpha Jira", "2026-09-30")}
+
+
+def test_tracker_types_by_name(db):
+    db.insert_tracker("Zeta DevOps", "devops", org_url="https://dev.azure.com/z", pat_token="p")
+    db.insert_tracker("Alpha Jira", "jira", jira_site="https://a.atlassian.net",
+                      jira_email="a@b.c", jira_api_token="t")
+
+    df = db.get_tracker_types()
+
+    assert list(zip(df["tracker_name"], df["itype"])) == [
+        ("Alpha Jira", "jira"), ("Zeta DevOps", "devops")]
 
 
 def test_devops_watermarks_are_the_highest_id_and_change_per_customer(db):

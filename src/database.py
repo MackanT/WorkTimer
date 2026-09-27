@@ -14,6 +14,9 @@ class Database:
 
     # Seed for the query page's default "customers" query. Class-level so the
     # legacy-column drop can also repair the stored copy on old databases.
+    # The query editor's starter SQL when the default "time" query is missing.
+    EDITOR_FALLBACK_QUERY = "select * from time order by time_id desc limit 100"
+
     _CUSTOMERS_DEFAULT_QUERY = """
                 select
                      customer_id
@@ -1867,6 +1870,37 @@ class Database:
             from queries
         """)
 
+    def insert_saved_query(self, query_name: str, query_sql: str) -> None:
+        """Save a user query under a new name (names are unique)."""
+        self.execute_query(
+            "insert into queries (query_name, query_sql) values (?, ?)",
+            (query_name, query_sql),
+        )
+
+    def update_saved_query(self, query_name: str, query_sql: str) -> None:
+        """Replace the SQL of a saved user query."""
+        self.execute_query(
+            "update queries set query_sql = ? where query_name = ?",
+            (query_sql, query_name),
+        )
+
+    def delete_saved_query(self, query_name: str) -> None:
+        """Delete a saved user query."""
+        self.execute_query("delete from queries where query_name = ?", (query_name,))
+
+    ### User SQL (query editor) ###
+
+    def run_user_query(self, query: str):
+        """Run SQL typed into the query editor — the one deliberate raw-SQL
+        path in the app: it runs whatever the user wrote. Returns a DataFrame
+        for statements that yield rows; otherwise commits and returns None."""
+        return self.smart_query(query)
+
+    def check_user_query(self, query: str) -> None:
+        """Compile the user's SQL without running it (EXPLAIN); raises if it
+        is invalid."""
+        self.smart_query(f"EXPLAIN {query}")
+
     ### DevOps Operations ###
 
     def get_devops_watermarks(self):
@@ -2294,6 +2328,14 @@ class Database:
         if not df.empty and df.iloc[0]["color"]:
             return str(df.iloc[0]["color"])
         return None
+
+    def get_tracker_types(self):
+        """tracker_name and its type (itype, 'devops' when unset) for every
+        tracker, by name."""
+        return self.fetch_query(
+            "select tracker_name, coalesce(integration_type,'devops') as itype "
+            "from trackers order by tracker_name"
+        )
 
     ### Report Operations ###
 

@@ -129,9 +129,19 @@ passes.
 | `pages/tasks.py` | **done** — 5 statements → 2 new methods (`get_tasks`, `get_task_titles`) + 3 reused; the page's `SORT_QUERIES` map moved verbatim to `Database.TASK_SORTS` (still the toolbar's single source of truth; `test_tasks_logic.py` retargeted). Proven identical (28 comparisons; the map is identical up to whitespace inside the two multi-line priority clauses). Pinned in [tests/test_char_tasks.py](../tests/test_char_tasks.py) (8 tests, mutation-checked — incl. a simulated Postgres NULL order). |
 | `ui/command_palette.py` | **done** — 4 statements → 2 new methods (`get_running_timers_with_names`, `get_current_customer_projects`) + 2 reused (`get_running_timer_names` — the same query as the Time page's indicator — and `get_current_customers`). Proven identical (4 comparisons); pinned in [tests/test_char_command_palette.py](../tests/test_char_command_palette.py) (2 tests, mutation-checked). |
 | `root.py`, `globals.py`, `board.py`, `work_item_forms.py` | **done** — 5 statements → 3 new methods (`get_tracker_expiries`, `get_devops_watermarks`, `get_customer_color`) + 2 reused. Proven identical (8 comparisons); pinned in [tests/test_char_sync_and_shell.py](../tests/test_char_sync_and_shell.py) (3 tests, mutation-checked). |
-| `pages/query_editor.py` | **on hold** — its row-edit project lookup is part of a live 5.1.1 bug (below); moving it before a hotfix lands on `main` would make the merge conflict. Then: user SQL behind `run_user_query`, saved-query writes as named methods, `query_db` removed. |
+| `pages/query_editor.py` | **done** — user SQL behind `run_user_query` / `check_user_query`; saved-query writes → `insert_` / `update_` / `delete_saved_query`; the fallback starter SQL → `Database.EDITOR_FALLBACK_QUERY`; the row-edit lookup moved with 5.1.2. `QueryEngine.query_db` **removed** — no callers left. Proven identical (8 comparisons); pinned in [tests/test_char_query_editor.py](../tests/test_char_query_editor.py) (5 tests; one — user SQL can write — changes in Phase 3). |
+| `pages/settings.py` | **done** — found by the architecture test, not the original count: it called `core.query_engine.db.fetch_query(...)` directly, bypassing `query_db`. → `get_tracker_types`. |
 
-**Live 5.1.1 bugs found during 0.2** (same SCD2 root cause; hotfix proposed):
+**Status: done.** No page, UI or service module contains SQL against a
+WorkTimer table; [tests/test_architecture.py](../tests/test_architecture.py)
+enforces it (and caught a planted leak). Its table list holds today's names —
+Phase 2 must add the renamed tables. The one remaining SQL-looking string
+outside the data layer is the SQL-editor theme preview in Settings: sample
+text, never executed.
+
+**Live 5.1.1 bugs found during 0.2** (same SCD2 root cause) — **fixed in 5.1.2**
+(`fix/5_1_2`, merged into this branch; `main` pending), with regression tests
+`test_raise_keeps_customer_settings.py` and `test_row_edit_after_raise.py`:
 
 - **A raise resets the customer's per-customer settings.** The add-customer
   form creates the new version row from its own fields and carries over only
@@ -379,7 +389,7 @@ has been fixed in the billing path since the last one.
 ## Progress
 
 - [x] **0.1** Characterisation tests: billing core
-- [ ] **0.2** SQL behind the `Database` API
+- [x] **0.2** SQL behind the `Database` API
 - [ ] **0.3** One clock
 - [ ] **0.4** Checkpoint
 - [ ] **1** Postgres foundation

@@ -10,6 +10,7 @@ import copy
 from nicegui import ui, app
 from nicegui.events import KeyEventArguments
 from ..core.app import AppCore
+from ..database import Database
 from ..globals import SaveData
 from .. import helpers
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
@@ -38,9 +39,7 @@ async def query_editor_page():
                 QE.df[QE.df["query_name"] == "time"]["query_sql"].values[0]
             )
         except Exception:
-            app.storage.user["query_editor_query"] = (
-                "select * from time order by time_id desc limit 100"
-            )
+            app.storage.user["query_editor_query"] = Database.EDITOR_FALLBACK_QUERY
 
     config_query = core.query_config if hasattr(core, "query_config") else {}
 
@@ -64,7 +63,7 @@ async def query_editor_page():
 
     async def _validate_query_syntax(query: str) -> bool:
         try:
-            await QE.query_db(f"EXPLAIN {query}")
+            await QE.function_db("check_user_query", query)
             return True
         except Exception:
             ui.notify("Query is invalid", type="warning")
@@ -138,11 +137,7 @@ async def query_editor_page():
             if not _validate_query_name(name, check_exists=True):
                 return
             try:
-                await QE.function_db(
-                    "execute_query",
-                    "insert into queries (query_name, query_sql) values (?, ?)",
-                    (name, query),
-                )
+                await QE.function_db("insert_saved_query", name, query)
                 LOG.info(f"Custom query '{name}' saved successfully!")
                 await refresh_query_list()
                 ui.notify(f"Query '{name}' saved!", type="positive")
@@ -168,11 +163,7 @@ async def query_editor_page():
             if not _validate_query_name(name):
                 return
             try:
-                await QE.function_db(
-                    "execute_query",
-                    "update queries set query_sql = ? where query_name = ?",
-                    (query, name),
-                )
+                await QE.function_db("update_saved_query", name, query)
                 LOG.info(f"Custom query '{name}' updated successfully!")
                 await refresh_query_list()
                 ui.notify(f"Query '{name}' updated!", type="positive")
@@ -196,9 +187,7 @@ async def query_editor_page():
             if not _validate_query_name(name):
                 return
             try:
-                await QE.function_db(
-                    "execute_query", "delete from queries where query_name = ?", (name,)
-                )
+                await QE.function_db("delete_saved_query", name)
                 LOG.info(f"Custom query '{name}' deleted successfully!")
                 await refresh_query_list()
                 ui.notify(f"Query '{name}' deleted!", type="positive")
@@ -217,7 +206,7 @@ async def query_editor_page():
         if not query.strip():
             return
         try:
-            df = await QE.query_db(query)
+            df = await QE.function_db("run_user_query", query)
             if df is not None:
                 cols = df.columns.tolist()
                 seen = {}
