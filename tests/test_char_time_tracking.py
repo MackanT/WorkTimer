@@ -4,11 +4,12 @@ in 5.1.x now that they live in the data layer.
 Part of the Postgres-port oracle (docs/v6_implementation.md, Phase 0.2).
 Everything goes through public ``Database`` methods — no SQL in this file.
 
-Three pinned quirks share one root cause (v6_plan §3, problem 2): a wage
-change gives the customer a new ``customer_id``, but time entries keep the
-old one, while the page always asks with the current id. Phase 2 finds entries
-through the project instead, which fixes all three — each test says how its
-expectation changes, to be applied as a reviewed diff.
+Two pinned quirks share one root cause (v6_plan §3, problem 2): a wage
+change gives the customer a new ``customer_id``, but completed time entries
+keep the old one, while the page always asks with the current id. Phase 2 finds
+entries through the project instead, which fixes both — each test says how its
+expectation changes, to be applied as a reviewed diff. (A third, the running
+timer, was fixed early in 5.1.1.)
 """
 
 from datetime import datetime, timedelta
@@ -138,16 +139,11 @@ def test_running_timers_and_their_names(db):
     assert db.get_running_timer_names()["customer_name"].tolist() == ["Beta"]
 
 
-def test_timer_running_across_a_wage_change_is_lost_to_the_current_id(db):
-    """PINNED QUIRK — a bug; fixed by Phase 2.
-
-    The timer keeps the old customer id when the wage changes. The nav bar
-    still names it, but asked with the *current* id (as the time tracker does)
-    it is not running — so its checkbox shows stopped, and ticking it starts a
-    second timer while the first runs on. Phase 2 finds it through the
-    project: the current-id lookup then returns the start time, and the click
-    stops it.
-    """
+def test_timer_running_across_a_wage_change_follows_the_customer(db):
+    """Fixed in 5.1.1 (pinned here as a bug until then). A raise gives the
+    customer a new id and the running timer now moves with it, so the time
+    tracker — asking with the current id — finds it, and its click stops it
+    rather than starting a second timer."""
     _acme(db)
     old_id, pid = _ids(db, "Acme", "Build")
     db.insert_timer_start_row(old_id, pid, "2026-09-01 09:00")
@@ -156,12 +152,13 @@ def test_timer_running_across_a_wage_change_is_lost_to_the_current_id(db):
     new_id, _ = _ids(db, "Acme", "Build")
 
     assert db.get_running_timer_names()["customer_name"].tolist() == ["Acme"]
-    assert not db.get_running_timer_start(old_id, pid).empty
-    assert db.get_running_timer_start(new_id, pid).empty
+    assert db.get_running_timer_start(old_id, pid).empty
+    [start] = db.get_running_timer_start(new_id, pid)["start_time"]
+    assert start == "2026-09-01 09:00:00"
 
-    db.insert_time_row(new_id, pid)  # the tracker's checkbox click
+    db.insert_time_row(new_id, pid, end_time="2026-09-01 11:00")  # the tracker's click
 
-    assert len(db.get_running_timers()) == 2
+    assert db.get_running_timers().empty
 
 
 # ── "Manage entries" ────────────────────────────────────────────────────────
