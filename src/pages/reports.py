@@ -48,14 +48,6 @@ _CARD = (
     "border: 1px solid rgba(255,255,255,0.09); box-shadow: none;"
 )
 
-# Per-entry duration in hours, counting a still-running timer up to "now" — so
-# today's ongoing work is included, not only stopped entries (total_time is only
-# written when a timer stops).
-_DUR = (
-    "(julianday(coalesce(end_time, datetime('now','localtime'))) "
-    "- julianday(start_time)) * 24.0"
-)
-
 
 def _soft(color, alpha=0.15):
     """Translucent area fill derived from a #rrggbb accent."""
@@ -343,11 +335,11 @@ async def reports_page():
     QE = core.query_engine
     muted = UI_STYLES.get_layout_classes("muted_text")
 
-    cust_df = await QE.query_db(
-        "SELECT DISTINCT customer_name FROM customers WHERE is_current = 1 "
-        "ORDER BY customer_name"
+    customers_df = await QE.function_db("get_current_customers")
+    names = (
+        customers_df["customer_name"].dropna().unique().tolist()
+        if not customers_df.empty else []
     )
-    names = cust_df["customer_name"].dropna().tolist() if not cust_df.empty else []
 
     tset = core.ui_config.get("time_settings", {})
     default_round = int(tset.get("rounding_minutes", 0) or 0)
@@ -364,13 +356,9 @@ async def reports_page():
             id2name[int(r["id"])] = str(r["display_name"])
 
     # Per-customer settings: expected work %, colour.
-    meta_df = await QE.query_db(
-        "SELECT customer_name, expected_work_pct, color "
-        "FROM customers WHERE is_current = 1"
-    )
     cust_meta = {}
-    if not meta_df.empty:
-        for _, r in meta_df.iterrows():
+    if not customers_df.empty:
+        for _, r in customers_df.iterrows():
             cust_meta[r["customer_name"]] = {
                 "expected": (float(r["expected_work_pct"])
                              if pd.notna(r["expected_work_pct"]) else None),
@@ -427,7 +415,7 @@ async def reports_page():
         "top_items_colors": [],
     }
 
-    async def _billable_hours(raw_h, basis, inc, cust_sql, cust_params):
+    async def _billable_hours(raw_h, basis, inc, start, end, sel):
         """Billable hours for the tiles/CSV under the chosen rounding basis.
 
         Rounding is display-only (never written to the DB). 'off' / no increment
@@ -439,18 +427,9 @@ async def reports_page():
             return raw_h
         if basis == "total":
             return round_hours(raw_h, inc, mode)
-        if basis == "entry":
-            rows = await QE.query_db(
-                f"SELECT {_DUR} AS h FROM time WHERE {cust_sql} AND {_DUR} > 0",
-                params=cust_params,
-            )
-        else:
-            grp = "project_name" if basis == "project" else "COALESCE(git_id, -1)"
-            rows = await QE.query_db(
-                f"""SELECT SUM({_DUR}) AS h FROM time WHERE {cust_sql}
-                    GROUP BY {grp} HAVING SUM({_DUR}) > 0""",
-                params=cust_params,
-            )
+        rows = await QE.function_db(
+            "report_hours_for_rounding", start, end, sel, basis
+        )
         if rows.empty:
             return 0.0
         return sum(round_hours(float(v), inc, mode) for v in rows["h"])
@@ -460,15 +439,7 @@ async def reports_page():
             state["period"], state["custom_start"], state["custom_end"], date.today()
         )
         state["range"] = (start, end)
-        sel = [c for c in state["customers"] if c in names]
-        specific = len(sel) > 0
-        # No end_time filter — running timers (end_time NULL) are counted via _DUR.
-        where = "date(start_time) BETWEEN ? AND ?"
-        base = [start, end]
-        cust_sql = where + (
-            f" AND customer_name IN ({','.join('?' * len(sel))})" if specific else ""
-        )
-        cust_params = tuple(base + (sel if specific else []))
+        sel = [c for c in state["customers"] if c in names]  # empty = all
 
         if not (start and end):
             state["tiles"] = {"hours": 0.0, "amount": 0.0, "entries": 0, "days": 0}
@@ -482,15 +453,7 @@ async def reports_page():
             render_dashboard.refresh()
             return
 
-        tot = await QE.query_db(
-            f"""SELECT COALESCE(SUM({_DUR}), 0) AS h,
-                       COALESCE(SUM(cost), 0) AS c,
-                       COALESCE(SUM(total_time), 0) AS cth,
-                       COUNT(*) AS n,
-                       COUNT(DISTINCT date(start_time)) AS d
-                FROM time WHERE {cust_sql}""",
-            params=cust_params,
-        )
+        tot = await QE.function_db("report_totals", start, end, sel)
         raw_h = float(tot.iloc[0]["h"]) if not tot.empty else 0.0
         raw_c = float(tot.iloc[0]["c"]) if not tot.empty else 0.0
         completed_h = float(tot.iloc[0]["cth"]) if not tot.empty else 0.0
@@ -498,7 +461,7 @@ async def reports_page():
         # cost yet); applied to the live hours for an estimated amount.
         rate = (raw_c / completed_h) if completed_h else 0.0
         billed_h = await _billable_hours(
-            raw_h, state["round_basis"], state["round"], cust_sql, cust_params
+            raw_h, state["round_basis"], state["round"], start, end, sel
         )
         state["tiles"] = {
             "hours": billed_h,
@@ -509,12 +472,7 @@ async def reports_page():
 
         # Period-over-period deltas — actual activity vs the SAME elapsed span of
         # the previous period (e.g. MTD vs the previous month's first N days).
-        prev = await QE.query_db(
-            f"""SELECT COALESCE(SUM({_DUR}),0) AS h, COALESCE(SUM(cost),0) AS c,
-                       COUNT(*) AS n
-                FROM time WHERE {cust_sql}""",
-            params=tuple([ps, pe] + (sel if specific else [])),
-        )
+        prev = await QE.function_db("report_totals", ps, pe, sel)
         p_h = float(prev.iloc[0]["h"]) if not prev.empty else 0.0
         p_c = float(prev.iloc[0]["c"]) if not prev.empty else 0.0
         p_n = int(prev.iloc[0]["n"]) if not prev.empty else 0
@@ -533,13 +491,7 @@ async def reports_page():
             "pct": (raw_h / target_h * 100.0) if target_h else 0.0,
         }
 
-        proj = await QE.query_db(
-            f"""SELECT project_name AS k, customer_name AS cust, SUM({_DUR}) AS h
-                FROM time WHERE {cust_sql}
-                GROUP BY project_name, customer_name HAVING SUM({_DUR}) > 0
-                ORDER BY h DESC LIMIT 12""",
-            params=cust_params,
-        )
+        proj = await QE.function_db("report_hours_by_project", start, end, sel)
         if not proj.empty:
             state["by_project"] = (
                 proj["k"].fillna("—").tolist(), proj["h"].astype(float).tolist()
@@ -552,13 +504,7 @@ async def reports_page():
             state["by_project_colors"] = []
 
         # Customer breakdown across the current selection (all when none chosen).
-        byc = await QE.query_db(
-            f"""SELECT customer_name AS k, SUM({_DUR}) AS h
-                FROM time WHERE {cust_sql}
-                GROUP BY customer_name HAVING SUM({_DUR}) > 0
-                ORDER BY h DESC LIMIT 12""",
-            params=cust_params,
-        )
+        byc = await QE.function_db("report_hours_by_customer", start, end, sel)
         state["by_customer"] = (
             (byc["k"].fillna("—").tolist(), byc["h"].astype(float).tolist())
             if not byc.empty else ([], [])
@@ -567,24 +513,13 @@ async def reports_page():
             cust_meta.get(n, {}).get("color") for n in state["by_customer"][0]
         ]
 
-        ot = await QE.query_db(
-            f"""SELECT date(start_time) AS d, SUM({_DUR}) AS h
-                FROM time WHERE {cust_sql}
-                GROUP BY date(start_time) ORDER BY d""",
-            params=cust_params,
-        )
+        ot = await QE.function_db("report_hours_by_day", start, end, sel)
         state["over_time"] = (
             (ot["d"].tolist(), ot["h"].astype(float).tolist())
             if not ot.empty else ([], [])
         )
 
-        items = await QE.query_db(
-            f"""SELECT git_id AS gid, customer_name AS cust, SUM({_DUR}) AS h
-                FROM time WHERE {cust_sql} AND git_id IS NOT NULL AND git_id > 0
-                GROUP BY git_id, customer_name HAVING SUM({_DUR}) > 0
-                ORDER BY h DESC LIMIT 10""",
-            params=cust_params,
-        )
+        items = await QE.function_db("report_hours_by_work_item", start, end, sel)
         if not items.empty:
             labels = [id2name.get(int(g), f"#{int(g)}") for g in items["gid"]]
             state["top_items"] = (labels, items["h"].astype(float).tolist())

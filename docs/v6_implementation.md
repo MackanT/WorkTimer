@@ -119,6 +119,13 @@ One commit per file; suite green after each.
 **Done when:** no page or UI module contains SQL; the architecture test
 passes.
 
+**Progress:**
+
+| File | Status |
+|---|---|
+| `pages/reports.py` | **done** — 10 statements → 7 methods (`get_current_customers`, `report_totals`, `report_hours_for_rounding`, `report_hours_by_project` / `_customer` / `_day` / `_work_item`). Proven frame-identical to the original SQL, dtypes included (108 comparisons); pinned in [tests/test_char_reports.py](../tests/test_char_reports.py) (15 tests, mutation-checked). |
+| `pages/time_tracking.py` | next |
+
 ### 0.3 One clock
 
 A small `clock` module (`now_local()`, `today_local()`), initially returning
@@ -188,8 +195,15 @@ on, and all security tests pass.
 
 A Postgres implementation of the same public `Database` API. The `db` fixture
 switches to it, and the Phase 0 characterisation tests run **unchanged** as the
-oracle — except for exactly two reviewed diffs: cost rounded to öre, and wage
-looked up by entry date.
+oracle — except for reviewed diffs, each already marked in its test:
+
+- **Planned:** cost rounded to öre; wage looked up by entry date.
+- **Pinned quirks, fix pending your call** (both found in 0.2, both fall out
+  of the new schema naturally):
+  - per-project billing rounding groups by project *name*, so two customers'
+    same-named projects round as one unit;
+  - "no work item" is `0` from manual entries but `NULL` from stopped timers,
+    so per-work-item rounding splits untagged time into two units.
 
 **Return shapes keep today's column names**, aliased in the SQL
 (`duration_hours as total_time`), so no page changes during the port. The

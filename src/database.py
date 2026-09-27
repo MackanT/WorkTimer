@@ -1875,6 +1875,117 @@ class Database:
             self.log_engine.error(f"Error saving sort order: {e}")
             return False
 
+    def get_current_customers(self):
+        """Current (not disabled) customers — id, name, colour and expected
+        work % — ordered by name. Each name has at most one current row."""
+        return self.fetch_query(
+            """
+            select customer_id, customer_name, color, expected_work_pct
+            from customers
+            where is_current = 1
+            order by customer_name
+            """
+        )
+
+    ### Report Operations ###
+
+    # Per-entry duration in hours, counting a still-running timer up to "now" —
+    # so today's ongoing work is included, not only stopped entries (total_time
+    # is only written when a timer stops).
+    _REPORT_DUR = (
+        "(julianday(coalesce(end_time, datetime('now','localtime'))) "
+        "- julianday(start_time)) * 24.0"
+    )
+
+    @staticmethod
+    def _report_filter(start: str, end: str, customers=None) -> tuple[str, tuple]:
+        """WHERE clause and params shared by the report queries: entries whose
+        start date is within [start, end] (ISO dates), optionally limited to the
+        named customers. No end_time filter — running timers count via
+        _REPORT_DUR."""
+        where = "date(start_time) BETWEEN ? AND ?"
+        params = [start, end]
+        if customers:
+            where += f" AND customer_name IN ({','.join('?' * len(customers))})"
+            params += list(customers)
+        return where, tuple(params)
+
+    def report_totals(self, start: str, end: str, customers=None):
+        """One row: h = hours incl. running timers, c = cost, cth = completed
+        hours, n = entries, d = distinct days."""
+        where, params = self._report_filter(start, end, customers)
+        return self.fetch_query(
+            f"""SELECT COALESCE(SUM({self._REPORT_DUR}), 0) AS h,
+                       COALESCE(SUM(cost), 0) AS c,
+                       COALESCE(SUM(total_time), 0) AS cth,
+                       COUNT(*) AS n,
+                       COUNT(DISTINCT date(start_time)) AS d
+                FROM time WHERE {where}""",
+            params,
+        )
+
+    def report_hours_for_rounding(self, start: str, end: str, customers, basis: str):
+        """Hours per billing-rounding unit (column h, positive only): one row
+        per entry for basis 'entry'; per project name for 'project'; otherwise
+        per work item, with untagged time as one group."""
+        where, params = self._report_filter(start, end, customers)
+        dur = self._REPORT_DUR
+        if basis == "entry":
+            sql = f"SELECT {dur} AS h FROM time WHERE {where} AND {dur} > 0"
+        else:
+            grp = "project_name" if basis == "project" else "COALESCE(git_id, -1)"
+            sql = f"""SELECT SUM({dur}) AS h FROM time WHERE {where}
+                    GROUP BY {grp} HAVING SUM({dur}) > 0"""
+        return self.fetch_query(sql, params)
+
+    def report_hours_by_project(self, start: str, end: str, customers=None):
+        """Top 12 projects by hours: k = project, cust = customer, h = hours."""
+        where, params = self._report_filter(start, end, customers)
+        dur = self._REPORT_DUR
+        return self.fetch_query(
+            f"""SELECT project_name AS k, customer_name AS cust, SUM({dur}) AS h
+                FROM time WHERE {where}
+                GROUP BY project_name, customer_name HAVING SUM({dur}) > 0
+                ORDER BY h DESC LIMIT 12""",
+            params,
+        )
+
+    def report_hours_by_customer(self, start: str, end: str, customers=None):
+        """Top 12 customers by hours: k = customer, h = hours."""
+        where, params = self._report_filter(start, end, customers)
+        dur = self._REPORT_DUR
+        return self.fetch_query(
+            f"""SELECT customer_name AS k, SUM({dur}) AS h
+                FROM time WHERE {where}
+                GROUP BY customer_name HAVING SUM({dur}) > 0
+                ORDER BY h DESC LIMIT 12""",
+            params,
+        )
+
+    def report_hours_by_day(self, start: str, end: str, customers=None):
+        """Hours per day, oldest first: d = ISO date, h = hours."""
+        where, params = self._report_filter(start, end, customers)
+        dur = self._REPORT_DUR
+        return self.fetch_query(
+            f"""SELECT date(start_time) AS d, SUM({dur}) AS h
+                FROM time WHERE {where}
+                GROUP BY date(start_time) ORDER BY d""",
+            params,
+        )
+
+    def report_hours_by_work_item(self, start: str, end: str, customers=None):
+        """Top 10 work items by hours: gid = work item id, cust = customer,
+        h = hours. Untagged time is excluded."""
+        where, params = self._report_filter(start, end, customers)
+        dur = self._REPORT_DUR
+        return self.fetch_query(
+            f"""SELECT git_id AS gid, customer_name AS cust, SUM({dur}) AS h
+                FROM time WHERE {where} AND git_id IS NOT NULL AND git_id > 0
+                GROUP BY git_id, customer_name HAVING SUM({dur}) > 0
+                ORDER BY h DESC LIMIT 10""",
+            params,
+        )
+
     def get_expected_schema(self):
         """
         Define the expected database schema.
