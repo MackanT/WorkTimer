@@ -1887,6 +1887,111 @@ class Database:
             """
         )
 
+    def get_current_customers_in_sort_order(self):
+        """Current customers — id, name, colour and sort position (so, 999 when
+        unset) — in the user's display order, then by name."""
+        return self.fetch_query(
+            "select customer_id, customer_name, color, "
+            "coalesce(sort_order, 999) as so "
+            "from customers where is_current = 1 "
+            "order by so, customer_name"
+        )
+
+    def get_current_projects_for_customer(self, customer_id: int):
+        """A customer's enabled projects (project_id, project_name), by name."""
+        return self.fetch_query(
+            "select project_id, project_name from projects "
+            "where customer_id = ? and is_current = 1 order by project_name",
+            (customer_id,),
+        )
+
+    def get_customer_project_info(self, customer_id: int, project_id: int):
+        """customer_name, project_name and the project's default work item
+        (git_id) for a customer/project pair; empty if they don't belong
+        together."""
+        return self.fetch_query(
+            """
+            select c.customer_name, p.project_name, p.git_id
+            from customers c
+            join projects p on p.customer_id = c.customer_id
+            where c.customer_id = ? and p.project_id = ?
+            """,
+            (customer_id, project_id),
+        )
+
+    def get_logged_project_info(self, customer_id: int, project_id: int):
+        """customer_name and project_name as recorded on the pair's time
+        entries, plus the project's default work item (git_id). Empty when the
+        pair has no entries."""
+        return self.fetch_query(
+            """
+            select distinct t.customer_name, t.project_name, p.git_id
+            from time t
+            left join projects p on p.project_id = t.project_id
+            where t.customer_id = ? and t.project_id = ?
+            """,
+            (customer_id, project_id),
+        )
+
+    def get_running_timers(self):
+        """customer_id and project_id of every running timer."""
+        return self.fetch_query(
+            "select customer_id, project_id from time where end_time is null"
+        )
+
+    def get_running_timer_names(self):
+        """customer_name and project_name of every running timer, by name."""
+        return self.fetch_query(
+            """
+            SELECT c.customer_name, p.project_name
+            FROM time t
+            JOIN customers c ON t.customer_id = c.customer_id
+            JOIN projects p ON t.project_id = p.project_id
+            WHERE t.end_time IS NULL
+            ORDER BY c.customer_name, p.project_name
+            """
+        )
+
+    def get_running_timer_start(self, customer_id: int, project_id: int):
+        """start_time of the pair's latest running timer; empty if none runs."""
+        return self.fetch_query(
+            "select start_time from time where customer_id = ? and project_id = ? "
+            "and end_time is null order by time_id desc limit 1",
+            (customer_id, project_id),
+        )
+
+    def get_completed_entries(
+        self, customer_id: int, project_id: int, start_key: int, end_key: int
+    ):
+        """Completed entries of a customer/project pair whose date_key is in
+        [start_key, end_key] (YYYYMMDD ints), newest first."""
+        return self.fetch_query(
+            """
+            select time_id, start_time, end_time, total_time, comment
+            from time
+            where customer_id = ? and project_id = ? and end_time is not null
+              and date_key between ? and ?
+            order by start_time desc
+            """,
+            (customer_id, project_id, start_key, end_key),
+        )
+
+    def get_first_entry_date(self):
+        """min_date: ISO date of the earliest time entry (NULL when none)."""
+        return self.fetch_query("select min(date(start_time)) as min_date from time")
+
+    def get_recent_project_hours(self, customer_id: int):
+        """Hours per project (project_id, h) for a customer over the last 60
+        days, running timers counted up to now."""
+        return self.fetch_query(
+            "select project_id, sum(coalesce(total_time, "
+            "(julianday('now', 'localtime') - julianday(start_time)) * 24)) as h "
+            "from time where customer_id = ? "
+            "and date(start_time) >= date('now', '-60 days') "
+            "group by project_id",
+            (customer_id,),
+        )
+
     ### Report Operations ###
 
     # Per-entry duration in hours, counting a still-running timer up to "now" —

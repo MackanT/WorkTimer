@@ -212,9 +212,7 @@ async def time_tracking_page():
     # Per-customer indicator colours (a dot next to each customer card's name).
     cust_colors: dict = {}
     try:
-        _cdf = await core.query_engine.query_db(
-            "SELECT customer_name, color FROM customers WHERE is_current = 1"
-        )
+        _cdf = await core.query_engine.function_db("get_current_customers")
         if not _cdf.empty:
             cust_colors = {
                 r["customer_name"]: r["color"]
@@ -295,16 +293,7 @@ async def time_tracking_page():
 
     async def update_tab_indicator_now():
         """Update the active timer indicator, emit event with names for nav bar."""
-        result = await core.query_engine.query_db(
-            """
-            SELECT c.customer_name, p.project_name
-            FROM time t
-            JOIN customers c ON t.customer_id = c.customer_id
-            JOIN projects p ON t.project_id = p.project_id
-            WHERE t.end_time IS NULL
-            ORDER BY c.customer_name, p.project_name
-            """
-        )
+        result = await core.query_engine.function_db("get_running_timer_names")
         active_names = [
             f"{r['customer_name']} / {r['project_name']}"
             for _, r in result.iterrows()
@@ -334,9 +323,7 @@ async def time_tracking_page():
         # "All-Time" starts at the first recorded entry instead of the
         # hardcoded 2000-01-01 fallback in get_range_for.
         if state.selected_time == "All-Time":
-            min_df = await core.query_engine.query_db(
-                "select min(date(start_time)) as min_date from time"
-            )
+            min_df = await core.query_engine.function_db("get_first_entry_date")
             min_date = min_df.iloc[0]["min_date"] if not min_df.empty else None
             if min_date:
                 range_str = f"{min_date} - {datetime.now().date()}"
@@ -486,14 +473,8 @@ async def time_tracking_page():
         building a fresh ui.dialog per timer stop leaked DOM nodes over time.
         """
         # Query project/customer info
-        df = await core.query_engine.query_db(
-            """
-            select distinct t.customer_name, t.project_name, p.git_id
-            from time t
-            left join projects p on p.project_id = t.project_id
-            where t.customer_id = ? and t.project_id = ?
-            """,
-            params=(customer_id, project_id),
+        df = await core.query_engine.function_db(
+            "get_logged_project_info", customer_id, project_id
         )
 
         # Extract values with defaults
@@ -507,10 +488,8 @@ async def time_tracking_page():
 
         # This customer's projects, so the entry can be re-assigned on stop
         # (e.g. started on "generic", meant "specific task").
-        proj_df = await core.query_engine.query_db(
-            "select project_id, project_name from projects "
-            "where customer_id = ? and is_current = 1 order by project_name",
-            params=(customer_id,),
+        proj_df = await core.query_engine.function_db(
+            "get_current_projects_for_customer", customer_id
         )
         proj_options = {
             int(r["project_id"]): str(r["project_name"])
@@ -520,10 +499,8 @@ async def time_tracking_page():
             proj_options[int(project_id)] = p_name
 
         # Start time of the running row, to default/validate the stop time.
-        running = await core.query_engine.query_db(
-            "select start_time from time where customer_id = ? and project_id = ? "
-            "and end_time is null order by time_id desc limit 1",
-            params=(customer_id, project_id),
+        running = await core.query_engine.function_db(
+            "get_running_timer_start", customer_id, project_id
         )
         start_str = str(running.iloc[0]["start_time"]) if not running.empty else None
         now_dt = datetime.now()
@@ -752,19 +729,18 @@ async def time_tracking_page():
 
             # Save to DevOps if requested
             if store_to_devops and git_id_val and git_id_val > 0:
-                customer_name_df = await core.query_engine.query_db(
-                    "select customer_name from customers where customer_id = ?",
-                    params=(customer_id_int,),
+                customer_name = await core.query_engine.function_db(
+                    "get_customer_name", customer_id_int
                 )
                 if (
                     core.tracker_engine
                     and core.tracker_engine.manager
-                    and not customer_name_df.empty
+                    and customer_name
                 ):
                     # Blocking API call — keep it off the event loop
                     status, msg = await asyncio.to_thread(
                         core.tracker_engine.manager.save_comment,
-                        customer_name=customer_name_df.iloc[0]["customer_name"],
+                        customer_name=customer_name,
                         comment=comment,
                         git_id=git_id_val,
                     )
@@ -798,14 +774,8 @@ async def time_tracking_page():
 
     async def show_manual_time_entry_dialog(customer_id: int, project_id: int):
         """Populate the pre-created dialog shell and open it."""
-        df = await core.query_engine.query_db(
-            """
-            select c.customer_name, p.project_name, p.git_id
-            from customers c
-            join projects p on p.customer_id = c.customer_id
-            where c.customer_id = ? and p.project_id = ?
-            """,
-            params=(customer_id, project_id),
+        df = await core.query_engine.function_db(
+            "get_customer_project_info", customer_id, project_id
         )
         c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
         p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
@@ -887,9 +857,8 @@ async def time_tracking_page():
     async def show_manual_start_dialog(customer_id: int, project_id: int):
         """Open a small dialog to start a timer with a custom start time."""
         # Guard: refuse if a timer is already running for this project
-        active = await core.query_engine.query_db(
-            "select 1 from time where customer_id = ? and project_id = ? and end_time is null limit 1",
-            params=(customer_id, project_id),
+        active = await core.query_engine.function_db(
+            "get_running_timer_start", customer_id, project_id
         )
         if not active.empty:
             core.event_bus.notify(
@@ -898,11 +867,8 @@ async def time_tracking_page():
             )
             return
 
-        df = await core.query_engine.query_db(
-            "select c.customer_name, p.project_name from customers c "
-            "join projects p on p.customer_id = c.customer_id "
-            "where c.customer_id = ? and p.project_id = ?",
-            params=(customer_id, project_id),
+        df = await core.query_engine.function_db(
+            "get_customer_project_info", customer_id, project_id
         )
         c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
         p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
@@ -958,11 +924,8 @@ async def time_tracking_page():
             today = datetime.now().strftime("%Y%m%d")
             start_date = end_date = today
 
-        info = await core.query_engine.query_db(
-            "select c.customer_name, p.project_name from customers c "
-            "join projects p on p.customer_id = c.customer_id "
-            "where c.customer_id = ? and p.project_id = ?",
-            params=(customer_id, project_id),
+        info = await core.query_engine.function_db(
+            "get_customer_project_info", customer_id, project_id
         )
         c_name = info.iloc[0]["customer_name"] if not info.empty else "Unknown"
         p_name = info.iloc[0]["project_name"] if not info.empty else "Unknown"
@@ -970,15 +933,9 @@ async def time_tracking_page():
         editing = {"id": None}
 
         async def _reload_list():
-            rows = await core.query_engine.query_db(
-                """
-                select time_id, start_time, end_time, total_time, comment
-                from time
-                where customer_id = ? and project_id = ? and end_time is not null
-                  and date_key between ? and ?
-                order by start_time desc
-                """,
-                params=(customer_id, project_id, int(start_date), int(end_date)),
+            rows = await core.query_engine.function_db(
+                "get_completed_entries",
+                customer_id, project_id, int(start_date), int(end_date),
             )
             list_box.clear()
             with list_box:
@@ -1128,9 +1085,7 @@ async def time_tracking_page():
         state.ui_data_df = df
 
         # One query for ALL running timers instead of one per project row (N+1)
-        active_df = await core.query_engine.query_db(
-            "select customer_id, project_id from time where end_time is null"
-        )
+        active_df = await core.query_engine.function_db("get_running_timers")
         active_pairs = (
             set(
                 zip(
@@ -1516,11 +1471,8 @@ async def time_tracking_page():
 
         # Customers with no projects yet are absent from the joined frame —
         # append them so they show as (empty) cards ready for "Add project".
-        all_cust = await core.query_engine.query_db(
-            "select customer_id, customer_name, color, "
-            "coalesce(sort_order, 999) as so "
-            "from customers where is_current = 1 "
-            "order by so, customer_name"
+        all_cust = await core.query_engine.function_db(
+            "get_current_customers_in_sort_order"
         )
         if not all_cust.empty:
             known_ids = {int(c[0]) for c in customers_list}
@@ -1663,13 +1615,8 @@ async def time_tracking_page():
         """One-click ordering by logged time in the last 60 days (most first;
         unused projects keep their current relative order at the bottom).
         Deliberately manual — an auto-reordering list ruins muscle memory."""
-        rows = await core.query_engine.query_db(
-            "select project_id, sum(coalesce(total_time, "
-            "(julianday('now', 'localtime') - julianday(start_time)) * 24)) as h "
-            "from time where customer_id = ? "
-            "and date(start_time) >= date('now', '-60 days') "
-            "group by project_id",
-            params=(customer_id,),
+        rows = await core.query_engine.function_db(
+            "get_recent_project_hours", customer_id
         )
         usage = (
             {int(r["project_id"]): float(r["h"] or 0) for _, r in rows.iterrows()}

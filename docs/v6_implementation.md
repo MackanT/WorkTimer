@@ -124,7 +124,8 @@ passes.
 | File | Status |
 |---|---|
 | `pages/reports.py` | **done** — 10 statements → 7 methods (`get_current_customers`, `report_totals`, `report_hours_for_rounding`, `report_hours_by_project` / `_customer` / `_day` / `_work_item`). Proven frame-identical to the original SQL, dtypes included (108 comparisons); pinned in [tests/test_char_reports.py](../tests/test_char_reports.py) (15 tests, mutation-checked). |
-| `pages/time_tracking.py` | next |
+| `pages/time_tracking.py` | **done** — 15 statements → 10 new methods + 2 reused (`get_current_customers`, `get_customer_name`); repeats collapsed (the name lookup appeared 3×, the running-timer check 2×). Proven identical to the original SQL (260 comparisons, incl. nonexistent ids); pinned in [tests/test_char_time_tracking.py](../tests/test_char_time_tracking.py) (12 tests, mutation-checked). |
+| `pages/add_data.py` | next |
 
 ### 0.3 One clock
 
@@ -204,6 +205,14 @@ oracle — except for reviewed diffs, each already marked in its test:
     same-named projects round as one unit;
   - "no work item" is `0` from manual entries but `NULL` from stopped timers,
     so per-work-item rounding splits untagged time into two units.
+- **Pinned bugs, fixed by the new schema** (found in 0.2; one root cause — a
+  wage change issues a new `customer_id`, entries keep the old one, and the
+  Time Tracker asks with the current one). Phase 2 looks entries up through the
+  project, so each expectation flips:
+  - a timer **running across a wage change** is invisible to the tracker;
+    ticking it starts a second timer while the first runs on;
+  - **"Manage entries"** omits entries logged before a raise;
+  - **"Sort by usage"** ignores usage logged before a raise.
 
 **Return shapes keep today's column names**, aliased in the SQL
 (`duration_hours as total_time`), so no page changes during the port. The
