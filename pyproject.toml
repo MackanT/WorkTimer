@@ -29,6 +29,8 @@ dependencies = [
     "requests>=2.31.0",
     "packaging>=21.0",
     "cryptography>=50.0.1",
+    "psycopg[binary]>=3.3.6",
+    "psycopg-pool>=3.3.3",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -68,6 +70,9 @@ addopts = "-q"
 # does per process (see that file for why).
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
+markers = [
+    "postgres: needs the dev Postgres (docker compose up -d postgres); skipped when it isn't running",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

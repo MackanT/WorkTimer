@@ -14,3 +14,28 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+
+  # v6 database. Not used by the app yet — it moves over in the Postgres port.
+  # Start just this service for development: `docker compose up -d postgres`.
+  postgres:
+    image: postgres:18
+    ports:
+      # Localhost only, never on the network. (On WSL with mirrored networking,
+      # an all-interfaces mapping would expose it to the whole LAN.)
+      - "127.0.0.1:${PG_PORT:-5432}:5432"
+    environment:
+      # Development default. Anything reachable by others must set its own in .env.
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-worktimer-dev}
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql/<major>/docker;
+      # mounting the parent (not .../data) keeps major-version upgrades possible.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:

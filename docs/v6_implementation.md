@@ -233,9 +233,12 @@ credentials blanked in the copy) — 4,467 entries, Oct 2023 → Sep 2026:
   and `NULL` (545), so the per-work-item rounding split is live.
 - **9 entries (7.25 h, Jan–Mar 2025) have `project_id = 0`** but still carry
   their project *name*; each maps to exactly one project of that name under
-  its customer. They count in Reports (grouped by name) but not in the Time
-  Tracker or "Manage entries" (joined on id). Re-linkable — see the 5.1.2
-  follow-up.
+  its customer. They count in Reports (grouped by name) but queries joining
+  on the project id skip them. **Re-linked by 5.1.2** — verified on a
+  snapshot: exactly these 9, only `project_id` changed, every other table and
+  the billing totals identical. (Their projects are all *disabled*, so the
+  Time Tracker, which lists enabled projects only, never showed them either
+  way — the repair fixes the data, not a visible total.)
 - Harness note: `src/core/app.py`'s module-level `_global_tracker_init_lock`
   binds to the first event loop that uses it, so tests must share one loop.
   Production has one loop per process, so it's not an app bug — but the task
@@ -251,8 +254,9 @@ proven: NiceGUI's test fixtures *delete* every `storage-*.json` in their
 storage directory, so the root [conftest.py](../conftest.py) redirects
 `NICEGUI_STORAGE_PATH` before NiceGUI is imported and the test refuses to run
 if storage still points at the real `.nicegui/`; and teardown fails if
-`data/worktimer.db` was opened. Phase 1.1: point its seeded database at the
-Postgres test fixture — the test itself doesn't change.
+`data/worktimer.db` was opened. Phase 2: once the app runs on Postgres, seed
+through `pg_db` instead of a temp SQLite file — the test itself doesn't
+change.
 
 **Manual click-through — pending.** On your real setup, the flows Phase 0 and
 5.1.1/5.1.2 touched:
@@ -286,9 +290,34 @@ Postgres test fixture — the test itself doesn't change.
 - `docker-compose.yml` gains a `postgres` service: official image, pinned
   major version, named volume, healthcheck; the app waits on
   `condition: service_healthy`.
-- A `pg_db` test fixture via `testcontainers`: one container per session, a
-  fresh database per test (from a template, for speed). Postgres tests are
-  marked so the SQLite suite still runs without Docker during the transition.
+- A `pg_db` test fixture giving each test a fresh database (from a template,
+  for speed). Postgres tests are marked so the SQLite suite still runs
+  without Docker during the transition.
+
+**Status: done** (the app doesn't use Postgres yet; `depends_on` arrives with
+the port).
+
+- `postgres:18` service, published on **`127.0.0.1` only**, data in the named
+  volume `pgdata` mounted at `/var/lib/postgresql` (the Postgres 18 layout),
+  `pg_isready` healthcheck, dev password default `worktimer-dev`
+  (`POSTGRES_PASSWORD` in `.env` overrides — Phase 7 must require a real one
+  for hosted installs). Start it: `docker compose up -d postgres`; with Docker
+  in WSL, `wsl docker compose up -d postgres` in the repo.
+- **Not `testcontainers`.** With Docker inside WSL, Windows-side Python could
+  only drive the daemon if it were exposed over unauthenticated TCP —
+  root-equivalent for any local process. Instead the fixtures in
+  [tests/conftest.py](../tests/conftest.py) use the running dev server:
+  `pg_server` (skips with a start hint when it's down; sweeps `wt_test_*`
+  leftovers from crashed runs) and `pg_db` (a fresh database per test, dropped
+  afterwards). Tests need only a connection URL (`WORKTIMER_TEST_PG_URL`
+  overrides the default). Template-cloning for speed comes with the schema.
+- Verified: PostgreSQL 18.6, `btree_gist` available, server clock UTC;
+  reachable on `127.0.0.1:5432`, **refused on the LAN address** (this machine
+  runs WSL in mirrored networking mode, where an all-interfaces port mapping
+  would expose it); tests skip cleanly with the server down; no databases left
+  behind after a run. [tests/test_pg_fixture.py](../tests/test_pg_fixture.py)
+  pins the server requirements and per-test isolation.
+- `psycopg[binary]` and `psycopg-pool` added now (the fixture needs the driver).
 
 ### 1.2 Dependencies and migrations
 
