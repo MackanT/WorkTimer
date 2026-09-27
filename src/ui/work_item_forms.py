@@ -181,12 +181,9 @@ async def open_work_item_dialog(
     # Customer indicator colour (fills the header badge when set).
     cust_color = None
     try:
-        _cc = await core.query_engine.query_db(
-            "SELECT color FROM customers WHERE customer_name = ? AND is_current = 1 LIMIT 1",
-            params=(customer,),
+        cust_color = await core.query_engine.function_db(
+            "get_customer_color", customer
         )
-        if not _cc.empty and _cc.iloc[0]["color"]:
-            cust_color = str(_cc.iloc[0]["color"])
     except Exception:
         cust_color = None
     display_name = f"{item_type}: {item_id} - {title}"

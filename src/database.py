@@ -1800,6 +1800,14 @@ class Database:
 
     ### DevOps Operations ###
 
+    def get_devops_watermarks(self):
+        """The incremental tracker sync's watermarks: per customer_name, the
+        highest cached work-item id (max_id) and change date
+        (max_changed_date) (unordered)."""
+        return self.fetch_query(
+            "select customer_name, max(id) as max_id, max(changed_date) as max_changed_date from devops group by customer_name"
+        )
+
     def update_devops_data(self, df: pd.DataFrame, mode: str = "replace"):
         """Update devops table with different modes.
 
@@ -2188,6 +2196,24 @@ class Database:
             "where c.is_current = 1 and p.is_current = 1 "
             "order by c.customer_name, p.project_name"
         )
+
+    def get_tracker_expiries(self):
+        """tracker_name and token_expires of every tracker that has an expiry
+        date (unordered)."""
+        return self.fetch_query(
+            "select tracker_name, token_expires from trackers "
+            "where coalesce(token_expires, '') != ''"
+        )
+
+    def get_customer_color(self, customer_name: str):
+        """The current customer's colour, or None when unset."""
+        df = self.fetch_query(
+            "SELECT color FROM customers WHERE customer_name = ? AND is_current = 1 LIMIT 1",
+            (customer_name,),
+        )
+        if not df.empty and df.iloc[0]["color"]:
+            return str(df.iloc[0]["color"])
+        return None
 
     ### Report Operations ###
 

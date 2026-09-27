@@ -247,10 +247,7 @@ async def _setup_spa_shell():
                 from ..helpers import token_expiry_level
 
                 try:
-                    df = await core.query_engine.query_db(
-                        "select tracker_name, token_expires from trackers "
-                        "where coalesce(token_expires, '') != ''"
-                    )
+                    df = await core.query_engine.function_db("get_tracker_expiries")
                     notified = False
                     for _, r in df.iterrows():
                         lvl = token_expiry_level(r["token_expires"])
@@ -288,16 +285,7 @@ async def _setup_spa_shell():
 
         # Set initial nav-bar state from DB
         try:
-            result = await core.query_engine.query_db(
-                """
-                SELECT c.customer_name, p.project_name
-                FROM time t
-                JOIN customers c ON t.customer_id = c.customer_id
-                JOIN projects p ON t.project_id = p.project_id
-                WHERE t.end_time IS NULL
-                ORDER BY c.customer_name, p.project_name
-                """
-            )
+            result = await core.query_engine.function_db("get_running_timer_names")
             initial_names = [
                 f"{r['customer_name']} / {r['project_name']}"
                 for _, r in result.iterrows()

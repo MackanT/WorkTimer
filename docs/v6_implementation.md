@@ -128,7 +128,22 @@ passes.
 | `pages/add_data.py` | **done** — 11 statements → 8 methods (the current-customer-name lookup appeared 3×; both enabled-project queries share one). Proven identical (10 comparisons); pinned in [tests/test_char_entity_dialogs.py](../tests/test_char_entity_dialogs.py) (7 tests, mutation-checked). |
 | `pages/tasks.py` | **done** — 5 statements → 2 new methods (`get_tasks`, `get_task_titles`) + 3 reused; the page's `SORT_QUERIES` map moved verbatim to `Database.TASK_SORTS` (still the toolbar's single source of truth; `test_tasks_logic.py` retargeted). Proven identical (28 comparisons; the map is identical up to whitespace inside the two multi-line priority clauses). Pinned in [tests/test_char_tasks.py](../tests/test_char_tasks.py) (8 tests, mutation-checked — incl. a simulated Postgres NULL order). |
 | `ui/command_palette.py` | **done** — 4 statements → 2 new methods (`get_running_timers_with_names`, `get_current_customer_projects`) + 2 reused (`get_running_timer_names` — the same query as the Time page's indicator — and `get_current_customers`). Proven identical (4 comparisons); pinned in [tests/test_char_command_palette.py](../tests/test_char_command_palette.py) (2 tests, mutation-checked). |
-| `pages/query_editor.py` | next — the one legitimate raw-SQL path (user SQL) moves behind `run_user_query` |
+| `root.py`, `globals.py`, `board.py`, `work_item_forms.py` | **done** — 5 statements → 3 new methods (`get_tracker_expiries`, `get_devops_watermarks`, `get_customer_color`) + 2 reused. Proven identical (8 comparisons); pinned in [tests/test_char_sync_and_shell.py](../tests/test_char_sync_and_shell.py) (3 tests, mutation-checked). |
+| `pages/query_editor.py` | **on hold** — its row-edit project lookup is part of a live 5.1.1 bug (below); moving it before a hotfix lands on `main` would make the merge conflict. Then: user SQL behind `run_user_query`, saved-query writes as named methods, `query_db` removed. |
+
+**Live 5.1.1 bugs found during 0.2** (same SCD2 root cause; hotfix proposed):
+
+- **A raise resets the customer's per-customer settings.** The add-customer
+  form creates the new version row from its own fields and carries over only
+  the tracker link — so colour, expected work % and **tracker project** are
+  cleared. With no project configured, the DevOps provider silently falls back
+  to the organisation's *first* project: board, sync and new work items move
+  to the wrong project.
+- **Query-editor row edit of an entry logged before a raise.** The project
+  dropdown is empty (it asks with the entry's old customer id), and at the
+  database layer an Update resolves the project by name under that old id,
+  finds nothing and writes `project_id = 0` — the entry drops out of the Time
+  Tracker. Whether the dialog lets that save through is untested in the UI.
 
 ### 0.3 One clock
 

@@ -102,9 +102,7 @@ async def board_page():
     # Per-customer indicator colours (shown as a dot on the customer tabs).
     cust_colors: dict = {}
     if customer_names:
-        _cdf = await core.query_engine.query_db(
-            "SELECT customer_name, color FROM customers WHERE is_current = 1"
-        )
+        _cdf = await core.query_engine.function_db("get_current_customers")
         if not _cdf.empty:
             cust_colors = {
                 r["customer_name"]: r["color"]

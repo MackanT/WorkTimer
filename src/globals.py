@@ -304,9 +304,7 @@ class TrackerEngine:
         changed_dates = None
         if incremental:
             self.log.info("Performing incremental update of devops data")
-            max_id_df = await self.query_engine.query_db(
-                "select customer_name, max(id) as max_id, max(changed_date) as max_changed_date from devops group by customer_name"
-            )
+            max_id_df = await self.query_engine.function_db("get_devops_watermarks")
             if not max_id_df.empty:
                 max_ids = dict(
                     zip(max_id_df["customer_name"], max_id_df["max_id"].astype(int))
