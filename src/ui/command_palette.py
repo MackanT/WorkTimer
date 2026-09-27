@@ -58,12 +58,7 @@ def setup_command_palette(core) -> None:
     async def _emit_active_timers():
         """Refresh the nav bar's running-timer pills (mirrors the Time page's
         indicator query, so palette timer actions update it from any page)."""
-        result = await core.query_engine.query_db(
-            "select c.customer_name, p.project_name from time t "
-            "join customers c on t.customer_id = c.customer_id "
-            "join projects p on t.project_id = p.project_id "
-            "where t.end_time is null order by c.customer_name, p.project_name"
-        )
+        result = await core.query_engine.function_db("get_running_timer_names")
         names = (
             [f"{r['customer_name']} / {r['project_name']}" for _, r in result.iterrows()]
             if not result.empty else []
@@ -169,13 +164,7 @@ def setup_command_palette(core) -> None:
                 })
 
         QE = core.query_engine
-        running = await QE.query_db(
-            "select t.customer_id, t.project_id, c.customer_name, p.project_name "
-            "from time t "
-            "join customers c on t.customer_id = c.customer_id "
-            "join projects p on t.project_id = p.project_id "
-            "where t.end_time is null order by c.customer_name, p.project_name"
-        )
+        running = await QE.function_db("get_running_timers_with_names")
         running_pairs = set()
         for _, r in running.iterrows():
             cid, pid = int(r["customer_id"]), int(r["project_id"])
@@ -197,12 +186,7 @@ def setup_command_palette(core) -> None:
                 "action": _stop,
             })
 
-        projects = await QE.query_db(
-            "select c.customer_id, c.customer_name, p.project_id, p.project_name "
-            "from customers c join projects p on p.customer_id = c.customer_id "
-            "where c.is_current = 1 and p.is_current = 1 "
-            "order by c.customer_name, p.project_name"
-        )
+        projects = await QE.function_db("get_current_customer_projects")
         for _, r in projects.iterrows():
             cid, pid = int(r["customer_id"]), int(r["project_id"])
             if (cid, pid) in running_pairs:
@@ -461,9 +445,7 @@ def setup_command_palette(core) -> None:
     async def _open_palette():
         state["commands"] = await _build_commands()
         state["_item_index"] = None  # find-mode index rebuilt per open (fresh df)
-        colors_df = await core.query_engine.query_db(
-            "select customer_name, color from customers where is_current = 1"
-        )
+        colors_df = await core.query_engine.function_db("get_current_customers")
         state["cust_colors"] = {
             r["customer_name"]: r["color"]
             for _, r in colors_df.iterrows()

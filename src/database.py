@@ -2168,6 +2168,27 @@ class Database:
             "FROM trackers ORDER BY tracker_name"
         )
 
+    def get_running_timers_with_names(self):
+        """customer_id, project_id, customer_name and project_name of every
+        running timer, by name."""
+        return self.fetch_query(
+            "select t.customer_id, t.project_id, c.customer_name, p.project_name "
+            "from time t "
+            "join customers c on t.customer_id = c.customer_id "
+            "join projects p on t.project_id = p.project_id "
+            "where t.end_time is null order by c.customer_name, p.project_name"
+        )
+
+    def get_current_customer_projects(self):
+        """Every enabled project of every current customer — customer_id,
+        customer_name, project_id, project_name — by customer, then project."""
+        return self.fetch_query(
+            "select c.customer_id, c.customer_name, p.project_id, p.project_name "
+            "from customers c join projects p on p.customer_id = c.customer_id "
+            "where c.is_current = 1 and p.is_current = 1 "
+            "order by c.customer_name, p.project_name"
+        )
+
     ### Report Operations ###
 
     # Per-entry duration in hours, counting a still-running timer up to "now" —

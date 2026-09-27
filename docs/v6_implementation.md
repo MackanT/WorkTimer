@@ -127,7 +127,8 @@ passes.
 | `pages/time_tracking.py` | **done** — 15 statements → 10 new methods + 2 reused (`get_current_customers`, `get_customer_name`); repeats collapsed (the name lookup appeared 3×, the running-timer check 2×). Proven identical to the original SQL (260 comparisons, incl. nonexistent ids); pinned in [tests/test_char_time_tracking.py](../tests/test_char_time_tracking.py) (12 tests, mutation-checked). |
 | `pages/add_data.py` | **done** — 11 statements → 8 methods (the current-customer-name lookup appeared 3×; both enabled-project queries share one). Proven identical (10 comparisons); pinned in [tests/test_char_entity_dialogs.py](../tests/test_char_entity_dialogs.py) (7 tests, mutation-checked). |
 | `pages/tasks.py` | **done** — 5 statements → 2 new methods (`get_tasks`, `get_task_titles`) + 3 reused; the page's `SORT_QUERIES` map moved verbatim to `Database.TASK_SORTS` (still the toolbar's single source of truth; `test_tasks_logic.py` retargeted). Proven identical (28 comparisons; the map is identical up to whitespace inside the two multi-line priority clauses). Pinned in [tests/test_char_tasks.py](../tests/test_char_tasks.py) (8 tests, mutation-checked — incl. a simulated Postgres NULL order). |
-| `ui/command_palette.py` | next |
+| `ui/command_palette.py` | **done** — 4 statements → 2 new methods (`get_running_timers_with_names`, `get_current_customer_projects`) + 2 reused (`get_running_timer_names` — the same query as the Time page's indicator — and `get_current_customers`). Proven identical (4 comparisons); pinned in [tests/test_char_command_palette.py](../tests/test_char_command_palette.py) (2 tests, mutation-checked). |
+| `pages/query_editor.py` | next — the one legitimate raw-SQL path (user SQL) moves behind `run_user_query` |
 
 ### 0.3 One clock
 
@@ -215,8 +216,10 @@ oracle — except for reviewed diffs, each already marked in its test:
   wage change issues a new `customer_id`, entries keep the old one, and the
   Time Tracker asks with the current one). Phase 2 looks entries up through the
   project, so each expectation flips:
-  - a timer **running across a wage change** is invisible to the tracker;
-    ticking it starts a second timer while the first runs on;
+  - ~~a timer **running across a wage change** is invisible to the tracker;
+    ticking it starts a second timer while the first runs on~~ — **fixed
+    early in 5.1.1** (`insert_customer` moves running timers with the
+    projects, plus a startup repair); its test now pins the fixed behaviour;
   - **"Manage entries"** omits entries logged before a raise;
   - **"Sort by usage"** ignores usage logged before a raise;
   - a disabled project **cannot be re-enabled** from the dialog while another
