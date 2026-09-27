@@ -1,7 +1,12 @@
-"""Architecture guard (v6 phase 0.2): SQL against WorkTimer's own tables lives
-only in the data layer, src/database.py. Pages, UI modules and services reach
-the database through named ``Database`` methods — which is what lets the
-Postgres port happen behind one API.
+"""Architecture guards for the v6 migration.
+
+Phase 0.2 — SQL against WorkTimer's own tables lives only in the data layer,
+src/database.py. Pages, UI modules and services reach the database through
+named ``Database`` methods — which is what lets the Postgres port happen
+behind one API.
+
+Phase 0.3 — the user's calendar time is read only through src/clock.py (see
+the second half of this file).
 
 Scans string literals (docstrings excluded; f-strings joined with their
 placeholders) for SQL shapes that name a WorkTimer table, plus the
@@ -88,3 +93,68 @@ def test_the_guard_recognises_the_sql_that_used_to_live_in_pages():
         "select customer_name, sum(cost) as amount from time_entries order by amount desc",
     ]:
         assert not SQL.search(text), text
+
+
+# ── one clock (v6 phase 0.3) ────────────────────────────────────────────────
+#
+# Anything on the user's calendar reads the time through src/clock.py. The
+# exceptions are technical timing, where the *server's* clock is the right one
+# (in v6 "local" becomes the user's timezone) — allowed per enclosing
+# function, so unrelated edits don't break the list. Epoch timers
+# (time.time(): retry cooldowns, unique filenames) aren't calendar reads and
+# aren't scanned.
+
+TECHNICAL_CLOCK_READS = {
+    ("globals.py", "_seconds_until_next"): "the 2 AM full-sync scheduler",
+    ("pages/log.py", "save_log_to_file"): "export filename",
+    ("pages/settings.py", "_backup_now"): "backup filename",
+    ("pages/settings.py", "_download"): "backup filename",
+    ("ui/command_palette.py", "_backup"): "backup filename",
+    ("services/update_checker.py", "check_for_update"): "update-check cache age",
+}
+_CLOCK_CALLS = {("datetime", "now"), ("datetime", "today"), ("datetime", "utcnow"),
+                ("date", "today")}
+
+
+class _ClockReads(ast.NodeVisitor):
+    """(enclosing function, line) of every datetime.now() / date.today()-style
+    call, including datetime.datetime.now()."""
+
+    def __init__(self):
+        self.stack, self.found = ["<module>"], []
+
+    def _function(self, node):
+        self.stack.append(node.name)
+        self.generic_visit(node)
+        self.stack.pop()
+
+    visit_FunctionDef = visit_AsyncFunctionDef = _function
+
+    def visit_Call(self, node):
+        f = node.func
+        if isinstance(f, ast.Attribute):
+            base = f.value
+            name = base.attr if isinstance(base, ast.Attribute) else getattr(base, "id", None)
+            if (name, f.attr) in _CLOCK_CALLS:
+                self.found.append((self.stack[-1], node.lineno))
+        self.generic_visit(node)
+
+
+def test_calendar_time_is_read_through_src_clock():
+    offenders, seen = [], set()
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        if rel == "clock.py":
+            continue
+        visitor = _ClockReads()
+        visitor.visit(ast.parse(path.read_text(encoding="utf-8")))
+        for function, lineno in visitor.found:
+            if (rel, function) in TECHNICAL_CLOCK_READS:
+                seen.add((rel, function))
+            else:
+                offenders.append(f"src/{rel}:{lineno} in {function}()")
+    assert not offenders, (
+        "Read the time through src/clock.py (or, for server-side timing, add the "
+        "function to TECHNICAL_CLOCK_READS with a reason):\n" + "\n".join(offenders))
+    stale = set(TECHNICAL_CLOCK_READS) - seen
+    assert not stale, f"allowlist entries with no clock read left: {sorted(stale)}"

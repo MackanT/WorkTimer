@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import asyncio
 import logging
 import datetime
+from . import clock
 import pandas as pd
 
 
@@ -355,9 +356,9 @@ class TrackerEngine:
 
             # Record sync timestamps
             if incremental:
-                self.last_incremental_sync = datetime.datetime.now()
+                self.last_incremental_sync = clock.now_local()
             else:
-                self.last_full_sync = datetime.datetime.now()
+                self.last_full_sync = clock.now_local()
 
             self.log.info(f"DevOps update result: {user_msg}")
         else:

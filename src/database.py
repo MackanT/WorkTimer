@@ -6,6 +6,7 @@ from textwrap import dedent
 from typing import Literal
 import pandas as pd
 from datetime import date, datetime, timedelta
+from . import clock
 
 
 class Database:
@@ -212,7 +213,7 @@ class Database:
                     # (inner join on dates), so keep at least a year of headroom.
                     max_date_df = self.fetch_query("select max(date) as max_date from dates")
                     max_date = max_date_df.iloc[0]["max_date"]
-                    horizon = datetime.now() + timedelta(days=365)
+                    horizon = clock.now_local() + timedelta(days=365)
                     if max_date and datetime.strptime(max_date, "%Y-%m-%d") < horizon:
                         next_day = datetime.strptime(max_date, "%Y-%m-%d") + timedelta(days=1)
                         new_end = horizon + timedelta(days=4 * 365)
@@ -546,7 +547,7 @@ class Database:
                     "from trackers"
                 ).fetchall()
                 by_key = {_key(t[1], t[2], t[3]): t[0] for t in existing}
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                now_str = clock.now_local().strftime("%Y-%m-%d %H:%M:%S")
 
                 for cname, pat, org, itype in rows:
                     key = _key(itype, org, pat)
@@ -717,7 +718,7 @@ class Database:
         self, customer_id: int, project_id: int, git_id: int = None,
         comment: str = None, new_project_id: int = None, end_time: str = None,
     ):
-        dt = datetime.now()
+        dt = clock.now_local()
         now = dt.strftime("%Y-%m-%d %H:%M:%S")
         date_key = int(dt.strftime("%Y%m%d"))
 
@@ -943,7 +944,7 @@ class Database:
         integration_type: str = None,
         tracker_name: str = None,
     ):
-        now = datetime.now()
+        now = clock.now_local()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
         # Credentials live on trackers now — the legacy args are accepted for
@@ -1150,7 +1151,7 @@ class Database:
                 org_url,
                 pat_token,
                 self._clean_expiry(token_expires),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                clock.now_local().strftime("%Y-%m-%d %H:%M:%S"),
             ),
         )
         self.log_engine.info(f"Inserted tracker '{tracker_name}'")

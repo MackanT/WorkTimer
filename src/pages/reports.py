@@ -11,6 +11,7 @@ import csv
 import io
 import math
 from datetime import date, timedelta
+from .. import clock
 
 import pandas as pd
 from nicegui import ui, app
@@ -436,7 +437,7 @@ async def reports_page():
 
     async def _load():
         start, end, ps, pe = _period_bounds(
-            state["period"], state["custom_start"], state["custom_end"], date.today()
+            state["period"], state["custom_start"], state["custom_end"], clock.today_local()
         )
         state["range"] = (start, end)
         sel = [c for c in state["customers"] if c in names]  # empty = all

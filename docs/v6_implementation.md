@@ -165,6 +165,34 @@ timestamp can stay as it is.
 No behaviour change now; in Phase 2 the switch to UTC storage with local
 presentation becomes a change to one module rather than a hunt.
 
+**Status: done.** [src/clock.py](../src/clock.py) (`now_local()`,
+`today_local()`). The real inventory was 41 clock reads in 14 files (the "22"
+above counted only `datetime.now()`):
+
+- **29 routed through the clock** — timer start/stop and stored timestamps
+  (`database.py`), last-sync times (`globals.py`), date-range presets and
+  "today" defaults (`helpers.py`, `add_data.py`, `reports.py`,
+  `dynamic_widgets.py`), the Time Tracker (`time_tracking.py`), and
+  `root.py`'s once-a-day token warning.
+- **12 deliberately left on the standard library** — the 2 AM sync scheduler,
+  export/backup/image filenames, the update-check cache age, the tracker retry
+  cooldown. In v6 "local" means the *user's* timezone, the wrong clock for
+  server housekeeping.
+
+Enforced by `test_calendar_time_is_read_through_src_clock` in
+[tests/test_architecture.py](../tests/test_architecture.py): technical reads
+are allowlisted per function with a reason, stale allowlist entries fail too,
+and a planted `datetime.now()` was caught. [tests/test_clock.py](../tests/test_clock.py)
+freezes the clock to prove the timer and date presets read it.
+
+**For Phase 2 — five "now"s inside SQL** (all in `database.py`, so the clock
+can't reach them without changing the SQL): the running-timer durations in
+`get_customer_ui_list` (2×) and `_REPORT_DUR`, and `get_recent_project_hours`
+(2×). Pass the clock's value as a parameter instead. Note that
+`get_recent_project_hours`' `date('now', '-60 days')` is **UTC** while its
+neighbours use `'localtime'` — the 60-day window is off by the UTC offset
+around midnight today.
+
 ### 0.4 Checkpoint
 
 Full suite green; the app smoke-tested by hand against a copy of a real 5.x
@@ -390,7 +418,7 @@ has been fixed in the billing path since the last one.
 
 - [x] **0.1** Characterisation tests: billing core
 - [x] **0.2** SQL behind the `Database` API
-- [ ] **0.3** One clock
+- [x] **0.3** One clock
 - [ ] **0.4** Checkpoint
 - [ ] **1** Postgres foundation
 - [ ] **2** Data layer port

@@ -12,7 +12,7 @@ import logging
 import re
 from nicegui import ui
 from typing import Callable, Optional, Any, Dict
-from datetime import date
+from .. import clock
 
 
 logger = logging.getLogger(__name__)
@@ -892,7 +892,7 @@ class DynamicDateInput(DynamicWidget):
 
     def _create_widget(self):
         """Create ui.input with date picker menu"""
-        default_val = self.field_config.get("default", date.today().isoformat())
+        default_val = self.field_config.get("default", clock.today_local().isoformat())
 
         # Create input with date picker
         date_input = ui.input(
@@ -915,7 +915,7 @@ class DynamicDateInput(DynamicWidget):
     async def _refresh_impl(self, parent_val):
         """Refresh date value based on parent"""
         if not parent_val:
-            self.widget.value = date.today().isoformat()
+            self.widget.value = clock.today_local().isoformat()
             return
 
         # Get fresh value from data fetcher
@@ -926,7 +926,7 @@ class DynamicDateInput(DynamicWidget):
         elif isinstance(new_value, str):
             self.widget.value = new_value
         else:
-            self.widget.value = date.today().isoformat()
+            self.widget.value = clock.today_local().isoformat()
 
         self.widget.update()
 
@@ -1091,7 +1091,7 @@ class DynamicCodeMirror(DynamicWidget):
 
         # Replace template variables
         if default_val:
-            default_val = default_val.replace("{today}", str(date.today()))
+            default_val = default_val.replace("{today}", str(clock.today_local()))
 
         editor = ui.codemirror(
             default_val,
@@ -1193,7 +1193,7 @@ class DynamicEditorWithPreview(DynamicWidget):
             default_val = ""
 
         if default_val:
-            default_val = default_val.replace("{today}", str(date.today()))
+            default_val = default_val.replace("{today}", str(clock.today_local()))
 
         self._container = ui.row().classes("gap-4 w-full")
 

@@ -14,6 +14,7 @@ were dead fallback paths.
 
 import re
 from datetime import date, timedelta
+from . import clock
 
 import numpy as np
 import pandas as pd
@@ -40,7 +41,7 @@ def get_range_for(option: str) -> str:
     Returns:
         Formatted date range string "start - end"
     """
-    today = date.today()
+    today = clock.today_local()
 
     if option == "Day":
         return f"{today} - {today}"
@@ -107,7 +108,7 @@ def token_expiry_level(expires, today: date | None = None):
         exp = date.fromisoformat(str(expires).strip()[:10])
     except (ValueError, TypeError):
         return None
-    days = (exp - (today or date.today())).days
+    days = (exp - (today or clock.today_local())).days
     if days < 0:
         return ("expired", days)
     if days <= 7:
@@ -339,7 +340,7 @@ def fill_template(template: str, values: dict) -> str:
     {field} forms) with values. 'today' is always available; an UNKNOWN
     {{placeholder}} stays literal, so a typo is visible instead of silently
     vanishing."""
-    vals = {"today": str(date.today())}
+    vals = {"today": str(clock.today_local())}
     for k, v in (values or {}).items():
         vals[k] = "" if v is None else str(v)
 
@@ -499,7 +500,7 @@ def assign_dynamic_options(fields: list, data_sources: dict) -> None:
         if field.get("type") in ["date"] and "options_source" in field:
             options_source = field["options_source"]
             if options_source == "today":
-                field["options"] = [str(date.today())]
+                field["options"] = [str(clock.today_local())]
         elif "options" in field and "options_source" in field:
             source = field["options_source"]
             # Handle nested data sources (like parent_names)

@@ -10,7 +10,7 @@ config_ui.yml's add_data_page section (kept under its historical key).
 import asyncio
 import copy
 import pandas as pd
-from datetime import date
+from .. import clock
 from nicegui import ui
 from ..core.app import AppCore
 from .. import helpers
@@ -468,7 +468,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                 )
 
             # Today's date for start_date
-            data_sources["today"] = date.today().isoformat()
+            data_sources["today"] = clock.today_local().isoformat()
 
         elif entity_type == "tracker":
             # Registered tracker providers feed the "Type" selector — a new
@@ -591,7 +591,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     p for lst in project_names_by_cust.values() for p in lst
                 ]
 
-            data_sources["today"] = date.today().isoformat()
+            data_sources["today"] = clock.today_local().isoformat()
 
         elif entity_type == "bonus":
             # Get active customers and projects
@@ -603,7 +603,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
             data_sources["project_data"] = (
                 proj_df["project_name"].tolist() if not proj_df.empty else []
             )
-            data_sources["today"] = date.today().isoformat()
+            data_sources["today"] = clock.today_local().isoformat()
 
     except Exception as e:
         core.logger.error(

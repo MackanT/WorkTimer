@@ -12,6 +12,7 @@ from nicegui import app, context, ui
 import asyncio
 import pandas as pd
 from datetime import datetime, timedelta
+from .. import clock
 from typing import Callable, Dict, Optional
 from dataclasses import dataclass, field
 
@@ -326,7 +327,7 @@ async def time_tracking_page():
             min_df = await core.query_engine.function_db("get_first_entry_date")
             min_date = min_df.iloc[0]["min_date"] if not min_df.empty else None
             if min_date:
-                range_str = f"{min_date} - {datetime.now().date()}"
+                range_str = f"{min_date} - {clock.now_local().date()}"
 
         date_input.value = range_str
         asyncio.create_task(update_time_tracker())
@@ -503,7 +504,7 @@ async def time_tracking_page():
             "get_running_timer_start", customer_id, project_id
         )
         start_str = str(running.iloc[0]["start_time"]) if not running.empty else None
-        now_dt = datetime.now()
+        now_dt = clock.now_local()
         dt_local_fmt = "%Y-%m-%dT%H:%M"
         db_fmt = "%Y-%m-%d %H:%M:%S"
 
@@ -557,7 +558,7 @@ async def time_tracking_page():
             def _toggle_end():
                 _end_shown["v"] = not _end_shown["v"]
                 if _end_shown["v"]:
-                    end_input.value = datetime.now().strftime(dt_local_fmt)
+                    end_input.value = clock.now_local().strftime(dt_local_fmt)
                 end_input.set_visibility(_end_shown["v"])
                 _update_end_hint()
 
@@ -619,7 +620,7 @@ async def time_tracking_page():
                 # Default (field hidden) → None, so the DB stamps the stop time at
                 # the moment of saving. A manual value is used only when revealed.
                 if _end_shown["v"]:
-                    end_val = end_input.value or datetime.now().strftime(dt_local_fmt)
+                    end_val = end_input.value or clock.now_local().strftime(dt_local_fmt)
                     if start_str:
                         try:
                             if (
@@ -783,7 +784,7 @@ async def time_tracking_page():
         has_git_id = git_id is not None and git_id > 0
         has_devops = core.tracker_engine.has_customer_connection(c_name) if core.tracker_engine else False
 
-        now = datetime.now()
+        now = clock.now_local()
         one_hour_ago = now - timedelta(hours=1)
         dt_fmt = "%Y-%m-%dT%H:%M"
 
@@ -873,7 +874,7 @@ async def time_tracking_page():
         c_name = df.iloc[0]["customer_name"] if not df.empty else "Unknown"
         p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
 
-        now = datetime.now()
+        now = clock.now_local()
         dt_fmt = "%Y-%m-%dT%H:%M"
 
         _manual_start_card.clear()
@@ -921,7 +922,7 @@ async def time_tracking_page():
         with inline edit (start/end/comment) and delete."""
         start_date, end_date = helpers.parse_date_range(date_input.value)
         if not (start_date and end_date):
-            today = datetime.now().strftime("%Y%m%d")
+            today = clock.now_local().strftime("%Y%m%d")
             start_date = end_date = today
 
         info = await core.query_engine.function_db(
@@ -1054,7 +1055,7 @@ async def time_tracking_page():
         start_date, end_date = helpers.parse_date_range(date_range_str)
 
         if not start_date or not end_date:
-            today = datetime.now().strftime("%Y%m%d")
+            today = clock.now_local().strftime("%Y%m%d")
             start_date = end_date = today
 
         return await core.query_engine.function_db(

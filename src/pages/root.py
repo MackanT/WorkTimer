@@ -1,5 +1,5 @@
 import asyncio
-from datetime import date
+from .. import clock
 
 from nicegui import ui, app
 from . import (
@@ -240,7 +240,7 @@ async def _setup_spa_shell():
         # so an expiring PAT / API token gets renewed before sync silently
         # starts failing. The date is set on the tracker (Data Input →
         # Trackers); trackers without one are never nagged about.
-        _today_str = str(date.today())
+        _today_str = str(clock.today_local())
         if app.storage.user.get("token_expiry_notified") != _today_str:
 
             async def _check_token_expiry():
