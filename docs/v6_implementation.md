@@ -199,6 +199,84 @@ Full suite green; the app smoke-tested by hand against a copy of a real 5.x
 database. Phase 0 is the last point where the branch is behaviourally identical
 to `main`.
 
+**Automated part — done** (against a seeded copy; the checkout's own
+`data/worktimer.db` turned out to be empty, so a *real* database is still to
+come):
+
+- The app boots against the copy (tracker credentials blanked in the copy, so
+  no outbound tracker calls), all ten routes answer 200, no errors logged.
+- A throwaway page smoke test using NiceGUI's simulated `user` fixture opened
+  all nine pages: each built without an ERROR log, and seeded data rendered
+  where checked (Time Tracker, Tasks, Query editor). It waits for each page's
+  async build task — without that, pages returned before their data loaded and
+  a broken `report_totals` went unnoticed. Mutation-checked: a failing
+  `get_running_timers`, `get_tasks`, `report_totals` or
+  `get_current_customers` fails its page. Not covered: interactions (e.g. Run
+  in the query editor) and reads wrapped in a deliberate `try/except` fallback.
+- Afterwards: row counts unchanged, no schema drift.
+
+**Against the real database** (a snapshot; the original only ever read, tracker
+credentials blanked in the copy) — 4,467 entries, Oct 2023 → Sep 2026:
+
+- **Phase 0 is behaviour-identical on real data:** every statement moved in
+  0.2, run in its original form next to its new method, across all 10
+  customers, 57 projects, six date ranges and every task sort — **4,798
+  comparisons, 0 mismatches**.
+- **Stored billing is internally consistent:** in all 4,466 completed entries,
+  duration = end − start, cost = wage × hours and user bonus agree. A clean
+  baseline for the Phase 4 importer and the Phase 5 parallel run.
+- All nine pages build without errors; afterwards row counts, stored billing
+  totals and the schema are unchanged.
+- Live bug exposure: no orphaned timer, no settings wiped by a raise; **616
+  entries logged before a raise** (so the pinned "Manage entries" / "Sort by
+  usage" bugs do affect real use); untagged time stored as both `0` (2,017)
+  and `NULL` (545), so the per-work-item rounding split is live.
+- **9 entries (7.25 h, Jan–Mar 2025) have `project_id = 0`** but still carry
+  their project *name*; each maps to exactly one project of that name under
+  its customer. They count in Reports (grouped by name) but not in the Time
+  Tracker or "Manage entries" (joined on id). Re-linkable — see the 5.1.2
+  follow-up.
+- Harness note: `src/core/app.py`'s module-level `_global_tracker_init_lock`
+  binds to the first event loop that uses it, so tests must share one loop.
+  Production has one loop per process, so it's not an app bug — but the task
+  it lives in is fire-and-forget without error handling, and these
+  process-wide singletons are exactly what Phase 6 restructures.
+
+**Page smoke test — now permanent:**
+[tests/test_smoke_pages.py](../tests/test_smoke_pages.py) opens all nine pages
+as NiceGUI's simulated user against a seeded temp database (dev dependency
+`pytest-asyncio`; `asyncio_mode = "auto"` in `pyproject.toml`). It runs offline
+(update check and internet probe stubbed) and is guarded two ways, both
+proven: NiceGUI's test fixtures *delete* every `storage-*.json` in their
+storage directory, so the root [conftest.py](../conftest.py) redirects
+`NICEGUI_STORAGE_PATH` before NiceGUI is imported and the test refuses to run
+if storage still points at the real `.nicegui/`; and teardown fails if
+`data/worktimer.db` was opened. Phase 1.1: point its seeded database at the
+Postgres test fixture — the test itself doesn't change.
+
+**Manual click-through — pending.** On your real setup, the flows Phase 0 and
+5.1.1/5.1.2 touched:
+
+- [ ] **Time Tracker** — start and stop a timer by checkbox; the stop dialog
+  (comment, move to another project, back-dated stop); manual entry; manual
+  start; *Manage entries* edit and delete; *Sort by usage*; *Edit Order* and
+  save; the date presets incl. All-Time; customer colour dots.
+- [ ] **Customer / project / tracker / bonus dialogs** — every tab; a raise
+  (re-add a customer with a new wage) keeps its colour, expected % and
+  tracker project; tracker *Test connection*.
+- [ ] **Reports** — periods, customer filter, each rounding basis, CSV export.
+- [ ] **Tasks** — every sort, *show completed*, add / edit / complete / delete,
+  the task picker.
+- [ ] **Board** — loads for a tracker customer, colours shown.
+- [ ] **Command palette** (Ctrl+K) — start and stop a timer, backup.
+- [ ] **Query editor** — run a query; save, update and delete a saved query;
+  invalid SQL refused on save; row edit of a time entry, incl. one logged
+  before a raise.
+- [ ] **Settings** — tracker form-defaults lists your trackers; backup and
+  download; last-sync times.
+- [ ] **App shell** — running-timer pills in the nav bar; token-expiry
+  warning; the *What's new* dialog.
+
 ---
 
 ## Phase 1 — Postgres foundation

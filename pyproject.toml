@@ -54,6 +54,7 @@ package = false
 # Installed by `uv sync` (the dev group is on by default). Run: `uv run pytest`
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=1.4.0",
 ]
 
 [tool.pytest.ini_options]
@@ -62,6 +63,11 @@ testpaths = ["tests"]
 # (src is an implicit namespace package used the same way main.py imports it).
 pythonpath = ["."]
 addopts = "-q"
+# The page smoke test (tests/test_smoke_pages.py) drives NiceGUI's simulated
+# user, whose fixture is async. It runs one event loop per module, as the app
+# does per process (see that file for why).
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "module"
 
 [tool.setuptools.packages.find]
 where = ["src"]
