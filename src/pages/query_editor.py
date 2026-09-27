@@ -319,10 +319,11 @@ async def query_editor_page():
 
         data_sources = {}
         if table_name == "time":
-            customer_id = int(table_row.get("customer_id", 0))
-            projects = await QE.query_db(
-                "SELECT project_name FROM projects WHERE customer_id = ? AND is_current = 1",
-                params=(customer_id,),
+            # Projects follow a raise to the customer's new id; the entry keeps
+            # the id it was logged under — so list the projects of the entry's
+            # own project's customer.
+            projects = await QE.function_db(
+                "get_sibling_project_names", int(table_row.get("project_id", 0))
             )
             data_sources["project_names"] = projects["project_name"].tolist()
 

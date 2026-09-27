@@ -348,6 +348,9 @@ class Database:
             self._drop_retired_columns()
             self._repoint_orphaned_timers()
 
+            # Customer settings cleared by a raise before 5.1.2 (idempotent).
+            self._restore_settings_cleared_by_raises()
+
             self.conn.commit()
             self.log_engine.info("Database loaded without errors!")
         except Exception as e:
@@ -398,6 +401,53 @@ class Database:
                     )
         except Exception as e:
             self.log_engine.error(f"Error re-attaching orphaned timers: {e}")
+
+    def _restore_settings_cleared_by_raises(self):
+        """Startup migration: before 5.1.2 a raise created the customer's new
+        version without its tracker_project, colour and expected work %.
+        Restore each from the most recent older version that still has it.
+
+        Safe to run every start: editing a customer (update_customer) writes
+        these settings to *every* version, so "latest version empty, an older
+        version set" only arises from that bug — a deliberate clear clears
+        them all and is left alone."""
+        columns = {
+            "tracker_project": "coalesce({c}, '') != ''",
+            "color": "coalesce({c}, '') != ''",
+            "expected_work_pct": "{c} is not null",
+        }
+        try:
+            with self._conn_lock:
+                restored = {}
+                for col, has_value in columns.items():
+                    older_with_value = (
+                        "from customers old "
+                        "where old.customer_name = customers.customer_name "
+                        "and old.customer_id < customers.customer_id "
+                        f"and {has_value.format(c='old.' + col)}"
+                    )
+                    cursor = self.conn.execute(
+                        f"""
+                        update customers
+                        set {col} = (
+                            select old.{col} {older_with_value}
+                            order by old.customer_id desc
+                            limit 1
+                        )
+                        where valid_to is null
+                          and not ({has_value.format(c=col)})
+                          and exists (select 1 {older_with_value})
+                        """
+                    )
+                    if cursor.rowcount:
+                        restored[col] = cursor.rowcount
+                if restored:
+                    self.conn.commit()
+                    self.log_engine.info(
+                        f"Restored customer settings cleared by a raise: {restored}"
+                    )
+        except Exception as e:
+            self.log_engine.error(f"Error restoring customer settings: {e}")
 
     def _rename_legacy_columns(self):
         """Startup migration: customers.devops_project → tracker_project
@@ -926,6 +976,25 @@ class Database:
                 (old_customer_id,),
                 data_type="int",
             )
+
+        # ...and so do its other per-customer settings. A raise goes through
+        # the add form, which leaves these blank; they describe the customer,
+        # not the wage, so the new version must not reset them — a cleared
+        # tracker_project silently switches the tracker to the organisation's
+        # first project.
+        if old_customer_id:
+            prev = self.fetch_query(
+                "select tracker_project, expected_work_pct, color, integration_type "
+                "from customers where customer_id = ?",
+                (old_customer_id,),
+            )
+            if not prev.empty:
+                prev = prev.iloc[0]
+                tracker_project = tracker_project or prev["tracker_project"]
+                if expected_work_pct is None and pd.notna(prev["expected_work_pct"]):
+                    expected_work_pct = float(prev["expected_work_pct"])
+                color = color or prev["color"]
+                integration_type = integration_type or prev["integration_type"]
 
         if old_customer_id:
             self.execute_query(
@@ -1889,6 +1958,17 @@ class Database:
             left join projects p on p.customer_id = c.customer_id
         """)
 
+    def get_sibling_project_names(self, project_id: int):
+        """project_name of the enabled projects of the customer that owns
+        project_id (unordered). Projects follow a raise to the customer's new
+        id, so this finds the right customer even for an entry logged under an
+        older version."""
+        return self.fetch_query(
+            "SELECT project_name FROM projects WHERE is_current = 1 AND customer_id = "
+            "(SELECT customer_id FROM projects WHERE project_id = ?)",
+            (project_id,),
+        )
+
     def get_project_list_from_project_id(self, project_id: int):
         return self.fetch_query(
             """
@@ -2550,19 +2630,26 @@ class Database:
         if pk_col not in table_columns:
             raise ValueError(f"Invalid primary key column '{pk_col}' for table '{table_name}'")
 
-        ## Specific logic for 'time' table to get project_id from project_name and customer_id
+        ## Specific logic for 'time' table to get project_id from project_name.
+        ## The project is resolved among the projects of the entry's current
+        ## project's customer: projects follow a raise to the new customer id,
+        ## the entry's own customer_id keeps the version it was logged under.
         if table_name == "time":
-            customer_id = self._get_value_from_db(
-                "select customer_id from time where time_id = ?",
-                (pk,),
-                data_type="int",
-            )
+            project_name = kwargs.pop("project_name", None)
             project_id = self._get_value_from_db(
-                "select project_id from projects where project_name = ? and customer_id = ?",
-                (kwargs.get("project_name"), customer_id),
+                "select p.project_id from projects p "
+                "join projects cur on cur.customer_id = p.customer_id "
+                "join time t on t.project_id = cur.project_id "
+                "where t.time_id = ? and p.project_name = ?",
+                (pk, project_name),
                 data_type="int",
             )
-            kwargs.pop("project_name", None)
+            if not project_id:
+                # Never write project_id 0 — that silently strips the entry of
+                # its project and drops it from the Time Tracker.
+                raise ValueError(
+                    f"No project named '{project_name}' for this entry's customer"
+                )
             kwargs["project_id"] = project_id
 
         update_fields = [k for k in kwargs if k not in ("table_name", "pk_data")]

@@ -7,6 +7,11 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
+### 5.1.2 (2026-09-27)
+- **Bug Fixes**
+  - fx **a raise no longer resets the customer's settings.** Entering a raise (adding the customer again with a new wage) created the customer's new version without its colour, expected work % and tracker project — and with no project set, the tracker silently switched to the organisation's first project, so the Board, the sync and new work items went to the wrong project. A raise now keeps every setting you leave blank. Settings already cleared this way are restored automatically on the next start.
+  - fx **editing a time entry logged before a raise** (query editor → row edit): the project list was empty, and saving could strip the entry of its project so that it vanished from the Time Tracker. The dialog now lists the customer's projects, and a save naming a project that doesn't exist is refused instead of clearing it. Entries that already lost their project can't be restored automatically — the original project is no longer recorded.
+
 ### 5.1.1 (2026-09-27)
 - **Bug Fixes**
   - fx **Docker installs are no longer reachable from the whole network.** `docker-compose.yml` published port 8080 on every interface, so a Docker install could be opened from any device on the LAN — with no login, and tracker credentials in the database — even though the bare-metal install defaults to localhost. It now binds to `127.0.0.1`. If you *want* LAN access (e.g. WorkTimer on a home server, opened from a laptop), set `HOST=0.0.0.0` in `.env` — the switch the bare-metal install already uses — and run `docker compose up -d`.
