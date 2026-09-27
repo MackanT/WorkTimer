@@ -346,12 +346,58 @@ class Database:
             # Per-customer billing rounding retired in 5.1.0 (the global
             # setting + the Reports-page override cover it).
             self._drop_retired_columns()
+            self._repoint_orphaned_timers()
 
             self.conn.commit()
             self.log_engine.info("Database loaded without errors!")
         except Exception as e:
             self.conn.commit()
             self.log_engine.error(f"Error initializing database: {e}")
+
+    def _repoint_orphaned_timers(self):
+        """Startup migration: move running timers left on a superseded
+        customer version — a wage change while they ran, before 5.1.1 — to the
+        customer's latest version, where the time tracker can see and stop
+        them. Idempotent; completed entries are never touched, and only the id
+        moves, so each entry keeps the wage it started at."""
+        try:
+            with self._conn_lock:
+                cursor = self.conn.execute(
+                    """
+                    update time
+                    set customer_id = (
+                        select latest.customer_id
+                        from customers old
+                        join customers latest
+                            on latest.customer_name = old.customer_name
+                        where old.customer_id = time.customer_id
+                          and latest.valid_to is null
+                        order by latest.customer_id desc
+                        limit 1
+                    )
+                    where end_time is null
+                      and customer_id in (
+                          select customer_id from customers
+                          where valid_to is not null
+                      )
+                      and exists (
+                          select 1
+                          from customers old
+                          join customers latest
+                              on latest.customer_name = old.customer_name
+                          where old.customer_id = time.customer_id
+                            and latest.valid_to is null
+                      )
+                    """
+                )
+                if cursor.rowcount:
+                    self.conn.commit()
+                    self.log_engine.info(
+                        f"Re-attached {cursor.rowcount} running timer(s) left on a "
+                        "superseded customer version"
+                    )
+        except Exception as e:
+            self.log_engine.error(f"Error re-attaching orphaned timers: {e}")
 
     def _rename_legacy_columns(self):
         """Startup migration: customers.devops_project → tracker_project
@@ -944,6 +990,16 @@ class Database:
                 self.log_engine.info(
                     f"Updated projects {project_list} to use {customer_name} new id: {new_customer_id}",
                 )
+
+            # A timer running across the new version would otherwise stay on
+            # the old id, where the time tracker (which asks with the current
+            # id) can no longer see or stop it. Only the id moves — the entry
+            # keeps the wage it started at.
+            self.execute_query(
+                "update time set customer_id = ? "
+                "where customer_id = ? and end_time is null",
+                (new_customer_id, old_customer_id),
+            )
 
     # ── trackers ──────────────────────────────────────────────────────────
     def get_tracker_id(self, tracker_name: str):
