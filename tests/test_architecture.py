@@ -1,9 +1,9 @@
 """Architecture guards for the v6 migration.
 
 Phase 0.2 — SQL against WorkTimer's own tables lives only in the data layer,
-src/database.py. Pages, UI modules and services reach the database through
-named ``Database`` methods — which is what lets the Postgres port happen
-behind one API.
+src/database.py (plus the v6 migration runner, src/migrator.py). Pages, UI
+modules and services reach the database through named ``Database`` methods —
+which is what lets the Postgres port happen behind one API.
 
 Phase 0.3 — the user's calendar time is read only through src/clock.py (see
 the second half of this file).
@@ -20,7 +20,9 @@ import re
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src"
-DATA_LAYER = {SRC / "database.py"}
+# The data layer: the Database class, and the migration runner that owns the
+# schema (it creates its own history table).
+DATA_LAYER = {SRC / "database.py", SRC / "migrator.py"}
 
 # Today's table names. Phase 2 renames them — add time_entries, customer_wages,
 # bonuses, saved_queries, work_items and users here then, or the guard goes
@@ -67,7 +69,7 @@ def test_no_sql_outside_the_data_layer():
             if SQL.search(text):
                 snippet = " ".join(text.split())[:70]
                 offenders.append(f"{path.relative_to(SRC.parent)}:{lineno}: {snippet!r}")
-    assert not offenders, "SQL outside src/database.py:\n" + "\n".join(offenders)
+    assert not offenders, "SQL outside the data layer:\n" + "\n".join(offenders)
 
 
 def test_the_guard_recognises_the_sql_that_used_to_live_in_pages():

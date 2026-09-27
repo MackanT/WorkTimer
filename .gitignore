@@ -4,7 +4,10 @@ __pycache__/
 _Old/*
 *.egg-info/
 
+.ruff_cache/
+.venv/
 .env
+.vscode/
 
 copilot-instructions.md
 docs/REFACTORING_SUMMARY.md

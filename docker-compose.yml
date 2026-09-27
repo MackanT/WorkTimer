@@ -9,8 +9,9 @@ services:
       # the same switch the bare-metal install uses.
       - "${HOST:-127.0.0.1}:8080:8080"
     environment:
-      - DB_NAME=${DB_NAME}
-      - DEBUG_MODE=${DEBUG_MODE}
+      # Defaults match the app's own, so a checkout without a .env file works.
+      - DB_NAME=${DB_NAME:-worktimer.db}
+      - DEBUG_MODE=${DEBUG_MODE:-false}
     volumes:
       - ./data:/app/data
     restart: unless-stopped

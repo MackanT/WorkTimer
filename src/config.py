@@ -406,7 +406,9 @@ class ConfigLoader:
 
     def _load_settings(self) -> None:
         """Load settings from environment variables (no YAML file)."""
-        db_name = os.getenv("DB_NAME", "worktimer.db")
+        # `or`, not a getenv default: an empty DB_NAME (docker compose passes
+        # one for a variable missing from .env) would open data/ itself.
+        db_name = os.getenv("DB_NAME") or "worktimer.db"
         db_path = os.path.join("data", db_name)
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.configs["settings"] = ConfigSettings(

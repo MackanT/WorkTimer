@@ -326,6 +326,29 @@ the port).
   small runner, each file in its own transaction, recorded in a
   `schema_migrations` table. Runs as `worktimer_owner`; applied on startup.
 
+**Status: done** (the runner exists; wiring it into app startup comes with
+the port, and there are no migrations yet — `0001` is 1.3).
+
+- [src/migrator.py](../src/migrator.py): `migrate(conninfo)` applies pending
+  files in order, each in one transaction together with its
+  `schema_migrations` row (version, name, sha256, `applied_at`); a failing
+  file rolls back whole and nothing after it runs. Command line:
+  `DATABASE_URL=… python -m src.migrator`.
+- **Refuses rather than guesses** when a `.sql` file is misnamed, two files
+  share a number, an applied file was edited (checksum) or deleted, or a new
+  file is numbered below the newest applied one (two branches both took the
+  next number). The checksum normalises line endings, so a Windows (CRLF)
+  checkout and a Linux (LF) image agree.
+- A **Postgres advisory lock** serialises concurrent runs (two app instances
+  starting at once).
+- Conventions in [migrations/README.md](../migrations/README.md).
+- [tests/test_migrator.py](../tests/test_migrator.py): 14 tests (discovery
+  offline; applying, reruns, rollback, the refusals and concurrency on a
+  throwaway Postgres database). Mutation-checked: without the history check 3
+  tests fail; without the lock the concurrency test fails.
+- The architecture guard counts the runner as data layer (it creates its own
+  history table).
+
 ### 1.3 Schema v1 (migration `0001`)
 
 Everything in [v6_plan.md §5](v6_plan.md): tables, FK actions, unique
