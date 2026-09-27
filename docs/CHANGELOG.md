@@ -7,6 +7,11 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
+### 5.1.1 (2026-09-27)
+- **Bug Fixes**
+  - fx **Docker installs are no longer reachable from the whole network.** `docker-compose.yml` published port 8080 on every interface, so a Docker install could be opened from any device on the LAN — with no login, and tracker credentials in the database — even though the bare-metal install defaults to localhost. It now binds to `127.0.0.1`. If you *want* LAN access (e.g. WorkTimer on a home server, opened from a laptop), set `HOST=0.0.0.0` in `.env` — the switch the bare-metal install already uses — and run `docker compose up -d`.
+  - fx **Docker builds of 5.1.0 failed** at `uv sync --locked`: the committed `uv.lock` still recorded version 5.0.4, so uv rejected it as out of date. The lockfile is regenerated.
+
 ### 5.1.0 (2026-09-22)
 - **Features**
   - ad **Jira tracker support** — a full Jira Cloud (REST v3) provider alongside Azure DevOps; different customers can use different trackers side by side. Reads: issues land in the same board / hierarchy / search / `#` find / time-linking as DevOps items, with types normalised to Epic / Story / Sub-task (Bugs and Tasks show at Story level), status as the board column, named priorities → 1–4, and issue keys shown in titles. Writes: create (the project's real issue types resolved per level, parent links included), field updates (priority, assignee via display name, tags → labels), comments, and board moves / state changes as workflow **transitions** — a forbidden move fails with the allowed target statuses listed. Board type chips, State dropdowns, templates, parent pickers and the timer's work-item lists all follow the selected customer's tracker; since a Jira issue's status IS its board column, the redundant column inputs are hidden for Jira. One provider's outage degrades to that customer only.

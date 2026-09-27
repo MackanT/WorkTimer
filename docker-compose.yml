@@ -3,7 +3,11 @@ services:
     build: .
     image: worktimer-app:latest
     ports:
-      - "8080:8080"
+      # Host-side bind address, localhost by default: the app has no login and
+      # the database holds tracker credentials, so network exposure is opt-in.
+      # Set HOST=0.0.0.0 in .env to reach it from other devices on the LAN —
+      # the same switch the bare-metal install uses.
+      - "${HOST:-127.0.0.1}:8080:8080"
     environment:
       - DB_NAME=${DB_NAME}
       - DEBUG_MODE=${DEBUG_MODE}

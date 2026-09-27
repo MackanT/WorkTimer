@@ -244,6 +244,12 @@ The database file is volume-mounted so data persists across restarts and
 rebuilds. See `docker-compose.yml` for the mount path, and the `.env` file
 for the database name.
 
+By default the container is only reachable from the machine running it
+(`http://localhost:8080`). WorkTimer has no login, so network access is an
+explicit opt-in: set `HOST=0.0.0.0` in `.env` and run `docker compose up -d`
+to reach it from other devices on your network. Anyone on that network can
+then read your data and tracker credentials.
+
 ---
 
 ## Troubleshooting
