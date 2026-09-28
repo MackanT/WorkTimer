@@ -23,26 +23,13 @@ from nicegui import app, ui
 from ..core.app import AppCore
 from ..ui.elements import toolbar, toolbar_group
 from ..helpers import UI_STYLES
-
-
-def _prune_backups(backups_dir: Path, keep: int = 10) -> None:
-    """Keep only the newest `keep` worktimer_*.db backups; delete the rest."""
-    files = sorted(
-        backups_dir.glob("worktimer_*.db"),
-        key=lambda f: f.stat().st_mtime,
-        reverse=True,
-    )
-    for old in files[keep:]:
-        try:
-            old.unlink()
-        except OSError:
-            pass
+from ..services.backups import create_backup, list_backups
 
 
 def _render_backup_card(core) -> None:
     """Database backup as a Settings card: back up to the local backups/ folder
     (auto-synced via OneDrive) or download a copy. SQLite online backup, safe live."""
-    backups_dir = Path(core.settings.db_path).resolve().parent.parent / "backups"
+    db_file = core.query_engine.file_name
     muted = UI_STYLES.get_layout_classes("muted_text")
 
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
@@ -58,11 +45,7 @@ def _render_backup_card(core) -> None:
 
         def _refresh():
             list_col.clear()
-            files = (
-                sorted(backups_dir.glob("worktimer_*.db"), reverse=True)
-                if backups_dir.exists()
-                else []
-            )
+            files = list_backups(db_file)
             with list_col:
                 if not files:
                     ui.label("No backups yet.").classes("text-sm " + muted)
@@ -72,10 +55,9 @@ def _render_backup_card(core) -> None:
 
         async def _backup_now():
             try:
-                backups_dir.mkdir(parents=True, exist_ok=True)
-                dest = backups_dir / f"worktimer_{datetime.now():%Y-%m-%d_%H%M%S}.db"
-                await asyncio.to_thread(core.query_engine.db.backup_to, str(dest))
-                _prune_backups(backups_dir, keep=10)
+                dest = await asyncio.to_thread(
+                    create_backup, core.query_engine.db, db_file
+                )
                 ui.notify(f"Backup saved: backups/{dest.name}", type="positive")
                 _refresh()
             except Exception as ex:

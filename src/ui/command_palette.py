@@ -16,8 +16,6 @@ field neither opens the palette nor loses your keystroke.
 
 import asyncio
 import math
-from datetime import datetime
-from pathlib import Path
 
 from nicegui import app, ui
 
@@ -222,14 +220,13 @@ def setup_command_palette(core) -> None:
             })
 
         async def _backup():
-            # Mirrors Settings → Backup now (same folder, naming and keep-10).
+            # Same helper as Settings → Backup now (folder, naming, keep-10).
+            from ..services.backups import create_backup
+
             try:
-                backups_dir = Path(core.query_engine.file_name).parent / "backups"
-                backups_dir.mkdir(parents=True, exist_ok=True)
-                dest = backups_dir / f"worktimer_{datetime.now():%Y-%m-%d_%H%M%S}.db"
-                await asyncio.to_thread(core.query_engine.db.backup_to, str(dest))
-                for old in sorted(backups_dir.glob("worktimer_*.db"), reverse=True)[10:]:
-                    old.unlink()
+                dest = await asyncio.to_thread(
+                    create_backup, core.query_engine.db, core.query_engine.file_name
+                )
                 ui.notify(f"Backup saved: backups/{dest.name}", type="positive")
             except Exception as ex:
                 core.logger.error(f"Backup failed: {ex}")

@@ -883,6 +883,7 @@ def build_form_widgets(
                         label=field_config.get("label", field_name),
                         field_config={
                             "options": initial_options,
+                            "parent_update": field_config.get("parent_update", False),
                             "with_input": field_config.get("with_input", False),
                             "min": field_config.get("min", 0),
                             "step": field_config.get("step", 1),

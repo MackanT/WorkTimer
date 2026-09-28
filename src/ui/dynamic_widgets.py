@@ -722,8 +722,12 @@ class DynamicDropDown(DynamicWidget):
         initial_options = self.field_config.get("options", [])
 
         # If options is a dict (parent-keyed map) or this widget has a parent,
-        # start with empty options until the parent makes a selection.
-        if isinstance(initial_options, dict) or self.parent:
+        # start with empty options until the parent makes a selection — unless
+        # the parent only fills in the value (parent_update, e.g. a task's
+        # status): then the configured list IS the full set of options.
+        if isinstance(initial_options, dict) or (
+            self.parent and not self.field_config.get("parent_update")
+        ):
             initial_options = []
 
         initial_options = self._normalize_options_for_select(initial_options)

@@ -1629,9 +1629,11 @@ async def time_tracking_page():
             return
         projects.sort(key=lambda p: -usage.get(int(p[0]), 0.0))  # stable
         await render_time_tracker()
-        ui.notify(
+        # Via the event bus: this runs as a bare task (no slot), and the
+        # re-render has just deleted the button that started it.
+        core.event_bus.notify(
             "Sorted by last 60 days of logged time — Save Order to keep it",
-            type="info",
+            type_="info",
         )
 
     async def open_quick_add(

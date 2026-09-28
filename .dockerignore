@@ -3,3 +3,17 @@ dist/
 __pycache__/
 _Old/
 *.egg-info/
+
+# Local state and secrets — the image must never carry them. data/ holds the
+# database, the PAT key and the storage secret; it is mounted at runtime.
+data/
+backups/
+*.db
+.env
+.nicegui/
+
+# Development-only
+.git/
+.pytest_cache/
+.ruff_cache/
+.vscode/
