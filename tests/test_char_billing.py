@@ -13,7 +13,7 @@ Rules for this file:
 
 * Behaviour is driven through public ``Database`` methods only.
 * The only SQL is in ``_entries`` and ``_calendar`` — the single place to
-  repoint when the schema is renamed.
+  repoint when the schema is renamed; each has a branch per backend.
 * Tolerances express the business contract, not float noise. Today's julianday
   arithmetic stores a clean 1-hour entry at 1,200/h as 1199.999996; Postgres
   ``numeric`` will be exact. Either way the invoice agrees to the öre.
@@ -22,6 +22,8 @@ Rules for this file:
 from datetime import datetime, timedelta
 
 import pytest
+
+pytestmark = pytest.mark.backends("sqlite", "postgres")
 
 HOURS = 1e-6  # ≈ 3.6 ms
 MONEY = 0.005  # half an öre
@@ -57,23 +59,39 @@ def _ids(db, customer: str, project: str) -> tuple[int, int]:
 
 
 def _entries(db) -> list[dict]:
-    """Billing fields of every time entry, oldest first."""
-    return db.fetch_query(
+    """Billing fields of every (not deleted) time entry, oldest first."""
+    if db.backend == "postgres":
+        query = """
+            select te.key_time_entry as time_id, p.fk_customer as customer_id,
+                   te.fk_project as project_id, te.fk_date as date_key,
+                   te.duration_hours as total_time, te.wage_snapshot as wage,
+                   te.bonus_pct_snapshot as bonus, te.cost, te.user_bonus
+            from time_entries te
+            join projects p on p.key_project = te.fk_project
+            where te.deleted_at is null
+            order by te.key_time_entry
         """
-        select time_id, customer_id, project_id, date_key,
-               total_time, wage, bonus, cost, user_bonus
-        from time
-        order by time_id
+    else:
+        query = """
+            select time_id, customer_id, project_id, date_key,
+                   total_time, wage, bonus, cost, user_bonus
+            from time
+            order by time_id
         """
-    ).to_dict("records")
+    return db.fetch_query(query).to_dict("records")
 
 
 def _calendar(db, first: str, last: str) -> dict[str, dict]:
     """Rows of the dates dimension, keyed by ISO date."""
-    df = db.fetch_query(
-        "select date, year, week from dates where date between ? and ? order by date",
-        (first, last),
-    )
+    if db.backend == "postgres":
+        df = db.fetch_query(
+            "select to_char(date, 'YYYY-MM-DD') as date, year, week from dates "
+            "where date between %s and %s order by date", (first, last))
+    else:
+        df = db.fetch_query(
+            "select date, year, week from dates where date between ? and ? order by date",
+            (first, last),
+        )
     return {r["date"]: r for r in df.to_dict("records")}
 
 
@@ -152,16 +170,15 @@ def test_editing_an_entry_reprices_it_at_its_own_snapshot(db):
 
 
 def test_backdated_entry_gets_current_wage_but_bonus_by_date(db):
-    """PINNED CURRENT BEHAVIOUR — changes deliberately in Phase 2.
+    """REVIEWED DIFF (Phase 2): wage by the entry's date on Postgres.
 
-    Today an entry takes its wage from the customer version it is created
+    SQLite takes an entry's wage from the customer version it is created
     against (the current one, in the UI) but its bonus by its own date. So
     hours back-dated to August after a September raise are billed at the
     September wage with the August bonus.
 
-    v6_plan §3 moves wage to a lookup by the entry's date. When that lands the
-    expected wage here becomes 1000 and the cost 1000.00 — update this test as
-    a reviewed diff, not a silent fix.
+    v6_plan §3 moves wage to a lookup by the entry's date: on Postgres the
+    same hours bill at August's 1000.
     """
     db.insert_bonus("2026-01-01", 10)
     _acme(db)
@@ -172,10 +189,11 @@ def test_backdated_entry_gets_current_wage_but_bonus_by_date(db):
     db.insert_manual_time_row(cid, pid, "2026-08-15 09:00", "2026-08-15 10:00")
 
     [e] = _entries(db)
-    assert e["wage"] == 1200  # the current version's wage, not August's 1000
+    wage = 1000 if db.backend == "postgres" else 1200  # August's, or the current version's
+    assert e["wage"] == wage
     assert e["bonus"] == pytest.approx(0.10)  # August's bonus, by date
-    assert e["cost"] == _money(1200.00)
-    assert e["user_bonus"] == _money(120.00)
+    assert e["cost"] == _money(wage * 1.0)
+    assert e["user_bonus"] == _money(wage * 0.10)
 
 
 # ── bonus periods ───────────────────────────────────────────────────────────

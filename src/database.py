@@ -10,6 +10,7 @@ from . import clock
 
 
 class Database:
+    backend = "sqlite"
     _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
     _QUERY_EDITABLE_TABLES = {"time", "customers", "projects"}
 

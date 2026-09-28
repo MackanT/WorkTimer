@@ -7,6 +7,10 @@ Everything goes through public ``Database`` methods — no SQL in this file.
 ``get_current_customers``, are pinned in the Time Tracker and Reports files.)
 """
 
+import pytest
+
+pytestmark = pytest.mark.backends("sqlite", "postgres")
+
 
 def _ids(db, customer: str, project: str) -> tuple[int, int]:
     """(customer_id, project_id) for the customer's current version."""

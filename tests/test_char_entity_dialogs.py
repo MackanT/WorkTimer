@@ -5,12 +5,14 @@ they live in the data layer.
 Part of the Postgres-port oracle (docs/v6_implementation.md, Phase 0.2).
 Everything goes through public ``Database`` methods — no SQL in this file.
 
-Two pinned quirks become reviewed diffs in Phase 2:
-``test_customer_dropdown_is_in_creation_order_and_a_raise_moves_it_last`` and
-``test_disabled_project_is_hidden_while_another_customer_uses_its_name``.
+Two pinned quirks are reviewed diffs on Postgres (Phase 2):
+``test_customer_dropdown_order`` and ``test_disabled_project_with_a_name_in_use``.
 """
 
 import pandas as pd
+import pytest
+
+pytestmark = pytest.mark.backends("sqlite", "postgres")
 
 
 def _values(df, *cols):
@@ -20,19 +22,20 @@ def _values(df, *cols):
 # ── customers ───────────────────────────────────────────────────────────────
 
 
-def test_customer_dropdown_is_in_creation_order_and_a_raise_moves_it_last(db):
-    """PINNED QUIRK — the query has no ORDER BY, so dropdowns show SQLite's
-    row order: creation order, except that a wage change creates a new row and
-    moves that customer to the end. Postgres guarantees no order at all, so
-    Phase 2 must choose one explicitly (alphabetical, or the user's sort
-    order) and update this expectation as a reviewed diff."""
+def test_customer_dropdown_order(db):
+    """REVIEWED DIFF (Phase 2) — decided: the Time Tracker's order.
+
+    SQLite's query has no ORDER BY, so dropdowns show its row order: creation
+    order, except that a wage change creates a new row and moves that
+    customer to the end. Postgres guarantees no order, so the port uses the
+    user's sort order, then the name — unchanged by a raise."""
     for name in ["Charlie", "Alpha", "Bravo", "Delta"]:
         db.insert_customer(name, "2026-01-01", 1000)
     db.disable_customer("Delta")
-    assert db.get_current_customer_names()["customer_name"].tolist() == [
-        "Charlie", "Alpha", "Bravo"]
+    before = ["Charlie", "Alpha", "Bravo"] if db.backend == "sqlite" else ["Alpha", "Bravo", "Charlie"]
+    assert db.get_current_customer_names()["customer_name"].tolist() == before
 
-    db.insert_customer("Charlie", "2026-09-01", 1200)  # raise → new row
+    db.insert_customer("Charlie", "2026-09-01", 1200)  # raise (SQLite: a new row)
 
     assert db.get_current_customer_names()["customer_name"].tolist() == [
         "Alpha", "Bravo", "Charlie"]
@@ -92,13 +95,12 @@ def test_disabled_projects_offered_for_re_enable(db):
     assert _values(df, "project_name", "customer_name") == [("Old", "Acme")]
 
 
-def test_disabled_project_is_hidden_while_another_customer_uses_its_name(db):
-    """PINNED QUIRK — a bug; fixed by Phase 2.
+def test_disabled_project_with_a_name_in_use(db):
+    """REVIEWED DIFF (Phase 2) — a SQLite bug, fixed on Postgres.
 
-    Re-enable candidates exclude any project whose *name* is enabled anywhere,
-    so Beta's disabled "Build" cannot be re-enabled from the dialog while
-    Acme has an enabled "Build". Phase 2 compares by project key: expect
-    [("Build", "Beta")] as a reviewed diff.
+    SQLite's re-enable candidates exclude any project whose *name* is enabled
+    anywhere, so Beta's disabled "Build" cannot be re-enabled from the dialog
+    while Acme has an enabled "Build". Postgres goes by the project itself.
     """
     db.insert_customer("Acme", "2026-01-01", 1000)
     db.insert_customer("Beta", "2026-01-01", 800)
@@ -106,7 +108,8 @@ def test_disabled_project_is_hidden_while_another_customer_uses_its_name(db):
     db.insert_project("Beta", "Build")
     db.disable_project("Beta", "Build")
 
-    assert db.get_disabled_projects_with_customer().empty
+    candidates = _values(db.get_disabled_projects_with_customer(), "project_name", "customer_name")
+    assert candidates == ([] if db.backend == "sqlite" else [("Build", "Beta")])
 
 
 # ── trackers ────────────────────────────────────────────────────────────────

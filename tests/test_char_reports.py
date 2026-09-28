@@ -5,14 +5,16 @@ Part of the Postgres-port oracle (docs/v6_implementation.md, Phase 0.2): the
 new data layer must return the same numbers. Everything here goes through
 public methods — there is no SQL in this file.
 
-Two pinned quirks may become reviewed diffs in Phase 2 — see
-``test_rounding_per_project_merges_same_named_projects_across_customers`` and
-``test_rounding_per_work_item_splits_untagged_time_by_how_it_was_logged``.
+Two pinned quirks are reviewed diffs on Postgres (Phase 2, both decided as
+fixes) — see ``test_rounding_per_project_and_same_named_projects`` and
+``test_rounding_per_work_item_and_how_untagged_time_was_logged``.
 """
 
 from datetime import datetime, timedelta
 
 import pytest
+
+pytestmark = pytest.mark.backends("sqlite", "postgres")
 
 HOURS = 1e-6  # ≈ 3.6 ms
 MONEY = 0.005  # half an öre
@@ -217,14 +219,13 @@ def test_rounding_per_work_item_pools_all_untagged_time(seeded):
     assert _sorted_hours(df) == [1.0, 2.0, 3.0, 3.5]
 
 
-def test_rounding_per_work_item_splits_untagged_time_by_how_it_was_logged(db):
-    """PINNED QUIRK — likely a bug; decide in Phase 2.
+def test_rounding_per_work_item_and_how_untagged_time_was_logged(db):
+    """REVIEWED DIFF (Phase 2) — decided: untagged time is one unit.
 
-    "No work item" is stored as 0 by a manual entry but NULL by a stopped
-    timer, and rounding groups by COALESCE(git_id, -1) — so untagged time
-    rounds as two units depending on how it was logged. Phase 2 stores "no work
-    item" as NULL everywhere (v6_plan §4), which pools them; if accepted,
-    update the expectation to [3.0] as a reviewed diff.
+    SQLite stores "no work item" as 0 from a manual entry but NULL from a
+    stopped timer, and rounding groups by COALESCE(git_id, -1) — so untagged
+    time rounds as two units depending on how it was logged. Postgres stores
+    NULL everywhere (v6_plan §4), which pools them.
     """
     db.insert_customer("Acme", "2026-01-01", 1000)
     db.insert_project("Acme", "Build")
@@ -235,18 +236,18 @@ def test_rounding_per_work_item_splits_untagged_time_by_how_it_was_logged(db):
 
     df = db.report_hours_for_rounding(*SEPTEMBER, [], "work_item")
 
-    assert _sorted_hours(df) == [1.0, 2.0]
+    assert _sorted_hours(df) == ([1.0, 2.0] if db.backend == "sqlite" else [3.0])
 
 
-def test_rounding_per_project_merges_same_named_projects_across_customers(seeded):
-    """PINNED QUIRK — likely a bug; decide in Phase 2.
+def test_rounding_per_project_and_same_named_projects(seeded):
+    """REVIEWED DIFF (Phase 2) — decided: each project rounds on its own.
 
-    Rounding "per project" groups by project *name* only, so Acme's Build
-    (3.5 h) and Beta's Build (1.0 h) round as a single 4.5 h unit — while the
-    by-project chart keeps them apart. Phase 2 groups by project key; if that
-    is accepted as a fix, update the expectation to [0.75, 1.0, 1.25, 3.0, 3.5]
-    as a reviewed diff.
+    SQLite's rounding "per project" groups by project *name* only, so Acme's
+    Build (3.5 h) and Beta's Build (1.0 h) round as a single 4.5 h unit —
+    while the by-project chart keeps them apart. Postgres groups by project.
     """
     df = seeded.report_hours_for_rounding(*SEPTEMBER, [], "project")
 
-    assert _sorted_hours(df) == [0.75, 1.25, 3.0, 4.5]
+    expected = ([0.75, 1.25, 3.0, 4.5] if seeded.backend == "sqlite"
+                else [0.75, 1.0, 1.25, 3.0, 3.5])
+    assert _sorted_hours(df) == expected

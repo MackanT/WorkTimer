@@ -1,6 +1,6 @@
 # v6 implementation path
 
-**Status:** r2 · 2026-09-28 — Phase 1 done; the Phase 0.4 manual click-through is still pending.
+**Status:** r2 · 2026-09-28 — Phase 1 done; Phase 2 in progress (data layer ported, not wired in); the Phase 0.4 manual click-through is still pending.
 **Branch:** `feat/postgres-migration` (long-lived; one 6.0.0 release at the end).
 **Design:** [v6_plan.md](v6_plan.md) covers *what* gets built and why. This file
 is the *order* it gets built in, with a definition of done per step.
@@ -540,6 +540,70 @@ Steps:
 **Done when:** the full suite passes on Postgres; the characterisation diffs are
 exactly the two approved ones; the app runs end to end under compose.
 
+**Status: in progress** — the data layer is ported and passes the oracle; the
+app still runs on SQLite (wiring it in is the next step).
+
+- **Decided (2026-09-28):** customer dropdowns follow the Time Tracker order;
+  per-work-item rounding pools all untagged time; per-project rounding groups
+  by project. So the "exactly two approved diffs" above became the reviewed
+  diffs listed below.
+- [src/pg_database.py](../src/pg_database.py): `PgDatabase`, the same public
+  API as `Database` on the v6 schema, one `Pools.transaction` per call for its
+  user. 78 of the 91 public methods. Not ported, by design: the SQLite
+  machinery (`validate_and_migrate_schema`, `get_expected_schema`,
+  `get_schema_info`, `compare_schemas`, `generate_sync_sql`, `smart_query` —
+  the importer keeps them), `run_user_query` / `check_user_query` (Phase 3)
+  and `backup_to` (step 8).
+- **The oracle runs on both backends.** `pytest.mark.backends("sqlite",
+  "postgres")` parametrizes the `db` fixture ([tests/conftest.py](../tests/conftest.py)).
+  All eight characterisation modules carry it — 139 tests — except the query
+  editor's two user-SQL tests, which Phase 3 changes.
+- **Reviewed diffs**, each marked `REVIEWED DIFF` in its test: wage by the
+  entry's date; "Manage entries" through the project; dropdown order; a
+  disabled project can be re-enabled whatever others are called; per-project
+  and per-work-item rounding; and a wage change keeps the customer's key (the
+  running-timer test asserted the old id went stale).
+- **Decisions made while porting:**
+  - Step 1's snapshots are looked up again only when an entry moves to another
+    day; any other edit keeps them, so an unrelated edit can't re-price history.
+    A stop or edit writes the times and the cost in one statement.
+  - Before a customer's first wage period, the first wage applies. A raise
+    must start after the current period began — anything else would overlap
+    history, so it is refused.
+  - Time entries, tasks and saved queries are soft-deleted; discarding a running
+    timer is a soft delete too.
+  - Names sort with `collate "C"`, SQLite's byte order.
+  - Tasks and cached work items must name real customers and projects (their
+    fixtures now create them). Work-item writes are upserts; rows for an
+    unknown customer are skipped with a warning.
+  - "Now" on the user's calendar: `clock.now_in(users.timezone)`.
+  - The PAT key stays in `data/.pat_key` (`secrets_dir`).
+- [tests/test_pg_database.py](../tests/test_pg_database.py): 18 tests of what
+  only Postgres does — local dating after midnight, both DST changes billed in
+  real hours, the user's timezone, cost from the exact duration, the wage
+  fallback and raise refusal, snapshots surviving edits, soft delete, the row
+  edit re-pricing (step 2's required test), the work-item cache, one instance
+  per user.
+- **Mutation-checked:** wage by the latest period instead of the entry's date,
+  and reports counting deleted entries, each fail a test. Skipping the Python
+  rounding does not: the `numeric(12,2)` columns round identically.
+- **Open:**
+  - Wire `PgDatabase` into the app — **decided (2026-09-28): Postgres only
+    when configured.** `AppCore` uses `PgDatabase` when `DATABASE_URL` is set
+    and SQLite otherwise, so a 5.x setup built from this branch keeps working
+    on its own data until the importer (Phase 4); a separate compose profile
+    runs the app on Postgres, with the migrator as the admin and logins
+    provisioned for the app roles. That profile is the "runs end to end under
+    compose" criterion.
+  - Step 5's totals per currency; step 7's "has N time entries — disable
+    instead" (the database already refuses); step 8 `pg_dump`; step 9.
+  - The Jira incremental sync's watermark is UTC now (SQLite kept Jira's own
+    offset string). A Jira site in a negative-offset zone could miss a few
+    hours of edits until the next full sync — check when the sync runs live.
+  - The architecture guard's table list still has only the 5.x names; adding
+    the v6 names needs an exception for the SQL sample text in Settings'
+    query-editor skin preview.
+
 ---
 
 ## Phase 3 — Query editor lockdown
@@ -633,7 +697,7 @@ has been fixed in the billing path since the last one.
 - [x] **0.3** One clock
 - [ ] **0.4** Checkpoint
 - [x] **1** Postgres foundation
-- [ ] **2** Data layer port
+- [ ] **2** Data layer port — in progress
 - [ ] **3** Query editor lockdown
 - [ ] **4** SQLite importer
 - [ ] **5** Gate: staging + parallel run

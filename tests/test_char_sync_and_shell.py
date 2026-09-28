@@ -9,6 +9,9 @@ Everything goes through public ``Database`` methods — no SQL in this file.
 """
 
 import pandas as pd
+import pytest
+
+pytestmark = pytest.mark.backends("sqlite", "postgres")
 
 
 def test_tracker_expiries_list_only_trackers_with_a_date(db):
@@ -38,6 +41,8 @@ def test_tracker_types_by_name(db):
 
 
 def test_devops_watermarks_are_the_highest_id_and_change_per_customer(db):
+    for name in ("Acme", "Beta"):  # the v6 cache belongs to real customers
+        db.insert_customer(name, "2026-01-01", 1000)
     db.update_devops_data(pd.DataFrame([
         {"customer_name": "Acme", "id": 101, "title": "a", "changed_date": "2026-09-01T10:00:00"},
         {"customer_name": "Acme", "id": 250, "title": "b", "changed_date": "2026-08-01T10:00:00"},

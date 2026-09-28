@@ -6,15 +6,17 @@ Everything goes through public ``Database`` methods — no SQL in this file.
 
 Two pinned quirks share one root cause (v6_plan §3, problem 2): a wage
 change gives the customer a new ``customer_id``, but completed time entries
-keep the old one, while the page always asks with the current id. Phase 2 finds
-entries through the project instead, which fixes both — each test says how its
-expectation changes, to be applied as a reviewed diff. (A third, the running
-timer, was fixed early in 5.1.1.)
+keep the old one, while the page always asks with the current id. The Postgres
+port finds entries through the project, and a wage change keeps the customer's
+key — the reviewed diffs are marked in their tests. (A third, the running
+timer, was fixed early in 5.1.1; "sort by usage" in 5.1.2.)
 """
 
 from datetime import datetime, timedelta
 
 import pytest
+
+pytestmark = pytest.mark.backends("sqlite", "postgres")
 
 HOURS = 1e-6  # ≈ 3.6 ms
 
@@ -152,7 +154,10 @@ def test_timer_running_across_a_wage_change_follows_the_customer(db):
     new_id, _ = _ids(db, "Acme", "Build")
 
     assert db.get_running_timer_names()["customer_name"].tolist() == ["Acme"]
-    assert db.get_running_timer_start(old_id, pid).empty
+    if db.backend == "postgres":  # REVIEWED DIFF: a wage change keeps the key
+        assert new_id == old_id
+    else:
+        assert db.get_running_timer_start(old_id, pid).empty
     [start] = db.get_running_timer_start(new_id, pid)["start_time"]
     assert start == "2026-09-01 09:00:00"
 
@@ -179,12 +184,12 @@ def test_completed_entries_in_range_newest_first(db):
     assert list(df.columns) == ["time_id", "start_time", "end_time", "total_time", "comment"]
 
 
-def test_completed_entries_before_a_wage_change_are_hidden(db):
-    """PINNED QUIRK — a bug; fixed by Phase 2.
+def test_completed_entries_before_a_wage_change(db):
+    """REVIEWED DIFF (Phase 2) — a SQLite bug, fixed on Postgres.
 
-    "Manage entries" asks with the current customer id, so an entry logged
-    before a raise is missing from the dialog even though it is in range.
-    Phase 2 finds entries through the project: expect both entries (2 rows).
+    SQLite's "Manage entries" asks with the current customer id, so an entry
+    logged before a raise is missing from the dialog even though it is in
+    range. Postgres finds entries through the project: both are listed.
     """
     _acme(db)
     old_id, pid = _ids(db, "Acme", "Build")
@@ -195,7 +200,10 @@ def test_completed_entries_before_a_wage_change_are_hidden(db):
 
     df = db.get_completed_entries(new_id, pid, 20260801, 20260930)
 
-    assert df["start_time"].tolist() == ["2026-09-02 09:00:00"]
+    expected = ["2026-09-02 09:00:00"]
+    if db.backend == "postgres":
+        expected.append("2026-08-03 09:00:00")
+    assert df["start_time"].tolist() == expected
 
 
 # ── ranges and usage ────────────────────────────────────────────────────────

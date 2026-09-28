@@ -27,16 +27,40 @@ def null_logger() -> logging.Logger:
     return lg
 
 
+def pytest_generate_tests(metafunc):
+    """Run `db` tests on every backend their module lists with
+    ``pytest.mark.backends("sqlite", "postgres")`` — how the Phase 0
+    characterisation tests become the oracle for the Postgres port
+    (docs/v6_implementation.md, Phase 2). Unmarked: SQLite only."""
+    marker = metafunc.definition.get_closest_marker("backends")
+    if marker and "db" in metafunc.fixturenames:
+        metafunc.parametrize("db", marker.args, indirect=True)
+
+
 @pytest.fixture
-def db(tmp_path, null_logger):
-    """A fresh, initialized Database on a temp-file SQLite DB.
+def db(request, tmp_path, null_logger):
+    """A fresh, initialized Database: a temp-file SQLite DB, or — for
+    backend "postgres" — the Postgres port on a fresh copy of the v6 schema,
+    logged in as worktimer_app for user 1.
 
     Closed in teardown so the file lock is released before pytest cleans tmp_path
     (Windows otherwise can't remove an open .db).
     """
-    from src.database import Database
+    if getattr(request, "param", "sqlite") == "postgres":
+        from psycopg.conninfo import make_conninfo
 
-    database = Database(str(tmp_path / "test.db"), null_logger)
+        from src.pg_connection import PgConfig, Pools
+        from src.pg_database import PgDatabase
+
+        conninfo = request.getfixturevalue("pg_schema_db")
+        password = request.getfixturevalue("pg_logins")["worktimer_app"]
+        pools = Pools(PgConfig(make_conninfo(conninfo, user="worktimer_app", password=password)),
+                      min_size=1, max_size=2)
+        database = PgDatabase(pools, null_logger, secrets_dir=str(tmp_path))
+    else:
+        from src.database import Database
+
+        database = Database(str(tmp_path / "test.db"), null_logger)
     database.initialize_db()
     yield database
     database.close()

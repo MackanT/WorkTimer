@@ -15,7 +15,7 @@ Call as ``clock.now_local()`` (module attribute), so tests can freeze time by
 patching one name.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, tzinfo
 
 
 def now_local() -> datetime:
@@ -26,3 +26,9 @@ def now_local() -> datetime:
 def today_local() -> date:
     """The current local date (server clock)."""
     return date.today()
+
+
+def now_in(tz: tzinfo) -> datetime:
+    """The current wall-clock time in `tz`, naive — "now" on the calendar of a
+    user whose timezone is known (v6: users.timezone)."""
+    return datetime.now(tz).replace(tzinfo=None)

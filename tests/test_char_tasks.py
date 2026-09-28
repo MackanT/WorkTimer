@@ -14,6 +14,8 @@ as a reviewed diff.
 
 import pytest
 
+pytestmark = pytest.mark.backends("sqlite", "postgres")
+
 # title, priority, due date, customer, project, completed — no two tasks tie in
 # any order asserted below.
 TASKS = [
@@ -28,6 +30,12 @@ TASKS = [
 
 @pytest.fixture
 def tasks(db):
+    # The customers and projects the tasks name. SQLite stores tasks' names as
+    # free text; the v6 schema references real customers and projects.
+    for customer, projects in {"Acme": ["Build", "Support"], "Beta": ["Ops", "Build"]}.items():
+        db.insert_customer(customer, "2026-01-01", 1000)
+        for project in projects:
+            db.insert_project(customer, project)
     ids = {}
     for title, priority, due, customer, project, completed in TASKS:
         ok, msg, task = db.insert_task(

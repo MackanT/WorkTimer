@@ -5,9 +5,14 @@ syntax check.
 Part of the Postgres-port oracle (docs/v6_implementation.md). One pinned
 behaviour changes deliberately in Phase 3 — see
 ``test_user_sql_can_write_today``.
+
+Saved queries run on both backends. Running and checking user SQL stay
+SQLite-only until Phase 3 moves them to the read-only role.
 """
 
 import pytest
+
+BOTH = pytest.mark.backends("sqlite", "postgres")
 
 
 def _saved(db) -> dict:
@@ -15,6 +20,7 @@ def _saved(db) -> dict:
     return dict(zip(df["query_name"], df["query_sql"]))
 
 
+@BOTH
 def test_saved_query_lifecycle(db):
     db.insert_saved_query("mine", "select 1 as x")
     assert _saved(db)["mine"] == "select 1 as x"
@@ -26,6 +32,7 @@ def test_saved_query_lifecycle(db):
     assert "mine" not in _saved(db)
 
 
+@BOTH
 def test_saved_query_names_are_unique(db):
     db.insert_saved_query("mine", "select 1")
 
