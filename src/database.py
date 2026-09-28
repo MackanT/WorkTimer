@@ -2251,11 +2251,15 @@ class Database:
 
     def get_recent_project_hours(self, customer_id: int):
         """Hours per project (project_id, h) for a customer over the last 60
-        days, running timers counted up to now (unordered)."""
+        days, running timers counted up to now (unordered). Selected by the
+        customer's projects, not time.customer_id: entries keep the customer
+        version they were logged under, so after a raise the current id alone
+        would only see the days since the raise."""
         return self.fetch_query(
             "select project_id, sum(coalesce(total_time, "
             "(julianday('now', 'localtime') - julianday(start_time)) * 24)) as h "
-            "from time where customer_id = ? "
+            "from time where project_id in "
+            "(select project_id from projects where customer_id = ?) "
             "and date(start_time) >= date('now', '-60 days') "
             "group by project_id",
             (customer_id,),

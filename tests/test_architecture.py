@@ -109,9 +109,8 @@ def test_the_guard_recognises_the_sql_that_used_to_live_in_pages():
 TECHNICAL_CLOCK_READS = {
     ("globals.py", "_seconds_until_next"): "the 2 AM full-sync scheduler",
     ("pages/log.py", "save_log_to_file"): "export filename",
-    ("pages/settings.py", "_backup_now"): "backup filename",
     ("pages/settings.py", "_download"): "backup filename",
-    ("ui/command_palette.py", "_backup"): "backup filename",
+    ("services/backups.py", "create_backup"): "backup filename",
     ("services/update_checker.py", "check_for_update"): "update-check cache age",
 }
 _CLOCK_CALLS = {("datetime", "now"), ("datetime", "today"), ("datetime", "utcnow"),

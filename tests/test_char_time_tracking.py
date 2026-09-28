@@ -229,13 +229,9 @@ def test_recent_project_hours_cover_the_last_60_days(db):
     assert hours[support] == pytest.approx(1.5, abs=0.02)
 
 
-def test_recent_hours_before_a_wage_change_are_not_counted(db):
-    """PINNED QUIRK — a bug; fixed by Phase 2.
-
-    "Sort by usage" asks with the current customer id, so usage logged before a
-    raise (still inside the 60 days) is ignored. Phase 2 finds entries through
-    the project: expect 3.0 hours.
-    """
+def test_recent_hours_include_entries_before_a_wage_change(db):
+    """Usage logged before a raise (still inside the 60 days) counts: entries
+    are found through the project, not the customer version (fixed in 5.1.2)."""
     _acme(db)
     old_id, pid = _ids(db, "Acme", "Build")
     db.insert_manual_time_row(old_id, pid, _ago(20), _ago(20, -2))  # 2 h before the raise
@@ -245,4 +241,4 @@ def test_recent_hours_before_a_wage_change_are_not_counted(db):
 
     df = db.get_recent_project_hours(new_id)
 
-    assert dict(zip(df["project_id"].astype(int), df["h"])) == {pid: _hours(1.0)}
+    assert dict(zip(df["project_id"].astype(int), df["h"])) == {pid: _hours(3.0)}
