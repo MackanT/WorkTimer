@@ -46,10 +46,11 @@ services:
   # services out.
 
   # One-shot setup, as the admin role: creates the database if missing,
-  # applies migrations and gives the app's roles their logins.
+  # applies migrations and gives the app's roles their logins. Runs the image
+  # worktimer-pg builds (two services building one tag collide on Docker's
+  # containerd image store).
   migrate:
-    build: .
-    image: worktimer-app:latest
+    image: worktimer-app:pg
     profiles: ["postgres"]
     entrypoint: ["uv", "run", "-m", "src.migrator"]
     environment:
@@ -63,7 +64,8 @@ services:
 
   worktimer-pg:
     build: .
-    image: worktimer-app:latest
+    # Its own tag: building this never replaces the SQLite app's image.
+    image: worktimer-app:pg
     profiles: ["postgres"]
     ports:
       - "${HOST:-127.0.0.1}:${PG_APP_PORT:-8090}:8080"

@@ -37,7 +37,7 @@ def main() -> int:
         subprocess.run(["ssh", args.host, f"mkdir -p {REMOTE_DIR}/data-pg/import"], check=True)
         subprocess.run(["scp", "-q", str(snapshot),
                         f"{args.host}:{REMOTE_DIR}/data-pg/import/worktimer.db"], check=True)
-    return subprocess.run(["ssh", args.host, f"{REMOTE_DIR}/scripts/staging.sh import"]).returncode
+    return subprocess.run(["ssh", args.host, f"bash {REMOTE_DIR}/scripts/staging.sh import"]).returncode
 
 
 if __name__ == "__main__":
