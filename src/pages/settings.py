@@ -277,6 +277,119 @@ def _render_tracker_defaults_card(core) -> None:
             )
 
 
+IMPORT_MAX_BYTES = 200 * 1024 * 1024
+
+
+def _render_import_card(core) -> None:
+    """Import a WorkTimer 5.x database or a v6 export (Postgres only; v6 Phase
+    4). Checked first — nothing is written until Import — then loaded in one
+    transaction, with the numbers before and after, side by side."""
+    db = core.query_engine.db
+    if getattr(db, "backend", "sqlite") != "postgres":
+        return
+    from .. import importer
+
+    muted = UI_STYLES.get_layout_classes("muted_text")
+    state = {"prepared": None}
+
+    with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+        ui.label("Import").classes(f"text-sm font-semibold text-{core.theme.get('accent')}")
+        ui.label(
+            "A WorkTimer 5.x database (worktimer.db) or a WorkTimer backup (.json.gz). "
+            "It is checked first; nothing is written until you import — into an empty "
+            "account, unless you replace everything."
+        ).classes("text-xs " + muted + " mb-2")
+        summary = ui.column().classes("w-full gap-1")
+        with ui.row().classes("w-full items-center gap-4 mt-2"):
+            replace = ui.checkbox("Replace everything in this account").props("dense")
+            replace.set_visibility(False)
+            ui.space()
+            import_button = ui.button("Import", icon="upload").props(
+                "color=primary no-caps dense disable")
+        result_box = ui.column().classes("w-full")
+
+        def _show(prepared, empty: bool):
+            summary.clear()
+            result_box.clear()
+            with summary:
+                counts = ", ".join(f"{t.replace('_', ' ')} {n}" for t, n in prepared.counts.items() if n)
+                ui.label(f"{prepared.kind}: {counts or 'nothing to import'}").classes("text-sm")
+                for n in prepared.notes:
+                    ui.label(f"• {n}").classes("text-xs " + muted)
+                for p in prepared.problems:
+                    ui.label(f"✖ {p}").classes("text-xs text-negative")
+                if prepared.problems:
+                    ui.label("Nothing can be imported until these are fixed in 5.x.").classes(
+                        "text-xs text-negative")
+            replace.value = False
+            replace.set_visibility(not empty and not prepared.problems)
+            _update_button(empty)
+
+        def _update_button(empty: bool):
+            ok = state["prepared"] is not None and not state["prepared"].problems
+            enabled = ok and (empty or replace.value)
+            import_button.props(remove="disable" if enabled else None,
+                                add=None if enabled else "disable")
+
+        async def _on_upload(e):
+            import os
+            import tempfile
+
+            data = e.content.read()
+            fd, path = tempfile.mkstemp(suffix=Path(e.name).suffix or ".bin")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+                prepared = await asyncio.to_thread(importer.prepare, path, db)
+                empty = await asyncio.to_thread(db.account_is_empty)
+            except Exception as ex:
+                state["prepared"] = None
+                summary.clear()
+                with summary:
+                    ui.label(f"✖ {ex}").classes("text-xs text-negative")
+                _update_button(True)
+                return
+            finally:
+                os.remove(path)
+            state["prepared"] = prepared
+            state["empty"] = empty
+            _show(prepared, empty)
+
+        replace.on_value_change(lambda _: _update_button(state.get("empty", True)))
+
+        async def _do_import():
+            prepared = state["prepared"]
+            if prepared is None:
+                return
+            import_button.props(add="disable")
+            try:
+                result = await asyncio.to_thread(importer.load, prepared, db, replace.value)
+            except Exception as ex:
+                core.logger.error(f"Import failed: {ex}")
+                ui.notify(f"Import failed: {ex}", type="negative", multi_line=True)
+                _update_button(state.get("empty", True))
+                return
+            state["prepared"] = None
+            replace.set_visibility(False)
+            result_box.clear()
+            with result_box:
+                ui.table(
+                    columns=[{"name": c, "label": c.replace("_", " "), "field": c}
+                             for c in result.columns],
+                    rows=result.round(4).astype({"match": str}).to_dict("records"),
+                ).props("dense flat").classes("w-full")
+            matched = bool(result["match"].all())
+            ui.notify("Imported — every customer's numbers match" if matched
+                      else "Imported — some numbers differ; see the table",
+                      type="positive" if matched else "warning")
+            core.event_bus.emit("ui_refresh_requested")
+            core.force_tracker_reinit()
+
+        import_button.on_click(_do_import)
+        ui.upload(on_upload=_on_upload, auto_upload=True, max_file_size=IMPORT_MAX_BYTES,
+                  label="Choose a file").props('accept=".db,.gz" flat bordered').classes("w-full")
+
+
 def _render_time_settings_card(core) -> None:
     """Edit the global time/billing defaults (the config's time_settings block).
 
@@ -1515,5 +1628,6 @@ async def settings_page():
             with ui.scroll_area().classes("w-full h-full"):
                 with ui.column().classes("w-full gap-4 p-4"):
                     _render_backup_card(core)
+                    _render_import_card(core)
                     _render_time_settings_card(core)
                     await _render_about_card(core)

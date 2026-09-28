@@ -191,17 +191,20 @@ class PgDatabase:
         this user's default saved queries — the query editor's presets —
         are added or brought up to date (the editor can't change them)."""
         with self._tx() as conn:
-            for name, text in self.DEFAULT_QUERIES.items():
-                row = conn.execute(
-                    "select key_saved_query, is_default from saved_queries "
-                    "where query_name = %s and deleted_at is null", (name,)).fetchone()
-                if row is None:
-                    conn.execute("insert into saved_queries (query_name, query_sql, is_default) "
-                                 "values (%s, %s, true)", (name, text))
-                elif row[1]:
-                    conn.execute("update saved_queries set query_sql = %s "
-                                 "where key_saved_query = %s and query_sql is distinct from %s",
-                                 (text, row[0], text))
+            self._seed_default_queries(conn)
+
+    def _seed_default_queries(self, conn) -> None:
+        for name, text in self.DEFAULT_QUERIES.items():
+            row = conn.execute(
+                "select key_saved_query, is_default from saved_queries "
+                "where query_name = %s and deleted_at is null", (name,)).fetchone()
+            if row is None:
+                conn.execute("insert into saved_queries (query_name, query_sql, is_default) "
+                             "values (%s, %s, true)", (name, text))
+            elif row[1]:
+                conn.execute("update saved_queries set query_sql = %s "
+                             "where key_saved_query = %s and query_sql is distinct from %s",
+                             (text, row[0], text))
 
     def close(self) -> None:
         self.pools.close()
@@ -1599,3 +1602,157 @@ class PgDatabase:
         text = _user_select(query)
         with self._user_query_tx() as conn:
             conn.cursor().execute("explain " + text, prepare=True)
+
+    # ── import (Phase 4) ────────────────────────────────────────────────────
+    # Loads data in the export shape (tables of rows with their source keys):
+    # a v6 export, or a 5.x file turned into one by src/importer_v5.py. Keys
+    # are new — every reference is remapped. Tracker tokens arrive as
+    # plaintext (or None) and are encrypted with this server's key.
+
+    _IMPORT_TABLES = {  # parents first; table → (key, columns written, references)
+        "trackers": ("key_tracker", ["tracker_name", "integration_type", "org_url", "pat_token",
+                                     "token_expires", "created_at"], {}),
+        "customers": ("key_customer", ["customer_name", "currency", "color", "fk_tracker",
+                                       "tracker_project", "expected_work_pct", "sort_order",
+                                       "is_enabled", "created_at"], {"fk_tracker": "trackers"}),
+        "customer_wages": ("key_customer_wage", ["fk_customer", "wage", "valid_from", "valid_to",
+                                                 "created_at"], {"fk_customer": "customers"}),
+        "projects": ("key_project", ["fk_customer", "project_name", "bk_work_item", "is_enabled",
+                                     "sort_order", "created_at"], {"fk_customer": "customers"}),
+        "bonuses": ("key_bonus", ["bonus_pct", "valid_from", "valid_to", "created_at",
+                                  "deleted_at"], {}),
+        "time_entries": ("key_time_entry", ["fk_project", "started_at", "ended_at", "fk_date",
+                                            "duration_hours", "wage_snapshot", "bonus_pct_snapshot",
+                                            "cost", "user_bonus", "bk_work_item", "comment",
+                                            "created_at", "updated_at", "deleted_at"],
+                         {"fk_project": "projects"}),
+        "tasks": ("key_task", ["fk_customer", "fk_project", "fk_parent_task", "title",
+                               "description", "status", "priority", "is_completed", "assigned_to",
+                               "due_date", "estimated_hours", "actual_hours", "progress_pct",
+                               "tags", "completed_at", "created_at", "updated_at", "deleted_at"],
+                  {"fk_customer": "customers", "fk_project": "projects", "fk_parent_task": "tasks"}),
+        "saved_queries": ("key_saved_query", ["query_name", "query_sql", "created_at",
+                                              "deleted_at"], {}),
+        "work_items": ("key_work_item", ["fk_customer", "bk_work_item", "bk_parent_work_item",
+                                         "display_ref", "item_type", "title", "state",
+                                         "board_column", "is_done", "assigned_to", "changed_at",
+                                         "priority", "description_text", "synced_at"],
+                       {"fk_customer": "customers"}),
+    }
+    _NUMERIC = {"duration_hours", "cost", "user_bonus", "bonus_pct_snapshot", "bonus_pct",
+                "expected_work_pct", "estimated_hours", "actual_hours"}
+    _DATES = {"valid_from", "valid_to", "due_date", "token_expires"}
+
+    def _import_value(self, column: str, value):
+        """An export value (JSON text for money, dates, times) as its column's type."""
+        if value is None:
+            return None
+        if column in self._NUMERIC:
+            return Decimal(str(value))
+        if column in self._DATES:
+            return date.fromisoformat(str(value)[:10])
+        if column.endswith("_at"):
+            stamp = datetime.fromisoformat(str(value))
+            if stamp.tzinfo is None:
+                raise ValueError(f"{column} {value!r} has no UTC offset")
+            return stamp
+        if column == "pat_token":
+            return encrypt_pat(value, self.db_file, self.log_engine)
+        return value
+
+    @staticmethod
+    def _account_is_empty(conn) -> bool:
+        """Nothing of the user's but the default saved queries."""
+        return not conn.execute(
+            """
+            select exists (select from customers) or exists (select from trackers)
+                or exists (select from bonuses) or exists (select from tasks)
+                or exists (select from work_items)
+                or exists (select from saved_queries where not is_default)
+            """).fetchone()[0]
+
+    def account_is_empty(self) -> bool:
+        with self._tx() as conn:
+            return self._account_is_empty(conn)
+
+    def import_export(self, data: dict, replace: bool = False) -> dict:
+        """Load export-shaped `data` into this user's account in one
+        transaction; {table: rows loaded}. Refused unless the account is
+        empty — or `replace`, which first deletes all of the user's data.
+        Default saved queries are skipped; this server's defaults are
+        re-seeded instead."""
+        tables = data.get("tables", {})
+        loaded = {}
+        with self._tx() as conn:
+            if replace:
+                for table in ("time_entries", "tasks", "work_items", "customers", "bonuses",
+                              "trackers"):
+                    conn.execute(f"delete from {table}")
+                conn.execute("delete from saved_queries where not is_default")
+            elif not self._account_is_empty(conn):
+                raise ValueError("This account already has data — import into an empty "
+                                 "account, or choose to replace everything")
+            keys: dict[str, dict] = {table: {} for table in self._IMPORT_TABLES}
+            for table, (key, columns, refs) in self._IMPORT_TABLES.items():
+                rows = tables.get(table) or []
+                if table == "saved_queries":
+                    rows = [r for r in rows if not r.get("is_default")]
+                if table == "tasks":
+                    rows = self._parents_first(rows)
+                for row in rows:
+                    values = {}
+                    for column in columns:
+                        if column not in row:
+                            continue
+                        value = row[column]
+                        if column in refs and value is not None:
+                            value = keys[refs[column]].get(value)
+                            if value is None and column != "fk_parent_task":
+                                raise ValueError(f"{table} row {row.get(key)}: {column} "
+                                                 "names a row that isn't in the import")
+                        values[column] = self._import_value(column, value)
+                    names = list(values)
+                    new_key = self._one(
+                        conn,
+                        f"insert into {table} ({', '.join(names)}) "
+                        f"values ({', '.join(['%s'] * len(names))}) returning {key}",
+                        [values[n] for n in names])
+                    keys[table][row.get(key)] = new_key
+                loaded[table] = len(rows)
+            self._seed_default_queries(conn)
+        return loaded
+
+    @staticmethod
+    def _parents_first(tasks: list) -> list:
+        """Tasks ordered so each parent is loaded before its subtasks (a
+        parent that is missing, or a cycle, loads without its link)."""
+        by_key = {t.get("key_task"): t for t in tasks}
+        ordered, placed = [], set()
+
+        def place(task, trail=()):
+            k = task.get("key_task")
+            if k in placed:
+                return
+            parent = task.get("fk_parent_task")
+            if parent in by_key and parent not in trail:
+                place(by_key[parent], trail + (k,))
+            elif parent is not None and (parent not in by_key or parent in trail):
+                task = {**task, "fk_parent_task": None}
+            placed.add(k)
+            ordered.append(task)
+
+        for task in tasks:
+            place(task)
+        return ordered
+
+    def import_totals(self) -> pd.DataFrame:
+        """Per customer: entries, hours and cost — the "after" side of the
+        import report (deleted entries excluded)."""
+        return self.fetch_query(
+            """
+            select customer_name as customer, count(*) as entries,
+                   coalesce(sum(duration_hours), 0) as hours, coalesce(sum(cost), 0) as cost
+            from v_time_entries
+            group by customer_name
+            order by customer_name collate "C"
+            """)

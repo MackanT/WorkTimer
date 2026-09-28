@@ -3045,6 +3045,14 @@ class Database:
     def get_customer_name(self, customer_id: int) -> str:
         return self._get_entity_name("customer", customer_id)
 
+    def read_tables(self) -> dict:
+        """Every WorkTimer table as a DataFrame (an empty one when missing) —
+        the v6 importer's view of a 5.x file (src/importer_v5.py)."""
+        names = ["customers", "projects", "time", "bonus", "tasks", "queries",
+                 "devops", "trackers"]
+        return {n: (self.fetch_query(f'select * from "{n}"') if self._table_exists(n)
+                    else pd.DataFrame()) for n in names}
+
     def get_project_name(self, project_id: int) -> str:
         return self._get_entity_name("project", project_id)
 

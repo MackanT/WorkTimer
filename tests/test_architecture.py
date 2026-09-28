@@ -20,9 +20,12 @@ import re
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src"
-# The data layer: the Database class (SQLite, and its Postgres port), and the
-# migration runner that owns the schema (it creates its own history table).
-DATA_LAYER = {SRC / "database.py", SRC / "pg_database.py", SRC / "migrator.py"}
+# The data layer: the Database class (SQLite, and its Postgres port), the
+# migration runner that owns the schema (it creates its own history table),
+# and the 5.x import mapping (its problem messages give the SQL to fix a 5.x
+# file in 5.x's query editor).
+DATA_LAYER = {SRC / "database.py", SRC / "pg_database.py", SRC / "migrator.py",
+              SRC / "importer_v5.py"}
 
 # Today's table names. Phase 2 renames them — add time_entries, customer_wages,
 # bonuses, saved_queries, work_items and users here then, or the guard goes

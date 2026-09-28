@@ -1,6 +1,6 @@
 # v6 implementation path
 
-**Status:** r2 · 2026-09-28 — Phases 1 and 3 done; Phase 2 in progress (data layer ported and wired in behind `DATABASE_URL`); the Phase 0.4 manual click-through is still pending.
+**Status:** r2 · 2026-09-28 — Phases 1 and 3 done; Phase 2 in progress (data layer, wiring, backups done); Phase 4 built; the Phase 0.4 manual click-through is still pending.
 **Branch:** `feat/postgres-migration` (long-lived; one 6.0.0 release at the end).
 **Design:** [v6_plan.md](v6_plan.md) covers *what* gets built and why. This file
 is the *order* it gets built in, with a definition of done per step.
@@ -714,6 +714,56 @@ As specified in [v6_plan.md §8](v6_plan.md). Pipeline:
 Test corpus: a copy of your own live database; a colleague's (with
 permission); a synthetic v4-era file; entries that straddle both DST changes.
 
+**Status: built** (2026-09-28) — two corpus files still to run: a colleague's
+database and a v4-era file.
+
+- **One loader, two kinds of file.** [src/importer_v5.py](../src/importer_v5.py)
+  (the legacy mapping — deletable later, as §8 asks) turns a 5.x file into the
+  same shape as step 8's v6 export; `PgDatabase.import_export` loads either,
+  remapping every key, in one transaction, into an empty account — or, with
+  *replace*, after deleting the account's data (Phase 5's weekly re-import).
+  So the app's own backups restore through the same path.
+  [src/importer.py](../src/importer.py): `prepare` (read, transform, check —
+  nothing written), `load`, and the before/after report per customer
+  (entries, hours to 0.0001 h per entry, cost to the öre). Command line:
+  `DATABASE_URL=… python -m src.importer FILE [--replace] [--dry-run]
+  [--pat-key FILE]`. In the app: Settings → Data → **Import** (Postgres only;
+  200 MB cap; upload authentication comes with Phase 6).
+- **Transform, as §8:** the file is copied and opened with the 5.x engine,
+  which normalises older files; customer versions collapse into one customer
+  and one wage period per version (each ending the day before the next —
+  two on one day: the later wins); snapshots copied verbatim, cost and bonus
+  rounded to öre; naive local times → UTC (the repeated autumn hour's first
+  occurrence; an entry that would then end before it starts ends in the
+  second; the skipped spring hour read as standard time); `git_id` 0 → NULL;
+  5.x's task timestamps were UTC already. Tokens the importing server can't
+  read are left out, with a "re-enter them" note (`--pat-key` keeps them);
+  5.x's default saved queries make way for v6's; the user's own are kept, with
+  a "rewrite them" note. Entries that lost their project are kept under a
+  "(no project)" project; a project name used twice for one customer is one
+  project.
+- **Nothing is guessed:** data v6 would refuse — a bonus period that ends
+  before it starts, overlapping bonus periods, an entry that ends before it
+  starts — stops the import with a list of what to fix in 5.x, including the
+  SQL for 5.x's query editor.
+- [tests/test_importer.py](../tests/test_importer.py): 17 tests on a 5.x file
+  built with the 5.x engine — matching numbers, collapsed versions, verbatim
+  snapshots, UTC and both DST changes, tasks, queries and work items, tokens
+  with and without the key, refused bonus periods, empty-account rule and
+  replace, a v6 export round trip into another user, lost projects, the file
+  never changed, the command line.
+- **Your own database** (a snapshot; no tokens decrypted): the first run
+  stopped on three rows to fix in 5.x — bonus periods 3 and 8 (typo'd years)
+  and **time entry 4468, which ends four days before it starts (−88.94 h on
+  Random Forest / Arbete)**. It also found 5.x storing three `git_id`s as
+  8-byte BLOBs, now read. With the three rows fixed in the copy, the import
+  matched to the öre: six customers, 4,468 entries, 11,240.597 h and
+  5,400,521.02 before and after; Castellum's three wage periods and the four
+  bonus periods came through as they should.
+- Verified under compose: the Settings card showed a problem file's issues
+  with Import disabled, then imported a valid file and showed every customer
+  matching.
+
 ---
 
 ## Phase 5 — Gate: staging and parallel run
@@ -798,7 +848,7 @@ Not requirements — nothing is built for these; decide at the end.
 - [x] **1** Postgres foundation
 - [ ] **2** Data layer port — in progress
 - [x] **3** Query editor lockdown
-- [ ] **4** SQLite importer
+- [ ] **4** SQLite importer — built; a colleague's file and a v4-era file still to run
 - [ ] **5** Gate: staging + parallel run
 - [ ] **6** Online
 - [ ] **7** Release 6.0.0
