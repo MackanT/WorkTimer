@@ -1,10 +1,15 @@
-"""Tests for DB backup: Database.backup_to + add_data._prune_backups."""
+"""Tests for DB backup: Database.backup_to + services.backups."""
 
 import os
 import sqlite3
 
 from src.database import Database
-from src.pages.settings import _prune_backups
+from src.services.backups import (
+    backups_dir,
+    create_backup,
+    list_backups,
+    prune_backups,
+)
 
 
 def test_backup_to_produces_a_consistent_readable_copy(tmp_path, null_logger):
@@ -46,7 +51,7 @@ def test_prune_backups_keeps_only_newest(tmp_path):
     # An unrelated file must be left untouched.
     (tmp_path / "keep_me.txt").write_text("hi")
 
-    _prune_backups(tmp_path, keep=2)
+    prune_backups(tmp_path, keep=2)
 
     remaining = sorted(p.name for p in tmp_path.glob("worktimer_*.db"))
     assert remaining == [
@@ -54,3 +59,54 @@ def test_prune_backups_keeps_only_newest(tmp_path):
         "worktimer_2026-01-05_000000.db",
     ]
     assert (tmp_path / "keep_me.txt").exists()
+
+
+# ── one folder for every entry point (regression, 5.1.2) ────────────────────
+# Settings saved one level above the database — under Docker that is the
+# container's own filesystem, so every rebuild deleted those backups — while
+# the command palette saved next to it.
+
+
+def test_backups_live_next_to_the_database(tmp_path):
+    db_file = tmp_path / "data" / "worktimer.db"
+    assert backups_dir(str(db_file)) == (tmp_path / "data" / "backups").resolve()
+
+
+def test_create_backup_writes_into_the_data_folder_and_keeps_ten(tmp_path, null_logger):
+    data = tmp_path / "data"
+    data.mkdir()
+    db_file = str(data / "worktimer.db")
+    db = Database(db_file, null_logger)
+    db.initialize_db()
+    folder = data / "backups"
+    folder.mkdir()
+    for i in range(12):
+        f = folder / f"worktimer_2026-01-{i + 1:02d}_000000.db"
+        f.write_bytes(b"x")
+        os.utime(f, (1000 + i, 1000 + i))
+
+    dest = create_backup(db, db_file)
+    db.close()
+
+    assert dest.parent == folder.resolve()
+    assert dest.read_bytes()[:15] == b"SQLite format 3"
+    assert len(list(folder.glob("worktimer_*.db"))) == 10
+    assert list_backups(db_file)[0].name == dest.name
+    assert not (tmp_path / "backups").exists()
+
+
+def test_backups_from_the_old_folder_are_moved_in(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    db_file = str(data / "worktimer.db")
+    legacy = tmp_path / "backups"
+    legacy.mkdir()
+    (legacy / "worktimer_2026-08-01_120000.db").write_bytes(b"old")
+    (legacy / "unrelated.txt").write_text("hi")
+
+    names = [f.name for f in list_backups(db_file)]
+
+    assert names == ["worktimer_2026-08-01_120000.db"]
+    assert (data / "backups" / "worktimer_2026-08-01_120000.db").read_bytes() == b"old"
+    assert not (legacy / "worktimer_2026-08-01_120000.db").exists()
+    assert (legacy / "unrelated.txt").exists()

@@ -407,17 +407,21 @@ class Database:
 
     def _restore_settings_cleared_by_raises(self):
         """Startup migration: before 5.1.2 a raise created the customer's new
-        version without its tracker_project, colour and expected work %.
-        Restore each from the most recent older version that still has it.
+        version without its tracker_project, colour, expected work % and
+        Time Tracker position. Restore each from the most recent older version
+        that still has it.
 
         Safe to run every start: editing a customer (update_customer) writes
         these settings to *every* version, so "latest version empty, an older
         version set" only arises from that bug — a deliberate clear clears
-        them all and is left alone."""
+        them all and is left alone. Save Order gives every current customer a
+        real position, so a current version still at the default 999 with an
+        older version placed can only come from a raise too."""
         columns = {
             "tracker_project": "coalesce({c}, '') != ''",
             "color": "coalesce({c}, '') != ''",
             "expected_work_pct": "{c} is not null",
+            "sort_order": "coalesce({c}, 999) != 999",
         }
         try:
             with self._conn_lock:
@@ -1021,10 +1025,11 @@ class Database:
         # not the wage, so the new version must not reset them — a cleared
         # tracker_project silently switches the tracker to the organisation's
         # first project.
+        sort_order = 999  # new customers go last until the order is saved
         if old_customer_id:
             prev = self.fetch_query(
-                "select tracker_project, expected_work_pct, color, integration_type "
-                "from customers where customer_id = ?",
+                "select tracker_project, expected_work_pct, color, integration_type, "
+                "sort_order from customers where customer_id = ?",
                 (old_customer_id,),
             )
             if not prev.empty:
@@ -1034,6 +1039,8 @@ class Database:
                     expected_work_pct = float(prev["expected_work_pct"])
                 color = color or prev["color"]
                 integration_type = integration_type or prev["integration_type"]
+                if pd.notna(prev["sort_order"]):
+                    sort_order = int(prev["sort_order"])
 
         if old_customer_id:
             self.execute_query(
@@ -1053,8 +1060,8 @@ class Database:
         # Insert new customer row
         self.execute_query(
             """
-            insert into customers (customer_name, start_date, wage, tracker_project, expected_work_pct, color, integration_type, tracker_id, valid_from, valid_to, is_current, inserted_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            insert into customers (customer_name, start_date, wage, tracker_project, expected_work_pct, color, integration_type, tracker_id, valid_from, valid_to, is_current, inserted_at, sort_order)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
         """,
             (
                 customer_name,
@@ -1068,6 +1075,7 @@ class Database:
                 valid_from,
                 None,
                 now_str,
+                sort_order,
             ),
         )
         self.log_engine.info(f"Inserted new customer '{customer_name}'")
@@ -2049,6 +2057,22 @@ class Database:
         except Exception as e:
             self.log_engine.error(f"Error saving sort order: {e}")
             return False
+
+    def get_recent_project_hours(self, customer_id: int):
+        """Hours per project (project_id, h) for a customer over the last 60
+        days, running timers counted up to now (unordered). Selected by the
+        customer's projects, not time.customer_id: entries keep the customer
+        version they were logged under, so after a raise the current id alone
+        would only see the days since the raise."""
+        return self.fetch_query(
+            "select project_id, sum(coalesce(total_time, "
+            "(julianday('now', 'localtime') - julianday(start_time)) * 24)) as h "
+            "from time where project_id in "
+            "(select project_id from projects where customer_id = ?) "
+            "and date(start_time) >= date('now', '-60 days') "
+            "group by project_id",
+            (customer_id,),
+        )
 
     def get_expected_schema(self):
         """

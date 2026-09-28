@@ -4,6 +4,7 @@ __pycache__/
 _Old/*
 *.egg-info/
 
+.venv/
 .env
 
 copilot-instructions.md

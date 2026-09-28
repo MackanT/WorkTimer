@@ -119,3 +119,57 @@ def test_startup_repair_leaves_settings_cleared_on_purpose(db):
     assert not after["color"]
     assert after["tracker_project"] is None
     assert after["expected_work_pct"] == 40
+
+
+# ── Time Tracker position ───────────────────────────────────────────────────
+
+
+def _tracker_order(db) -> list[str]:
+    df = db.get_customer_ui_list("20260101", "20261231")
+    return list(dict.fromkeys(df["customer_name"]))
+
+
+def _acme_first_of_two(db):
+    _acme_on_jira(db)
+    db.insert_customer("Beta", "2026-01-01", 900)
+    for name in ("Acme", "Beta"):
+        db.insert_project(name, "Work")
+    ids = db.fetch_query(
+        "select customer_id, customer_name from customers where is_current = 1 "
+        "order by customer_name"
+    ).itertuples(index=False)
+    db.save_sort_order([tuple(r) for r in ids], {})
+    assert _tracker_order(db) == ["Acme", "Beta"]
+
+
+def test_raise_keeps_the_customers_time_tracker_position(db):
+    """Before the fix the new version got the default sort_order 999, so a
+    raised customer jumped to the end of the Time Tracker."""
+    _acme_first_of_two(db)
+
+    _raise_via_add_form(db)
+
+    assert _tracker_order(db) == ["Acme", "Beta"]
+
+
+def test_new_customers_still_go_last(db):
+    _acme_first_of_two(db)
+
+    db.insert_customer("Aardvark", "2026-01-01", 500)
+    db.insert_project("Aardvark", "Work")
+
+    assert _tracker_order(db) == ["Acme", "Beta", "Aardvark"]
+
+
+def test_startup_restores_a_position_lost_to_an_earlier_raise(db):
+    _acme_first_of_two(db)
+    _raise_via_add_form(db)
+    db.execute_query(
+        "update customers set sort_order = 999 "
+        "where customer_name = 'Acme' and valid_to is null"
+    )
+    assert _tracker_order(db) == ["Beta", "Acme"]  # the pre-fix state
+
+    db.initialize_db()
+
+    assert _tracker_order(db) == ["Acme", "Beta"]
