@@ -1,6 +1,6 @@
 # v6 implementation path
 
-**Status:** r2 · 2026-09-28 — Phase 1 done; Phase 2 in progress (data layer ported, not wired in); the Phase 0.4 manual click-through is still pending.
+**Status:** r2 · 2026-09-28 — Phase 1 done; Phase 2 in progress (data layer ported and wired in behind `DATABASE_URL`); the Phase 0.4 manual click-through is still pending.
 **Branch:** `feat/postgres-migration` (long-lived; one 6.0.0 release at the end).
 **Design:** [v6_plan.md](v6_plan.md) covers *what* gets built and why. This file
 is the *order* it gets built in, with a definition of done per step.
@@ -540,8 +540,8 @@ Steps:
 **Done when:** the full suite passes on Postgres; the characterisation diffs are
 exactly the two approved ones; the app runs end to end under compose.
 
-**Status: in progress** — the data layer is ported and passes the oracle; the
-app still runs on SQLite (wiring it in is the next step).
+**Status: in progress** — the data layer is ported, passes the oracle and is
+wired in (Postgres when `DATABASE_URL` is set); steps 5, 7, 8 and 9 remain.
 
 - **Decided (2026-09-28):** customer dropdowns follow the Time Tracker order;
   per-work-item rounding pools all untagged time; per-project rounding groups
@@ -587,14 +587,32 @@ app still runs on SQLite (wiring it in is the next step).
 - **Mutation-checked:** wage by the latest period instead of the entry's date,
   and reports counting deleted entries, each fail a test. Skipping the Python
   rounding does not: the `numeric(12,2)` columns round identically.
+- **Wired in — Postgres only when configured** (decided 2026-09-28):
+  `QueryEngine` opens `PgDatabase` when `DATABASE_URL` is set and SQLite
+  otherwise, so a 5.x setup built from this branch keeps working on its own
+  data until the importer (Phase 4). On Postgres the SQLite path's folder
+  still holds the PAT key and backups. The startup banner names the database
+  (never the password).
+  - **Compose profile `postgres`**: `docker compose --profile postgres up -d
+    --build` adds a one-shot `migrate` service and `worktimer-pg` on port
+    8090 (own `data-pg/`); a plain `docker compose up -d` is unchanged.
+  - **`python -m src.migrator` sets a database up from nothing**, as the admin
+    (`DATABASE_URL_ADMIN`): creates it if missing, migrates, and gives the app
+    roles their logins from `WORKTIMER_APP_PASSWORD` /
+    `WORKTIMER_READONLY_PASSWORD`.
+  - The query editor's user SQL (Phase 3) and backups (step 8) raise a clear
+    "not available on Postgres yet" message instead of failing.
+  - [tests/test_smoke_pages_pg.py](../tests/test_smoke_pages_pg.py): every
+    page renders on Postgres with no error logged, from the same seed data as
+    the SQLite smoke test ([tests/_smoke.py](../tests/_smoke.py)).
+  - Verified under compose (2026-09-28): the profile came up from an empty
+    server, and a browser run on 8090 created a customer and project, ran and
+    stopped a timer, added a manual entry, a task, and read them back on the
+    Time Tracker and Reports — entries stored in UTC for user 1, dated by the
+    local day, cost from the exact duration.
+  - The login fixture restores the roles' logins after a test session, so the
+    suite no longer locks out a local compose instance sharing the server.
 - **Open:**
-  - Wire `PgDatabase` into the app — **decided (2026-09-28): Postgres only
-    when configured.** `AppCore` uses `PgDatabase` when `DATABASE_URL` is set
-    and SQLite otherwise, so a 5.x setup built from this branch keeps working
-    on its own data until the importer (Phase 4); a separate compose profile
-    runs the app on Postgres, with the migrator as the admin and logins
-    provisioned for the app roles. That profile is the "runs end to end under
-    compose" criterion.
   - Step 5's totals per currency; step 7's "has N time entries — disable
     instead" (the database already refuses); step 8 `pg_dump`; step 9.
   - The Jira incremental sync's watermark is UTC now (SQLite kept Jira's own
@@ -679,6 +697,26 @@ has been fixed in the billing path since the last one.
 - Colleague onboarding: each imports their own 5.x database through
   Settings → Import on the hosted instance.
 - Merge to `main`.
+
+---
+
+## Maybe, after 6.0.0
+
+Not requirements — nothing is built for these; decide at the end.
+
+- **Self-hosting on SQLite (single-user).** For installs that can't run
+  Docker. This means the *v6* model on SQLite, not today's 5.x code (which
+  keeps 5.x's billing rules): a SQLite version of the schema
+  (`timestamptz` → UTC text, the no-overlap rules as triggers, `dates` as a
+  recursive CTE, no roles or RLS), the data layer made dialect-neutral
+  (local-time formatting in Python instead of `at time zone`; the few
+  Postgres-only constructs rewritten) and a SQLite connection layer pinned to
+  user 1. The `backends` test marker then runs the whole oracle on it.
+  Estimated 1–1.5 weeks (2026-09-28), plus every later schema change written
+  as two migrations. Hand-written portable SQL, not a runtime dialect
+  translator (SQLGlot, SQLAlchemy): the gaps are features SQLite lacks —
+  time zones, arrays, exclusion constraints, RLS — not syntax. Multi-user stays
+  Postgres-only.
 
 ---
 

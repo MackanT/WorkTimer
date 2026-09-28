@@ -1357,3 +1357,19 @@ class PgDatabase:
             where own.key_project = %s
             order by sibling.key_project
             """, (project_id,))
+
+    # ── not on Postgres yet ─────────────────────────────────────────────────
+    # Clear errors instead of an AttributeError; the pages show the message.
+
+    def run_user_query(self, query: str):
+        raise NotImplementedError(
+            "The query editor isn't available on Postgres yet — it moves to a "
+            "read-only role in v6 Phase 3")
+
+    def check_user_query(self, query: str) -> None:
+        self.run_user_query(query)
+
+    def backup_to(self, dest_path: str) -> str:
+        raise NotImplementedError(
+            "Backups of the Postgres database aren't available yet (pg_dump, "
+            "v6 Phase 2 step 8)")

@@ -19,7 +19,10 @@ INDEX CONCURRENTLY and the like) aren't supported.
 
 Command line:  python -m src.migrator   (connects to $DATABASE_URL_ADMIN — the
 server's admin role: 0001 provisions the roles; the app's own DATABASE_URL
-connects as worktimer_app and can't migrate)
+connects as worktimer_app and can't migrate). The command sets a database up
+from nothing: it creates the database if it is missing, migrates it, and gives
+worktimer_app / worktimer_readonly a login when WORKTIMER_APP_PASSWORD /
+WORKTIMER_READONLY_PASSWORD are set — compose's one-shot "migrate" service.
 """
 
 import hashlib
@@ -30,6 +33,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import psycopg
+from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
@@ -136,6 +141,39 @@ def migrate(conninfo: str, directory: Path = MIGRATIONS_DIR) -> list[str]:
     return applied
 
 
+# The app's roles and the variables their passwords come from.
+LOGIN_PASSWORDS = {
+    "worktimer_app": "WORKTIMER_APP_PASSWORD",
+    "worktimer_readonly": "WORKTIMER_READONLY_PASSWORD",
+}
+
+
+def ensure_database(conninfo: str) -> bool:
+    """Create the database `conninfo` names if it doesn't exist (connecting to
+    the server's maintenance database as the same role); True if created."""
+    name = conninfo_to_dict(conninfo).get("dbname")
+    if not name:
+        raise MigrationError("the connection string names no database")
+    with psycopg.connect(make_conninfo(conninfo, dbname="postgres"), autocommit=True) as conn:
+        if conn.execute("select 1 from pg_database where datname = %s", (name,)).fetchone():
+            return False
+        conn.execute(sql.SQL("create database {}").format(sql.Identifier(name)))
+    return True
+
+
+def provision_logins(conninfo: str, passwords: dict[str, str]) -> list[str]:
+    """Give the app's roles a login with these passwords (role → password);
+    return the roles changed. Only the roles in LOGIN_PASSWORDS."""
+    unknown = set(passwords) - set(LOGIN_PASSWORDS)
+    if unknown:
+        raise MigrationError(f"not an app role: {sorted(unknown)}")
+    with psycopg.connect(conninfo, autocommit=True) as conn:
+        for role, password in passwords.items():
+            conn.execute(sql.SQL("alter role {} login password {}").format(
+                sql.Identifier(role), sql.Literal(password)))
+    return sorted(passwords)
+
+
 def main() -> int:
     conninfo = os.environ.get("DATABASE_URL_ADMIN")
     if not conninfo:
@@ -143,11 +181,17 @@ def main() -> int:
               file=sys.stderr)
         return 2
     try:
+        if ensure_database(conninfo):
+            print(f"created database {conninfo_to_dict(conninfo)['dbname']}")
         applied = migrate(conninfo)
-    except MigrationError as e:
+        logins = provision_logins(conninfo, {
+            role: os.environ[var] for role, var in LOGIN_PASSWORDS.items() if os.environ.get(var)})
+    except (MigrationError, psycopg.Error) as e:
         print(f"Migration stopped: {e}", file=sys.stderr)
         return 1
     print("\n".join(f"applied {name}" for name in applied) or "database is up to date")
+    if logins:
+        print(f"logins set for {', '.join(logins)}")
     return 0
 
 

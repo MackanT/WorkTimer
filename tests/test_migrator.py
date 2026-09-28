@@ -4,10 +4,11 @@ Discovery rules run offline; everything that touches the database runs on a
 throwaway Postgres database (skipped when the dev server isn't running)."""
 
 import threading
+import uuid
 
 import pytest
 
-from src.migrator import Migration, MigrationError, discover, migrate
+from src.migrator import Migration, MigrationError, discover, main, migrate, provision_logins
 
 psycopg = pytest.importorskip("psycopg")
 
@@ -160,3 +161,53 @@ def test_concurrent_runs_apply_each_migration_once(pg_db, tmp_path):
     assert not errors
     assert sorted(name for r in results for name in r) == [f"{n:04d}_t{n}.sql" for n in range(1, 6)]
     assert _history(pg_db) == [1, 2, 3, 4, 5]
+
+
+# ── setting a database up from nothing (compose's "migrate" service) ───────
+
+
+def test_setup_needs_the_admin_url(monkeypatch, capsys):
+    monkeypatch.delenv("DATABASE_URL_ADMIN", raising=False)
+
+    assert main() == 2
+    assert "DATABASE_URL_ADMIN" in capsys.readouterr().err
+
+
+def test_only_the_app_roles_get_logins():
+    with pytest.raises(MigrationError, match="not an app role"):
+        provision_logins("dbname=never-connected", {"postgres": "x"})
+
+
+@pytest.fixture
+def new_database(pg_server):
+    """Conninfo naming a database that doesn't exist yet; dropped afterwards."""
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    name = f"wt_test_setup_{uuid.uuid4().hex[:8]}"
+    yield make_conninfo(pg_server, dbname=name)
+    with psycopg.connect(pg_server, autocommit=True) as admin:
+        admin.execute(sql.SQL("drop database if exists {} with (force)").format(sql.Identifier(name)))
+
+
+@pytest.mark.postgres
+def test_setup_creates_migrates_and_gives_the_app_its_login(new_database, pg_logins,
+                                                           monkeypatch, capsys):
+    from psycopg.conninfo import make_conninfo
+
+    monkeypatch.setenv("DATABASE_URL_ADMIN", new_database)
+    monkeypatch.setenv("WORKTIMER_APP_PASSWORD", pg_logins["worktimer_app"])
+    monkeypatch.setenv("WORKTIMER_READONLY_PASSWORD", pg_logins["worktimer_readonly"])
+
+    assert main() == 0
+    out = capsys.readouterr().out
+    assert "created database" in out and "applied 0001_schema_v1.sql" in out
+    assert "logins set for worktimer_app, worktimer_readonly" in out
+
+    app = make_conninfo(new_database, user="worktimer_app", password=pg_logins["worktimer_app"])
+    with psycopg.connect(app) as conn:
+        assert conn.execute("select current_user, count(*) from customers").fetchone() == (
+            "worktimer_app", 0)
+
+    assert main() == 0  # rerunnable: nothing to create or apply
+    assert "database is up to date" in capsys.readouterr().out

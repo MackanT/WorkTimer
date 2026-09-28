@@ -148,7 +148,8 @@ def pg_schema_template(pg_server) -> str:
 def pg_logins(pg_server, pg_schema_template) -> dict:
     """Passwords to log in as worktimer_app and worktimer_readonly, random per
     session. Migration 0001 creates the roles NOLOGIN (passwords are deployment
-    configuration), so they get a login for the session and lose it afterwards."""
+    configuration). Roles are server-wide, so a local compose instance may be
+    using them: each gets back exactly its login and password (hash) afterwards."""
     import secrets
 
     import psycopg
@@ -156,18 +157,21 @@ def pg_logins(pg_server, pg_schema_template) -> dict:
 
     passwords = {r: secrets.token_urlsafe(24) for r in ("worktimer_app", "worktimer_readonly")}
     with psycopg.connect(pg_server, autocommit=True) as admin:
+        before = {r: admin.execute("select rolcanlogin, rolpassword from pg_authid "
+                                   "where rolname = %s", (r,)).fetchone() for r in passwords}
         for role, password in passwords.items():
             admin.execute(sql.SQL("alter role {} login password {}").format(
                 sql.Identifier(role), sql.Literal(password)))
     yield passwords
     with psycopg.connect(pg_server, autocommit=True) as admin:
-        for role in passwords:
-            admin.execute(sql.SQL("alter role {} nologin password null").format(sql.Identifier(role)))
+        for role, (could_login, password_hash) in before.items():
+            admin.execute(sql.SQL("alter role {} {} password {}").format(
+                sql.Identifier(role), sql.SQL("login" if could_login else "nologin"),
+                sql.Literal(password_hash)))
 
 
-@pytest.fixture
-def pg_schema_db(pg_server, pg_schema_template) -> str:
-    """Conninfo for a fresh database with the full v6 schema; dropped afterwards."""
+def _clone_schema_db(pg_server, template):
+    """A new database cloned from the migrated template: (conninfo, drop)."""
     import time
 
     import psycopg
@@ -176,7 +180,7 @@ def pg_schema_db(pg_server, pg_schema_template) -> str:
 
     name = f"{PG_TEST_PREFIX}{uuid.uuid4().hex[:12]}"
     create = sql.SQL("create database {} template {}").format(
-        sql.Identifier(name), sql.Identifier(pg_schema_template))
+        sql.Identifier(name), sql.Identifier(template))
     with psycopg.connect(pg_server, autocommit=True) as admin:
         for attempt in range(50):
             try:
@@ -186,6 +190,25 @@ def pg_schema_db(pg_server, pg_schema_template) -> str:
                 if attempt == 49:
                     raise
                 time.sleep(0.1)
-    yield make_conninfo(pg_server, dbname=name)
-    with psycopg.connect(pg_server, autocommit=True) as admin:
-        _drop_database(admin, name)
+
+    def drop():
+        with psycopg.connect(pg_server, autocommit=True) as admin:
+            _drop_database(admin, name)
+
+    return make_conninfo(pg_server, dbname=name), drop
+
+
+@pytest.fixture
+def pg_schema_db(pg_server, pg_schema_template) -> str:
+    """Conninfo for a fresh database with the full v6 schema; dropped afterwards."""
+    conninfo, drop = _clone_schema_db(pg_server, pg_schema_template)
+    yield conninfo
+    drop()
+
+
+@pytest.fixture(scope="module")
+def pg_schema_db_module(pg_server, pg_schema_template) -> str:
+    """The same, shared by one test module."""
+    conninfo, drop = _clone_schema_db(pg_server, pg_schema_template)
+    yield conninfo
+    drop()

@@ -43,6 +43,19 @@ class PgConfig:
         return cls(url, os.getenv("DATABASE_URL_READONLY") or None)
 
 
+def describe_database(sqlite_path: str) -> str:
+    """Which database the app runs on, for the startup banner — never the
+    password."""
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        return f"SQLite {sqlite_path}"
+    from psycopg.conninfo import conninfo_to_dict
+
+    info = conninfo_to_dict(url)
+    return (f"Postgres {info.get('user', '?')}@{info.get('host', 'localhost')}:"
+            f"{info.get('port', 5432)}/{info.get('dbname', '?')}")
+
+
 def _user_setting(user_key) -> str:
     """The value for app.user_id. Anything but a positive int is refused here,
     before a connection is taken: a wrong key must never become a query."""

@@ -415,8 +415,11 @@ class ConfigLoader:
             db_path=db_path,
             debug_mode=os.getenv("DEBUG_MODE", "false").lower() == "true",
         )
+        from .pg_connection import describe_database
+
         print(
-            f"  DB: {self.configs['settings'].db_path}, Debug: {self.configs['settings'].debug_mode}"
+            f"  DB: {describe_database(self.configs['settings'].db_path)}, "
+            f"Debug: {self.configs['settings'].debug_mode}"
         )
 
     def _load_ui_config(self) -> None:

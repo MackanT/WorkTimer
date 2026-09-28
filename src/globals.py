@@ -11,6 +11,7 @@ from .database import Database
 from dataclasses import dataclass
 import asyncio
 import logging
+import os
 import datetime
 from . import clock
 import pandas as pd
@@ -46,14 +47,29 @@ class SaveData:
     button_name: str = "Save"
 
 
+def _open_database(file_name: str, log_engine: logging.Logger):
+    """Postgres when DATABASE_URL is set (v6), otherwise the SQLite file — so
+    an install that hasn't moved keeps working on its own data. On Postgres,
+    file_name's folder still holds the PAT key and the backups."""
+    if os.getenv("DATABASE_URL"):
+        from .pg_connection import PgConfig, Pools
+        from .pg_database import PgDatabase
+
+        db = PgDatabase(Pools(PgConfig.from_env()), log_engine,
+                        secrets_dir=os.path.dirname(os.path.abspath(file_name)))
+    else:
+        db = Database(file_name, log_engine)
+    db.initialize_db()
+    return db
+
+
 class QueryEngine:
     def __init__(self, file_name: str, log_engine: logging.Logger):
         self.file_name = file_name
-        if file_name not in _shared_databases:
-            db = Database(file_name, log_engine)
-            db.initialize_db()
-            _shared_databases[file_name] = db
-        self.db = _shared_databases[file_name]
+        key = os.getenv("DATABASE_URL") or file_name
+        if key not in _shared_databases:
+            _shared_databases[key] = _open_database(file_name, log_engine)
+        self.db = _shared_databases[key]
         self.df = None
         self.log = log_engine
 

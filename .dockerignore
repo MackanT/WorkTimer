@@ -7,6 +7,7 @@ _Old/
 # Local state and secrets — the image must never carry them. data/ holds the
 # database, the PAT key and the storage secret; it is mounted at runtime.
 data/
+data-pg/
 backups/
 *.db
 .env

@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 # Import only what we need for startup
 from src.core import get_config_loader
+from src.pg_connection import describe_database
 from src.pages import root_page  # noqa: F401 — importing registers all @ui.page routes
 
 
@@ -34,7 +35,7 @@ def initialize_app():
     print("=" * 60)
     print("WorkTimer V5")
     print("=" * 60)
-    print(f"Database: {configs['settings'].db_path}")
+    print(f"Database: {describe_database(configs['settings'].db_path)}")
     print(f"Debug mode: {configs['settings'].debug_mode}")
     print("Multi-client support: Enabled (with storage_secret)")
     print("Thread safety: Enabled via ui.context")

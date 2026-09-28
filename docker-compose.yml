@@ -16,8 +16,9 @@ services:
       - ./data:/app/data
     restart: unless-stopped
 
-  # v6 database. Not used by the app yet — it moves over in the Postgres port.
-  # Start just this service for development: `docker compose up -d postgres`.
+  # v6 database. The app above still runs on SQLite; the "postgres" profile
+  # below runs a second instance on it. Start just the database (development,
+  # tests): `docker compose up -d postgres`.
   postgres:
     image: postgres:18
     ports:
@@ -36,6 +37,48 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  # ── v6 on Postgres (in development) — opt-in, alongside the app above ─────
+  # `docker compose --profile postgres up -d --build` adds a second WorkTimer
+  # on http://localhost:8090, running on Postgres with an empty database (5.x
+  # data arrives with the importer). A plain `docker compose up -d` leaves both
+  # services out.
+
+  # One-shot setup, as the admin role: creates the database if missing,
+  # applies migrations and gives the app's roles their logins.
+  migrate:
+    build: .
+    image: worktimer-app:latest
+    profiles: ["postgres"]
+    entrypoint: ["uv", "run", "-m", "src.migrator"]
+    environment:
+      - DATABASE_URL_ADMIN=postgresql://postgres:${POSTGRES_PASSWORD:-worktimer-dev}@postgres:5432/worktimer
+      - WORKTIMER_APP_PASSWORD=${WORKTIMER_APP_PASSWORD:-worktimer-app-dev}
+      - WORKTIMER_READONLY_PASSWORD=${WORKTIMER_READONLY_PASSWORD:-worktimer-readonly-dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  worktimer-pg:
+    build: .
+    image: worktimer-app:latest
+    profiles: ["postgres"]
+    ports:
+      - "${HOST:-127.0.0.1}:${PG_APP_PORT:-8090}:8080"
+    environment:
+      # Setting DATABASE_URL is what switches the app to Postgres.
+      - DATABASE_URL=postgresql://worktimer_app:${WORKTIMER_APP_PASSWORD:-worktimer-app-dev}@postgres:5432/worktimer
+      - DATABASE_URL_READONLY=postgresql://worktimer_readonly:${WORKTIMER_READONLY_PASSWORD:-worktimer-readonly-dev}@postgres:5432/worktimer
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+    volumes:
+      # Its own folder for the PAT key, notes and backups — never the SQLite
+      # install's data/.
+      - ./data-pg:/app/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
