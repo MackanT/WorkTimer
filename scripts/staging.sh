@@ -7,7 +7,9 @@
 #                       migrate, worktimer-pg and the backup service
 #   staging.sh import   import data-pg/import/worktimer.db (a 5.x snapshot,
 #                       put there by scripts/push_to_staging.py) over the
-#                       account, compare the numbers, save the report
+#                       account, compare the numbers, save the report; with
+#                       data-pg/import/pat_key.v5 beside it (--with-tokens),
+#                       the tracker tokens come along
 #   staging.sh gate     the last two reports: the gate passes when both
 #                       matched, on the same code
 #   staging.sh status   containers and the latest reports
@@ -24,7 +26,12 @@ case "${1:-}" in
         ;;
     import)
         file=data-pg/import/worktimer.db
+        key=data-pg/import/pat_key.v5
+        # the data is in Postgres afterwards; no second copy (or 5.x key) lying around
+        trap 'rm -f "$file" "$key"' EXIT
         [ -f "$file" ] || { echo "no $file — push a 5.x snapshot first" >&2; exit 2; }
+        tokens=()
+        [ -f "$key" ] && tokens=(--pat-key /app/data/import/pat_key.v5)
         mkdir -p "$reports"
         report="$reports/import_$(date +%Y-%m-%d_%H%M%S).txt"
         {
@@ -33,10 +40,13 @@ case "${1:-}" in
         } > "$report"
         set +e
         "${compose[@]}" exec -T worktimer-pg uv run -m src.importer \
-            /app/data/import/worktimer.db --replace --check-reports 2>&1 | tee -a "$report"
+            /app/data/import/worktimer.db --replace --check-reports "${tokens[@]}" 2>&1 | tee -a "$report"
         status=${PIPESTATUS[0]}
         set -e
-        rm -f "$file"  # the data is in Postgres now; no second copy lying around
+        # 0 and 3 wrote data: restart so the app reloads it (trackers connect)
+        if [ "$status" -eq 0 ] || [ "$status" -eq 3 ]; then
+            "${compose[@]}" restart worktimer-pg >/dev/null
+        fi
         echo "report: $report"
         exit "$status"
         ;;

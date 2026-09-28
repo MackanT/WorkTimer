@@ -14,8 +14,11 @@ month — on the same code** ([v6_implementation.md](v6_implementation.md), Phas
   comes with Phase 6. Your `~/.ssh/config` already forwards
   `localhost:18080` → the server's `127.0.0.1:8080`, so staging uses port 8080
   there: **http://localhost:18080** while `ssh worktimer` is open.
-- **No tracker tokens, on purpose.** The weekly import leaves them out, so
-  staging never talks to DevOps or Jira alongside 5.x.
+- **Tracker tokens: opt-in.** A plain weekly import leaves them out (no Board,
+  no sync). `--with-tokens` brings them along, re-encrypted with staging's own
+  key (`data-pg/.pat_key`). Staging then syncs with DevOps and Jira alongside
+  5.x — reading is harmless, but a card moved or an item edited on staging
+  changes the real one.
 - **Backups:** the `backup` service dumps the whole database daily into
   `/opt/worktimer/backups-pg` (newest 14) — `scripts/pg_backup.sh`.
 
@@ -56,13 +59,14 @@ port 22 only (the server listens on nothing else anyway).
 On your PC, from the WorkTimer checkout, with 5.x running as usual:
 
 ```powershell
-uv run python scripts/push_to_staging.py
+uv run python scripts/push_to_staging.py --with-tokens   # or without, for no tokens
 ```
 
 It takes a consistent snapshot of `data/worktimer.db` (SQLite's backup API —
-safe while 5.x runs), copies it to the server, and runs
-`scripts/staging.sh import` there: the importer replaces staging's data with
-the snapshot and prints
+safe while 5.x runs), copies it (and with `--with-tokens`, 5.x's
+`data/.pat_key`) to the server, and runs `scripts/staging.sh import` there:
+the importer replaces staging's data with the snapshot, deletes the copies,
+restarts the app (reload the browser) and prints
 
 - per customer: entries, hours and cost, 5.x and v6 side by side;
 - per month (`--check-reports`): the Reports page's hours, cost, entries and
