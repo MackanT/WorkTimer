@@ -98,3 +98,70 @@ def pg_db(pg_server) -> str:
     yield make_conninfo(pg_server, dbname=name)
     with psycopg.connect(pg_server, autocommit=True) as admin:
         _drop_database(admin, name)
+
+
+@pytest.fixture(scope="session")
+def pg_schema_template(pg_server) -> str:
+    """Name of a database with every migration applied, once per session —
+    the template each `pg_schema_db` is cloned from (much faster than
+    migrating every time)."""
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    from src.migrator import migrate
+
+    name = f"{PG_TEST_PREFIX}template_{uuid.uuid4().hex[:8]}"
+    with psycopg.connect(pg_server, autocommit=True) as admin:
+        admin.execute(sql.SQL("create database {}").format(sql.Identifier(name)))
+    migrate(make_conninfo(pg_server, dbname=name))
+    yield name
+    with psycopg.connect(pg_server, autocommit=True) as admin:
+        _drop_database(admin, name)
+
+
+@pytest.fixture(scope="session")
+def pg_logins(pg_server, pg_schema_template) -> dict:
+    """Passwords to log in as worktimer_app and worktimer_readonly, random per
+    session. Migration 0001 creates the roles NOLOGIN (passwords are deployment
+    configuration), so they get a login for the session and lose it afterwards."""
+    import secrets
+
+    import psycopg
+    from psycopg import sql
+
+    passwords = {r: secrets.token_urlsafe(24) for r in ("worktimer_app", "worktimer_readonly")}
+    with psycopg.connect(pg_server, autocommit=True) as admin:
+        for role, password in passwords.items():
+            admin.execute(sql.SQL("alter role {} login password {}").format(
+                sql.Identifier(role), sql.Literal(password)))
+    yield passwords
+    with psycopg.connect(pg_server, autocommit=True) as admin:
+        for role in passwords:
+            admin.execute(sql.SQL("alter role {} nologin password null").format(sql.Identifier(role)))
+
+
+@pytest.fixture
+def pg_schema_db(pg_server, pg_schema_template) -> str:
+    """Conninfo for a fresh database with the full v6 schema; dropped afterwards."""
+    import time
+
+    import psycopg
+    from psycopg import errors, sql
+    from psycopg.conninfo import make_conninfo
+
+    name = f"{PG_TEST_PREFIX}{uuid.uuid4().hex[:12]}"
+    create = sql.SQL("create database {} template {}").format(
+        sql.Identifier(name), sql.Identifier(pg_schema_template))
+    with psycopg.connect(pg_server, autocommit=True) as admin:
+        for attempt in range(50):
+            try:
+                admin.execute(create)
+                break
+            except errors.ObjectInUse:  # the template's last session is still closing
+                if attempt == 49:
+                    raise
+                time.sleep(0.1)
+    yield make_conninfo(pg_server, dbname=name)
+    with psycopg.connect(pg_server, autocommit=True) as admin:
+        _drop_database(admin, name)

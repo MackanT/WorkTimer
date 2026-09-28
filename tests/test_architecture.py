@@ -159,3 +159,26 @@ def test_calendar_time_is_read_through_src_clock():
         "function to TECHNICAL_CLOCK_READS with a reason):\n" + "\n".join(offenders))
     stale = set(TECHNICAL_CLOCK_READS) - seen
     assert not stale, f"allowlist entries with no clock read left: {sorted(stale)}"
+
+
+# ── one place sets the transaction's user (v6 phase 1.4) ────────────────────
+#
+# Row-level security compares every user-data row with app.user_id. Setting it
+# anywhere but the connection layer is a tenancy decision made at a call site —
+# and a SET LOCAL outside a transaction silently does nothing.
+
+CONNECTION_LAYER = SRC / "pg_connection.py"
+_USER_SETTING = re.compile(r"app\.user_id|\bset\s+local\b|\bset_config\s*\(", re.IGNORECASE)
+
+
+def test_only_the_connection_layer_sets_the_transactions_user():
+    offenders, setters = [], []
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for lineno, text in _string_literals(tree):
+            if _USER_SETTING.search(text):
+                (setters if path == CONNECTION_LAYER else offenders).append(
+                    f"{path.relative_to(SRC.parent)}:{lineno}")
+    assert not offenders, (
+        "Set the transaction's user only through src/pg_connection.py:\n" + "\n".join(offenders))
+    assert setters, "the guard found no user setting in the connection layer itself"

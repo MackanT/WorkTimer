@@ -17,7 +17,9 @@ A session-level advisory lock serialises concurrent runs (two app instances
 starting at once). Statements that can't run inside a transaction (CREATE
 INDEX CONCURRENTLY and the like) aren't supported.
 
-Command line:  python -m src.migrator   (connects to $DATABASE_URL)
+Command line:  python -m src.migrator   (connects to $DATABASE_URL_ADMIN — the
+server's admin role: 0001 provisions the roles; the app's own DATABASE_URL
+connects as worktimer_app and can't migrate)
 """
 
 import hashlib
@@ -135,9 +137,10 @@ def migrate(conninfo: str, directory: Path = MIGRATIONS_DIR) -> list[str]:
 
 
 def main() -> int:
-    conninfo = os.environ.get("DATABASE_URL")
+    conninfo = os.environ.get("DATABASE_URL_ADMIN")
     if not conninfo:
-        print("Set DATABASE_URL to the database to migrate.", file=sys.stderr)
+        print("Set DATABASE_URL_ADMIN to the database to migrate, as its admin role.",
+              file=sys.stderr)
         return 2
     try:
         applied = migrate(conninfo)

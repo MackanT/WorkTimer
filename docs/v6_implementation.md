@@ -1,6 +1,6 @@
 # v6 implementation path
 
-**Status:** r2 · 2026-09-27 — decisions resolved; Phase 0 in progress.
+**Status:** r2 · 2026-09-28 — Phase 1 done; the Phase 0.4 manual click-through is still pending.
 **Branch:** `feat/postgres-migration` (long-lived; one 6.0.0 release at the end).
 **Design:** [v6_plan.md](v6_plan.md) covers *what* gets built and why. This file
 is the *order* it gets built in, with a definition of done per step.
@@ -324,7 +324,9 @@ the port).
 - `psycopg[binary]` and `psycopg-pool`.
 - **Migrations: numbered SQL files** (`migrations/NNNN_name.sql`) applied by a
   small runner, each file in its own transaction, recorded in a
-  `schema_migrations` table. Runs as `worktimer_owner`; applied on startup.
+  `schema_migrations` table; applied on startup. The runner connects as the
+  server's admin role — `0001` provisions the roles — and every schema object
+  is owned by `worktimer_owner` (1.3).
 
 **Status: done** (the runner exists; wiring it into app startup comes with
 the port, and there are no migrations yet — `0001` is 1.3).
@@ -333,7 +335,7 @@ the port, and there are no migrations yet — `0001` is 1.3).
   files in order, each in one transaction together with its
   `schema_migrations` row (version, name, sha256, `applied_at`); a failing
   file rolls back whole and nothing after it runs. Command line:
-  `DATABASE_URL=… python -m src.migrator`.
+  `DATABASE_URL_ADMIN=… python -m src.migrator`.
 - **Refuses rather than guesses** when a `.sql` file is misnamed, two files
   share a number, an applied file was edited (checksum) or deleted, or a new
   file is numbered below the newest applied one (two branches both took the
@@ -366,6 +368,56 @@ These are the most important tests in the project:
 - overlapping wage periods for one customer are rejected
 - deleting a customer or project with time entries is refused
 
+**Status: done** (nothing in the app uses the schema yet).
+
+- [migrations/0001_schema_v1.sql](../migrations/0001_schema_v1.sql): the §5
+  tables, `dates` (a `generate_series` view, 2000–2100, pure date arithmetic so
+  the session time zone can't shift a day) and `v_time_entries`
+  (`security_invoker`); RLS enabled **and forced** on `users` (own row) and all
+  nine user-data tables; user 1 (`local`).
+- **Roles:** created only if missing (roles are server-wide, shared by every
+  database on the server) and `NOLOGIN` — logins and passwords are deployment
+  configuration, set in 1.4, never in a checked-in file. So the runner needs a
+  role that can create roles (the compose `postgres` admin); the migration
+  switches to `worktimer_owner` for everything it creates. It **refuses** to
+  continue if `worktimer_app` or `worktimer_readonly` is a superuser or has
+  `BYPASSRLS`.
+- **Beyond §5, found or decided while building:**
+  - Foreign keys between user-data tables are **composite, `(fk_user, fk_…)`**.
+    FK checks bypass RLS, so a plain `fk_customer` would let user 1 attach a
+    project to user 2's customer just by knowing its key.
+  - The wage **exclusion constraint includes `fk_user`** — the "every unique
+    constraint includes `fk_user`" rule applies to exclusion constraints too.
+    Without it, user 1's insert collided with user 2's wage period before the
+    FK refused it, and the error named user 2's dates. A test caught this;
+    structural tests now check every unique/exclusion rule and every foreign
+    key between user-data tables.
+  - Wage and bonus periods treat `valid_to` as **inclusive** (the last day, as
+    in 5.x), so the ranges are `'[]'`.
+  - The currency lock (§4) is a trigger: changing a customer's currency is
+    refused once it has time entries (soft-deleted ones included).
+  - `trackers.pat_token` accepts only `enc:` ciphertext (or empty).
+  - The read-only role gets every tracker column **except** `pat_token`.
+  - `updated_at` / `updated_by` are set by a trigger; `created_by`, `updated_by`
+    and `fk_user` default to the transaction's user.
+  - Deletes refused by time entries raise `RestrictViolation` (23001) — the
+    code Phase 2 step 7 maps to "has N time entries — disable instead".
+- [tests/test_schema_v1.py](../tests/test_schema_v1.py): 34 tests, each on a
+  fresh copy of the migrated schema (`pg_schema_db`, cloned from a template
+  migrated once per session). Every check runs as the real role
+  (`SET LOCAL ROLE`) with `app.user_id` set the way the app will. Besides the
+  six above: rows can't reference another user's rows; nothing can be written
+  without a user; the read-only role can't read credentials; the app role
+  can't switch RLS off, disable or drop it; unique names per user; the
+  currency lock; `v_time_entries`; ISO weeks at New Year; the migration
+  applies to a second database on the same server.
+- **Mutation-checked:** without `FORCE` 2 tests fail; without `fk_user` in a
+  foreign key or in the wage exclusion, 1 and 2; without the bypass-RLS
+  refusal, 1; with `pat_token` granted to the read-only role, 1.
+- **Left for 1.4:** membership (`SET ROLE`) is checked against the session
+  user, so these tests assert "the app roles are members of nothing" from the
+  catalog; the connection layer's integration test logs in as the real role.
+
 ### 1.4 Connection layer
 
 A pool plus a single `transaction(user_key)` context manager:
@@ -375,6 +427,36 @@ A pool plus a single `transaction(user_key)` context manager:
 
 **Done when:** an integration test writes and reads through the pool with RLS
 on, and all security tests pass.
+
+**Status: done** (the app doesn't use it yet — Phase 2 builds the Postgres
+`Database` on it).
+
+- [src/pg_connection.py](../src/pg_connection.py): `Pools` (psycopg-pool,
+  thread-safe for the worker threads `function_db` runs in) and
+  `Pools.transaction(user_key, readonly=False)`. The user is set with
+  `set_config('app.user_id', …, true)` — `SET LOCAL` semantics, but it takes a
+  bind parameter. Nothing hands out a bare connection. A user key that isn't a
+  positive int is refused before a connection is taken. Pooled sessions run in
+  UTC. `LOCAL_USER = 1` for single-user mode.
+- **Config:** `DATABASE_URL` (worktimer_app) and `DATABASE_URL_READONLY`
+  (worktimer_readonly; required only for read-only transactions). The
+  migrator moved to **`DATABASE_URL_ADMIN`**: since `0001` it has to run as the
+  admin role, so it can't share the app's URL.
+- **Logins:** the roles stay `NOLOGIN` in the schema. Tests give them random
+  per-session passwords (`pg_logins`) and take the login away afterwards;
+  provisioning real logins is part of wiring compose in Phase 2.
+- [tests/test_pg_connection.py](../tests/test_pg_connection.py): 15 tests
+  logged in as the real roles — the integration test (write and read through
+  the pool, RLS on, two users), the setting ends with its transaction on the
+  same pooled session, errors roll back whole and the session recovers,
+  read-only writes nothing and can't read credentials, the app role's own login
+  can't switch RLS off or `SET ROLE` to the owner or the admin (the check 1.3
+  left open), bad user keys, UTC, config from the environment.
+- The architecture guard now allows `app.user_id`, `SET LOCAL` and
+  `set_config(` only in the connection layer.
+- **Mutation-checked:** with a session-wide setting (`is_local => false`) the
+  leak test fails; without the explicit transaction 4 tests fail; a user
+  setting planted in another module fails the guard.
 
 ---
 
@@ -550,7 +632,7 @@ has been fixed in the billing path since the last one.
 - [x] **0.2** SQL behind the `Database` API
 - [x] **0.3** One clock
 - [ ] **0.4** Checkpoint
-- [ ] **1** Postgres foundation
+- [x] **1** Postgres foundation
 - [ ] **2** Data layer port
 - [ ] **3** Query editor lockdown
 - [ ] **4** SQLite importer
