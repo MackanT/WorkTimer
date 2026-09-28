@@ -45,7 +45,7 @@ def _render_backup_card(core) -> None:
 
         def _refresh():
             list_col.clear()
-            files = list_backups(db_file)
+            files = list_backups(db_file, core.user_key)
             with list_col:
                 if not files:
                     ui.label("No backups yet.").classes("text-sm " + muted)

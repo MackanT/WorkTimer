@@ -855,12 +855,14 @@ has been fixed in the billing path since the last one.
 - **Tests:** two users end to end — neither can see the other's customers,
   board, tracker items or notes.
 
-**Status: in progress — slice 1 of 6 done** (2026-09-28). Started beside the
-Phase 5 gate: staging stays on the gate's commit, so nothing here reaches it
-until the gate passes. An inventory of process-wide state found more shared
-than the plan listed, so the work is cut into slices; **multi-user mode must
-not be deployed before slice 3** — notes, backups, logs and settings are still
-shared between users until then.
+**Status: in progress — slices 1–2 of 6 done** (2026-09-28). Started beside
+the Phase 5 gate. Slice 1 is part of the gate's commit (`0699487`) and runs on
+staging in single-user mode — the regression run there (the 32 timer checks,
+a live tracker sync through the per-user engine) passed; later slices stay
+off staging until the gate passes. An inventory of process-wide state found
+more shared than the plan listed, so the work is cut into slices; **multi-user
+mode must not be deployed before slice 3** — settings are still shared
+between users until then.
 
 1. **Identity, per-user data and tracker engine — done.**
    - [src/auth.py](../src/auth.py): `WORKTIMER_AUTH=cloudflare-access` (with
@@ -894,10 +896,25 @@ shared between users until then.
      token, no app); the endpoints; the single-user refusal; re-init.
      Mutation-checked: every tab acting as user 1, and staged images served
      to any signed-in user, each fail tests.
-2. **Files and endpoints:** notes per user (folder, the static
-   `/notes_assets` route becomes an authenticated one, `/upload_image`),
-   backups per user (folder, listing, pruning), the Log page showing only the
-   user's own records.
+2. **Files, endpoints and logs — done.**
+   - [src/user_paths.py](../src/user_paths.py): user 1 keeps `data/` as it
+     was; every other user gets `data/users/<key>/`. Notes and backups (Backup
+     now, its listing and pruning) live there; only user 1 adopts pre-5.1.2
+     backups. External notes (files in the app's own folder) are off when
+     people sign in.
+   - Pasted note images: `/upload_image` needs a sign-in, takes raster images
+     only (no SVG — it can carry script), 10 MB at most, into the user's
+     folder. The static `/notes_assets` mount — it served the whole notes
+     folder, notes and metadata included, to anyone — is now a route that
+     serves only images from a note's `_assets` folder, the user's own.
+   - Logs: loggers are per user (`Database.user2`, …; the Log page shows the
+     plain name), each tab listens only to its user's, and the history new
+     tabs replay is per user. With sign-in on, no tab listens to the root
+     logger — libraries' and other users' records stay on the server console.
+   - Tests: folders per user, backups per user, each user's Log page and the
+     root logger, pasted images end to end as two signed-in users.
+     Mutation-checked: one shared notes folder, and process-wide loggers,
+     each fail tests.
 3. **Settings:** what Settings writes into `config/` today — time and billing
    defaults, description templates, contacts, tags, theme, tracker defaults —
    becomes per user; `app.storage.user` keys namespaced by user.
@@ -961,5 +978,5 @@ Not requirements — nothing is built for these; decide at the end.
 - [x] **3** Query editor lockdown
 - [ ] **4** SQLite importer — built; a colleague's file and a v4-era file still to run
 - [ ] **5** Gate: staging + parallel run
-- [ ] **6** Online — slice 1 of 6 (identity) done
+- [ ] **6** Online — slices 1–2 of 6 (identity; files, endpoints, logs) done
 - [ ] **7** Release 6.0.0

@@ -18,9 +18,13 @@ import re
 from pathlib import Path
 import time
 from fastapi import UploadFile, Request, File
+from fastapi.responses import FileResponse, Response
 from nicegui import ui, app
 
+from ..auth import auth_config
 from ..core.app import AppCore
+from ..pg_connection import LOCAL_USER
+from ..user_paths import user_dir
 from ..ui.elements import toolbar, toolbar_group, page_card, toolbar_divider
 from ..ui.dynamic_widgets import render_markdown_toolbar
 from ..helpers import render_and_sanitize_markdown, UI_STYLES
@@ -36,9 +40,13 @@ from ..helpers import render_and_sanitize_markdown, UI_STYLES
 _notepad_state_by_client: dict = {}
 
 
-def get_notes_dir() -> Path:
-    project_root = Path(__file__).resolve().parent.parent.parent
-    path = project_root / "data" / "notes"
+DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+
+
+def get_notes_dir(user_key: int = LOCAL_USER) -> Path:
+    """The user's notes folder: data/notes for user 1, data/users/<key>/notes
+    for everyone else."""
+    path = user_dir(DATA_DIR, user_key) / "notes"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -226,38 +234,66 @@ def delete_note(notes_dir: Path, note: dict):
 # ── Image Upload Endpoint ───────────────────────────────────────────────
 
 
+# Pasted images: raster formats only (an SVG can carry script), size-capped.
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+IMAGE_MAX_BYTES = 10 * 1024 * 1024
+
+
+async def _request_user(request: Request):
+    from ..globals import signed_in_user
+
+    return await signed_in_user(request)
+
+
 @app.post("/upload_image")
 async def upload_image(request: Request, file: UploadFile = File(...)):
-    notes_dir = get_notes_dir()
-
+    """A pasted image, saved beside the signed-in user's note."""
+    user_key = await _request_user(request)
+    if user_key is None:
+        return Response(status_code=401)
     form = await request.form()
     note_filename = form.get("note")
 
     if not note_filename:
         return {"error": "Missing note filename"}
 
+    ext = (Path(file.filename or "").suffix or ".png").lower()
+    if ext not in IMAGE_SUFFIXES:
+        return {"error": f"Not an image type WorkTimer keeps ({ext})"}
+    content = await file.read(IMAGE_MAX_BYTES + 1)
+    if len(content) > IMAGE_MAX_BYTES:
+        return {"error": "Image too large (10 MB at most)"}
+
     note_stem = Path(note_filename).stem
-    assets_dir = notes_dir / f"{note_stem}_assets"
+    assets_dir = get_notes_dir(user_key) / f"{note_stem}_assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
-
-    ext = Path(file.filename).suffix or ".png"
     filename = f"img_{int(time.time() * 1000)}{ext}"
-    file_path = assets_dir / filename
-
-    content = await file.read()
-    file_path.write_bytes(content)
+    (assets_dir / filename).write_bytes(content)
 
     return {"path": f"/notes_assets/{note_stem}_assets/{filename}"}
 
 
-app.add_static_files("/notes_assets", str(get_notes_dir()))
+@app.get("/notes_assets/{folder}/{name}")
+async def notes_asset(folder: str, name: str, request: Request):
+    """A pasted image from the signed-in user's own notes — only images in a
+    note's _assets folder, never the notes or their metadata."""
+    user_key = await _request_user(request)
+    if user_key is None:
+        return Response(status_code=401)
+    if (not folder.endswith("_assets") or Path(folder).name != folder
+            or Path(name).name != name or Path(name).suffix.lower() not in IMAGE_SUFFIXES):
+        return Response(status_code=404)
+    path = get_notes_dir(user_key) / folder / name
+    if not path.is_file():
+        return Response(status_code=404)
+    return FileResponse(path, headers={"Cache-Control": "private, max-age=3600"})
 
 # ── Main page ──────────────────────────────────────────────────────────────────
 
 
 async def notepad_page():
     core = await AppCore.get_or_initialize()
-    notes_dir = get_notes_dir()
+    notes_dir = get_notes_dir(core.user_key)
     project_root = get_project_root()
     
     note_config = core.config_loader.configs["notepad"]
@@ -277,7 +313,10 @@ async def notepad_page():
 
     meta = load_meta(notes_dir)
     regular_notes = load_notes(notes_dir, meta)
-    external_notes = load_external_notes(project_root, meta, note_config.external_notes)
+    # External notes are files in the app's own folder — one install's, so
+    # none when several people sign in.
+    external_notes = load_external_notes(
+        project_root, meta, [] if auth_config().multi_user else note_config.external_notes)
     all_notes = external_notes + regular_notes
 
     state = {
@@ -725,7 +764,7 @@ async def notepad_page():
                     if not note:
                         return None
                     stem = Path(note["filename"]).stem
-                    assets = get_notes_dir() / f"{stem}_assets"
+                    assets = get_notes_dir(core.user_key) / f"{stem}_assets"
                     assets.mkdir(parents=True, exist_ok=True)
                     ext = Path(name).suffix or ".png"
                     fn = f"img_{int(time.time() * 1000)}{ext}"

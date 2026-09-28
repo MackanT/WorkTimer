@@ -19,7 +19,7 @@ from src import auth  # noqa: E402
 from src import globals as wt_globals  # noqa: E402
 from src.auth import ACCESS_HEADER, AuthConfig  # noqa: E402
 from src.core import app as core_app  # noqa: E402
-from src.pages import root  # noqa: E402
+from src.pages import notepad, root  # noqa: E402
 from src.pg_connection import ConfigError, PgConfig, Pools  # noqa: E402
 from src.pg_database import PgDatabase  # noqa: E402
 from src.services import update_checker  # noqa: E402
@@ -62,6 +62,7 @@ def hosted(app_url, ada_key, tmp_path_factory, monkeypatch):
     monkeypatch.setenv("DB_NAME", str(tmp_path_factory.mktemp("data") / "worktimer.db"))
     monkeypatch.setattr(auth, "_config", CONFIG)
     monkeypatch.setattr(auth, "_verifier", verifier())
+    monkeypatch.setattr(notepad, "DATA_DIR", tmp_path_factory.mktemp("notes-data"))
     monkeypatch.setattr(core_app, "_config_loader", None)
     monkeypatch.setattr(update_checker, "_fetch_latest_blocking", update_checker._current_version)
 
@@ -80,6 +81,8 @@ def endpoints(user: User) -> User:
     app.get("/staged_image/{token}")(work_item_forms.staged_image)
     app.post("/upload_devops_image")(work_item_forms.upload_devops_image)
     app.get("/devops_attachment")(work_item_forms.devops_attachment)
+    app.post("/upload_image")(notepad.upload_image)
+    app.get("/notes_assets/{folder}/{name}")(notepad.notes_asset)
     return user
 
 
@@ -142,3 +145,29 @@ async def test_single_user_mode_refuses_a_database_people_signed_in_to(app_url, 
     with pytest.raises(ConfigError, match="signed-in user"):
         wt_globals._shared_pools_for(app_url)
     assert wt_globals._shared_pools == {}
+
+
+PNG = b"\x89PNG\r\n\x1a\n-pixels"
+
+
+async def test_notes_images_are_each_users_own(endpoints: User, ada_key):
+    http = endpoints.http_client
+
+    def upload(name="shot.png", content=PNG):
+        return http.post("/upload_image", data={"note": "plan.md"}, files={"file": (name, content)})
+
+    assert (await upload()).status_code == 401
+    _sign_in(endpoints, ADA)
+    path = (await upload()).json()["path"]
+    assert path.startswith("/notes_assets/plan_assets/")
+    assert (notepad.get_notes_dir(ada_key) / "plan_assets").is_dir()
+    response = await http.get(path)
+    assert response.status_code == 200 and response.content == PNG
+    assert "error" in (await upload("x.svg", b"<svg onload=alert(1)/>")).json()
+    (notepad.get_notes_dir(ada_key) / "plan_assets" / "notes.md").write_text("# private")
+    assert (await http.get("/notes_assets/plan_assets/notes.md")).status_code == 404
+
+    _sign_in(endpoints, BOB)
+    assert (await http.get(path)).status_code == 404  # not in Bob's notes
+    http.headers.pop(ACCESS_HEADER)
+    assert (await http.get(path)).status_code == 401

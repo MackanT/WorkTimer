@@ -60,13 +60,9 @@ def take_staged_images(markdown_text: str, user_key: int) -> list:
 
 async def _request_user(request: Request):
     """The request's user key, or None when it has no valid sign-in."""
-    from ..auth import AuthError
-    from ..globals import request_user_key
+    from ..globals import signed_in_user
 
-    try:
-        return await request_user_key(request)
-    except AuthError:
-        return None
+    return await signed_in_user(request)
 
 
 def strip_staged_image_lines(markdown_text: str) -> str:

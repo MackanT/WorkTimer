@@ -9,7 +9,7 @@ from datetime import datetime
 
 from nicegui import ui
 from ..core.app import AppCore
-from ..core.events import get_global_recent_logs
+from ..core.events import get_recent_logs
 from ..helpers import UI_STYLES
 from ..ui.elements import toolbar, toolbar_group, page_card
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
@@ -81,7 +81,7 @@ async def log_page():
             """
             seen_keys = set()
             try:
-                merged = list(get_global_recent_logs()) + list(core.log_buffer)
+                merged = get_recent_logs(core.user_key) + list(core.log_buffer)
             except Exception:
                 merged = []
             for item in merged:
@@ -176,7 +176,7 @@ async def log_page():
         # Save to file handler
         def save_log_to_file():
             try:
-                logs = get_global_recent_logs()
+                logs = get_recent_logs(core.user_key)
 
                 # Format logs as text
                 log_text = "\n".join(

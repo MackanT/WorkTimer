@@ -121,16 +121,17 @@ class AppCore:
         self.event_bus.register("log_message", handler)
 
     def _setup_logger(self, name: str) -> logging.Logger:
-        """Set up a named logger with an EventBus handler for THIS client.
+        """Set up the user's named logger with an EventBus handler for THIS client.
 
-        Logger names ("AppCore", "Database", …) are process-wide, so with multiple
-        browser tabs the same logger carries one EventBusLogHandler per live client
-        — each client's Log page sees the shared logs. detach_log_handlers()
-        removes this client's handlers again on disconnect.
+        Loggers are per user ("AppCore.user2", "Database.user2", …), so with
+        several browser tabs a user's logger carries one EventBusLogHandler per
+        live tab of theirs — each of their Log pages sees their logs, and no
+        other user's. detach_log_handlers() removes this client's handlers again
+        on disconnect.
         """
         from .events import EventBusLogHandler
 
-        logger = logging.getLogger(name)
+        logger = logging.getLogger(f"{name}.user{self.user_key}")
 
         # Early return if THIS client's handler is already attached (another
         # client's handler on the same logger must not short-circuit ours).
@@ -145,7 +146,7 @@ class AppCore:
         logger.propagate = False
 
         if self.event_bus:
-            handler = EventBusLogHandler(self.event_bus)
+            handler = EventBusLogHandler(self.event_bus, self.user_key)
             handler.setLevel(level)
             logger.addHandler(handler)
             self._log_handlers.append((logger, handler))
@@ -183,12 +184,16 @@ class AppCore:
             console.setLevel(level)
             root.addHandler(console)
 
-        # EventBus handler for this client (other clients keep theirs)
-        if not any(
+        # EventBus handler for this client (other clients keep theirs). The
+        # root logger carries every library's and every user's records, so
+        # when several people sign in it stays on the server console only.
+        from ..auth import auth_config
+
+        if not auth_config().multi_user and not any(
             isinstance(h, EventBusLogHandler) and h.event_bus is self.event_bus
             for h in root.handlers
         ):
-            handler = EventBusLogHandler(self.event_bus)
+            handler = EventBusLogHandler(self.event_bus, self.user_key)
             root.addHandler(handler)
             self._log_handlers.append((root, handler))
         root.setLevel(level)

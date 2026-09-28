@@ -93,6 +93,17 @@ async def request_user_key(request) -> int:
     return await asyncio.to_thread(lambda: user_key_for(request_identity(request)))
 
 
+async def signed_in_user(request) -> int | None:
+    """request_user_key, or None when the request has no valid sign-in —
+    for endpoints, which answer 401 then."""
+    from .auth import AuthError
+
+    try:
+        return await request_user_key(request)
+    except AuthError:
+        return None
+
+
 def _open_database(file_name: str, log_engine: logging.Logger, user_key: int):
     """Postgres when DATABASE_URL is set (v6), otherwise the SQLite file — so
     an install that hasn't moved keeps working on its own data. On Postgres,

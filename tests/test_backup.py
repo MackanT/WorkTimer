@@ -141,3 +141,40 @@ def test_create_backup_names_the_file_by_the_backend(tmp_path):
 
     assert dest.name.startswith("worktimer_") and dest.name.endswith(".json.gz")
     assert list_backups(str(tmp_path / "worktimer.db")) == [dest]
+
+
+# ── one folder per user (v6 Phase 6) ────────────────────────────────────────
+
+
+class _UserExport:
+    BACKUP_SUFFIX = ".json.gz"
+
+    def __init__(self, user_key):
+        self.user_key = user_key
+
+    def backup_to(self, dest):
+        open(dest, "wb").close()
+
+
+def test_each_user_backs_up_into_their_own_folder(tmp_path):
+    db_file = str(tmp_path / "data" / "worktimer.db")
+
+    ada = create_backup(_UserExport(2), db_file)
+    local = create_backup(_UserExport(1), db_file)
+
+    assert ada.parent == (tmp_path / "data" / "users" / "2" / "backups").resolve()
+    assert local.parent == (tmp_path / "data" / "backups").resolve()
+    assert list_backups(db_file, 2) == [ada]
+    assert list_backups(db_file, 3) == []
+    assert list_backups(db_file) == [local]
+
+
+def test_only_the_single_user_install_adopts_old_backups(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    legacy = tmp_path / "backups"
+    legacy.mkdir()
+    (legacy / "worktimer_2026-08-01_120000.db").write_bytes(b"old")
+
+    assert list_backups(str(data / "worktimer.db"), 2) == []
+    assert (legacy / "worktimer_2026-08-01_120000.db").exists()

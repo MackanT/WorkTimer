@@ -6,19 +6,26 @@ All UI operations from background threads MUST go through this system.
 """
 
 import asyncio
+import re
 from typing import Callable, Optional
 from nicegui import ui
 import logging
 from datetime import datetime
 from collections import deque
 
-# Global recent logs buffer shared across clients/pages (helps when pages reload)
-_GLOBAL_RECENT_LOGS = deque(maxlen=2000)
+# Recent logs per user, shared by that user's tabs and pages (helps when
+# pages reload) — never another user's (v6 Phase 6).
+_RECENT_LOGS: dict = {}
 
 
-def get_global_recent_logs():
-    """Return a copy of the global recent logs (oldest first)."""
-    return list(_GLOBAL_RECENT_LOGS)
+def get_recent_logs(user_key: int):
+    """A copy of the user's recent logs (oldest first)."""
+    return list(_RECENT_LOGS.get(user_key, ()))
+
+
+def _display_name(logger_name: str) -> str:
+    # Per-user loggers are named "<name>.user<key>"; the Log page shows <name>.
+    return re.sub(r"\.user\d+$", "", logger_name)
 
 
 class EventBusLogHandler(logging.Handler):
@@ -28,9 +35,10 @@ class EventBusLogHandler(logging.Handler):
     This bridges standard Python logging to the EventBus so logs appear in the UI.
     """
 
-    def __init__(self, event_bus: "EventBus"):
+    def __init__(self, event_bus: "EventBus", user_key: int = 1):
         super().__init__()
         self.event_bus = event_bus
+        self.user_key = user_key
 
     def emit(self, record: logging.LogRecord):
         """Emit a log record to the event bus"""
@@ -48,16 +56,16 @@ class EventBusLogHandler(logging.Handler):
                 message=record.getMessage(),
                 level=record.levelname,
                 timestamp=timestamp,
-                logger=record.name,
+                logger=_display_name(record.name),
             )
             # Store in per-event-bus recent logs buffer for replay
             try:
                 self.event_bus._recent_logs.append(log_item)
             except Exception:
                 pass
-            # Store in global buffer so new pages/clients can see history
+            # Store in the user's buffer so their new pages/tabs see history
             try:
-                _GLOBAL_RECENT_LOGS.append(log_item)
+                _RECENT_LOGS.setdefault(self.user_key, deque(maxlen=2000)).append(log_item)
             except Exception:
                 pass
 
