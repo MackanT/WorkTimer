@@ -116,6 +116,19 @@ class Pools:
                 conn.execute(statement)
             yield conn
 
+    def sign_in(self, bk_user: str, email: str | None = None, name: str | None = None) -> int:
+        """The user key for a verified identity (its IdP subject), creating the
+        user on a first sign-in — migration 0003's app_sign_in, the only way a
+        user is added. Refused for 'local', a blank subject or a disabled user."""
+        with self._app.connection() as conn:
+            return conn.execute("select app_sign_in(%s, %s, %s)",
+                                (bk_user, email, name)).fetchone()[0]
+
+    def signed_in_users(self) -> int:
+        """How many users have signed in — everyone but 'local'."""
+        with self._app.connection() as conn:
+            return conn.execute("select app_signed_in_users()").fetchone()[0]
+
     def close(self) -> None:
         self._app.close()
         if self._readonly is not None:

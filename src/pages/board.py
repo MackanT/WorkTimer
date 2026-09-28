@@ -13,7 +13,6 @@ from nicegui import app, context, ui
 from ..core.app import AppCore
 from .. import helpers
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
-from ..ui.work_item_handlers import WorkItemHandlers
 from ..ui.work_item_forms import open_add_work_item_dialog, open_work_item_dialog
 from ..trackers.base import DEFAULT_TYPE_HIERARCHY
 from .hierarchy import create_hierarchy_view
@@ -116,11 +115,15 @@ async def board_page():
     view_state = {"view": app.storage.user.get("devops_view", "board")}
     hier = create_hierarchy_view(core, lambda: filter_state["customer"])
 
+    def _columns_cache():
+        """This user's engine's board-column cache (empty until trackers are up)."""
+        return core.tracker_engine.columns_cache if core.tracker_engine is not None else {}
+
     # Seed known_cols from the ADO column cache (pre-loaded at startup).
     # Without this, the first render derives order from df insertion order which is arbitrary.
     for _cn in customer_names:
         for _wt in _work_item_types(_cn):
-            _c = WorkItemHandlers.devops_columns_cache.get(_cn, {}).get(_wt)
+            _c = _columns_cache().get(_cn, {}).get(_wt)
             if _c:
                 known_cols[(_cn, _wt)] = list(_c)
 
@@ -128,7 +131,7 @@ async def board_page():
     def _column_order(customer: str, item_type: str) -> list[str]:
         """Return ordered column list; once a column is known it stays visible."""
         key = (customer, item_type)
-        cached = WorkItemHandlers.devops_columns_cache.get(customer, {}).get(item_type)
+        cached = _columns_cache().get(customer, {}).get(item_type)
         if cached:
             result = list(cached)
             for c in known_cols.get(key, []):

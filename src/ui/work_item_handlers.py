@@ -16,9 +16,6 @@ from .. import helpers
 class WorkItemHandlers:
     """Handlers for DevOps work item operations."""
 
-    devops_columns_cache = defaultdict(dict)
-    _preload_started = False
-
     def __init__(self, DO, LOG, config_folder=None):
         """
         Initialize DevOps handlers.
@@ -32,16 +29,18 @@ class WorkItemHandlers:
         self.DO = DO
         self.LOG = LOG
         self.config_folder = config_folder
+        # The engine's own cache: one user's customers (v6 Phase 6).
+        self.devops_columns_cache = DO.columns_cache if DO is not None else defaultdict(dict)
 
-        if not WorkItemHandlers._preload_started:
-            WorkItemHandlers._preload_started = True
+        if DO is not None and not DO.preload_started:
+            DO.preload_started = True
             asyncio.ensure_future(self._background_work())
 
     async def _background_work(self):
         # A form can be opened before DevOps init finishes — don't crash the
         # preload task on a missing manager; app.py re-runs it after init.
-        if not self.DO or not self.DO.manager:
-            WorkItemHandlers._preload_started = False
+        if not self.DO.manager:
+            self.DO.preload_started = False
             return
         await self.preload_cached_board_columns()
 
@@ -159,7 +158,8 @@ class WorkItemHandlers:
             # description with the real attachment URLs (consumes the stage
             # only now, so a failed create keeps the staged bytes intact).
             id_match = re.search(r"ID (\d+)", message)
-            staged = take_staged_images(description) if id_match else []
+            staged = (take_staged_images(description, self.DO.query_engine.user_key)
+                      if id_match else [])
             if staged:
                 new_id = int(id_match.group(1))
                 fixed = description

@@ -100,7 +100,6 @@ def _render_tracker_defaults_card(core) -> None:
         save_tracker_defaults,
     )
     from ..trackers.registry import get_provider_class
-    from ..ui.work_item_handlers import WorkItemHandlers
 
     muted = UI_STYLES.get_layout_classes("muted_text")
     try:
@@ -195,8 +194,8 @@ def _render_tracker_defaults_card(core) -> None:
                         states = eng.state_options(cust)
                     except Exception:
                         states = []
-                cols_by_type = WorkItemHandlers.devops_columns_cache.get(
-                    cust, {}
+                cols_by_type = (
+                    eng.columns_cache.get(cust, {}) if eng is not None else {}
                 )
                 if wtype != ALL_TYPES and cols_by_type.get(wtype):
                     columns = list(cols_by_type[wtype])

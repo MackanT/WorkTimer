@@ -24,7 +24,7 @@ from ..ui.work_item_handlers import WorkItemHandlers
 # the item doesn't exist yet, so the bytes are STAGED here, previewed via
 # /staged_image/<token>, and uploaded + swapped for the real attachment URL
 # right after the item is created (see WorkItemHandlers.add_work_item).
-_STAGED_IMAGES: dict = {}  # token -> (filename, bytes, monotonic timestamp)
+_STAGED_IMAGES: dict = {}  # token -> (filename, bytes, monotonic timestamp, user key)
 _STAGED_URL_RE = _re.compile(r"/staged_image/([0-9a-f]{32})")
 
 
@@ -36,23 +36,37 @@ def _prune_staged(max_age: float = 3600.0) -> None:
         _STAGED_IMAGES.pop(token, None)
 
 
-def stage_image(file_name: str, content: bytes) -> str:
-    """Hold image bytes until the work item exists; returns the preview URL."""
+def stage_image(file_name: str, content: bytes, user_key: int) -> str:
+    """Hold the user's image bytes until the work item exists; returns the
+    preview URL."""
     _prune_staged()
     token = uuid.uuid4().hex
-    _STAGED_IMAGES[token] = (file_name or "image.png", content, time.monotonic())
+    _STAGED_IMAGES[token] = (file_name or "image.png", content, time.monotonic(), user_key)
     return f"/staged_image/{token}"
 
 
-def take_staged_images(markdown_text: str) -> list:
-    """[(url_in_text, filename, bytes)] for staged refs in the text — the
-    entries are CONSUMED, so call only when the upload is about to happen."""
+def take_staged_images(markdown_text: str, user_key: int) -> list:
+    """[(url_in_text, filename, bytes)] for the user's staged refs in the
+    text — the entries are CONSUMED, so call only when the upload is about
+    to happen."""
     out = []
     for token in _STAGED_URL_RE.findall(markdown_text or ""):
-        item = _STAGED_IMAGES.pop(token, None)
-        if item:
+        item = _STAGED_IMAGES.get(token)
+        if item and item[3] == user_key:
+            del _STAGED_IMAGES[token]
             out.append((f"/staged_image/{token}", item[0], item[1]))
     return out
+
+
+async def _request_user(request: Request):
+    """The request's user key, or None when it has no valid sign-in."""
+    from ..auth import AuthError
+    from ..globals import request_user_key
+
+    try:
+        return await request_user_key(request)
+    except AuthError:
+        return None
 
 
 def strip_staged_image_lines(markdown_text: str) -> str:
@@ -67,9 +81,12 @@ def strip_staged_image_lines(markdown_text: str) -> str:
 
 
 @app.get("/staged_image/{token}")
-async def staged_image(token: str):
+async def staged_image(token: str, request: Request):
+    user_key = await _request_user(request)
+    if user_key is None:
+        return Response(status_code=401)
     item = _STAGED_IMAGES.get(token)
-    if not item:
+    if not item or item[3] != user_key:
         return Response(status_code=404)
     media_type = mimetypes.guess_type(item[0])[0] or "image/png"
     return Response(content=item[1], media_type=media_type,
@@ -80,10 +97,13 @@ async def staged_image(token: str):
 async def upload_devops_image(request: Request, file: UploadFile = File(...)):
     """Upload a pasted/picked image as a DevOps attachment for a customer and
     return {path: url} so it can be embedded in a work-item description."""
-    # Use the process-wide engine directly: this is a plain HTTP endpoint with no
-    # NiceGUI client context, so AppCore.get_or_initialize() would fail.
-    from ..core.app import get_global_tracker_engine
+    # The signed-in user's engine, looked up directly: this is a plain HTTP
+    # endpoint with no NiceGUI client context, so AppCore can't be used.
+    from ..core.app import get_tracker_engine
 
+    user_key = await _request_user(request)
+    if user_key is None:
+        return Response(status_code=401)
     form = await request.form()
     customer = form.get("customer")
     if not customer:
@@ -94,8 +114,8 @@ async def upload_devops_image(request: Request, file: UploadFile = File(...)):
     # Add-form paste for an item-scoped store: no item exists yet — stage
     # the bytes; add_work_item uploads them right after the create.
     if form.get("stage") and not work_item_id:
-        return {"path": stage_image(file.filename or "paste.png", content)}
-    engine = get_global_tracker_engine()
+        return {"path": stage_image(file.filename or "paste.png", content, user_key)}
+    engine = get_tracker_engine(user_key)
     if engine is None:
         return {"error": "No DevOps connection"}
     url = await asyncio.to_thread(
@@ -109,13 +129,17 @@ async def upload_devops_image(request: Request, file: UploadFile = File(...)):
 
 
 @app.get("/devops_attachment")
-async def devops_attachment(url: str):
-    """Proxy a DevOps work-item attachment with the matching customer's PAT, so
-    images embedded in a description render in the WorkTimer preview (the browser
-    can't authenticate to dev.azure.com directly)."""
-    from ..core.app import get_global_tracker_engine
+async def devops_attachment(url: str, request: Request):
+    """Proxy a DevOps work-item attachment with the matching customer's PAT —
+    the signed-in user's own connections only — so images embedded in a
+    description render in the WorkTimer preview (the browser can't
+    authenticate to dev.azure.com directly)."""
+    from ..core.app import get_tracker_engine
 
-    engine = get_global_tracker_engine()
+    user_key = await _request_user(request)
+    if user_key is None:
+        return Response(status_code=401)
+    engine = get_tracker_engine(user_key)
     manager = getattr(engine, "manager", None) if engine else None
     if manager is None:
         return Response(status_code=404)
@@ -843,7 +867,7 @@ async def open_add_work_item_dialog(
                         if caps.attachments_require_item:
                             # Item-scoped store (Jira): no item yet — stage
                             # now, upload right after the create.
-                            return stage_image(name, content)
+                            return stage_image(name, content, core.user_key)
                         return await asyncio.to_thread(
                             core.tracker_engine.upload_attachment,
                             cust_now, name, content,

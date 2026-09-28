@@ -46,8 +46,10 @@ def app_url(pg_schema_db_module, pg_logins, tmp_path_factory):
     seed(PgDatabase(pools, quiet, secrets_dir=str(tmp_path_factory.mktemp("seed"))))
     pools.close()
     yield url
-    if url in wt_globals._shared_databases:
-        wt_globals._shared_databases.pop(url).close()
+    for key in [k for k in wt_globals._shared_databases if isinstance(k, tuple) and k[0] == url]:
+        wt_globals._shared_databases.pop(key)
+    if url in wt_globals._shared_pools:
+        wt_globals._shared_pools.pop(url).close()
 
 
 @pytest.fixture(autouse=True)
@@ -67,7 +69,7 @@ def isolated_app(app_url, tmp_path_factory, monkeypatch):
     monkeypatch.setattr(core_app.AppCore, "_check_internet", offline)
     yield
     # The page ran on Postgres: the app opened the data layer for DATABASE_URL.
-    assert isinstance(wt_globals._shared_databases.get(app_url), PgDatabase)
+    assert isinstance(wt_globals._shared_databases.get((app_url, 1)), PgDatabase)
 
 
 @pytest.mark.parametrize("path", list(PAGES))

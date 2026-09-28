@@ -855,6 +855,58 @@ has been fixed in the billing path since the last one.
 - **Tests:** two users end to end — neither can see the other's customers,
   board, tracker items or notes.
 
+**Status: in progress — slice 1 of 6 done** (2026-09-28). Started beside the
+Phase 5 gate: staging stays on the gate's commit, so nothing here reaches it
+until the gate passes. An inventory of process-wide state found more shared
+than the plan listed, so the work is cut into slices; **multi-user mode must
+not be deployed before slice 3** — notes, backups, logs and settings are still
+shared between users until then.
+
+1. **Identity, per-user data and tracker engine — done.**
+   - [src/auth.py](../src/auth.py): `WORKTIMER_AUTH=cloudflare-access` (with
+     `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`) turns sign-in on. The Access
+     token (header, or the `CF_Authorization` cookie) is verified with PyJWT
+     against the team's published keys — RS256 only, audience, issuer, expiry;
+     a service token (no `sub`) is refused. No valid token: the page shows "Not
+     signed in" and nothing of the app.
+   - **Migration 0003:** `app_sign_in(sub, email, name)` finds or creates the
+     user (email kept current), refusing `'local'`, a blank subject and a
+     disabled user; `app_signed_in_users()` counts them. Both run as a role of
+     their own, `worktimer_signin` — NOLOGIN, nobody's member, allowed only
+     `users` — so every everyday role, the owner included, still sees no row
+     without `app.user_id`. Only the app role may call them.
+   - The first page of a tab resolves its user (`AppCore` is bound to it for
+     the tab's life); each user has their own `PgDatabase` on one shared set of
+     pools, and their own tracker engine (`get_tracker_engine(user)`), board
+     column cache and init lock. The attachment endpoints and staged images
+     need a sign-in and serve only the user's own.
+   - **The switch is deployment config, not a Settings toggle:** a hosted
+     instance must not be switchable to "no login" from inside the app. The
+     block of §2 is at startup instead — a single-user process refuses a
+     database people have signed in to — and multi-user mode refuses to start
+     without Postgres.
+   - **Found on the way:** a tracker re-init never stopped the old engine's
+     hourly and 2 AM syncs, so every re-init added two more loops (single-user
+     too). Fixed: the replaced engine's schedules stop.
+   - Tests: the token checks (forged, expired, wrong audience or issuer,
+     `alg: none` / HS256, service tokens); the sign-in functions and the role;
+     pages as two simulated signed-in users (each sees only their own data; no
+     token, no app); the endpoints; the single-user refusal; re-init.
+     Mutation-checked: every tab acting as user 1, and staged images served
+     to any signed-in user, each fail tests.
+2. **Files and endpoints:** notes per user (folder, the static
+   `/notes_assets` route becomes an authenticated one, `/upload_image`),
+   backups per user (folder, listing, pruning), the Log page showing only the
+   user's own records.
+3. **Settings:** what Settings writes into `config/` today — time and billing
+   defaults, description templates, contacts, tags, theme, tracker defaults —
+   becomes per user; `app.storage.user` keys namespaced by user.
+4. **Sync scheduling:** per-user hourly and nightly syncs staggered, with a
+   global concurrency cap.
+5. **Deploy:** the hosted compose profile with `cloudflared`, the Access
+   application and policy, one-month sessions.
+6. **Two users end to end** in a real browser, then colleagues.
+
 ---
 
 ## Phase 7 — Release 6.0.0
@@ -909,5 +961,5 @@ Not requirements — nothing is built for these; decide at the end.
 - [x] **3** Query editor lockdown
 - [ ] **4** SQLite importer — built; a colleague's file and a v4-era file still to run
 - [ ] **5** Gate: staging + parallel run
-- [ ] **6** Online
+- [ ] **6** Online — slice 1 of 6 (identity) done
 - [ ] **7** Release 6.0.0

@@ -12,25 +12,26 @@ from typing import Optional, Dict
 import asyncio
 from nicegui import app, ui
 
+from ..auth import AuthError
 from ..config import ConfigLoader
+from ..pg_connection import LOCAL_USER
 from ..ui.elements import NavigationBar
 from .events import PageEventBus
 
 # Module-level storage for AppCore instances (per-client, by client ID)
 _app_cores: Dict[str, "AppCore"] = {}
 
-# Process-wide DevOps singleton — shared across all client connections.
-# Prevents re-initializing (and re-syncing) DevOps on every browser reconnect.
-_global_tracker_engine = None
-_global_tracker_initialized: bool = False
-_global_tracker_init_lock: Optional[asyncio.Lock] = None
+# One ready tracker engine per user, shared by that user's tabs — so a
+# reconnect doesn't re-initialize (and re-sync), and no user is ever served
+# another's tracker connections (v6 Phase 6). Keyed by user key.
+_tracker_engines: Dict[int, object] = {}
+_tracker_init_locks: Dict[int, asyncio.Lock] = {}
 
 
-def get_global_tracker_engine():
-    """Return the process-wide DevOps engine (or None) without needing a client
-    context. Safe to call from plain HTTP endpoints, where AppCore's
-    client-scoped lookup would fail with an empty slot stack."""
-    return _global_tracker_engine
+def get_tracker_engine(user_key: int):
+    """The user's ready tracker engine (or None), without a client context —
+    for plain HTTP endpoints, where AppCore's client-scoped lookup fails."""
+    return _tracker_engines.get(user_key)
 
 
 class AppCore:
@@ -45,8 +46,9 @@ class AppCore:
         # Use core.event_bus, core.query_engine, etc.
     """
 
-    def __init__(self, config_loader: ConfigLoader):
+    def __init__(self, config_loader: ConfigLoader, user_key: int = LOCAL_USER):
         self.config_loader = config_loader
+        self.user_key = user_key  # who this tab acts as — fixed for its lifetime
         self._load_configs()
 
         self._background_tasks = {}
@@ -212,7 +214,8 @@ class AppCore:
 
             db_logger = self._setup_logger("Database")
             self.query_engine = QueryEngine(
-                file_name=self.settings.db_path, log_engine=db_logger
+                file_name=self.settings.db_path, log_engine=db_logger,
+                user_key=self.user_key,
             )
             await self.query_engine.refresh()
             self.logger.info("Query engine initialized")
@@ -229,35 +232,27 @@ class AppCore:
         """
         Initialize or re-initialize DevOps engine.
         Safe to call multiple times — skips if already initialized.
-        Uses a process-wide singleton so only the first connecting client
-        performs the actual initialization and sync; subsequent clients
-        reuse the already-running engine immediately.
+        One engine per user: only the user's first connecting tab performs
+        the actual initialization and sync; their other tabs reuse it.
         """
-        global _global_tracker_engine, _global_tracker_initialized, _global_tracker_init_lock
-
         if not self._initialized:
             self.logger.debug("Local engines not ready — skipping DevOps init")
             return
         if self._tracker_initialized:
             return
 
-        # Fast path: global engine is ready — just adopt it
-        if _global_tracker_initialized and _global_tracker_engine is not None:
-            self.tracker_engine = _global_tracker_engine
-            self._tracker_initialized = True
-            self.logger.debug("Reusing existing DevOps engine (already initialized globally)")
+        # Fast path: this user's engine is ready — just adopt it
+        if self._adopt_tracker_engine():
+            self.logger.debug("Reusing the user's DevOps engine (already initialized)")
             return
 
-        # Lazy-create the process-wide init lock (must be done inside the event loop)
-        if _global_tracker_init_lock is None:
-            _global_tracker_init_lock = asyncio.Lock()
+        # The user's init lock, created inside the event loop
+        lock = _tracker_init_locks.setdefault(self.user_key, asyncio.Lock())
 
-        async with _global_tracker_init_lock:
-            # Re-check inside the lock — another client may have just finished init
-            if _global_tracker_initialized and _global_tracker_engine is not None:
-                self.tracker_engine = _global_tracker_engine
-                self._tracker_initialized = True
-                self.logger.debug("Reusing existing DevOps engine (initialized while waiting for lock)")
+        async with lock:
+            # Re-check inside the lock — another tab may have just finished init
+            if self._adopt_tracker_engine():
+                self.logger.debug("Reusing the user's DevOps engine (initialized while waiting for lock)")
                 return
 
             # If no customers are configured, skip unless explicitly forced
@@ -303,7 +298,6 @@ class AppCore:
         Run DevOps initialization with timeout.
         Sets _tracker_initialized on success, False on failure — triggering retry next page load.
         """
-        global _global_tracker_engine, _global_tracker_initialized
         try:
             self.logger.info("Starting background DevOps initialization")
             await asyncio.wait_for(
@@ -320,17 +314,16 @@ class AppCore:
             if has_connections:
                 self._tracker_initialized = True
                 self._tracker_no_customers = False
-                _global_tracker_engine = self.tracker_engine
-                _global_tracker_initialized = True
+                _tracker_engines[self.user_key] = self.tracker_engine
                 self.logger.info(
                     f"DevOps initialized — {len(self.tracker_engine.manager.clients)} customer(s) connected"
                 )
 
-                # Warm the Kanban board's column-order cache now (once per process) so the
+                # Warm the Kanban board's column-order cache now (once per engine) so the
                 # board is correct on its very first render instead of only after a user
                 # opens a work-item dialog (see src/pages/board.py _column_order fallback).
                 from ..ui.work_item_handlers import WorkItemHandlers
-                WorkItemHandlers._preload_started = True
+                self.tracker_engine.preload_started = True
                 await WorkItemHandlers(self.tracker_engine, self.logger).preload_cached_board_columns()
 
                 asyncio.create_task(self.tracker_engine.start_scheduled_updates())
@@ -358,16 +351,26 @@ class AppCore:
             self._tracker_no_customers = False
             self.logger.warning(f"DevOps initialization failed: {e}")
 
+    def _adopt_tracker_engine(self) -> bool:
+        """Use this user's ready engine, if there is one."""
+        engine = _tracker_engines.get(self.user_key)
+        if engine is None:
+            return False
+        self.tracker_engine = engine
+        self._tracker_initialized = True
+        return True
+
     def force_tracker_reinit(self):
-        """Force DevOps to retry — call this after adding a new DevOps customer."""
-        global _global_tracker_engine, _global_tracker_initialized
+        """Force DevOps to retry — call this after adding a new DevOps customer.
+        The old engine's hourly and nightly syncs stop with it."""
         self.logger.info("DevOps re-init forced — resetting state")
+        old = [_tracker_engines.pop(self.user_key, None), self.tracker_engine]
+        for engine in {id(e): e for e in old if e is not None}.values():
+            engine.stop_scheduled_updates()
         self._tracker_initialized = False
         self._tracker_no_customers = False
         self._tracker_last_attempt = 0
         self.tracker_engine = None
-        _global_tracker_engine = None
-        _global_tracker_initialized = False
         asyncio.create_task(self.initialize_trackers())
 
     async def _check_internet(self) -> bool:
@@ -388,10 +391,12 @@ class AppCore:
     # ── Client Management ─────────────────────────────────────────────────────
 
     @classmethod
-    def get_or_create(cls, config_loader: Optional[ConfigLoader] = None) -> "AppCore":
+    def get_or_create(cls, config_loader: Optional[ConfigLoader] = None,
+                      user_key: Optional[int] = None) -> "AppCore":
         """
         Get existing AppCore for this client or create a new one.
-        Keyed by NiceGUI client ID for per-client isolation.
+        Keyed by NiceGUI client ID for per-client isolation; a new one acts
+        as `user_key` (who signed in) for the client's whole life.
         """
         from nicegui import context
 
@@ -399,8 +404,10 @@ class AppCore:
 
         if client_id in _app_cores:
             return _app_cores[client_id]
+        if user_key is None:
+            raise AuthError("a new client needs its user")
 
-        core = cls(config_loader=config_loader or ConfigLoader())
+        core = cls(config_loader=config_loader or ConfigLoader(), user_key=user_key)
         _app_cores[client_id] = core
 
         def cleanup():
@@ -421,18 +428,25 @@ class AppCore:
 
     @classmethod
     async def get_or_initialize(cls, config_loader=None) -> "AppCore":
-        core = cls.get_or_create(config_loader=config_loader or get_config_loader())
+        """This client's core, created on its first page: the page request's
+        user is resolved first — the verified sign-in, or user 1 in
+        single-user mode. AuthError when a hosted request has no valid one."""
+        from nicegui import context
+
+        user_key = None
+        if context.client.id not in _app_cores:
+            from ..globals import request_user_key
+
+            user_key = await request_user_key(context.client.request)
+        core = cls.get_or_create(config_loader=config_loader or get_config_loader(),
+                                 user_key=user_key)
 
         async with core._init_lock:
             if not core._initialized:
                 await core.initialize_local_engines()
 
-        if not core._tracker_initialized:
-            if _global_tracker_initialized and _global_tracker_engine is not None:
-                core.tracker_engine = _global_tracker_engine
-                core._tracker_initialized = True
-            else:
-                asyncio.create_task(core.initialize_trackers())
+        if not core._tracker_initialized and not core._adopt_tracker_engine():
+            asyncio.create_task(core.initialize_trackers())
 
         core.apply_theme()
 

@@ -28,8 +28,8 @@ from src.services import update_checker
 
 from _smoke import PAGES, page_built, seed
 
-# One event loop for the module, as in production: the app keeps a module-level
-# asyncio.Lock (core/app.py _global_tracker_init_lock) bound to the first loop
+# One event loop for the module, as in production: the app keeps module-level
+# asyncio.Locks (core/app.py _tracker_init_locks) bound to the first loop
 # that uses it, so a fresh loop per test fails with "bound to a different
 # event loop" — a harness artifact, not an app bug.
 pytestmark = [pytest.mark.module_under_test(root), pytest.mark.asyncio(loop_scope="module")]
@@ -56,7 +56,8 @@ def seeded_db(tmp_path_factory):
     _seed(path)
     yield path
     # Close the app's shared connection so the temp file can be removed.
-    for key in [k for k in wt_globals._shared_databases if Path(k).resolve() == path.resolve()]:
+    for key in [k for k in wt_globals._shared_databases
+                if isinstance(k, str) and Path(k).resolve() == path.resolve()]:
         wt_globals._shared_databases.pop(key).close()
 
 
@@ -76,7 +77,7 @@ def isolated_app(seeded_db, monkeypatch):
 
     monkeypatch.setattr(core_app.AppCore, "_check_internet", offline)
     yield
-    opened = {Path(key).resolve() for key in wt_globals._shared_databases}
+    opened = {Path(key).resolve() for key in wt_globals._shared_databases if isinstance(key, str)}
     assert REAL_DB not in opened, "a smoke test opened the real data/worktimer.db"
 
 

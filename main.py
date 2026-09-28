@@ -16,6 +16,7 @@ from nicegui import ui
 from dotenv import load_dotenv
 
 # Import only what we need for startup
+from src.auth import auth_config
 from src.core import get_config_loader
 from src.pg_connection import describe_database
 from src.pages import root_page  # noqa: F401 — importing registers all @ui.page routes
@@ -36,12 +37,24 @@ def initialize_app():
     print("WorkTimer V5")
     print("=" * 60)
     print(f"Database: {describe_database(configs['settings'].db_path)}")
+    print(f"Sign-in: {_describe_sign_in()}")
     print(f"Debug mode: {configs['settings'].debug_mode}")
     print("Multi-client support: Enabled (with storage_secret)")
     print("Thread safety: Enabled via ui.context")
     print("=" * 60)
     print("\nPress Ctrl+C to stop the server.")
     print("=" * 60)
+
+
+def _describe_sign_in() -> str:
+    """The sign-in mode — refusing a bad setup before the server starts:
+    multi-user needs Postgres (docs/v6_plan.md §2)."""
+    auth = auth_config()  # AuthError on a bad WORKTIMER_AUTH setup
+    if not auth.multi_user:
+        return "none (single user)"
+    if not os.getenv("DATABASE_URL"):
+        raise SystemExit("WORKTIMER_AUTH=cloudflare-access needs Postgres: set DATABASE_URL.")
+    return f"Cloudflare Access ({auth.team_domain})"
 
 
 def _get_storage_secret() -> str:

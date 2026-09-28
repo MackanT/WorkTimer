@@ -185,3 +185,60 @@ def test_config_comes_from_the_environment(monkeypatch):
     assert PgConfig.from_env() == PgConfig("postgresql://app@db/worktimer", None)
     monkeypatch.setenv("DATABASE_URL_READONLY", "postgresql://ro@db/worktimer")
     assert PgConfig.from_env().readonly_url == "postgresql://ro@db/worktimer"
+
+
+# ── sign-in (v6 Phase 6, migration 0003) ────────────────────────────────────
+
+SUB = "7335d417-61da-459d-899c-0a01c76a2f94"
+
+
+def test_a_first_sign_in_creates_the_user_and_later_ones_find_it(pools, pg_schema_db):
+    key = pools.sign_in(SUB, "ada@example.com", "Ada")
+
+    assert key != LOCAL_USER
+    assert pools.sign_in(SUB, "ada@new.example.com") == key  # same subject, new email
+    assert pools.signed_in_users() == 1
+    with psycopg.connect(pg_schema_db) as admin:
+        assert admin.execute("select bk_user, email, display_name from users where key_user = %s",
+                             (key,)).fetchone() == (SUB, "ada@new.example.com", "Ada")
+    with pools.transaction(key) as conn:  # the new user sees only themself
+        assert conn.execute("select key_user from users").fetchall() == [(key,)]
+
+
+@pytest.mark.parametrize("sub", ["local", "", "   "])
+def test_local_and_blank_are_never_a_sign_in(pools, sub):
+    with pytest.raises(errors.InvalidParameterValue):
+        pools.sign_in(sub)
+    assert pools.signed_in_users() == 0
+
+
+def test_a_disabled_user_cannot_sign_in(pools, pg_schema_db):
+    key = pools.sign_in(SUB)
+    with psycopg.connect(pg_schema_db) as admin:
+        admin.execute("update users set is_enabled = false where key_user = %s", (key,))
+
+    with pytest.raises(errors.InsufficientPrivilege):
+        pools.sign_in(SUB)
+
+
+def test_only_the_app_role_signs_in_and_nobody_inserts_users(config):
+    with psycopg.connect(config.readonly_url, autocommit=True) as conn:
+        for call in ("select app_sign_in('x', null, null)", "select app_signed_in_users()"):
+            with pytest.raises(errors.InsufficientPrivilege):
+                conn.execute(call)
+    with psycopg.connect(config.url, autocommit=True) as conn:
+        with pytest.raises(errors.InsufficientPrivilege):
+            conn.execute("insert into users (bk_user) values ('x')")
+
+
+def test_the_sign_in_role_acts_only_through_its_functions(pg_schema_db):
+    """It sees every user (that is its job), so nobody may log in as it or
+    hold it; it owns exactly the two sign-in functions."""
+    with psycopg.connect(pg_schema_db) as admin:
+        assert admin.execute("select rolcanlogin from pg_roles "
+                             "where rolname = 'worktimer_signin'").fetchone() == (False,)
+        assert admin.execute("select count(*) from pg_auth_members "
+                             "where roleid = 'worktimer_signin'::regrole").fetchone() == (0,)
+        owned = admin.execute("select proname from pg_proc where proowner = "
+                              "'worktimer_signin'::regrole order by 1").fetchall()
+    assert owned == [("app_sign_in",), ("app_signed_in_users",)]

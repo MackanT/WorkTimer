@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from .. import clock
 
 from nicegui import ui, app
@@ -13,6 +14,7 @@ from . import (
     info_page,
     settings_page,
 )
+from ..auth import AuthError
 from ..core.app import AppCore
 from ..ui.command_palette import setup_command_palette
 
@@ -138,10 +140,24 @@ document.addEventListener('keydown', function (e) {
 """
 
 
-async def _setup_spa_shell():
-    """Set up the SPA shell with navigation and sub-pages."""
+def _render_signed_out() -> None:
+    with ui.column().classes("w-full items-center justify-center").style("height: 80vh;"):
+        ui.icon("lock", size="xl").classes("text-grey-6")
+        ui.label("Not signed in").classes("text-h6 text-white")
+        ui.label("WorkTimer opens after its sign-in page — reload to sign in again.").classes(
+            "text-sm text-grey-5")
+
+
+async def _setup_spa_shell() -> bool:
+    """Set up the SPA shell with navigation and sub-pages. A hosted request
+    without a valid sign-in gets a message instead, and nothing of the app."""
     ui.add_head_html(_LAYOUT_CSS)
-    core = await AppCore.get_or_initialize()
+    try:
+        core = await AppCore.get_or_initialize()
+    except AuthError as e:
+        logging.getLogger("AppCore").warning(f"Page refused, no valid sign-in: {e}")
+        _render_signed_out()
+        return False
     core.nav_bar.render()
     setup_command_palette(core)  # global Ctrl+K — one dialog + binding per client
 
@@ -307,14 +323,14 @@ async def _setup_spa_shell():
             "/settings": settings_page,
         }
     ).classes("w-full h-full gap-0").style("overflow: hidden;")
+    return True
 
 
 @ui.page("/")
 async def root_page():
     """Root page - redirects to /time by default."""
-    await _setup_spa_shell()
-    # Only navigate if actually at root
-    ui.navigate.to("/time")
+    if await _setup_spa_shell():
+        ui.navigate.to("/time")
 
 
 # ============================================================================

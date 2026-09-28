@@ -8,6 +8,7 @@ from .trackers import azure as _azure_tracker  # noqa: F401
 from .trackers import jira as _jira_tracker  # noqa: F401
 from .trackers.base import DEFAULT_STATE_OPTIONS, DEFAULT_TYPE_HIERARCHY
 from .database import Database
+from collections import defaultdict
 from dataclasses import dataclass
 import asyncio
 import logging
@@ -17,11 +18,14 @@ from . import clock
 import pandas as pd
 
 
-# Process-wide Database instances keyed by file name. Every browser tab gets
-# its own AppCore/QueryEngine, but they all share ONE SQLite connection per
-# file — per-tab connections only added lock contention, and initialize_db()
-# (incl. schema auto-migration) now runs once per process instead of per tab.
+# Process-wide Database instances. Every browser tab gets its own
+# AppCore/QueryEngine, but they share one data layer: on SQLite ONE connection
+# per file (per-tab connections only added lock contention, and
+# initialize_db() runs once per process instead of per tab); on Postgres one
+# PgDatabase per user, keyed (DATABASE_URL, user key), all on one set of
+# connection pools per DATABASE_URL — row-level security scopes each user's.
 _shared_databases: dict = {}
+_shared_pools: dict = {}
 
 
 def _seconds_until_next(hour: int, now: datetime.datetime | None = None) -> float:
@@ -47,28 +51,87 @@ class SaveData:
     button_name: str = "Save"
 
 
-def _open_database(file_name: str, log_engine: logging.Logger):
+def _shared_pools_for(url: str):
+    """The connection pools for DATABASE_URL, opened once. A single-user
+    process refuses a database people have signed in to: without a login it
+    would be open to anyone who reaches it (docs/v6_plan.md §2)."""
+    if url not in _shared_pools:
+        from .auth import auth_config
+        from .pg_connection import ConfigError, PgConfig, Pools
+
+        pools = Pools(PgConfig.from_env())
+        signed_in = 0 if auth_config().multi_user else pools.signed_in_users()
+        if signed_in:
+            pools.close()
+            raise ConfigError(
+                f"This database has {signed_in} signed-in user(s): run it with "
+                "WORKTIMER_AUTH=cloudflare-access. Single-user mode has no login.")
+        _shared_pools[url] = pools
+    return _shared_pools[url]
+
+
+def user_key_for(identity) -> int:
+    """The user a request acts as: user 1 in single-user mode (no identity),
+    else the verified identity's user — created on its first sign-in."""
+    from .pg_connection import LOCAL_USER
+
+    if identity is None:
+        return LOCAL_USER
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        from .auth import AuthError
+
+        raise AuthError("Signing in needs Postgres: set DATABASE_URL")
+    return _shared_pools_for(url).sign_in(identity.sub, identity.email, identity.name)
+
+
+async def request_user_key(request) -> int:
+    """The user a plain HTTP request acts as — its verified sign-in, or user
+    1 in single-user mode. AuthError when a hosted request has none."""
+    from .auth import request_identity
+
+    return await asyncio.to_thread(lambda: user_key_for(request_identity(request)))
+
+
+def _open_database(file_name: str, log_engine: logging.Logger, user_key: int):
     """Postgres when DATABASE_URL is set (v6), otherwise the SQLite file — so
     an install that hasn't moved keeps working on its own data. On Postgres,
     file_name's folder still holds the PAT key and the backups."""
-    if os.getenv("DATABASE_URL"):
-        from .pg_connection import PgConfig, Pools
+    url = os.getenv("DATABASE_URL")
+    if url:
         from .pg_database import PgDatabase
 
-        db = PgDatabase(Pools(PgConfig.from_env()), log_engine,
+        db = PgDatabase(_shared_pools_for(url), log_engine, user_key=user_key,
                         secrets_dir=os.path.dirname(os.path.abspath(file_name)))
     else:
+        from .pg_connection import LOCAL_USER
+
+        if user_key != LOCAL_USER:
+            raise ValueError("SQLite has one user; signing in needs Postgres")
         db = Database(file_name, log_engine)
     db.initialize_db()
     return db
 
 
+def close_shared_databases() -> None:
+    """Close every shared data layer and pool (tests; shutdown)."""
+    for db in _shared_databases.values():
+        if getattr(db, "backend", "sqlite") == "sqlite":
+            db.close()
+    _shared_databases.clear()
+    for pools in _shared_pools.values():
+        pools.close()
+    _shared_pools.clear()
+
+
 class QueryEngine:
-    def __init__(self, file_name: str, log_engine: logging.Logger):
+    def __init__(self, file_name: str, log_engine: logging.Logger, user_key: int = 1):
         self.file_name = file_name
-        key = os.getenv("DATABASE_URL") or file_name
+        self.user_key = user_key
+        url = os.getenv("DATABASE_URL")
+        key = (url, user_key) if url else file_name
         if key not in _shared_databases:
-            _shared_databases[key] = _open_database(file_name, log_engine)
+            _shared_databases[key] = _open_database(file_name, log_engine, user_key)
         self.db = _shared_databases[key]
         self.df = None
         self.log = log_engine
@@ -94,6 +157,10 @@ class TrackerEngine:
         self._update_lock = asyncio.Lock()
         self.last_incremental_sync: datetime.datetime | None = None
         self.last_full_sync: datetime.datetime | None = None
+        # Board columns per customer and work-item type — this engine's user's
+        # customers only (WorkItemHandlers fills it).
+        self.columns_cache = defaultdict(dict)
+        self.preload_started = False
 
     async def start_scheduled_updates(self):
         """Start background tasks for scheduled DevOps updates.

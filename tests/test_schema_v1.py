@@ -174,7 +174,8 @@ def test_the_roles_cannot_bypass_row_level_security(pg_schema_db):
         roles = dict(conn.execute(
             "select rolname, rolsuper or rolbypassrls from pg_roles "
             "where rolname like 'worktimer%'"))
-    assert roles == {"worktimer_owner": False, "worktimer_app": False, "worktimer_readonly": False}
+    assert roles == {"worktimer_owner": False, "worktimer_app": False, "worktimer_readonly": False,
+                     "worktimer_signin": False}
 
 
 def test_the_single_user_install_has_user_1(pg_schema_db):

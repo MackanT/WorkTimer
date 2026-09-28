@@ -119,9 +119,9 @@ def setup_command_palette(core) -> None:
         # it on the next page render, so after a tracker/customer change the
         # per-client reference lags until a navigation (the palette would
         # miss a newly linked tracker's levels).
-        from ..core.app import get_global_tracker_engine
+        from ..core.app import get_tracker_engine
 
-        engine = get_global_tracker_engine() or core.tracker_engine
+        engine = get_tracker_engine(core.user_key) or core.tracker_engine
         if engine is not None:
             DO = engine
             # Union of levels across ALL connected trackers (Azure: Epic /
