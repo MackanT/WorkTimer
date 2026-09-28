@@ -247,6 +247,18 @@ def test_work_item_ids_stored_as_blobs_are_read(db, v5_file):
                           "where bk_work_item is not null").bk_work_item.tolist() == [2433]
 
 
+def test_an_entry_is_dated_by_its_start_even_if_5x_cached_another_day(db, v5_file):
+    """Found in a real 5.x file: a start edited later left date_key a day off."""
+    v5 = Database(str(v5_file), _quiet())
+    v5.execute_query("update time set date_key = 20260804 where start_time like '2026-08-03%'")
+    v5.close()
+
+    prepared, _ = _report(db, v5_file)
+
+    assert db.fetch_query("select count(*) as n from time_entries where fk_date = 20260803").n[0] == 1
+    assert any("dated by their start time" in n for n in prepared.notes)
+
+
 def test_the_file_is_never_changed(db, v5_file):
     before = v5_file.read_bytes()
     _report(db, v5_file)
@@ -274,3 +286,27 @@ def test_the_command_line(db, v5_file, pg_schema_db, pg_logins, monkeypatch, cap
     assert "Acme" in out and "False" not in out
     assert importer.main([str(v5_file)]) == 2  # not empty now
     assert importer.main([str(v5_file), "--replace"]) == 0
+
+
+def test_the_reports_check_compares_every_month(db, v5_file):
+    from datetime import date
+
+    _report(db, v5_file)
+    months = importer.compare_reports(str(v5_file), db, today=date(2026, 10, 31))
+
+    assert months["month"].tolist()[0] == "2026-03" and months["month"].tolist()[-1] == "2026-10"
+    assert months["match"].all(), months.to_string()
+    august = months[months.month == "2026-08"].iloc[0]
+    assert (august.entries_5x, august.cost_5x, august.cost_v6) == (4, 6233.33, 6233.33)
+
+
+def test_the_reports_check_notices_a_difference(db, v5_file):
+    from datetime import date
+
+    _report(db, v5_file)
+    db.execute_query("update time_entries set cost = cost + 1 where fk_date = 20260803")
+
+    months = importer.compare_reports(str(v5_file), db, today=date(2026, 10, 31))
+
+    assert months.set_index("month").loc["2026-08", "match"] == False  # noqa: E712
+    assert months["match"].sum() == len(months) - 1

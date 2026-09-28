@@ -9,6 +9,7 @@ _Old/
 data/
 data-pg/
 backups-pg/
+staging-reports/
 backups/
 *.db
 .env

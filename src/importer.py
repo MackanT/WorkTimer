@@ -11,7 +11,10 @@ mapping in src/importer_v5.py) and a v6 export (the app's own backup,
    by side — the numbers must match, to the öre.
 
 Command line (Phase 5's weekly import into staging), connecting as the app:
-    DATABASE_URL=… python -m src.importer FILE [--replace] [--dry-run] [--pat-key FILE]
+    DATABASE_URL=… python -m src.importer FILE [--replace] [--dry-run]
+        [--check-reports] [--pat-key FILE]
+Exit codes: 0 everything matches, 1 problems in the file, 2 stopped,
+3 imported but numbers differ. The last line is "RESULT: …".
 """
 
 import argparse
@@ -20,11 +23,12 @@ import json
 import logging
 import sys
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pandas as pd
 
-from . import importer_v5
+from . import clock, importer_v5
 from .pat_crypto import decrypt_pat
 from .pg_database import PgDatabase
 
@@ -106,6 +110,37 @@ def report(before: pd.DataFrame, after: pd.DataFrame) -> pd.DataFrame:
                  "cost_before", "cost_after", "match"]]
 
 
+def compare_reports(v5_path, db: PgDatabase, today: date | None = None) -> pd.DataFrame:
+    """Month by month from the first 5.x entry to this month: the Reports
+    page's totals (hours, cost, entries, days) from 5.x and from Postgres —
+    the report queries themselves, not just the stored rows. Hours may drift
+    by a running timer's seconds; cost by < half an öre per entry."""
+    today = today or clock.today_local()
+    rows = []
+    with importer_v5.opened(v5_path) as v5:
+        first = v5.get_first_entry_date().iloc[0]["min_date"]
+        if not first:
+            return pd.DataFrame(columns=["month", "match"])
+        month = date.fromisoformat(first).replace(day=1)
+        while month <= today:
+            last = (month.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+            old = v5.report_totals(month.isoformat(), last.isoformat()).iloc[0]
+            new = db.report_totals(month.isoformat(), last.isoformat()).iloc[0]
+            n = int(old["n"])
+            rows.append({
+                "month": month.strftime("%Y-%m"),
+                "hours_5x": round(float(old["h"]), 4), "hours_v6": round(float(new["h"]), 4),
+                "cost_5x": round(float(old["c"]), 2), "cost_v6": round(float(new["c"]), 2),
+                "entries_5x": n, "entries_v6": int(new["n"]),
+                "days_5x": int(old["d"]), "days_v6": int(new["d"]),
+                "match": (n == int(new["n"]) and int(old["d"]) == int(new["d"])
+                          and abs(float(old["h"]) - float(new["h"])) <= 0.0001 * max(n, 1) + 0.02
+                          and abs(float(old["c"]) - float(new["c"])) <= 0.005 * max(n, 1)),
+            })
+            month = last + timedelta(days=1)
+    return pd.DataFrame(rows)
+
+
 def load(prepared: Prepared, db: PgDatabase, replace: bool = False) -> pd.DataFrame:
     """Import a prepared file (refused while it has problems); the report."""
     if prepared.problems:
@@ -121,6 +156,8 @@ def main(argv=None) -> int:
     parser.add_argument("--replace", action="store_true",
                         help="delete everything in the account first")
     parser.add_argument("--dry-run", action="store_true", help="check only")
+    parser.add_argument("--check-reports", action="store_true",
+                        help="also compare the Reports totals month by month")
     parser.add_argument("--pat-key", help="the 5.x install's .pat_key, to keep tracker tokens")
     args = parser.parse_args(argv)
 
@@ -137,15 +174,24 @@ def main(argv=None) -> int:
             print(f"PROBLEM: {p}")
         if prepared.problems:
             print("Nothing imported — fix the problems above in 5.x and try again.")
+            print("RESULT: problems in the file")
             return 1
         if args.dry_run:
             print(prepared.before.to_string(index=False))
+            print("RESULT: checked (dry run)")
             return 0
         result = load(prepared, db, replace=args.replace)
         print(result.to_string(index=False))
-        return 0 if result["match"].all() else 3
+        matched = bool(result["match"].all())
+        if args.check_reports and prepared.kind == "5.x database":
+            months = compare_reports(args.file, db)
+            print(months.to_string(index=False))
+            matched = matched and bool(months["match"].all())
+        print(f"RESULT: {'match' if matched else 'MISMATCH'}")
+        return 0 if matched else 3
     except ValueError as e:
         print(f"Import stopped: {e}", file=sys.stderr)
+        print("RESULT: stopped")
         return 2
     finally:
         db.close()

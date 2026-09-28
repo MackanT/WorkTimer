@@ -17,6 +17,8 @@ The rules (§8):
   that would then end before it starts ends in the second one); a time in
   the skipped spring hour is read as standard time. Tasks' timestamps were
   UTC already (SQLite's current_timestamp).
+* An entry's day is its start's local date — 5.x also cached it (date_key),
+  and a start edited later could leave that stale.
 * ``git_id = 0`` ("no work item") becomes NULL.
 * Tracker tokens the importing server can't read are left out — re-enter them.
 
@@ -28,6 +30,7 @@ Informational changes are *notes*.
 import logging
 import shutil
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
@@ -58,32 +61,39 @@ def _quiet() -> logging.Logger:
     return log
 
 
-def read_v5(path, pat_key_file=None) -> dict:
-    """The tables of a 5.x file (via a normalised copy — the file itself is
-    never opened for writing). Tracker tokens come back as plaintext, or None
-    where unreadable (column ``pat_unreadable`` marks those); pass the 5.x
-    install's .pat_key to read tokens encrypted there."""
+@contextmanager
+def opened(path, pat_key_file=None):
+    """The 5.x engine on a normalised *copy* of `path` — the file itself is
+    never opened for writing. Pass the 5.x install's .pat_key to read tokens
+    encrypted there."""
     with open(path, "rb") as f:
         if f.read(len(SQLITE_HEADER)) != SQLITE_HEADER:
             raise ValueError("Not a WorkTimer 5.x database (not an SQLite file)")
-    log = _quiet()
     with tempfile.TemporaryDirectory() as tmp:
         copy = Path(tmp) / "worktimer.db"
         shutil.copyfile(path, copy)
         if pat_key_file:
             shutil.copyfile(pat_key_file, Path(tmp) / ".pat_key")
-        db = Database(str(copy), log)
+        db = Database(str(copy), _quiet())
         try:
             db.initialize_db()  # the old engine normalises older files first
-            tables = db.read_tables()
-            trackers = tables["trackers"]
-            if not trackers.empty:
-                stored = trackers["pat_token"].tolist()
-                readable = [decrypt_pat(v, str(copy), log) or None if v else None for v in stored]
-                trackers["pat_token"] = readable
-                trackers["pat_unreadable"] = [bool(s) and not r for s, r in zip(stored, readable)]
+            yield db
         finally:
             db.close()
+
+
+def read_v5(path, pat_key_file=None) -> dict:
+    """The tables of a 5.x file. Tracker tokens come back as plaintext, or
+    None where unreadable (column ``pat_unreadable`` marks those)."""
+    with opened(path, pat_key_file) as db:
+        tables = db.read_tables()
+        trackers = tables["trackers"]
+        if not trackers.empty:
+            stored = trackers["pat_token"].tolist()
+            readable = [decrypt_pat(v, db.db_file, db.log_engine) or None if v else None
+                        for v in stored]
+            trackers["pat_token"] = readable
+            trackers["pat_unreadable"] = [bool(s) and not r for s, r in zip(stored, readable)]
     return tables
 
 
@@ -250,6 +260,7 @@ def transform(tables: dict, zone: str) -> V5Import:
         return placeholders[customer]
 
     # ── time entries ──
+    restated = []
     for r in _rows(tables.get("time")):
         tid = r["time_id"]
         project = project_key.get(r.get("project_id"))
@@ -286,10 +297,13 @@ def transform(tables: dict, zone: str) -> V5Import:
             continue
         running = ended is None
         wage = r.get("wage")
+        day = int(start.strftime("%Y%m%d"))  # an entry's day is its start's (5.x Reports agree)
+        if r.get("date_key") and int(r["date_key"]) != day:
+            restated.append(str(tid))
         out["time_entries"].append({
             "key_time_entry": tid, "fk_project": project,
             "started_at": started.isoformat(), "ended_at": ended.isoformat() if ended else None,
-            "fk_date": int(r["date_key"]) if r.get("date_key") else int(start.strftime("%Y%m%d")),
+            "fk_date": day,
             "duration_hours": None if running else _money(duration, "0.0001"),
             "wage_snapshot": int(round(float(wage))) if wage is not None else None,
             "bonus_pct_snapshot": _money(r.get("bonus") or 0, "0.0001"),
@@ -298,6 +312,10 @@ def transform(tables: dict, zone: str) -> V5Import:
             "bk_work_item": _work_item(r.get("git_id")), "comment": r.get("comment"),
             "created_at": started.isoformat(), "updated_at": started.isoformat(),
         })
+
+    if restated:
+        note(f"Entries dated by their start time — 5.x's cached day for them was stale "
+             f"(a start edited later): time_id {', '.join(restated)}")
 
     # ── bonus periods: refused, not guessed, when v6 would reject them ──
     bonuses = sorted(_rows(tables.get("bonus")), key=lambda r: (_date(r.get("start_date")) or date.min))

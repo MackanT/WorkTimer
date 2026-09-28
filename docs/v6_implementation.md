@@ -776,6 +776,33 @@ database and a v4-era file.
 **Done when:** two consecutive weekly imports match to the öre, and nothing
 has been fixed in the billing path since the last one.
 
+**Status: prepared, not deployed** (2026-09-28). Runbook:
+[staging.md](staging.md).
+
+- **Access:** through the SSH tunnel already in `~/.ssh/config`
+  (`localhost:18080` → the server's `127.0.0.1:8080`); nothing new listens on
+  the internet. No tracker tokens on staging, so it never talks to
+  DevOps/Jira alongside 5.x.
+- [scripts/staging.sh](../scripts/staging.sh) on the server (`up`, `import`,
+  `gate`, `status`); [scripts/push_to_staging.py](../scripts/push_to_staging.py)
+  on the PC — the weekly routine in one command: a consistent snapshot
+  (SQLite backup API), copied over SSH, imported with `--replace`, the report
+  kept on the server with the commit that produced it.
+- **A stronger comparison than planned:** `--check-reports` also compares the
+  Reports page's totals month by month — hours, cost, entries, days, each
+  from its own version's report queries — so the gate proves the report
+  logic, not only the stored rows. **The gate** (`staging.sh gate`): the last
+  two reports both `RESULT: match`, on the same commit.
+- **Dry run on your live database** (after your three 5.x fixes): every
+  customer matches, and all 36 months of the Reports check match. The check
+  found one more 5.x inconsistency on the way: four entries whose cached day
+  (`date_key`) was a day after their start — a start edited later. The
+  importer now dates entries by their start, as 5.x's Reports already did,
+  and lists them (time_id 4228, 4234, 4255, 4419).
+- **Server (read-only look):** Ubuntu 26.04.1, no Docker yet; Ubuntu's own
+  `docker.io` 29.1, `docker-compose-v2` 2.40 and `docker-buildx` 0.30 are
+  available and patched by the running `unattended-upgrades`.
+
 ---
 
 ## Phase 6 — Online: identity and per-user state

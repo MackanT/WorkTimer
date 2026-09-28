@@ -30,3 +30,4 @@ data/.storage_secret
 data/.pat_key
 data-pg/
 backups-pg/
+staging-reports/
