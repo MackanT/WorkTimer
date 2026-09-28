@@ -236,6 +236,58 @@ def test_a_write_through_hits_only_the_named_customers_item(db):
         ("Acme", "Done", 1), ("Beta", "New", 0)]
 
 
+# ── currency: the customer's, fixed once time is logged (v6_plan §4) ────────
+
+
+def _acme_and_euro(db):
+    _acme(db)
+    db.insert_customer("Euro GmbH", "2026-01-01", 100, currency=" eur ")
+    db.insert_project("Euro GmbH", "Audit")
+
+
+def test_a_customer_is_in_sek_unless_told_otherwise(db):
+    _acme_and_euro(db)
+
+    details = db.get_current_customer_details()
+    assert dict(zip(details["customer_name"], details["currency"])) == {
+        "Acme": "SEK", "Euro GmbH": "EUR"}
+    with pytest.raises(ValueError, match="three-letter"):
+        db.insert_customer("Bad", "2026-01-01", 1, currency="EURO")
+
+
+def test_the_currency_is_fixed_once_the_customer_has_time(db):
+    _acme(db)
+    db.update_customer("Acme", "Acme", currency="EUR")  # no time yet
+    db.insert_manual_time_row(*_pid(db, "Build"), "2026-09-01 09:00", "2026-09-01 10:00")
+
+    db.update_customer("Acme", "Acme Ltd", currency="EUR")  # unchanged: a rename goes through
+    with pytest.raises(ValueError, match="fixed once it has time entries"):
+        db.update_customer("Acme Ltd", "Acme Ltd", currency="SEK")
+    db.insert_customer("Acme Ltd", "2026-10-01", 1200, currency="SEK")  # a raise keeps it
+    assert db.get_current_customer_details()["currency"].tolist() == ["EUR"]
+
+
+def test_money_is_reported_per_currency_never_summed(db):
+    _acme_and_euro(db)
+    db.insert_manual_time_row(*_pid(db, "Build"), "2026-09-01 09:00", "2026-09-01 10:30")
+    db.insert_manual_time_row(*_pid(db, "Audit", "Euro GmbH"), "2026-09-02 09:00", "2026-09-02 11:00")
+
+    amounts = db.report_amounts("2026-09-01", "2026-09-30")
+    assert [tuple(r) for r in amounts[["currency", "h", "c", "cth"]].itertuples(index=False)] == [
+        ("EUR", 2.0, 200.0, 2.0), ("SEK", 1.5, 1500.0, 1.5)]
+    assert db.report_amounts("2026-09-01", "2026-09-30", ["Euro GmbH"])["currency"].tolist() == ["EUR"]
+    # untagged time rounds as one unit per currency, not one across both
+    units = db.report_hours_for_rounding("2026-09-01", "2026-09-30", [], "work_item")
+    assert sorted(zip(units["currency"], units["h"])) == [("EUR", 2.0), ("SEK", 1.5)]
+
+
+def test_the_time_tracker_knows_each_customers_currency(db):
+    _acme_and_euro(db)
+
+    df = db.get_customer_ui_list("20260901", "20260930")
+    assert dict(zip(df["customer_name"], df["currency"])) == {"Acme": "SEK", "Euro GmbH": "EUR"}
+
+
 # ── tasks and trackers ──────────────────────────────────────────────────────
 
 

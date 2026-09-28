@@ -77,6 +77,14 @@ class PageState:
             return 0.0
         return float(row.iloc[0][column_name])
 
+    def get_currency(self, customer_id: int) -> str:
+        """The customer's currency (SEK on SQLite, which has none)."""
+        df = self.ui_data_df
+        if df is None or "currency" not in df.columns:
+            return "SEK"
+        rows = df[df["customer_id"] == customer_id]
+        return str(rows.iloc[0]["currency"]) if not rows.empty else "SEK"
+
     def get_customer_total(self, customer_id: int, column_name: str) -> float:
         """Get customer total from dataframe."""
         if self.ui_data_df is None:
@@ -139,9 +147,9 @@ def recommended_first(cust_df: pd.DataFrame, selectable_labels: list, default_id
     return rec + [lbl for lbl in selectable_labels if lbl not in rec_set], len(rec)
 
 
-def format_value(value: float, is_time: bool) -> str:
-    """Format a value as time (hours) or bonus (SEK)."""
-    return f"{value:.2f} h" if is_time else f"{value:,.0f} SEK"
+def format_value(value: float, is_time: bool, currency: str = "SEK") -> str:
+    """Format a value as time (hours) or bonus (in the customer's currency)."""
+    return f"{value:.2f} h" if is_time else f"{value:,.0f} {currency}"
 
 
 def get_column_name(is_time: bool) -> str:
@@ -1110,7 +1118,7 @@ async def time_tracking_page():
         def get_total_string(customer_id):
             """Get formatted total for a customer from state."""
             total = state.get_customer_total(customer_id, column_name)
-            return format_value(total, is_time)
+            return format_value(total, is_time, state.get_currency(customer_id))
 
         async def make_project_row(
             project, customer_id, project_index=None, total_projects=None
@@ -1219,7 +1227,7 @@ async def time_tracking_page():
                 )
 
                 value = project[column_name]
-                total_string = format_value(value, is_time)
+                total_string = format_value(value, is_time, state.get_currency(int(customer_id)))
 
                 project_value_style = UI_STYLES.get_widget_style(
                     "time_tracking_project_value"
@@ -1565,12 +1573,12 @@ async def time_tracking_page():
         # Update project value labels
         for (cust_id, proj_id), label in value_label_refs.items():
             value = state.get_project_value(cust_id, proj_id, column_name)
-            label.set_text(format_value(value, is_time))
+            label.set_text(format_value(value, is_time, state.get_currency(cust_id)))
 
         # Update customer total labels
         for cust_id, label in customer_total_label_refs.items():
             total = state.get_customer_total(cust_id, column_name)
-            label.set_text(format_value(total, is_time))
+            label.set_text(format_value(total, is_time, state.get_currency(cust_id)))
 
         core.logger.debug("Values updated incrementally")
 

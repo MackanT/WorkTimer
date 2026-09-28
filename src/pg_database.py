@@ -75,6 +75,16 @@ def _clean_expiry(token_expires) -> date | None:
         raise ValueError(f"Token expiry '{value}' is not a date (use YYYY-MM-DD)")
 
 
+def _currency(value) -> str | None:
+    """A currency form value: empty → None; otherwise an ISO 4217 code."""
+    code = str(value or "").strip().upper()
+    if not code:
+        return None
+    if not re.fullmatch(r"[A-Z]{3}", code):
+        raise ValueError(f"Currency '{value}' is not a three-letter code (like SEK or EUR)")
+    return code
+
+
 _CUSTOMER_ORDER = 'c.sort_order, c.customer_name collate "C"'  # the Time Tracker's order
 
 
@@ -401,13 +411,15 @@ class PgDatabase:
         self, customer_name: str, start_date: str, wage: int, org_url: str = None,
         pat_token: str = None, valid_from: str = None, tracker_project: str = None,
         expected_work_pct: float = None, color: str = None, integration_type: str = None,
-        tracker_name: str = None,
+        tracker_name: str = None, currency: str = None,
     ):
-        """A new customer — or, for an existing name, a wage change from
-        `start_date`: the current period closes the day before. Settings
-        passed blank keep their values."""
+        """A new customer (in `currency`, SEK when blank) — or, for an existing
+        name, a wage change from `start_date`: the current period closes the
+        day before. Settings passed blank keep their values; a wage change
+        never changes the currency."""
         start = date.fromisoformat(str(start_date)[:10])
         wage = int(round(float(wage)))
+        currency = _currency(currency) or "SEK"
         with self._tx() as conn:
             tracker = self._tracker_key(conn, tracker_name) if tracker_name else None
             key = self._one(conn, "select key_customer from customers where customer_name = %s",
@@ -416,9 +428,10 @@ class PgDatabase:
                 key = self._one(
                     conn,
                     "insert into customers (customer_name, color, fk_tracker, tracker_project, "
-                    "expected_work_pct) values (%s, %s, %s, %s, %s) returning key_customer",
+                    "expected_work_pct, currency) values (%s, %s, %s, %s, %s, %s) "
+                    "returning key_customer",
                     (customer_name, color or None, tracker, tracker_project or None,
-                     expected_work_pct),
+                     expected_work_pct, currency),
                 )
                 self.log_engine.info(f"Inserted new customer '{customer_name}'")
             else:
@@ -453,11 +466,25 @@ class PgDatabase:
         self, customer_name: str, new_customer_name: str, org_url: str = None,
         pat_token: str = None, tracker_project: str = None, expected_work_pct: float = None,
         color: str = None, integration_type: str = None, tracker_name: str = None,
+        currency: str = None,
     ):
         """Rename and edit settings. None leaves a setting unchanged; "" clears
-        it. The tracker type comes from the linked tracker."""
+        it. The tracker type comes from the linked tracker. The currency can
+        change only while the customer has no time entries (v6_plan §4)."""
+        currency = _currency(currency)
         with self._tx() as conn:
             changes = {"customer_name": new_customer_name}
+            if currency is not None:
+                current = conn.execute(
+                    "select c.currency, exists (select from time_entries te join projects p "
+                    "on p.key_project = te.fk_project where p.fk_customer = c.key_customer) "
+                    "from customers c where c.customer_name = %s", (customer_name,)).fetchone()
+                if current and current[0] != currency:
+                    if current[1]:
+                        raise ValueError(
+                            f"The currency of '{customer_name}' is fixed once it has time "
+                            f"entries (it is {current[0]})")
+                    changes["currency"] = currency
             if tracker_name is not None:
                 changes["fk_tracker"] = self._tracker_key(conn, tracker_name) if tracker_name else None
             if tracker_project is not None:
@@ -584,8 +611,8 @@ class PgDatabase:
 
     def get_customer_ui_list(self, start_date: str, end_date: str) -> pd.DataFrame:
         """The Time Tracker: every enabled project of every enabled customer
-        with its hours and bonus between two YYYYMMDD dates — running timers
-        counted up to now — in the user's order."""
+        with its hours and bonus (in the customer's currency) between two
+        YYYYMMDD dates — running timers counted up to now — in the user's order."""
         return self.fetch_query(
             """
             with totals as (
@@ -605,6 +632,7 @@ class PgDatabase:
                    p.project_name,
                    round(coalesce(t.total_time, 0), 2)    as total_time,
                    round(coalesce(t.user_bonus, 0), 2)    as user_bonus,
+                   c.currency,
                    c.sort_order                           as customer_sort_order,
                    p.sort_order                           as project_sort_order
             from projects p
@@ -801,7 +829,7 @@ class PgDatabase:
         return self.fetch_query(
             f"""
             select c.customer_name, c.tracker_project, c.expected_work_pct, c.color,
-                   t.tracker_name
+                   t.tracker_name, c.currency
             from customers c left join trackers t on t.key_tracker = c.fk_tracker
             where c.is_enabled
             order by {_CUSTOMER_ORDER}
@@ -988,17 +1016,36 @@ class PgDatabase:
             """,
             self._report_params(start, end, customers))
 
+    def report_amounts(self, start: str, end: str, customers=None) -> pd.DataFrame:
+        """Money per currency — never summed across currencies (v6_plan §4):
+        one row per currency with entries in the range; h = hours incl.
+        running timers, c = cost, cth = completed hours."""
+        return self.fetch_query(
+            f"""
+            select c.currency,
+                   coalesce(sum({self._REPORT_HOURS}), 0) as h,
+                   coalesce(sum(te.cost), 0) as c,
+                   coalesce(sum(te.duration_hours), 0) as cth
+            {self._REPORT_FROM}
+            group by c.currency
+            order by c.currency
+            """,
+            self._report_params(start, end, customers))
+
     def report_hours_for_rounding(self, start: str, end: str, customers, basis: str) -> pd.DataFrame:
-        """Hours per billing-rounding unit (h, positive only): one per entry
-        for 'entry', per project for 'project', otherwise per work item — all
-        untagged time is one unit ("no work item" is NULL however it was logged)."""
+        """Hours per billing-rounding unit (h, positive only, with its
+        currency): one per entry for 'entry', per project for 'project',
+        otherwise per work item — all untagged time of a currency is one unit
+        ("no work item" is NULL however it was logged)."""
         hours = self._REPORT_HOURS
         if basis == "entry":
-            query = f"select {hours} as h {self._REPORT_FROM} and {hours} > 0 order by te.key_time_entry"
+            query = (f"select c.currency, {hours} as h {self._REPORT_FROM} and {hours} > 0 "
+                     f"order by te.key_time_entry")
         else:
             unit = "te.fk_project" if basis == "project" else "te.bk_work_item"
-            query = (f"select sum({hours}) as h {self._REPORT_FROM} "
-                     f"group by {unit} having sum({hours}) > 0 order by {unit}")
+            query = (f"select c.currency, sum({hours}) as h {self._REPORT_FROM} "
+                     f"group by c.currency, {unit} having sum({hours}) > 0 "
+                     f"order by c.currency, {unit}")
         return self.fetch_query(query, self._report_params(start, end, customers))
 
     def report_hours_by_project(self, start: str, end: str, customers=None) -> pd.DataFrame:

@@ -392,6 +392,12 @@ add_data_page:
           label: Colour
           type: color
           optional: true
+        - name: currency
+          label: Currency (fixed once time is logged)
+          type: input
+          default: SEK
+          optional: true
+          backend: postgres
       action:
         function: "insert_customer"
         main_action: "Customer"
@@ -445,6 +451,14 @@ add_data_page:
           options_source: color
           parent: customer_name
           optional: true
+        - name: currency
+          label: Currency (fixed once time is logged)
+          type: input
+          options: []
+          options_source: currency_current
+          parent: customer_name
+          optional: true
+          backend: postgres
       action:
         function: "update_customer"
         main_action: "Customer"

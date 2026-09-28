@@ -404,7 +404,7 @@ async def reports_page():
         "custom_start": _month.split(" - ")[0],
         "custom_end": _month.split(" - ")[1],
         "range": ("", ""),
-        "tiles": {"hours": 0.0, "amount": 0.0, "entries": 0, "days": 0},
+        "tiles": {"hours": 0.0, "amounts": [], "entries": 0, "days": 0},
         "deltas": {"hours": None, "amount": None, "entries": None},
         "target": {"hours": 0.0, "pct": 0.0},
         "by_project": ([], []),
@@ -416,8 +416,24 @@ async def reports_page():
         "top_items_colors": [],
     }
 
-    async def _billable_hours(raw_h, basis, inc, start, end, sel):
-        """Billable hours for the tiles/CSV under the chosen rounding basis.
+    def _currency_of(row, columns):
+        # None on SQLite (5.x has no currencies): one unnamed currency.
+        return row["currency"] if "currency" in columns and pd.notna(row["currency"]) else None
+
+    def _money(amount, cur):
+        """An amount with its currency code — on SQLite, the suffix setting."""
+        unit = cur or currency
+        return f"{amount:,.0f} {unit}" if unit else f"{amount:,.0f}"
+
+    def _per_currency(df):
+        """[(currency, h, c, cth)] from report_amounts."""
+        return [(_currency_of(r, df.columns), float(r["h"]), float(r["c"]), float(r["cth"]))
+                for _, r in df.iterrows()]
+
+    async def _billable_hours(raw, basis, inc, start, end, sel):
+        """{currency: billable hours} for the tiles/CSV under the chosen
+        rounding basis, each currency rounded on its own (its amount uses only
+        its hours).
 
         Rounding is display-only (never written to the DB). 'off' / no increment
         returns raw hours; 'total' rounds the sum; 'project' / 'work_item' round
@@ -425,15 +441,17 @@ async def reports_page():
         group); 'entry' rounds every row (inflates with many start/stops).
         """
         if not inc or basis == "off":
-            return raw_h
+            return dict(raw)
         if basis == "total":
-            return round_hours(raw_h, inc, mode)
+            return {cur: round_hours(h, inc, mode) for cur, h in raw.items()}
         rows = await QE.function_db(
             "report_hours_for_rounding", start, end, sel, basis
         )
-        if rows.empty:
-            return 0.0
-        return sum(round_hours(float(v), inc, mode) for v in rows["h"])
+        billed = {cur: 0.0 for cur in raw}
+        for _, r in rows.iterrows():
+            cur = _currency_of(r, rows.columns)
+            billed[cur] = billed.get(cur, 0.0) + round_hours(float(r["h"]), inc, mode)
+        return billed
 
     async def _load():
         start, end, ps, pe = _period_bounds(
@@ -443,7 +461,7 @@ async def reports_page():
         sel = [c for c in state["customers"] if c in names]  # empty = all
 
         if not (start and end):
-            state["tiles"] = {"hours": 0.0, "amount": 0.0, "entries": 0, "days": 0}
+            state["tiles"] = {"hours": 0.0, "amounts": [], "entries": 0, "days": 0}
             state["deltas"] = {"hours": None, "amount": None, "entries": None}
             state["target"] = {"hours": 0.0, "pct": 0.0}
             state["by_project"] = state["by_customer"] = state["over_time"] = ([], [])
@@ -456,30 +474,35 @@ async def reports_page():
 
         tot = await QE.function_db("report_totals", start, end, sel)
         raw_h = float(tot.iloc[0]["h"]) if not tot.empty else 0.0
-        raw_c = float(tot.iloc[0]["c"]) if not tot.empty else 0.0
-        completed_h = float(tot.iloc[0]["cth"]) if not tot.empty else 0.0
+        # Money per currency, never summed across them (v6_plan §4).
+        money = _per_currency(await QE.function_db("report_amounts", start, end, sel))
+        billed = await _billable_hours(
+            {cur: h for cur, h, _, _ in money},
+            state["round_basis"], state["round"], start, end, sel,
+        )
         # Blended billable rate from completed entries (running timers have no
         # cost yet); applied to the live hours for an estimated amount.
-        rate = (raw_c / completed_h) if completed_h else 0.0
-        billed_h = await _billable_hours(
-            raw_h, state["round_basis"], state["round"], start, end, sel
-        )
         state["tiles"] = {
-            "hours": billed_h,
-            "amount": billed_h * rate,
+            "hours": sum(billed.values()),
+            "amounts": [(cur, billed[cur] * (c / cth if cth else 0.0))
+                        for cur, _, c, cth in money],
             "entries": int(tot.iloc[0]["n"]) if not tot.empty else 0,
             "days": int(tot.iloc[0]["d"]) if not tot.empty else 0,
         }
 
         # Period-over-period deltas — actual activity vs the SAME elapsed span of
         # the previous period (e.g. MTD vs the previous month's first N days).
+        # The amount's only when both periods are in one currency.
         prev = await QE.function_db("report_totals", ps, pe, sel)
         p_h = float(prev.iloc[0]["h"]) if not prev.empty else 0.0
-        p_c = float(prev.iloc[0]["c"]) if not prev.empty else 0.0
         p_n = int(prev.iloc[0]["n"]) if not prev.empty else 0
+        cost = {cur: c for cur, _, c, _ in money}
+        p_cost = {cur: c for cur, _, c, _ in
+                  _per_currency(await QE.function_db("report_amounts", ps, pe, sel))}
         state["deltas"] = {
             "hours": _pct_change(raw_h, p_h),
-            "amount": _pct_change(raw_c, p_c),
+            "amount": (_pct_change(sum(cost.values()), sum(p_cost.values()))
+                       if len(set(cost) | set(p_cost)) == 1 else None),
             "entries": _pct_change(state["tiles"]["entries"], p_n),
         }
 
@@ -565,7 +588,7 @@ async def reports_page():
         t = state["tiles"]
         d = state["deltas"]
         tg = state["target"]
-        cur = f" {currency}" if currency else ""
+        amount = " · ".join(_money(a, cur) for cur, a in t["amounts"]) or _money(0, None)
         pc, pv = state["by_project"]
         cc, cv = state["by_customer"]
         dts, dvs = state["over_time"]
@@ -579,7 +602,7 @@ async def reports_page():
         with ui.column().classes("w-full gap-3"):
             with ui.row().classes("w-full gap-3 flex-wrap"):
                 _stat_tile("Total hours", f"{t['hours']:,.1f}", "h", d["hours"])
-                _stat_tile("Amount", f"{t['amount']:,.0f}{cur}", "", d["amount"])
+                _stat_tile("Amount", amount, "", d["amount"])
                 _stat_tile("Entries", f"{t['entries']:,}", "", d["entries"])
                 _stat_tile("Active days", f"{t['days']:,}")
                 _stat_tile(f"of target ({tg['hours']:.0f} h)", f"{tg['pct']:.0f}%")
@@ -675,7 +698,8 @@ async def reports_page():
             w.writerow([k, f"{v:.2f}"])
         w.writerow([])
         w.writerow(["Billable hours", f"{state['tiles']['hours']:.2f}"])
-        w.writerow(["Amount", f"{state['tiles']['amount']:.2f}"])
+        for cur, a in state["tiles"]["amounts"] or [(None, 0.0)]:
+            w.writerow(["Amount", f"{a:.2f}"] + ([cur] if cur else []))
         _slug = "_".join(state["customers"]) if state["customers"] else "All"
         ui.download(buf.getvalue().encode("utf-8-sig"), f"report_{_slug}_{start}_{end}.csv")
 

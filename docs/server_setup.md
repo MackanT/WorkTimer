@@ -147,9 +147,12 @@ Disconnect before measuring the app's own memory, or the numbers are skewed.
 
 - [ ] Hetzner Cloud Firewall — inbound port 22 only (once cloudflared is up, the
       app itself needs no inbound ports at all)
-- [ ] `unattended-upgrades` for security patches
-- [ ] Docker + Compose — Ubuntu 26.04 may predate Docker's apt repo codename
-- [ ] Postgres container + volume
+- [x] `unattended-upgrades` for security patches — active out of the box
+- [x] Docker + Compose — Ubuntu's own packages (`docker.io` 29.1,
+      `docker-compose-v2` 2.40, `docker-buildx` 0.30), installed 2026-09-28
+- [x] Postgres container + volume — the Phase 5 staging stack in
+      `/opt/worktimer` ([staging.md](staging.md)), with daily `pg_dump`s to
+      `backups-pg/` on the server
 - [ ] Domain — registered at Hetzner (~€4.90/yr; check the **renewal** price,
       cheap TLDs often jump after year one)
 - [ ] Move the domain's DNS to Cloudflare: add it as a site on the Free plan,

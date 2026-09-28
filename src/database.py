@@ -2436,6 +2436,20 @@ class Database:
             params,
         )
 
+    def report_amounts(self, start: str, end: str, customers=None):
+        """Money per currency. 5.x has no currencies: one row, currency NULL
+        (the page then shows the currency-suffix setting); h, c and cth as in
+        report_totals."""
+        where, params = self._report_filter(start, end, customers)
+        return self.fetch_query(
+            f"""SELECT NULL AS currency,
+                       COALESCE(SUM({self._REPORT_DUR}), 0) AS h,
+                       COALESCE(SUM(cost), 0) AS c,
+                       COALESCE(SUM(total_time), 0) AS cth
+                FROM time WHERE {where}""",
+            params,
+        )
+
     def report_hours_for_rounding(self, start: str, end: str, customers, basis: str):
         """Hours per billing-rounding unit (column h, positive only): one row
         per entry for basis 'entry'; per project name for 'project'; otherwise

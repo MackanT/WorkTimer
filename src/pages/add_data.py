@@ -232,6 +232,9 @@ async def render_entity_form(
     # Deep-copy: the config dicts are shared process-wide; assign_dynamic_options
     # writes options into the field dicts, which must not leak across clients.
     fields = copy.deepcopy(form_config.get("fields", []))
+    # A field marked `backend:` exists only there (a customer's currency: Postgres).
+    backend = getattr(getattr(core.query_engine, "db", None), "backend", "sqlite")
+    fields = [f for f in fields if f.get("backend", backend) == backend]
     action = form_config.get("action", {})
 
     data_sources = await prepare_data_sources(core, entity_type, operation)
@@ -440,6 +443,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     data_sources["tracker_project_current"] = {}
                     data_sources["expected_work_pct"] = {}
                     data_sources["color"] = {}
+                    data_sources["currency_current"] = {}
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
                         data_sources["new_customer_name"][cname] = cname
@@ -454,6 +458,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                             if pd.notna(row["expected_work_pct"]) else 0
                         )
                         data_sources["color"][cname] = row["color"] or ""
+                        data_sources["currency_current"][cname] = row.get("currency") or ""
                     # Available projects per customer, from the live connections.
                     eng = getattr(core, "tracker_engine", None)
                     data_sources["tracker_projects"] = (

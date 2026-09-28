@@ -198,6 +198,16 @@ def test_breakdowns_honour_the_customer_filter(seeded):
     assert df["k"].tolist() == ["Beta"]
 
 
+def test_money_per_currency_matches_the_totals_for_one_currency(seeded):
+    """All SEK (Postgres's default; SQLite has no currencies): one row, the
+    same hours and cost as the totals."""
+    [a] = seeded.report_amounts(*SEPTEMBER).to_dict("records")
+    [t] = seeded.report_totals(*SEPTEMBER).to_dict("records")
+
+    assert (a["h"], a["c"], a["cth"]) == (t["h"], t["c"], t["cth"])
+    assert a["currency"] == ("SEK" if seeded.backend == "postgres" else None)
+
+
 # ── billing-rounding units ──────────────────────────────────────────────────
 
 

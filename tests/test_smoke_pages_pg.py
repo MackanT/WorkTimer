@@ -8,6 +8,7 @@ The seed data and the page list are shared with tests/test_smoke_pages.py.
 """
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -75,3 +76,22 @@ async def test_page_renders_on_postgres(user: User, path):
     await page_built()
     if PAGES[path]:
         await user.should_see(PAGES[path])
+
+
+async def test_reports_show_each_currency_on_its_own(user: User, app_url, tmp_path):
+    """v6_plan §4: a EUR customer's amount stands beside SEK's, never added
+    to it. Last in the module — it adds to the shared seed."""
+    quiet = logging.getLogger("smoke.seed")
+    pools = Pools(PgConfig(app_url), max_size=1)
+    db = PgDatabase(pools, quiet, secrets_dir=str(tmp_path))
+    db.insert_customer("Euro GmbH", "2026-01-01", 100, currency="EUR")
+    db.insert_project("Euro GmbH", "Audit")
+    row = db.get_data_input_list().query("project_name == 'Audit'").iloc[0]
+    today = datetime.now().strftime("%Y-%m-%d")
+    db.insert_manual_time_row(int(row.customer_id), int(row.project_id),
+                              f"{today} 00:00", f"{today} 00:30")
+    pools.close()
+
+    await user.open("/reports")
+    await page_built()
+    await user.should_see("50 EUR")

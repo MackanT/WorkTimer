@@ -542,7 +542,8 @@ Steps:
 exactly the two approved ones; the app runs end to end under compose.
 
 **Status: in progress** — the data layer is ported, passes the oracle and is
-wired in (Postgres when `DATABASE_URL` is set); steps 5, 7 and 9 remain.
+wired in (Postgres when `DATABASE_URL` is set); only step 9 remains, at
+release (SQLite is the fallback until then).
 
 - **Decided (2026-09-28):** customer dropdowns follow the Time Tracker order;
   per-work-item rounding pools all untagged time; per-project rounding groups
@@ -635,10 +636,27 @@ wired in (Postgres when `DATABASE_URL` is set); steps 5, 7 and 9 remain.
   - Verified under compose: the service wrote a dump at start that
     `pg_restore --list` reads (pg_dump 18.6 = server, owners and 0002's
     revokes included); "Backup now" and "Download" produced the export.
+- **Step 5's currency, done (2026-09-28):** the customer dialog has a
+  Currency field on Postgres (a `backend: postgres` field in
+  `config_ui.yml`; SEK by default, any ISO code). It changes only while the
+  customer has no time entries — `update_customer` refuses with "fixed once
+  it has time entries", and the 0001 trigger enforces it underneath; a raise
+  never changes it. Reports shows **one amount per currency** —
+  `report_amounts` returns a row per currency and billing rounding runs
+  within each (untagged time is one unit *per currency*), so the tile reads
+  "100 NOK · 2,000 SEK", the CSV has an Amount row per currency, and the
+  delta shows only for a single currency. The Time Tracker's bonus shows each
+  customer's own code. On SQLite nothing changes: one currency-less row, and
+  Settings' currency suffix still applies (hidden on Postgres). Tests: the
+  data layer on Postgres, `report_amounts` against `report_totals` on both
+  backends, the Reports page with a EUR customer; mutation-checked (untagged
+  time pooled across currencies; one summed amount). Verified in a browser
+  on Postgres and on SQLite.
+- **Step 7, closed — nothing to build:** no page can delete a customer or
+  project (disable is the only path, and the query editor is read-only since
+  Phase 3); the database refuses such a delete with entries anyway.
 - **Open:**
-  - Step 5's totals per currency; step 7's "has N time entries — disable
-    instead" (the database already refuses); step 9 (after the importer:
-    SQLite is the fallback until then).
+  - Step 9 (at release: SQLite is the fallback until then).
   - The Jira incremental sync's watermark is UTC now (SQLite kept Jira's own
     offset string). A Jira site in a negative-offset zone could miss a few
     hours of edits until the next full sync — check when the sync runs live.
@@ -776,13 +794,30 @@ database and a v4-era file.
 **Done when:** two consecutive weekly imports match to the öre, and nothing
 has been fixed in the billing path since the last one.
 
-**Status: prepared, not deployed** (2026-09-28). Runbook:
+**Status: deployed, the weekly imports under way** (2026-09-28). Runbook:
 [staging.md](staging.md).
 
+- **Deployed 2026-09-28** to the Hetzner box: Docker from Ubuntu's packages,
+  the branch in `/opt/worktimer`, passwords generated there into a root-only
+  `.env`. Found on the way: `migrate` and `worktimer-pg` both built the same
+  image tag, which Docker 29's containerd image store refuses when built in
+  parallel — `migrate` now runs the image `worktimer-pg` builds, and the
+  Postgres services have their own tag (`worktimer-app:pg`), so building them
+  never replaces the SQLite app's image.
+- **First import: `RESULT: match`** — every customer, and all months of the
+  Reports check.
 - **Access:** through the SSH tunnel already in `~/.ssh/config`
   (`localhost:18080` → the server's `127.0.0.1:8080`); nothing new listens on
-  the internet. No tracker tokens on staging, so it never talks to
-  DevOps/Jira alongside 5.x.
+  the internet.
+- **Tracker tokens: opt-in** (`push_to_staging.py --with-tokens` copies 5.x's
+  `.pat_key` for the import; deleted afterwards). With tokens, staging syncs
+  with DevOps/Jira alongside 5.x — a stop saved with "Store to tracker" on
+  posts to the real item.
+- **Timers checked live on staging** (a scripted browser run, every step read
+  back from Postgres): start/stop, cancel, reload / second client / app
+  restart, start from a past time with a custom stop (1.5 h × 926 = 1389.00,
+  bonus 138.90), re-assign on stop, delete, manual entry, two timers at once,
+  the tracker-connected stop dialog — all correct.
 - [scripts/staging.sh](../scripts/staging.sh) on the server (`up`, `import`,
   `gate`, `status`); [scripts/push_to_staging.py](../scripts/push_to_staging.py)
   on the PC — the weekly routine in one command: a consistent snapshot
@@ -799,9 +834,6 @@ has been fixed in the billing path since the last one.
   (`date_key`) was a day after their start — a start edited later. The
   importer now dates entries by their start, as 5.x's Reports already did,
   and lists them (time_id 4228, 4234, 4255, 4419).
-- **Server (read-only look):** Ubuntu 26.04.1, no Docker yet; Ubuntu's own
-  `docker.io` 29.1, `docker-compose-v2` 2.40 and `docker-buildx` 0.30 are
-  available and patched by the running `unattended-upgrades`.
 
 ---
 

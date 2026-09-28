@@ -419,6 +419,9 @@ def _render_time_settings_card(core) -> None:
             currency_in = ui.input(
                 label="Currency suffix", value=str(ts.get("currency", "") or ""),
             ).props("dense outlined").classes("w-32")
+            # On Postgres each customer has its own currency, shown instead.
+            currency_in.set_visibility(
+                getattr(core.query_engine.db, "backend", "sqlite") != "postgres")
             hours_in = ui.number(
                 label="Target hours/day", min=0, step=0.5,
                 value=float(ts.get("target_hours_per_day", 8) or 8),
