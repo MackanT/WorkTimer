@@ -5,10 +5,15 @@ BEGIN → the transaction's user set → work → COMMIT, or ROLLBACK on any err
 Row-level security compares every user-data row with that user, so tenancy is
 decided here and nowhere else — never at call sites.
 
-The user is set with ``set_config('app.user_id', …, true)``: SET LOCAL
-semantics, so it ends with the transaction and a pooled connection can't carry
-one user into the next user's transaction. Outside a transaction it would
-silently do nothing — which is why nothing here hands out a bare connection.
+The user is set with ``SET LOCAL app.user_id``: it ends with the transaction,
+so a pooled connection can't carry one user into the next user's transaction.
+Outside a transaction it would silently do nothing — which is why nothing here
+hands out a bare connection. (No role may call set_config(), which could
+change it from inside a query — migration 0002.)
+
+Read-only transactions — the query editor's users' own SELECTs — run on
+worktimer_readonly, in a READ ONLY transaction, optionally with a statement
+timeout and the user's time zone.
 
 Config: DATABASE_URL connects as worktimer_app; DATABASE_URL_READONLY as
 worktimer_readonly (the query editor, phase 3). Migrations run separately, as
@@ -19,8 +24,10 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 import psycopg
+from psycopg import sql
 from psycopg_pool import ConnectionPool
 
 LOCAL_USER = 1  # the single-user install's only user (seeded by migration 0001)
@@ -87,14 +94,26 @@ class Pools:
         )
 
     @contextmanager
-    def transaction(self, user_key: int, *, readonly: bool = False) -> Iterator[psycopg.Connection]:
-        """One transaction as `user_key`; commits on success, rolls back on error."""
-        setting = _user_setting(user_key)
-        if readonly and self._readonly is None:
-            raise ConfigError("Set DATABASE_URL_READONLY for read-only transactions.")
+    def transaction(self, user_key: int, *, readonly: bool = False,
+                    timeout_ms: int | None = None,
+                    timezone: str | None = None) -> Iterator[psycopg.Connection]:
+        """One transaction as `user_key`; commits on success, rolls back on
+        error. `timeout_ms` caps each statement; `timezone` is the session's
+        zone for the transaction."""
+        setup = [sql.SQL("set local app.user_id = {}").format(sql.Literal(_user_setting(user_key)))]
+        if readonly:
+            if self._readonly is None:
+                raise ConfigError("Set DATABASE_URL_READONLY for read-only transactions.")
+            setup.insert(0, sql.SQL("set transaction read only"))
+        if timeout_ms is not None:
+            setup.append(sql.SQL("set local statement_timeout = {}").format(sql.Literal(int(timeout_ms))))
+        if timezone is not None:
+            ZoneInfo(timezone)  # an unknown zone fails here, not in the database
+            setup.append(sql.SQL("set local time zone {}").format(sql.Literal(timezone)))
         pool = self._readonly if readonly else self._app
         with pool.connection() as conn, conn.transaction():
-            conn.execute("select set_config('app.user_id', %s, true)", (setting,))
+            for statement in setup:
+                conn.execute(statement)
             yield conn
 
     def close(self) -> None:

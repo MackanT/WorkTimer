@@ -19,6 +19,13 @@ class Database:
     # The query editor's starter SQL when the default "time" query is missing.
     EDITOR_FALLBACK_QUERY = "select * from time order by time_id desc limit 100"
 
+    # The table a query reads from → (the row-edit dialog's table, its key).
+    ROW_EDIT_TABLES = {
+        "time": ("time", "time_id"),
+        "customers": ("customers", "customer_id"),
+        "projects": ("projects", "project_id"),
+    }
+
     _CUSTOMERS_DEFAULT_QUERY = """
                 select
                      customer_id

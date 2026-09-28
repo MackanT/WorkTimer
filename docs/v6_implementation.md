@@ -1,6 +1,6 @@
 # v6 implementation path
 
-**Status:** r2 · 2026-09-28 — Phase 1 done; Phase 2 in progress (data layer ported and wired in behind `DATABASE_URL`); the Phase 0.4 manual click-through is still pending.
+**Status:** r2 · 2026-09-28 — Phases 1 and 3 done; Phase 2 in progress (data layer ported and wired in behind `DATABASE_URL`); the Phase 0.4 manual click-through is still pending.
 **Branch:** `feat/postgres-migration` (long-lived; one 6.0.0 release at the end).
 **Design:** [v6_plan.md](v6_plan.md) covers *what* gets built and why. This file
 is the *order* it gets built in, with a definition of done per step.
@@ -434,8 +434,8 @@ on, and all security tests pass.
 - [src/pg_connection.py](../src/pg_connection.py): `Pools` (psycopg-pool,
   thread-safe for the worker threads `function_db` runs in) and
   `Pools.transaction(user_key, readonly=False)`. The user is set with
-  `set_config('app.user_id', …, true)` — `SET LOCAL` semantics, but it takes a
-  bind parameter. Nothing hands out a bare connection. A user key that isn't a
+  `SET LOCAL app.user_id` (until Phase 3 it was `set_config(…, true)`, which
+  no role may call since migration 0002). Nothing hands out a bare connection. A user key that isn't a
   positive int is refused before a connection is taken. Pooled sessions run in
   UTC. `LOCAL_USER = 1` for single-user mode.
 - **Config:** `DATABASE_URL` (worktimer_app) and `DATABASE_URL_READONLY`
@@ -634,6 +634,43 @@ wired in (Postgres when `DATABASE_URL` is set); steps 5, 7, 8 and 9 remain.
 - Row edits keep working — they save through data-layer methods on the app
   role (Phase 2, step 2), never through the read-only connection.
 
+**Status: done** (2026-09-28; SQLite keeps 5.x's editor until it leaves the
+runtime).
+
+- **A hole the plan didn't list, closed first:** row-level security keys on
+  `app.user_id`, a setting any role could change with `set_config()` — from
+  inside a SELECT, which the editor would now run. Migration
+  [0002_lock_user_setting.sql](../migrations/0002_lock_user_setting.sql)
+  revokes `set_config` (and, as a second route, UPDATE on `pg_settings`, whose
+  rule calls it) from every role; the connection layer sets the user with
+  `SET LOCAL` instead, which one SELECT cannot issue.
+- `run_user_query` / `check_user_query` in
+  [src/pg_database.py](../src/pg_database.py): one statement (a text check
+  for the readable message; the server enforces it — user SQL is sent as a
+  prepared statement, which can't hold two), SELECT / WITH / VALUES / TABLE
+  only, on `worktimer_readonly` for the user in a **READ ONLY** transaction,
+  in the user's time zone, 15 s `statement_timeout`, 5,000 rows (the page
+  says when it cut). The check is `EXPLAIN` — planned, never run.
+- Default queries (`time`, `customers`, `projects`, `weekly`, `monthly`)
+  rewritten on `v_time_entries` and the v6 tables; `initialize_db()` adds or
+  refreshes them for the user at startup. Each data layer names the tables
+  its row edit opens from (`ROW_EDIT_TABLES`), so the page handles 5.x and v6
+  names.
+- [tests/test_pg_query_editor.py](../tests/test_pg_query_editor.py): 17 tests
+  — own rows only; writes refused with a readable message, and a
+  data-modifying WITH that passes the text check stopped by the database; a
+  second statement refused by the server even with the text check bypassed;
+  no switching users (`set_config`, `pg_settings`); timeout; row cap; local
+  times; `%` in queries; the check plans without running; the defaults run
+  and carry their row-edit keys. The query-editor characterisation tests run
+  on both backends (two REVIEWED DIFFs: writes refused).
+- **Mutation-checked:** without the `set_config` revoke 2 tests fail; without
+  the `pg_settings` revoke 3; without the prepared statement 1; without the
+  timeout 2; without READ ONLY 1.
+- Verified under compose: the presets run; a result row opened the edit
+  dialog, and saving moved the entry and re-priced it (3.5 h → 3,500); a
+  `delete` and a `set_config` from the editor were refused.
+
 ---
 
 ## Phase 4 — SQLite importer
@@ -736,7 +773,7 @@ Not requirements — nothing is built for these; decide at the end.
 - [ ] **0.4** Checkpoint
 - [x] **1** Postgres foundation
 - [ ] **2** Data layer port — in progress
-- [ ] **3** Query editor lockdown
+- [x] **3** Query editor lockdown
 - [ ] **4** SQLite importer
 - [ ] **5** Gate: staging + parallel run
 - [ ] **6** Online

@@ -10,7 +10,6 @@ import copy
 from nicegui import ui, app
 from nicegui.events import KeyEventArguments
 from ..core.app import AppCore
-from ..database import Database
 from ..globals import SaveData
 from .. import helpers
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
@@ -39,7 +38,7 @@ async def query_editor_page():
                 QE.df[QE.df["query_name"] == "time"]["query_sql"].values[0]
             )
         except Exception:
-            app.storage.user["query_editor_query"] = Database.EDITOR_FALLBACK_QUERY
+            app.storage.user["query_editor_query"] = QE.db.EDITOR_FALLBACK_QUERY
 
     config_query = core.query_config if hasattr(core, "query_config") else {}
 
@@ -207,6 +206,8 @@ async def query_editor_page():
             return
         try:
             df = await QE.function_db("run_user_query", query)
+            if df is not None and df.attrs.get("truncated"):
+                ui.notify(f"Showing the first {len(df):,} rows", type="warning")
             if df is not None:
                 cols = df.columns.tolist()
                 seen = {}
@@ -281,15 +282,15 @@ async def query_editor_page():
 
     async def show_row_edit_popup(row_data) -> None:
         table_name = helpers.extract_table_name(editor.value)
-        if table_name not in ["time", "customers", "projects"]:
+        target = QE.db.ROW_EDIT_TABLES.get(table_name)
+        if target is None:
             ui.notify(
                 f"Table '{table_name}' is not registered for editing!", type="negative"
             )
             LOG.warning(f"Table '{table_name}' is not editable!")
             return
 
-        base_name = table_name.rstrip("s")
-        primary_key = f"{base_name}_id"
+        table_name, primary_key = target
         if primary_key not in row_data:
             ui.notify(
                 f"Cannot find primary key '{primary_key}' in your query!",

@@ -6,8 +6,8 @@ Part of the Postgres-port oracle (docs/v6_implementation.md). One pinned
 behaviour changes deliberately in Phase 3 — see
 ``test_user_sql_can_write_today``.
 
-Saved queries run on both backends. Running and checking user SQL stay
-SQLite-only until Phase 3 moves them to the read-only role.
+Everything runs on both backends. Phase 3's lockdown (Postgres) is marked
+REVIEWED DIFF where it changes an expectation.
 """
 
 import pytest
@@ -41,28 +41,40 @@ def test_saved_query_names_are_unique(db):
     assert _saved(db)["mine"] == "select 1"
 
 
+@BOTH
 def test_user_sql_returns_rows(db):
     df = db.run_user_query("select 1 as one, 'a' as letter")
 
     assert df.to_dict("records") == [{"one": 1, "letter": "a"}]
 
 
-def test_user_sql_can_write_today(db):
-    """PINNED — changes deliberately in Phase 3, where user SQL runs on a
-    read-only role and anything but a single SELECT is refused. Today a write
-    goes through, commits, and returns None."""
+@BOTH
+def test_user_sql_writes(db):
+    """REVIEWED DIFF (Phase 3): on Postgres user SQL runs on a read-only role
+    and anything but a single SELECT is refused. SQLite (5.x) lets a write
+    through: it commits and returns None."""
     db.insert_saved_query("mine", "select 1")
+    write = "update queries set query_sql = 'x' where query_name = 'mine'"
 
-    result = db.run_user_query("update queries set query_sql = 'x' where query_name = 'mine'")
+    if db.backend == "postgres":
+        with pytest.raises(ValueError, match="Only SELECT"):
+            db.run_user_query(write)
+        assert _saved(db)["mine"] == "select 1"
+    else:
+        assert db.run_user_query(write) is None
+        assert _saved(db)["mine"] == "x"
 
-    assert result is None
-    assert _saved(db)["mine"] == "x"
 
-
+@BOTH
 def test_syntax_check_compiles_without_running(db):
+    """REVIEWED DIFF (Phase 3): on Postgres a write fails the check itself."""
     db.insert_saved_query("mine", "select 1")
 
-    db.check_user_query("delete from queries")  # valid — and not executed
+    if db.backend == "postgres":
+        with pytest.raises(ValueError, match="Only SELECT"):
+            db.check_user_query("delete from saved_queries")
+    else:
+        db.check_user_query("delete from queries")  # valid — and not executed
 
     assert "mine" in _saved(db)
     with pytest.raises(Exception):

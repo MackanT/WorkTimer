@@ -54,8 +54,11 @@ def db(request, tmp_path, null_logger):
 
         conninfo = request.getfixturevalue("pg_schema_db")
         password = request.getfixturevalue("pg_logins")["worktimer_app"]
-        pools = Pools(PgConfig(make_conninfo(conninfo, user="worktimer_app", password=password)),
-                      min_size=1, max_size=2)
+        readonly = request.getfixturevalue("pg_logins")["worktimer_readonly"]
+        pools = Pools(PgConfig(
+            make_conninfo(conninfo, user="worktimer_app", password=password),
+            make_conninfo(conninfo, user="worktimer_readonly", password=readonly),
+        ), min_size=1, max_size=2)
         database = PgDatabase(pools, null_logger, secrets_dir=str(tmp_path))
     else:
         from src.database import Database

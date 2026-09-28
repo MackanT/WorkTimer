@@ -15,7 +15,7 @@ import pytest
 psycopg = pytest.importorskip("psycopg")
 from psycopg import errors, sql  # noqa: E402
 
-from src.migrator import MigrationError, migrate  # noqa: E402
+from src.migrator import MigrationError, discover, migrate  # noqa: E402
 
 pytestmark = pytest.mark.postgres
 
@@ -41,7 +41,7 @@ def as_role(conninfo, role="worktimer_app", user=None):
         with conn.transaction():
             conn.execute(sql.SQL("set local role {}").format(sql.Identifier(role)))
             if user is not None:
-                conn.execute("select set_config('app.user_id', %s, true)", (str(user),))
+                conn.execute(sql.SQL("set local app.user_id = {}").format(sql.Literal(str(user))))
             yield conn
 
 
@@ -310,6 +310,21 @@ def test_the_app_role_cannot_switch_row_level_security_off(seeded):
             "where r.rolname in ('worktimer_app', 'worktimer_readonly')").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("role", ["worktimer_app", "worktimer_readonly", "worktimer_owner"])
+def test_no_role_can_move_the_user_from_inside_a_query(seeded, role):
+    """Migration 0002: set_config() could change app.user_id mid-query (the
+    query editor runs users' own SELECTs). No role may call it."""
+    conninfo, _ = seeded
+    with as_role(conninfo, role, user=1) as conn:
+        refused(conn, "select set_config('app.user_id', '2', true)")
+        # pg_settings' update rule calls set_config too.
+        refused(conn, "update pg_settings set setting = '5s' where name = 'statement_timeout'")
+        assert conn.execute("select current_setting('app.user_id')").fetchone()[0] == "1"
+    with psycopg.connect(conninfo) as conn:  # and that route is closed outright
+        assert not conn.execute("select has_table_privilege(%s, 'pg_catalog.pg_settings', 'update')",
+                                (role,)).fetchone()[0]
+
+
 def test_users_may_edit_their_own_profile_only(seeded):
     conninfo, _ = seeded
     with as_role(conninfo, user=1) as conn:
@@ -474,7 +489,7 @@ def test_the_dates_view_spans_the_centuries_the_data_needs(pg_schema_db):
 
 def test_it_applies_to_a_second_database_on_the_same_server(pg_db, pg_schema_template):
     """The roles are server-wide and already exist (the template made them)."""
-    assert migrate(pg_db) == ["0001_schema_v1.sql"]
+    assert migrate(pg_db) == [m.path.name for m in discover()]
     assert migrate(pg_db) == []
 
 

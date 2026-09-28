@@ -18,7 +18,9 @@ time (``users.timezone``) and are stored in UTC.
 """
 
 import os
+import re
 from datetime import date, datetime, timedelta
+from textwrap import dedent
 from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
@@ -74,6 +76,70 @@ def _clean_expiry(token_expires) -> date | None:
 _CUSTOMER_ORDER = 'c.sort_order, c.customer_name collate "C"'  # the Time Tracker's order
 
 
+def _code_only(query: str) -> str:
+    """`query` with string literals, quoted identifiers, comments and
+    dollar-quoted bodies blanked out — the SQL structure that is left."""
+    out, i, n = [], 0, len(query)
+    while i < n:
+        if query.startswith("--", i):
+            end = query.find("\n", i)
+            i = n if end < 0 else end
+        elif query.startswith("/*", i):
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if query.startswith("/*", i):
+                    depth, i = depth + 1, i + 2
+                elif query.startswith("*/", i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+        elif query[i] in "'\"":
+            quote, i = query[i], i + 1
+            while i < n and not (query[i] == quote and query[i + 1:i + 2] != quote):
+                i += 2 if query[i] == quote else 1
+            i += 1
+        elif m := re.match(r"\$([A-Za-z_]\w*)?\$", query[i:]):
+            end = query.find(m.group(0), i + len(m.group(0)))
+            i = n if end < 0 else end + len(m.group(0))
+        else:
+            out.append(query[i])
+            i += 1
+            continue
+        out.append(" ")
+    return "".join(out)
+
+
+_USER_QUERY_START = re.compile(r"\s*\(*\s*(select|with|values|table)\b", re.IGNORECASE)
+
+
+def _user_select(query: str) -> str:
+    """`query`, trailing semicolons dropped, if it is one SELECT (or WITH,
+    VALUES, TABLE); otherwise a ValueError worded for the user. This only
+    words the refusal: the read-only role, the READ ONLY transaction and the
+    one-statement protocol are what enforce it."""
+    code = _code_only(query).strip()
+    while code.endswith(";"):
+        code = code[:-1].rstrip()
+    if not code:
+        raise ValueError("Write a query first")
+    if ";" in code:
+        raise ValueError("Run one statement at a time")
+    if not _USER_QUERY_START.match(code):
+        raise ValueError("Only SELECT queries run here — the query editor reads, it doesn't write")
+    text = query.strip()
+    while text.endswith(";"):
+        text = text[:-1].rstrip()
+    return text
+
+
+def _shown(value):
+    """A result value as the grid shows it: times as the user's local wall
+    clock (the query ran in the user's zone)."""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return value
+
+
 def _money(started: datetime, ended: datetime, wage: int, bonus: Decimal):
     """(duration_hours, cost, user_bonus): the exact duration, and money
     computed from it and rounded once."""
@@ -119,8 +185,21 @@ class PgDatabase:
             "select timezone from users where key_user = app_user()").fetchone()[0])
 
     def initialize_db(self) -> None:
-        """The schema comes from migrations (src/migrator.py) — nothing to
-        create at startup."""
+        """The schema comes from migrations (src/migrator.py). At startup:
+        this user's default saved queries — the query editor's presets —
+        are added or brought up to date (the editor can't change them)."""
+        with self._tx() as conn:
+            for name, text in self.DEFAULT_QUERIES.items():
+                row = conn.execute(
+                    "select key_saved_query, is_default from saved_queries "
+                    "where query_name = %s and deleted_at is null", (name,)).fetchone()
+                if row is None:
+                    conn.execute("insert into saved_queries (query_name, query_sql, is_default) "
+                                 "values (%s, %s, true)", (name, text))
+                elif row[1]:
+                    conn.execute("update saved_queries set query_sql = %s "
+                                 "where key_saved_query = %s and query_sql is distinct from %s",
+                                 (text, row[0], text))
 
     def close(self) -> None:
         self.pools.close()
@@ -1359,17 +1438,115 @@ class PgDatabase:
             """, (project_id,))
 
     # ── not on Postgres yet ─────────────────────────────────────────────────
-    # Clear errors instead of an AttributeError; the pages show the message.
-
-    def run_user_query(self, query: str):
-        raise NotImplementedError(
-            "The query editor isn't available on Postgres yet — it moves to a "
-            "read-only role in v6 Phase 3")
-
-    def check_user_query(self, query: str) -> None:
-        self.run_user_query(query)
+    # A clear error instead of an AttributeError; the page shows the message.
 
     def backup_to(self, dest_path: str) -> str:
         raise NotImplementedError(
             "Backups of the Postgres database aren't available yet (pg_dump, "
             "v6 Phase 2 step 8)")
+
+    # ── the query editor (Phase 3) ──────────────────────────────────────────
+    # Users' own SQL: one SELECT, on worktimer_readonly for this user, in a
+    # READ ONLY transaction, sent as a prepared statement (the server refuses
+    # a second statement), in the user's time zone, capped in time and rows.
+
+    USER_QUERY_ROWS = 5000
+    USER_QUERY_TIMEOUT_MS = 15_000
+
+    EDITOR_FALLBACK_QUERY = "select * from v_time_entries order by started_at desc limit 100"
+
+    # The table a query reads from → (the row-edit dialog's table, its key).
+    ROW_EDIT_TABLES = {
+        "v_time_entries": ("time", "key_time_entry"),
+        "time_entries": ("time", "key_time_entry"),
+        "customers": ("customers", "key_customer"),
+        "projects": ("projects", "key_project"),
+    }
+
+    DEFAULT_QUERIES = {name: dedent(text).strip() for name, text in {
+        "time": """
+            select key_time_entry, started_at, ended_at, round(duration_hours, 2) as hours,
+                   customer_name, project_name, cost, currency, bk_work_item, comment
+            from v_time_entries
+            order by started_at desc
+            limit 100
+            """,
+        "customers": """
+            select c.key_customer, c.customer_name, w.wage, c.currency,
+                   c.expected_work_pct, c.color, t.tracker_name, c.is_enabled
+            from customers c
+            left join customer_wages w on w.fk_customer = c.key_customer and w.valid_to is null
+            left join trackers t on t.key_tracker = c.fk_tracker
+            order by c.sort_order, c.customer_name
+            """,
+        "projects": """
+            select p.key_project, p.project_name, c.customer_name, p.bk_work_item, p.is_enabled
+            from projects p
+            join customers c on c.key_customer = p.fk_customer
+            order by c.customer_name, p.project_name
+            """,
+        "weekly": """
+            with current_period as (
+                select te.customer_name, te.project_name, sum(te.duration_hours) as hours
+                from v_time_entries te
+                join dates d on d.key_date = te.fk_date
+                join dates today on today.date = current_date
+                where d.iso_year = today.iso_year and d.week = today.week
+                group by te.customer_name, te.project_name
+            )
+            select customer_name, project_name, hours from (
+                select 1 as part, customer_name, project_name, round(hours, 2) as hours
+                from current_period
+                union all select 2, '', '', null
+                union all select 3, customer_name, 'total', round(sum(hours), 2)
+                from current_period group by customer_name
+            ) rows
+            order by part, customer_name, project_name
+            """,
+        "monthly": """
+            with current_period as (
+                select te.customer_name, te.project_name, sum(te.duration_hours) as hours
+                from v_time_entries te
+                join dates d on d.key_date = te.fk_date
+                join dates today on today.date = current_date
+                where d.year = today.year and d.month = today.month
+                group by te.customer_name, te.project_name
+            )
+            select customer_name, project_name, hours from (
+                select 1 as part, customer_name, project_name, round(hours, 2) as hours
+                from current_period
+                union all select 2, '', '', null
+                union all select 3, customer_name, 'total', round(sum(hours), 2)
+                from current_period group by customer_name
+            ) rows
+            order by part, customer_name, project_name
+            """,
+    }.items()}
+
+    def _user_query_tx(self):
+        with self._tx() as conn:
+            timezone = self._timezone(conn).key
+        return self.pools.transaction(self.user_key, readonly=True,
+                                      timeout_ms=self.USER_QUERY_TIMEOUT_MS, timezone=timezone)
+
+    def run_user_query(self, query: str) -> pd.DataFrame:
+        """The query editor's Run: the rows (at most USER_QUERY_ROWS;
+        ``df.attrs["truncated"]`` says whether there were more)."""
+        text = _user_select(query)
+        with self._user_query_tx() as conn:
+            cur = conn.cursor()
+            cur.adapters.register_loader("numeric", FloatLoader)
+            cur.execute(text, prepare=True)
+            columns = [c.name for c in cur.description]
+            rows = cur.fetchmany(self.USER_QUERY_ROWS + 1)
+        df = pd.DataFrame([tuple(map(_shown, row)) for row in rows[:self.USER_QUERY_ROWS]],
+                          columns=columns)
+        df.attrs["truncated"] = len(rows) > self.USER_QUERY_ROWS
+        return df
+
+    def check_user_query(self, query: str) -> None:
+        """Raise if the query would be refused or is invalid — planned
+        (EXPLAIN), never run."""
+        text = _user_select(query)
+        with self._user_query_tx() as conn:
+            conn.cursor().execute("explain " + text, prepare=True)

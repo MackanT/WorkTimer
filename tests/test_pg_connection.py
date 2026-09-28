@@ -118,7 +118,8 @@ def test_readonly_transactions_read_their_user_and_write_nothing(pools, user2):
         for statement in ("insert into customers (customer_name) values ('No')",
                           "delete from customers",
                           "select pat_token from trackers"):
-            with pytest.raises(errors.InsufficientPrivilege):
+            # A READ ONLY transaction, on a role without write privileges.
+            with pytest.raises((errors.ReadOnlySqlTransaction, errors.InsufficientPrivilege)):
                 with conn.transaction():
                     conn.execute(statement)
 
@@ -137,6 +138,24 @@ def test_the_app_roles_own_login_cannot_bypass_rls(config, pg_schema_db):
 def test_a_bad_user_key_never_reaches_the_database(pools, key):
     with pytest.raises(ValueError, match="user key"):
         with pools.transaction(key):
+            pass
+
+
+def test_read_only_transactions_carry_their_limits(pools):
+    with pools.transaction(LOCAL_USER, readonly=True, timeout_ms=1234,
+                           timezone="America/New_York") as conn:
+        settings = conn.execute(
+            "select current_setting('transaction_read_only'), "
+            "current_setting('statement_timeout'), current_setting('TimeZone')").fetchone()
+    assert settings == ("on", "1234ms", "America/New_York")
+    with pools.transaction(LOCAL_USER) as conn:  # none of it outlives the transaction
+        assert conn.execute("select current_setting('statement_timeout'), "
+                            "current_setting('TimeZone')").fetchone() == ("0", "UTC")
+
+
+def test_an_unknown_time_zone_fails_before_the_database(pools):
+    with pytest.raises(Exception, match="Mars/Olympus"):
+        with pools.transaction(LOCAL_USER, readonly=True, timezone="Mars/Olympus"):
             pass
 
 
