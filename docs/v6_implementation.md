@@ -533,6 +533,7 @@ Steps:
    customers and projects, with the FK refusal shown as "has N time entries —
    disable instead".
 8. **Backup:** `pg_dump`; the app image installs `postgresql-client`.
+   *(Decided 2026-09-28: split in two — see the status below.)*
 9. **Remove from the runtime path:** the SQLite `Database` class (kept only for
    the importer), triggers, `validate_and_migrate_schema`, the `dates` horizon
    code.
@@ -541,7 +542,7 @@ Steps:
 exactly the two approved ones; the app runs end to end under compose.
 
 **Status: in progress** — the data layer is ported, passes the oracle and is
-wired in (Postgres when `DATABASE_URL` is set); steps 5, 7, 8 and 9 remain.
+wired in (Postgres when `DATABASE_URL` is set); steps 5, 7 and 9 remain.
 
 - **Decided (2026-09-28):** customer dropdowns follow the Time Tracker order;
   per-work-item rounding pools all untagged time; per-project rounding groups
@@ -612,9 +613,32 @@ wired in (Postgres when `DATABASE_URL` is set); steps 5, 7, 8 and 9 remain.
     local day, cost from the exact duration.
   - The login fixture restores the roles' logins after a test session, so the
     suite no longer locks out a local compose instance sharing the server.
+- **Step 8, backups — decided (2026-09-28): two kinds.** The plan's in-app
+  `pg_dump` would need a credential that reads every user's rows inside the
+  app, undoing the roles of Phases 1 and 3, and a whole-database backup can't
+  be offered to users in hosted mode anyway.
+  - **In the app** ("Backup now", "Download", the palette): `backup_to`
+    exports the signed-in user's data through the app role — RLS applies —
+    as gzipped JSON (`worktimer-v6-export`, format 1, with the schema
+    version): every user-data table, soft-deleted rows included, keys kept,
+    money and hours exact as text, times in ISO 8601 with their offset, from
+    one REPEATABLE READ snapshot. The Phase 4 importer will read it back. The
+    backups folder lists and prunes both kinds (`.db` on SQLite).
+  - **On the server**: compose's `backup` service (profile `postgres`) runs
+    [scripts/pg_backup.sh](../scripts/pg_backup.sh) in the `postgres:18`
+    image — a whole-database `pg_dump -Fc` as the admin, daily
+    (`BACKUP_INTERVAL_SECONDS`), newest 14 kept (`BACKUP_KEEP`), in
+    `./backups-pg`. The image's `pg_dump` always matches the server, so the
+    app image needs no Postgres client. Restore: `pg_restore --clean
+    --if-exists` as the admin (the script's header). `.gitattributes` keeps
+    `*.sh` LF, since the script is mounted from a Windows checkout.
+  - Verified under compose: the service wrote a dump at start that
+    `pg_restore --list` reads (pg_dump 18.6 = server, owners and 0002's
+    revokes included); "Backup now" and "Download" produced the export.
 - **Open:**
   - Step 5's totals per currency; step 7's "has N time entries — disable
-    instead" (the database already refuses); step 8 `pg_dump`; step 9.
+    instead" (the database already refuses); step 9 (after the importer:
+    SQLite is the fallback until then).
   - The Jira incremental sync's watermark is UTC now (SQLite kept Jira's own
     offset string). A Jira site in a negative-offset zone could miss a few
     hours of edits until the next full sync — check when the sync runs live.

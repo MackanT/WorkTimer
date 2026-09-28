@@ -17,6 +17,7 @@ SECRETS = [
     "data/notes/todo.md",
     "data/backups/worktimer_2026-01-01_000000.db",
     "data-pg/.pat_key",
+    "backups-pg/worktimer_2026-01-01_000000.dump",
     "backups/worktimer_2026-01-01_000000.db",
     ".env",
     ".nicegui/storage-general.json",

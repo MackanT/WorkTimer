@@ -17,6 +17,8 @@ never re-price history. Times arrive and leave as the user's local wall-clock
 time (``users.timezone``) and are stored in UTC.
 """
 
+import gzip
+import json
 import os
 import re
 from datetime import date, datetime, timedelta
@@ -1437,13 +1439,60 @@ class PgDatabase:
             order by sibling.key_project
             """, (project_id,))
 
-    # ── not on Postgres yet ─────────────────────────────────────────────────
-    # A clear error instead of an AttributeError; the page shows the message.
+    # ── backup: this user's data (plan step 8) ──────────────────────────────
+    # "Backup now" and "Download" export the user's own rows through the app
+    # role — row-level security applies, no other credential is needed. The
+    # whole database is backed up by compose's "backup" service (pg_dump as
+    # the admin, scripts/pg_backup.sh).
+
+    BACKUP_SUFFIX = ".json.gz"
+    EXPORT_FORMAT = "worktimer-v6-export"
+    _EXPORT_TABLES = {  # parents first; table → key column
+        "trackers": "key_tracker", "customers": "key_customer",
+        "customer_wages": "key_customer_wage", "projects": "key_project",
+        "bonuses": "key_bonus", "time_entries": "key_time_entry", "tasks": "key_task",
+        "saved_queries": "key_saved_query", "work_items": "key_work_item",
+    }
+
+    @staticmethod
+    def _exported(value):
+        """JSON for a column value — money and hours exact (Decimal as text),
+        times ISO 8601 with their UTC offset."""
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        return value
+
+    def export_data(self) -> dict:
+        """Every row of this user's (soft-deleted ones included — they are
+        history), from one consistent snapshot, keys kept."""
+        from .migrator import discover
+
+        with self._tx() as conn:
+            conn.execute("set transaction isolation level repeatable read")
+            user = conn.execute(
+                "select bk_user, email, display_name, timezone from users "
+                "where key_user = app_user()").fetchone()
+            tables = {}
+            for table, key in self._EXPORT_TABLES.items():
+                cur = conn.execute(f"select * from {table} order by {key}")
+                columns = [c.name for c in cur.description]
+                tables[table] = [dict(zip(columns, map(self._exported, row))) for row in cur]
+        return {
+            "format": self.EXPORT_FORMAT,
+            "format_version": 1,
+            "schema_version": max(m.version for m in discover()),
+            "exported_at": clock.now_in(ZoneInfo("UTC")).isoformat() + "+00:00",
+            "user": dict(zip(("bk_user", "email", "display_name", "timezone"), user)),
+            "tables": tables,
+        }
 
     def backup_to(self, dest_path: str) -> str:
-        raise NotImplementedError(
-            "Backups of the Postgres database aren't available yet (pg_dump, "
-            "v6 Phase 2 step 8)")
+        """Write export_data() to dest_path as gzipped JSON."""
+        with gzip.open(dest_path, "wt", encoding="utf-8") as f:
+            json.dump(self.export_data(), f, ensure_ascii=False)
+        return dest_path
 
     # ── the query editor (Phase 3) ──────────────────────────────────────────
     # Users' own SQL: one SELECT, on worktimer_readonly for this user, in a

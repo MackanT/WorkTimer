@@ -110,3 +110,34 @@ def test_backups_from_the_old_folder_are_moved_in(tmp_path):
     assert (data / "backups" / "worktimer_2026-08-01_120000.db").read_bytes() == b"old"
     assert not (legacy / "worktimer_2026-08-01_120000.db").exists()
     assert (legacy / "unrelated.txt").exists()
+
+
+# ── Postgres exports share the folder (v6) ──────────────────────────────────
+
+
+def test_the_folder_lists_and_prunes_both_kinds_of_backup(tmp_path):
+    data = tmp_path / "data"
+    folder = data / "backups"
+    folder.mkdir(parents=True)
+    names = ["worktimer_2026-01-01_000000.db", "worktimer_2026-01-02_000000.json.gz",
+             "worktimer_2026-01-03_000000.db", "worktimer_2026-01-04_000000.json.gz"]
+    for i, name in enumerate(names):
+        (folder / name).write_bytes(b"x")
+        os.utime(folder / name, (1000 + i, 1000 + i))
+
+    assert [f.name for f in list_backups(str(data / "worktimer.db"))] == names[::-1]
+    prune_backups(folder, keep=3)
+    assert sorted(f.name for f in folder.iterdir()) == names[1:]
+
+
+def test_create_backup_names_the_file_by_the_backend(tmp_path):
+    class Export:
+        BACKUP_SUFFIX = ".json.gz"
+
+        def backup_to(self, dest):
+            open(dest, "wb").close()
+
+    dest = create_backup(Export(), str(tmp_path / "worktimer.db"))
+
+    assert dest.name.startswith("worktimer_") and dest.name.endswith(".json.gz")
+    assert list_backups(str(tmp_path / "worktimer.db")) == [dest]

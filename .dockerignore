@@ -8,6 +8,7 @@ _Old/
 # database, the PAT key and the storage secret; it is mounted at runtime.
 data/
 data-pg/
+backups-pg/
 backups/
 *.db
 .env

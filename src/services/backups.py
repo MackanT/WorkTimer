@@ -6,6 +6,12 @@ from datetime import datetime
 from pathlib import Path
 
 KEEP = 10
+# SQLite backs up a copy of the database file; Postgres exports the user's data.
+_PATTERNS = ("worktimer_*.db", "worktimer_*.json.gz")
+
+
+def _backups_in(folder: Path) -> list[Path]:
+    return [f for pattern in _PATTERNS for f in folder.glob(pattern)]
 
 
 def backups_dir(db_file: str) -> Path:
@@ -30,9 +36,9 @@ def _adopt_legacy_backups(db_file: str) -> None:
 
 
 def prune_backups(folder: Path, keep: int = KEEP) -> None:
-    """Keep only the newest `keep` worktimer_*.db backups; delete the rest."""
+    """Keep only the newest `keep` backups; delete the rest."""
     files = sorted(
-        folder.glob("worktimer_*.db"),
+        _backups_in(folder),
         key=lambda f: f.stat().st_mtime,
         reverse=True,
     )
@@ -47,16 +53,17 @@ def list_backups(db_file: str) -> list[Path]:
     """Backups newest first."""
     _adopt_legacy_backups(db_file)
     folder = backups_dir(db_file)
-    return sorted(folder.glob("worktimer_*.db"), reverse=True) if folder.exists() else []
+    return sorted(_backups_in(folder), key=lambda f: f.name, reverse=True) if folder.exists() else []
 
 
 def create_backup(db, db_file: str) -> Path:
-    """A consistent copy of the live database (SQLite online backup), then
-    prune to the newest KEEP. Blocking — run it in a thread."""
+    """A backup from the data layer (SQLite: a consistent copy of the file;
+    Postgres: the user's data), then prune to the newest KEEP. Blocking — run
+    it in a thread."""
     _adopt_legacy_backups(db_file)
     folder = backups_dir(db_file)
     folder.mkdir(parents=True, exist_ok=True)
-    dest = folder / f"worktimer_{datetime.now():%Y-%m-%d_%H%M%S}.db"
+    dest = folder / f"worktimer_{datetime.now():%Y-%m-%d_%H%M%S}{db.BACKUP_SUFFIX}"
     db.backup_to(str(dest))
     prune_backups(folder)
     return dest

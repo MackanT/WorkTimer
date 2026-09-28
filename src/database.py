@@ -19,6 +19,8 @@ class Database:
     # The query editor's starter SQL when the default "time" query is missing.
     EDITOR_FALLBACK_QUERY = "select * from time order by time_id desc limit 100"
 
+    BACKUP_SUFFIX = ".db"  # backup_to writes a copy of the database file
+
     # The table a query reads from → (the row-edit dialog's table, its key).
     ROW_EDIT_TABLES = {
         "time": ("time", "time_id"),

@@ -270,3 +270,36 @@ def test_each_user_sees_only_their_own_data(db, pg_schema_db, tmp_path):
     other.insert_customer("Acme", "2026-01-01", 500)  # the same name is free for them
     assert db.get_data_input_list()["wage"].tolist() == [1000]
     assert other.get_data_input_list()["wage"].tolist() == [500]
+
+
+# ── backup: the user's data (plan step 8) ───────────────────────────────────
+
+
+def test_a_backup_is_an_export_of_the_users_own_data(db, pg_schema_db, tmp_path):
+    import gzip
+    import json
+
+    _acme(db, "Build")
+    db.insert_tracker("Ops", "devops", org_url="ops", pat_token="secret-pat")
+    db.insert_manual_time_row(*_pid(db, "Build"), "2026-09-01 09:00", "2026-09-01 09:20")
+    db.insert_manual_time_row(*_pid(db, "Build"), "2026-09-02 09:00", "2026-09-02 10:00")
+    db.delete_time_entry(_entries(db)[1]["id"])
+    with psycopg.connect(pg_schema_db) as admin:
+        admin.execute("insert into users (bk_user) values ('second')")
+        admin.execute("insert into customers (fk_user, customer_name) values (2, 'Theirs')")
+
+    path = db.backup_to(str(tmp_path / "export.json.gz"))
+
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        export = json.load(f)
+    assert (export["format"], export["format_version"], export["user"]["bk_user"]) == (
+        "worktimer-v6-export", 1, "local")
+    tables = export["tables"]
+    assert [c["customer_name"] for c in tables["customers"]] == ["Acme"]  # not 'Theirs'
+    assert {r["fk_user"] for rows in tables.values() for r in rows} == {1}
+    first, deleted = tables["time_entries"]
+    assert (first["cost"], first["duration_hours"]) == ("333.33", "0.3333")  # exact
+    assert first["started_at"] == "2026-09-01T07:00:00+00:00"
+    assert deleted["deleted_at"] is not None  # history is kept
+    assert tables["trackers"][0]["pat_token"].startswith("enc:")
+    assert tables["customer_wages"][0]["wage"] == 1000

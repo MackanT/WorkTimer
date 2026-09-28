@@ -67,11 +67,12 @@ def _render_backup_card(core) -> None:
         async def _download():
             tmp = None
             try:
-                fd, tmp = tempfile.mkstemp(suffix=".db")
+                suffix = core.query_engine.db.BACKUP_SUFFIX
+                fd, tmp = tempfile.mkstemp(suffix=suffix)
                 os.close(fd)
                 await asyncio.to_thread(core.query_engine.db.backup_to, tmp)
                 data = Path(tmp).read_bytes()
-                ui.download(data, f"worktimer_backup_{datetime.now():%Y-%m-%d_%H%M}.db")
+                ui.download(data, f"worktimer_backup_{datetime.now():%Y-%m-%d_%H%M}{suffix}")
             except Exception as ex:
                 core.logger.error(f"Export failed: {ex}")
                 ui.notify(f"Export failed: {ex}", type="negative")
