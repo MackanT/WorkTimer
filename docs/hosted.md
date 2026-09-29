@@ -33,8 +33,13 @@ dash.cloudflare.com → *Zero Trust*. Pick a team name — it becomes
 `https://<team>.cloudflareaccess.com`, the **team domain** (note it) — and
 the **Free** plan (up to 50 users; it may ask for a card, nothing is charged).
 
-Under *Settings → Authentication → Login methods*, check that **One-time PIN**
-is there (it is by default): Cloudflare emails a code, any address works.
+**Add the One-time PIN login method:** *Integrations → Identity providers*
+(older menus: *Settings → Authentication → Login methods*) → *Add an identity
+provider* → **One-time PIN** — Cloudflare emails a code, any address works.
+Without it, the only method is the Cloudflare account, restricted to your
+account's own members: any other address is refused ("sign-in is restricted
+to members of the account") before it reaches WorkTimer. Leave that
+restriction on.
 
 ## 3. The tunnel
 
@@ -55,7 +60,7 @@ is there (it is by default): Cloudflare emails a code, any address works.
 - Name `WorkTimer`, hostname `worktimer.<your domain>`.
 - **Session duration: 15 minutes for the first test** (to see a login expire),
   then **1 month**.
-- Login method: One-time PIN.
+- Login methods: tick **One-time PIN** (the Cloudflare account can stay for you).
 - Policy: name `People`, action **Allow**, include **Emails**: your address,
   plus a second one of yours for the test.
 

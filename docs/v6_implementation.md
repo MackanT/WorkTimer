@@ -863,7 +863,8 @@ has been fixed in the billing path since the last one.
 - **Tests:** two users end to end — neither can see the other's customers,
   board, tracker items or notes.
 
-**Status: in progress — slices 1–4 of 6 done** (2026-09-29). Started beside
+**Status: live — slices 1–6 done** (2026-09-29): the server runs behind
+Cloudflare Access; a security review remains before colleagues join. Started beside
 the Phase 5 gate. Slice 1 is part of the gate's commit (`0699487`) and runs on
 staging in single-user mode — the regression run there (the 32 timer checks,
 a live tracker sync through the per-user engine) passed; later slices stay
@@ -958,7 +959,7 @@ everything that inventory found is per user or deliberately the install's
    - Tests: the spread, the waits, the cap across five users, one user's syncs
      serial. Mutation-checked: no cap, no hourly offset, and a skipped
      same-night slot each fail tests.
-5. **Deploy — built, waiting for the Cloudflare side.**
+5. **Deploy — done, live since 2026-09-29.**
    - Compose profile `hosted`: a `cloudflared` service (token from `.env`)
      that reaches the app over the compose network; `staging.sh up` adds it
      when `.env` has a tunnel token. The app's sign-in settings come from
@@ -972,7 +973,19 @@ everything that inventory found is per user or deliberately the install's
      Access application, the server's `.env`, and the two-person test.
    - Tests: the takeover (once, only when asked, never over someone who
      signed in earlier), owner matching, the hosted user lookup.
-6. **Two users end to end** in a real browser, then colleagues.
+6. **Two users end to end — done (2026-09-29).** On the live server, the
+   owner's first sign-in took over the single-user data (user 1: 4,481
+   entries, 3 trackers, notes); a second address, signing in with a One-time
+   PIN, got an empty WorkTimer of its own — its test customer and entry are
+   its own rows, its settings and notes its own folder, and neither window
+   showed the other's data. The tunnel registered four connections; nothing
+   new listens on the server.
+   - Found on the way: Cloudflare's default login method for an Access
+     application is the Cloudflare account, restricted to the account's own
+     members — any other address is refused before it reaches the app. The
+     One-time PIN method has to be added (hosted.md step 2).
+   - Still to see: a session expiring with a tab open (15-minute test
+     session, then 1 month).
 
 ---
 
@@ -1028,5 +1041,5 @@ Not requirements — nothing is built for these; decide at the end.
 - [x] **3** Query editor lockdown
 - [ ] **4** SQLite importer — built; a colleague's file and a v4-era file still to run
 - [ ] **5** Gate: staging + parallel run
-- [ ] **6** Online — slices 1–4 of 6 (identity; files, endpoints, logs; settings; syncs) done
+- [x] **6** Online — live behind Cloudflare Access (security review before colleagues)
 - [ ] **7** Release 6.0.0

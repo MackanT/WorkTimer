@@ -153,15 +153,15 @@ Disconnect before measuring the app's own memory, or the numbers are skewed.
 - [x] Postgres container + volume — the Phase 5 staging stack in
       `/opt/worktimer` ([staging.md](staging.md)), with daily `pg_dump`s to
       `backups-pg/` on the server
-- [ ] Domain — registered at Hetzner (~€4.90/yr; check the **renewal** price,
+- [x] Domain — on Cloudflare (2026-09-29). Originally planned: registered at Hetzner (~€4.90/yr; check the **renewal** price,
       cheap TLDs often jump after year one)
-- [ ] Move the domain's DNS to Cloudflare: add it as a site on the Free plan,
+- [x] Move the domain's DNS to Cloudflare (bought there, so nothing to move): add it as a site on the Free plan,
       then set Cloudflare's two nameservers at Hetzner. **If DNSSEC is enabled
       at Hetzner, disable it first** — a stale DS record makes the domain
       unresolvable after the switch. Re-enable DNSSEC from Cloudflare once
       the zone is active.
-- [ ] `cloudflared` named tunnel → the app container
-- [ ] Cloudflare Access application + allow-list policy (by email)
+- [x] `cloudflared` named tunnel → the app container (compose profile `hosted`)
+- [x] Cloudflare Access application + allow-list policy (by email) — [hosted.md](hosted.md)
   - Zero Trust **Free plan: up to 50 users**, no time limit
   - Login method: **One-time PIN** to start — Cloudflare emails a code, any
     address works, nothing to set up. A Google or Microsoft identity provider
