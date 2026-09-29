@@ -855,15 +855,15 @@ has been fixed in the billing path since the last one.
 - **Tests:** two users end to end — neither can see the other's customers,
   board, tracker items or notes.
 
-**Status: in progress — slices 1–3 of 6 done** (2026-09-28). Started beside
+**Status: in progress — slices 1–4 of 6 done** (2026-09-29). Started beside
 the Phase 5 gate. Slice 1 is part of the gate's commit (`0699487`) and runs on
 staging in single-user mode — the regression run there (the 32 timer checks,
 a live tracker sync through the per-user engine) passed; later slices stay
 off staging until the gate passes. An inventory of process-wide state found
 more shared than the plan listed, so the work is cut into slices. With slice 3
 everything that inventory found is per user or deliberately the install's
-(the theme, the PAT key, the update check); what remains is load (slice 4),
-the deployment (5) and the end-to-end run (6).
+(the theme, the PAT key, the update check); what remains is the deployment
+(slice 5) and the end-to-end run (6).
 
 1. **Identity, per-user data and tracker engine — done.**
    - [src/auth.py](../src/auth.py): `WORKTIMER_AUTH=cloudflare-access` (with
@@ -938,8 +938,18 @@ the deployment (5) and the end-to-end run (6).
      keys, the palette as a signed-in user. Mutation-checked: every user
      writing into `config/`, and the palette editable by every signed-in
      user, each fail tests.
-4. **Sync scheduling:** per-user hourly and nightly syncs staggered, with a
-   global concurrency cap.
+4. **Sync scheduling — done.**
+   - Every tracker sync — scheduled, startup or manual, any user's — takes one
+     of `TRACKER_SYNC_CONCURRENCY` slots (default 2) for its whole run; a
+     user's own syncs still run one at a time (their engine's lock).
+   - Each user's schedule has a fixed offset from their user key (Knuth's
+     multiplicative hash, so consecutive keys spread evenly): the hourly sync
+     at the user's own minute past every hour — ten users land 3–9 minutes
+     apart — and the nightly full refresh at their own time between 02:00 and
+     04:00, still today when the engine starts after 02:00 but before it.
+   - Tests: the spread, the waits, the cap across five users, one user's syncs
+     serial. Mutation-checked: no cap, no hourly offset, and a skipped
+     same-night slot each fail tests.
 5. **Deploy:** the hosted compose profile with `cloudflared`, the Access
    application and policy, one-month sessions.
 6. **Two users end to end** in a real browser, then colleagues.
@@ -998,5 +1008,5 @@ Not requirements — nothing is built for these; decide at the end.
 - [x] **3** Query editor lockdown
 - [ ] **4** SQLite importer — built; a colleague's file and a v4-era file still to run
 - [ ] **5** Gate: staging + parallel run
-- [ ] **6** Online — slices 1–3 of 6 (identity; files, endpoints, logs; settings) done
+- [ ] **6** Online — slices 1–4 of 6 (identity; files, endpoints, logs; settings; syncs) done
 - [ ] **7** Release 6.0.0

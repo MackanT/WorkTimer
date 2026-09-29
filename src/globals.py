@@ -14,6 +14,8 @@ import asyncio
 import logging
 import os
 import datetime
+import time
+import weakref
 from . import clock
 import pandas as pd
 
@@ -40,6 +42,36 @@ def _seconds_until_next(hour: int, now: datetime.datetime | None = None) -> floa
     if target <= now:
         target += datetime.timedelta(days=1)
     return (target - now).total_seconds()
+
+
+# Tracker syncs across users (v6 Phase 6): at most SYNC_SLOTS run at once —
+# scheduled, startup and manual syncs of every user share them — and each
+# user's schedule has its own fixed offset, so their hourly syncs spread over
+# the hour and their nightly full refreshes over 02:00–04:00.
+SYNC_SLOTS = max(1, int(os.getenv("TRACKER_SYNC_CONCURRENCY") or 2))
+NIGHTLY_SPREAD = 2 * 3600
+_sync_slots: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()  # event loop -> Semaphore
+
+
+def _sync_slot() -> asyncio.Semaphore:
+    """The running loop's cap on tracker syncs in flight."""
+    loop = asyncio.get_running_loop()
+    if loop not in _sync_slots:
+        _sync_slots[loop] = asyncio.Semaphore(SYNC_SLOTS)
+    return _sync_slots[loop]
+
+
+def _stagger(user_key: int, window: float) -> float:
+    """The user's fixed offset in [0, window) seconds. Knuth's multiplicative
+    hash spreads consecutive keys evenly instead of bunching them."""
+    return (user_key * 2654435761) % 2**32 / 2**32 * window
+
+
+def _seconds_until_offset(offset: float, period: float = 3600, now: float | None = None) -> float:
+    """Seconds until the next moment `offset` seconds into a `period` (the
+    clock's periods — for an hour, the same minute past every hour)."""
+    now = time.time() if now is None else now
+    return (offset - now) % period or period
 
 
 @dataclass
@@ -173,11 +205,24 @@ class TrackerEngine:
         self.columns_cache = defaultdict(dict)
         self.preload_started = False
 
+    def _user_key(self) -> int:
+        return getattr(self.query_engine, "user_key", 1)
+
+    def next_hourly_wait(self, now: float | None = None) -> float:
+        """Seconds until this user's next hourly sync — their own minute."""
+        return _seconds_until_offset(_stagger(self._user_key(), 3600), 3600, now)
+
+    def next_nightly_wait(self, now: datetime.datetime | None = None) -> float:
+        """Seconds until this user's nightly full refresh, between 02:00 and 04:00."""
+        wait = _seconds_until_next(2, now) + _stagger(self._user_key(), NIGHTLY_SPREAD)
+        # Past 02:00 but before the user's slot: today's slot is still ahead.
+        return wait - 86400 if wait > 86400 else wait
+
     async def start_scheduled_updates(self):
         """Start background tasks for scheduled DevOps updates.
 
-        The engine itself is a process-wide singleton (see app.py), so the
-        instance flag is sufficient — the old extra module-level flag is gone.
+        One engine per user (see app.py), so the instance flag is sufficient;
+        the user's own offsets keep users' syncs apart.
         """
         if self._scheduled_started:
             self.log.info("Scheduled DevOps tasks already running — skipping")
@@ -185,11 +230,11 @@ class TrackerEngine:
         self._scheduled_started = True
         self.log.info("Starting scheduled DevOps update tasks")
 
-        # Hourly incremental update
+        # Hourly incremental update, at the user's own minute
         async def hourly_incremental():
             while True:
                 try:
-                    await asyncio.sleep(3600)
+                    await asyncio.sleep(self.next_hourly_wait())
                     self.log.info("Running scheduled incremental DevOps update")
                     await self.refresh_tracker_data(incremental=True)
                 except Exception as e:
@@ -197,11 +242,11 @@ class TrackerEngine:
                 except asyncio.CancelledError:
                     break
 
-        # Daily full refresh at 2 AM
+        # Daily full refresh, at the user's own time between 2 and 4 AM
         async def daily_full_refresh():
             while True:
                 try:
-                    await asyncio.sleep(_seconds_until_next(2))
+                    await asyncio.sleep(self.next_nightly_wait())
                     self.log.info("Running scheduled daily full refresh")
                     await self.refresh_tracker_data(incremental=False)
                     # Loop back immediately — next iteration recalculates time until 2 AM
@@ -389,7 +434,8 @@ class TrackerEngine:
             return None
 
         async with self._update_lock:
-            await self._update_devops_locked(incremental)
+            async with _sync_slot():  # shared by every user's syncs
+                await self._update_devops_locked(incremental)
 
     async def _update_devops_locked(self, incremental: bool):
         max_ids = None
