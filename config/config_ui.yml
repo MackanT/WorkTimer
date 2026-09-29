@@ -896,7 +896,7 @@ info_page:
     meta:
       icon: menu_book
       friendly_name: Guide
-      file: readme.md
+      file: README.md
   shortcuts:
     meta:
       icon: keyboard
@@ -906,12 +906,12 @@ info_page:
     meta:
       icon: change_history
       friendly_name: Changelog
-      file: changelog.md
+      file: CHANGELOG.md
   tracker_contacts:
     meta:
       icon: contacts
       friendly_name: Tracker Contacts
-      file: devops_contacts.md
+      file: DEVOPS_CONTACTS.md
 
 ## Log Page ##
 log_page:
