@@ -177,14 +177,34 @@ async def test_notes_images_are_each_users_own(endpoints: User, ada_key):
     assert (await http.get(path)).status_code == 401
 
 
-async def test_the_app_palette_is_the_installs_when_people_sign_in(user: User):
-    _sign_in(user, ADA)
-    await user.open("/settings")
-    await page_built()
-    await user.should_see("Set for everyone on this server", retries=20)
-    await user.should_not_see("Save Theme")
-    await user.should_see("Query editor skin")  # each user's own
 
+async def test_each_user_has_their_own_palette(create_user, ada_key):
+    """Settings edits the viewer's own colours, and every page resolves its
+    styles against its viewer's palette."""
+    import yaml
+
+    from src.config import ConfigLoader
+    from src.ui_styles import UI_STYLES
+
+    theme = yaml.safe_load((ConfigLoader().config_folder / "config_theme.yml.template")
+                           .read_text(encoding="utf-8"))
+    default_accent = theme["colors"]["accent"]
+    theme["colors"]["accent"] = "pink-500"
+    folder = ConfigLoader(user_key=ada_key).user_folder
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "config_theme.yml").write_text(yaml.safe_dump(theme), encoding="utf-8")
+
+    ada = _sign_in(create_user(), ADA)
+    await ada.open("/settings")
+    await page_built()
+    await ada.should_see("Save Theme")  # her palette editor
+    bob = _sign_in(create_user(), BOB)
+    await bob.open("/settings")
+    await page_built()
+
+    for user, accent in ((ada, "pink-500"), (bob, default_accent)):
+        with user.client:
+            assert UI_STYLES.get_layout_classes("section_heading").endswith(f"text-{accent}")
 
 async def test_the_owners_first_sign_in_lands_in_the_single_user_data(monkeypatch):
     """Going online: WORKTIMER_OWNER_EMAIL's first sign-in takes over user 1.

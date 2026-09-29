@@ -934,10 +934,13 @@ everything that inventory found is per user or deliberately the install's
      `data/users/<key>/config/` for everyone else, created from the shared
      templates. A new user starts from the shipped defaults, never from user
      1's overrides.
-   - **The theme stays the install's:** the style resolver is process-wide,
-     so per-user palettes would repaint each other's pages. When people sign
-     in, Settings shows "set for everyone on this server" instead of the
-     palette editor; the query-editor skin stays each user's own.
+   - **The colour palette is each user's too** (since 2026-09-29; at first
+     it was the install's, because the style resolver was process-wide):
+     `config_theme.yml` is one of the user's files, Settings' colour editor
+     edits the viewer's own, and the resolver resolves every style against
+     the palette of whoever the page is being built for — cached per
+     palette, so the 96 style lookups stay as they were. A zip import brings
+     a colleague's palette along.
    - `app.storage.user` is keyed by the browser, and one browser can carry
      several people: each preference key is the user's own (`pref_key`; user
      1 keeps the plain keys, so saved preferences survive). The post-update
@@ -1020,6 +1023,9 @@ per-user keying and the token checks held). Fixed:
 - **Hygiene:** the PAT key file 0600, the backup dumps root-only,
   `staging.sh up` refuses a `.env` without its passwords, `data/` ignored by
   git as a whole, a note's filename escaped in the page's JavaScript.
+
+On the Access application: cookie SameSite Lax, HttpOnly and Binding Cookie
+on (2026-09-29), One-time PIN as the colleagues' login.
 
 Deferred (low, noted): an open tab isn't re-verified when its Access session
 ends or is revoked (the socket keeps its sign-in until it reconnects);

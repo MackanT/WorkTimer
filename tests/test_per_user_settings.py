@@ -1,7 +1,8 @@
 """Each user's own settings (v6 Phase 6, slice 3): what Settings writes lives
 in the user's folder — config/ itself for user 1, data/users/<key>/config/
-for everyone else — while the shipped files, the templates and the theme stay
-shared. Browser-side preferences get the user's own keys.
+for everyone else, the colour palette among them — while the shipped files
+and the templates stay shared. Browser-side preferences get the user's own
+keys, and each page resolves its styles against its viewer's palette.
 
 Every loader here reads a temp copy of config/: were a change ever to send
 writes into the shipped folder, they must land in the copy, never in the
@@ -49,7 +50,8 @@ def test_user_1_writes_to_config_and_everyone_else_to_their_own_folder(data, con
     assert ada.user_folder == data / "users" / "2" / "config"
     for name in ConfigLoader.USER_FILES:
         assert ada.user_path(name) == ada.user_folder / name
-    for shared in ("config_ui.yml", "config_ui_styles.yml", "config_theme.yml", "config_notepad.yml"):
+    assert ada.user_path("config_theme.yml") == ada.user_folder / "config_theme.yml"  # her palette
+    for shared in ("config_ui.yml", "config_ui_styles.yml", "config_notepad.yml"):
         assert ada.user_path(shared) == config / shared  # shipped, or the install's
 
 
@@ -115,6 +117,21 @@ def test_the_settings_folder_can_live_outside_the_image(data, config, monkeypatc
     assert local.user_path("config_theme.yml") == data / "config" / "config_theme.yml"
     assert local.user_path("config_ui.yml") == config / "config_ui.yml"  # what ships stays
     assert ada.user_path("time_settings.yml") == data / "users" / "2" / "config" / "time_settings.yml"
-    assert ada.user_path("config_theme.yml") == data / "config" / "config_theme.yml"  # the install's
+    assert ada.user_path("config_theme.yml") == data / "users" / "2" / "config" / "config_theme.yml"
     local.load_all()
     assert (data / "config" / "config_theme.yml").exists()  # from the shipped template
+
+
+def test_each_viewer_gets_styles_in_their_own_palette(monkeypatch):
+    from src import ui_styles
+
+    pink = {"colors": {"accent": "pink-500", "muted": "zinc-400"}}
+    teal = {"colors": {"accent": "teal-400", "muted": "stone-400"}}
+    styles = ui_styles.UI_STYLES
+
+    for theme, accent in ((pink, "pink-500"), (teal, "teal-400"), (pink, "pink-500")):
+        monkeypatch.setattr(ui_styles, "_viewer_theme", lambda theme=theme: theme)
+        assert styles.get_layout_classes("section_heading").endswith(f"text-{accent}")
+    monkeypatch.setattr(ui_styles, "_viewer_theme", lambda: None)  # outside any page
+    ui_styles.UIStyles.configure_theme(teal)
+    assert styles.get_layout_classes("section_heading").endswith("text-teal-400")

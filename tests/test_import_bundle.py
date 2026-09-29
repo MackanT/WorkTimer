@@ -30,7 +30,8 @@ def test_only_what_worktimer_knows_is_taken(tmp_path):
         "data/backups/worktimer_old.db": b"old",
         "config/time_settings.yml": b"rounding_minutes: 15\n",
         "config/devops_contacts.yml": b"customers: {}\n",
-        "config/config_theme.yml": b"colors: {}\n",  # the install's, not a user's
+        "config/config_theme.yml": b"colors: {}\n",  # the user's own palette
+        "config/config_notepad.yml": b"x: 1\n",  # the install's, not a user's
         "../escape.md": b"out",
         "/abs/notes/x.md": b"abs",
         "__MACOSX/data/notes/._plan.md": b"meta",
@@ -43,7 +44,8 @@ def test_only_what_worktimer_knows_is_taken(tmp_path):
         assert bundle.notes == {"plan.md": b"# Plan", "notes_meta.json": b"{}",
                                 "plan_assets/img_1.png": b"png"}
         assert bundle.settings == {"time_settings.yml": b"rounding_minutes: 15\n",
-                                   "devops_contacts.yml": b"customers: {}\n"}
+                                   "devops_contacts.yml": b"customers: {}\n",
+                                   "config_theme.yml": b"colors: {}\n"}
     assert not folder.exists()  # the temp copies are gone
 
 

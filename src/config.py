@@ -321,12 +321,11 @@ class ConfigLoader:
     """Load and validate all configuration files.
 
     `config_folder` holds what ships — config_ui.yml, the styles, the
-    templates — and is shared. The files Settings writes (USER_FILES) are the
-    user's own (v6 Phase 6): in the settings folder for user 1 and in
-    data/users/<key>/config/ for everyone else, created from the shared
-    templates where one exists. The install's own written files
-    (INSTALL_FILES — the theme stays the install's: the style resolver is
-    process-wide) live in the settings folder too.
+    templates — and is shared. The files Settings writes (USER_FILES — the
+    colour palette among them) are the user's own (v6 Phase 6): in the
+    settings folder for user 1 and in data/users/<key>/config/ for everyone
+    else, created from the shared templates where one exists. The install's
+    own written file (INSTALL_FILES) lives in the settings folder too.
 
     The settings folder is `config_folder` itself unless WORKTIMER_SETTINGS_DIR
     names another — under Docker a folder in the mounted data/, because the
@@ -335,9 +334,9 @@ class ConfigLoader:
 
     USER_FILES = frozenset({
         "time_settings.yml", "description_templates.yml", "devops_contacts.yml",
-        "devops_tags.yml", "tracker_defaults.yml",
+        "devops_tags.yml", "tracker_defaults.yml", "config_theme.yml",
     })
-    INSTALL_FILES = frozenset({"config_theme.yml", "config_notepad.yml"})
+    INSTALL_FILES = frozenset({"config_notepad.yml"})
 
     _REGISTRY: List[_ConfigSpec] = [
         _ConfigSpec(

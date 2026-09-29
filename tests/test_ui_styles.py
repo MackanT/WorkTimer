@@ -1,29 +1,24 @@
-"""Tests for src/ui_styles.py — content-idempotent theme resolution (§8.10)."""
+"""Tests for src/ui_styles.py — theme resolution, once per palette's content
+(each viewer's own palette: tests/test_per_user_settings.py)."""
 
 from src.ui_styles import UIStyles
 
 
-def test_configure_theme_is_idempotent_by_content():
-    UIStyles._theme_signature = None
-    UIStyles.configure_theme({"colors": {"muted": "slate-400", "accent": "sky-400"}})
-    sig1 = UIStyles._theme_signature
-    assert sig1 is not None
+def test_each_palette_is_resolved_once_by_content():
+    first = UIStyles.resolved_for({"colors": {"muted": "slate-400", "accent": "sky-400"}})
 
-    # Same content -> no re-resolution (signature unchanged).
-    UIStyles.configure_theme({"colors": {"muted": "slate-400", "accent": "sky-400"}})
-    assert UIStyles._theme_signature == sig1
-
-    # Changed content -> re-resolves.
-    UIStyles.configure_theme({"colors": {"muted": "red-400", "accent": "sky-400"}})
-    assert UIStyles._theme_signature != sig1
+    # Same content (another dict) -> the same resolved styles, not a new pass.
+    assert UIStyles.resolved_for({"colors": {"muted": "slate-400", "accent": "sky-400"}}) is first
+    # Changed content -> resolved anew.
+    changed = UIStyles.resolved_for({"colors": {"muted": "red-400", "accent": "sky-400"}})
+    assert changed is not first
+    assert changed["layouts"]["muted_text"] == "text-red-400"
 
 
-def test_configure_theme_accepts_flat_or_nested():
-    UIStyles._theme_signature = None
-    UIStyles.configure_theme({"muted": "slate-400"})  # flat colours dict
-    flat_sig = UIStyles._theme_signature
-    UIStyles.configure_theme({"colors": {"muted": "slate-400"}})  # equivalent nested
-    assert UIStyles._theme_signature == flat_sig
+def test_a_palette_may_be_flat_or_nested():
+    flat = UIStyles.resolved_for({"muted": "slate-500"})  # the flat colours dict
+
+    assert UIStyles.resolved_for({"colors": {"muted": "slate-500"}}) is flat  # equivalent nested
 
 
 def test_widget_width_falls_back_to_standard():

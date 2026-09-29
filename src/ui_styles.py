@@ -2,8 +2,9 @@
 Centralized UI styling configuration.
 
 Loads config/config_ui_styles.yml once per process and resolves ``${key}``
-theme placeholders. Split out of helpers.py (which re-exports UI_STYLES for
-backward compatibility).
+theme placeholders — against the theme of whoever the page is being built
+for, so each user sees their own palette (v6 Phase 6). Split out of
+helpers.py (which re-exports UI_STYLES for backward compatibility).
 """
 
 import os
@@ -17,8 +18,9 @@ class UIStyles:
 
     _instance = None
     _styles = None
-    _resolved = None  # styles with ${key} placeholders resolved against theme
-    _theme_signature = None  # content hash of the last theme resolved against
+    _resolved = None  # the last configured theme's — for code outside any page
+    _by_theme: dict = {}  # theme content -> styles resolved against it
+    _by_identity: dict = {}  # id(theme dict) -> (the dict, resolved): the fast path
 
     @classmethod
     def get_instance(cls):
@@ -38,26 +40,35 @@ class UIStyles:
             UIStyles._resolved = UIStyles._styles  # default: unresolved fallback
 
     @classmethod
-    def configure_theme(cls, theme: dict) -> None:
-        """Resolve all ${key} placeholders in styles using the loaded theme.
-
-        Replaces ``${key}`` in any YAML string value with ``theme[key]``.
-        Idempotent by theme CONTENT: calling again with the same theme is a
-        no-op, while a changed theme (e.g. after a settings reload) re-resolves
-        — no external flag resets needed.
+    def resolved_for(cls, theme: dict) -> dict:
+        """The styles with every ``${key}`` replaced by ``theme[key]`` — cached
+        per theme content, so each distinct palette is resolved once.
 
         Example: ``"text-${muted}"`` with ``theme = {"muted": "slate-400"}``
         becomes ``"text-slate-400"``.
         """
+        entry = cls._by_identity.get(id(theme))
+        if entry is not None and entry[0] is theme:
+            return entry[1]
         # theme dict may be the full config_theme.yml (with "colors" key) or just the
         # colors sub-dict — handle both.
         flat_theme = theme.get("colors", theme) if isinstance(theme, dict) else {}
-
         signature = repr(sorted(flat_theme.items()))
-        if signature == cls._theme_signature:
-            return
-        cls._theme_signature = signature
+        if signature not in cls._by_theme:
+            cls._by_theme[signature] = cls._resolve(cls._styles, flat_theme)
+        if len(cls._by_identity) > 512:
+            cls._by_identity.clear()
+        cls._by_identity[id(theme)] = (theme, cls._by_theme[signature])
+        return cls._by_theme[signature]
 
+    @classmethod
+    def configure_theme(cls, theme: dict) -> None:
+        """Remember `theme` for code that runs outside any page (a page uses
+        its viewer's own theme), resolving it now."""
+        cls._resolved = cls.resolved_for(theme)
+
+    @staticmethod
+    def _resolve(styles, flat_theme: dict):
         def _resolve(value):
             if isinstance(value, str):
                 return re.sub(
@@ -71,11 +82,15 @@ class UIStyles:
                 return [_resolve(item) for item in value]
             return value
 
-        cls._resolved = _resolve(cls._styles)
+        return _resolve(styles)
 
     @property
     def _active(self) -> dict:
-        """Return resolved styles if theme was configured, else raw styles."""
+        """The styles for whoever the current page is being built for — their
+        theme — else the last configured theme's, else the raw styles."""
+        theme = _viewer_theme()
+        if theme is not None:
+            return UIStyles.resolved_for(theme)
         return UIStyles._resolved if UIStyles._resolved is not None else UIStyles._styles
 
     def get_widget_width(self, size_name: str) -> str:
@@ -191,6 +206,21 @@ class UIStyles:
             Inline CSS style string
         """
         return self._active.get("inline_styles", {}).get(module, {}).get(style_name, "")
+
+
+def _viewer_theme() -> dict | None:
+    """The theme of the user whose page is being built: their app core's —
+    None outside a page (a background task) or before the core exists."""
+    try:
+        from nicegui import context
+
+        client_id = context.client.id
+    except Exception:
+        return None
+    from .core import app as core_app
+
+    core = core_app._app_cores.get(client_id)
+    return core.theme if core is not None else None
 
 
 # Global instance

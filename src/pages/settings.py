@@ -23,7 +23,6 @@ from nicegui import app, ui
 from ..core.app import AppCore
 from ..ui.elements import toolbar, toolbar_group
 from ..helpers import UI_STYLES
-from ..auth import auth_config
 from ..services.backups import create_backup, list_backups
 from ..user_paths import pref_key
 
@@ -1339,16 +1338,8 @@ async def _render_devops_tags_tab(core: AppCore):
 
 
 async def _render_theme_tab(core: AppCore):
-    """The app's palette — the install's, so editable only without sign-in —
-    and each user's own query-editor skin."""
-    if auth_config().multi_user:
-        with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
-            ui.label("App colours").classes(
-                f"text-sm font-semibold text-{core.theme.get('accent')}")
-            ui.label("Set for everyone on this server, by its administrator "
-                     "(config/config_theme.yml).").classes("text-xs opacity-70")
-    else:
-        await _render_palette(core)
+    """The user's own colour palette and query-editor skin."""
+    await _render_palette(core)
     _render_editor_skin_card(core)
 
 
