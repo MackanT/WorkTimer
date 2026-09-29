@@ -19,8 +19,9 @@ month — on the same code** ([v6_implementation.md](v6_implementation.md), Phas
   key (`data-pg/.pat_key`). Staging then syncs with DevOps and Jira alongside
   5.x — reading is harmless, but a card moved or an item edited on staging
   changes the real one.
-- **Backups:** the `backup` service dumps the whole database daily into
-  `/opt/worktimer/backups-pg` (newest 14) — `scripts/pg_backup.sh`.
+- **Backups:** the `backup` service backs the whole database and the notes
+  and settings up daily into `/opt/worktimer/backups-pg` (newest 14, and each
+  month's first for 12 months) — `scripts/pg_backup.sh`, below.
 
 ---
 
@@ -100,40 +101,90 @@ restarts the count (the next two imports must match on the new code).
 
 ## Backups
 
-**On the server:** the `backup` service dumps the whole database into
-`/opt/worktimer/backups-pg` once a day (the newest 14 kept) —
-[scripts/pg_backup.sh](../scripts/pg_backup.sh).
+**On the server:** once a day the `backup` service writes into
+`/opt/worktimer/backups-pg` ([scripts/pg_backup.sh](../scripts/pg_backup.sh)):
+
+- `worktimer_<stamp>.dump` — the whole database, every user;
+- `files_<stamp>.tar.gz` — the files in `data-pg/`: everyone's notes (with
+  their images), settings and saved preferences. **Not** the token key
+  (`.pat_key`), the preferences' `.storage_secret` or `.env`.
+
+The newest 14 of each stay, and each month's first is also kept in
+`backups-pg/monthly/` for 12 months (`BACKUP_KEEP`, `BACKUP_KEEP_MONTHLY`).
+One extra backup now, e.g. before a risky change:
+
+```bash
+docker compose --profile postgres run --rm backup --once
+```
 
 **Off the server** — the server is the only live copy, so its backups must
 not live only on it:
 
-- **Hetzner Backups:** in the Hetzner console, the server → *Backups* → enable.
-  Seven daily snapshots of the whole server, about 20 % of its price.
+- **Hetzner Backups** (enabled 2026-09-29): in the Hetzner console, the
+  server → *Backups*. An image of the whole disk once a day, the newest 7
+  kept, about 20 % of the server's price. It holds everything, the token key
+  and `.env` included: Postgres' Docker volume is a folder on that disk.
+  (The console's "Volumes are not included" means Hetzner *Cloud Volumes*,
+  extra disks — none is attached.) The images are **deleted with the
+  server**: before deleting it, turn the one to keep into a snapshot.
+  A manual snapshot (kept until deleted, about a cent per GB and month) is
+  worth taking before big changes.
 - **Copies on your PC:** from the WorkTimer checkout,
 
   ```powershell
   uv run python scripts/pull_backups.py --to "C:\Users\<you>\OneDrive\WorkTimer-backups"
   ```
 
-  copies each dump not already there (the newest 30 kept; a OneDrive folder
-  adds a cloud copy). To run it daily: Task Scheduler → *Create Basic Task* →
-  daily, some time after lunch (the dump is written around midday) → *Start a
+  copies each backup not already there — dumps, file archives and the
+  monthly ones (into `monthly\`). The newest 30 of each kind stay, and every
+  monthly one (`--keep`, `--keep-monthly`); a OneDrive folder adds a cloud
+  copy. To run it daily: Task Scheduler → *Create Basic Task* → daily, some
+  time after lunch (the backup is written around midday) → *Start a
   program*: `uv`, arguments `run python scripts\pull_backups.py --to "<that
   folder>"`, *Start in*: the checkout folder.
 
+**How far back:**
+
+| From | Reaches back | Brings back |
+|---|---|---|
+| Hetzner Backups | 7 days | the whole server |
+| `backups-pg/` | 14 days | the database and the files |
+| `backups-pg/` inside the oldest Hetzner image | about 3 weeks | the same, via a temporary server made from the image |
+| `backups-pg/monthly/` | 12 months, one per month | the same |
+| The copies on your PC | as long as they are kept | the same, but no token key |
+
+A mistake found late is usually one user's: rather than roll everyone back,
+restore an older dump into a scratch database, copy that user's missing rows
+across, and drop it:
+
+```bash
+docker compose --profile postgres run --rm backup createdb worktimer_scratch
+docker compose --profile postgres run --rm backup \
+  pg_restore -d worktimer_scratch /backups/monthly/worktimer_<month>.dump
+# ... compare and copy, as the admin ...
+docker compose --profile postgres run --rm backup dropdb worktimer_scratch
+```
+
 **Restore** (as the admin; the app stopped so nothing writes meanwhile), on
-the server in `/opt/worktimer`:
+the server in `/opt/worktimer`. This rolls **every** user back:
 
 ```bash
 docker compose --profile postgres stop worktimer-pg
 docker compose --profile postgres run --rm backup \
   pg_restore --clean --if-exists -d worktimer /backups/worktimer_<stamp>.dump
+tar -xzf backups-pg/files_<stamp>.tar.gz -C data-pg   # the files too, if needed
 docker compose --profile postgres start worktimer-pg
 ```
 
+`tar` can bring back one user's files only: add `./users/<key>` (or
+`./notes ./config` for user 1). Files of the same name are overwritten;
+newer ones stay.
+
 From a copy on your PC (the server lost): set a new server up as above
-(`staging.sh up`), `scp` the dump into its `/opt/worktimer/backups-pg/`, then
-restore the same way. Checked 2026-09-29: a dump restored into a scratch
+(`staging.sh up`), `scp` the dump and the file archive into its
+`/opt/worktimer/backups-pg/`, then restore the same way. The token key is
+not in the copies: everyone enters their tracker tokens again, and saved
+preferences start over. Checked 2026-09-29: a dump restored into a scratch
 database held every entry, customer, work item, tracker token and security
 rule of the live one at dump time.
 

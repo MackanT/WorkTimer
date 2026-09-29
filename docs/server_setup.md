@@ -151,8 +151,9 @@ Disconnect before measuring the app's own memory, or the numbers are skewed.
 - [x] Docker + Compose — Ubuntu's own packages (`docker.io` 29.1,
       `docker-compose-v2` 2.40, `docker-buildx` 0.30), installed 2026-09-28
 - [x] Postgres container + volume — the Phase 5 staging stack in
-      `/opt/worktimer` ([staging.md](staging.md)), with daily `pg_dump`s to
-      `backups-pg/` on the server
+      `/opt/worktimer` ([staging.md](staging.md)), with daily `pg_dump`s and
+      notes/settings archives to `backups-pg/` on the server (14 days, and
+      monthly for 12 months)
 - [x] Domain — on Cloudflare (2026-09-29). Originally planned: registered at Hetzner (~€4.90/yr; check the **renewal** price,
       cheap TLDs often jump after year one)
 - [x] Move the domain's DNS to Cloudflare (bought there, so nothing to move): add it as a site on the Free plan,
@@ -172,7 +173,7 @@ Disconnect before measuring the app's own memory, or the numbers are skewed.
   - When a session expires with a tab open, NiceGUI's reconnect is redirected
     to the login page and the tab shows "reconnecting" — a reload brings up
     the login. Rare with a one-month session.
-- [ ] Backups off the server: enable Hetzner Backups (console), and copy the
-      nightly dumps to a PC with `scripts/pull_backups.py` on a schedule
-      ([staging.md](staging.md), Backups); object storage later if wanted
+- [x] Hetzner Backups — enabled 2026-09-29 (7 daily images of the whole disk)
+- [ ] Copy the nightly backups to a PC with `scripts/pull_backups.py` on a
+      schedule ([staging.md](staging.md), Backups); object storage later if wanted
 - [ ] Non-root admin user (currently root-only, acceptable for a single admin)

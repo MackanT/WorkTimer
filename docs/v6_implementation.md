@@ -636,6 +636,16 @@ release (SQLite is the fallback until then).
   - Verified under compose: the service wrote a dump at start that
     `pg_restore --list` reads (pg_dump 18.6 = server, owners and 0002's
     revokes included); "Backup now" and "Download" produced the export.
+  - **Files and monthly backups (2026-09-29):** the dump alone left out what
+    lives in `data-pg/` — notes, settings, saved preferences. Each run now
+    also writes `files_<stamp>.tar.gz` of that folder (mounted read-only),
+    leaving out the token key, `.storage_secret`, `import/` and the app's
+    own `backups/`; and each month's first dump and archive go to
+    `monthly/`, the newest 12 kept (`BACKUP_KEEP_MONTHLY`), so a mistake
+    noticed at month's end is still recoverable. `--once` runs one backup
+    and exits. `pull_backups.py` copies both kinds and the monthly ones.
+    [tests/test_pg_backup_script.py](../tests/test_pg_backup_script.py)
+    runs the script with a stand-in `pg_dump`.
 - **Step 5's currency, done (2026-09-28):** the customer dialog has a
   Currency field on Postgres (a `backend: postgres` field in
   `config_ui.yml`; SEK by default, any ISO code). It changes only while the

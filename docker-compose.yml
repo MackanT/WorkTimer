@@ -94,8 +94,10 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  # Whole-database backups (disaster recovery): pg_dump as the admin, every
-  # BACKUP_INTERVAL_SECONDS (daily), newest BACKUP_KEEP kept, in ./backups-pg.
+  # Backups (disaster recovery), in ./backups-pg: every BACKUP_INTERVAL_SECONDS
+  # (daily) a pg_dump of the whole database, as the admin, and an archive of
+  # ./data-pg's notes and settings (not the token key); the newest BACKUP_KEEP
+  # kept, and each month's first in monthly/ (newest BACKUP_KEEP_MONTHLY).
   # The app's own "Backup now" exports only the signed-in user's data.
   backup:
     image: postgres:18
@@ -108,9 +110,11 @@ services:
       - PGDATABASE=worktimer
       - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
       - BACKUP_KEEP=${BACKUP_KEEP:-14}
+      - BACKUP_KEEP_MONTHLY=${BACKUP_KEEP_MONTHLY:-12}
     volumes:
       - ./scripts/pg_backup.sh:/pg_backup.sh:ro
       - ./backups-pg:/backups
+      - ./data-pg:/data:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
