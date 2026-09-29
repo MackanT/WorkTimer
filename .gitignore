@@ -15,7 +15,7 @@ docs/ADD_DATA_REFACTORING.md
 docs/TASKS_REFACTOR_SUMMARY.md
 
 .nicegui/
-data/notes/
+data/
 
 config/config_theme.yml
 config/devops_tags.yml
@@ -26,8 +26,6 @@ config/tracker_defaults.yml
 config/time_settings.yml
 config/description_templates.yml
 
-data/.storage_secret
-data/.pat_key
 data-pg/
 backups-pg/
 staging-reports/

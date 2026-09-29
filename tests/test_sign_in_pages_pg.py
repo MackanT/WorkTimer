@@ -16,7 +16,7 @@ from psycopg.conninfo import make_conninfo  # noqa: E402
 
 from _access import ADA, BOB, CONFIG, OTHER_KEY, token, verifier  # noqa: E402
 from _smoke import page_built  # noqa: E402
-from src import auth  # noqa: E402
+from src import auth, http_safety  # noqa: E402
 from src import globals as wt_globals  # noqa: E402
 from src.auth import ACCESS_HEADER, AuthConfig, Identity  # noqa: E402
 from src.core import app as core_app  # noqa: E402
@@ -84,6 +84,7 @@ def endpoints(user: User) -> User:
     app.get("/devops_attachment")(work_item_forms.devops_attachment)
     app.post("/upload_image")(notepad.upload_image)
     app.get("/notes_assets/{folder}/{name}")(notepad.notes_asset)
+    http_safety.install(app)
     return user
 
 
@@ -145,6 +146,8 @@ async def test_single_user_mode_refuses_a_database_people_signed_in_to(app_url, 
     monkeypatch.setattr(wt_globals, "_shared_pools", {})
     with pytest.raises(ConfigError, match="signed-in user"):
         wt_globals._shared_pools_for(app_url)
+    with pytest.raises(ConfigError, match="signed-in user"):  # endpoints too: never user 1
+        wt_globals.user_key_for(None)
     assert wt_globals._shared_pools == {}
 
 
@@ -191,3 +194,79 @@ async def test_the_owners_first_sign_in_lands_in_the_single_user_data(monkeypatc
     assert wt_globals.user_key_for(Identity("not-the-owner", "x@example.com")) != 1
     assert wt_globals.user_key_for(Identity("owner-sub", "Owner@Example.com")) == 1
     assert wt_globals.user_key_for(Identity("owner-sub", "owner@example.com")) == 1
+
+
+async def test_a_colleague_imports_their_zipped_data_folder(user: User, tmp_path, pg_schema_db_module):
+    """Onboarding through the Settings card: a zip of the 5.x data folder with
+    its config folder — data, tracker token, notes and settings, each into the
+    colleague's own account and folders."""
+    import io
+    import zipfile
+
+    from nicegui import ui
+    from starlette.datastructures import UploadFile
+
+    from src.database import Database
+
+    v5_dir = tmp_path / "v5" / "data"
+    v5_dir.mkdir(parents=True)
+    quiet = logging.getLogger("signin.v5")
+    quiet.handlers = [logging.NullHandler()]
+    quiet.propagate = False
+    v5 = Database(str(v5_dir / "worktimer.db"), quiet)
+    v5.initialize_db()
+    v5.insert_tracker("Carol DevOps", "devops", org_url="carol-org", pat_token="carols-pat")
+    v5.insert_customer("Carol AB", "2026-01-01", 900, tracker_name="Carol DevOps")
+    v5.insert_project("Carol AB", "Build")
+    row = v5.get_data_input_list().query("project_name == 'Build'").iloc[0]
+    v5.insert_manual_time_row(int(row.customer_id), int(row.project_id),
+                              "2026-09-01 09:00", "2026-09-01 11:00")
+    v5.close()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.write(v5_dir / "worktimer.db", "data/worktimer.db")
+        zf.write(v5_dir / ".pat_key", "data/.pat_key")
+        zf.writestr("data/notes/plan.md", "# Carol's plan")
+        zf.writestr("data/notes/plan_assets/img_1.png", b"png")
+        zf.writestr("config/time_settings.yml", "rounding_minutes: 15\n")
+
+    _sign_in(user, "carol-sub-0001")
+    await user.open("/settings")
+    await page_built()
+    user.find(ui.upload).elements.pop().handle_uploads(
+        [UploadFile(io.BytesIO(buffer.getvalue()), filename="carol-data.zip")])
+    await user.should_see("5.x data folder (zip)", retries=100)
+    user.find(kind=ui.button, content="Import").click()
+    await user.should_see("every customer's numbers match", retries=100)  # the notification
+
+    with psycopg.connect(pg_schema_db_module) as admin:
+        [(carol,)] = admin.execute(
+            "select key_user from users where bk_user = 'carol-sub-0001'").fetchall()
+        assert admin.execute("select count(*) from time_entries where fk_user = %s",
+                             (carol,)).fetchone() == (1,)
+    carol_db = next(c.query_engine.db for c in core_app._app_cores.values() if c.user_key == carol)
+    assert carol_db.get_tracker_credentials("Carol DevOps") == ("devops", "carol-org", "carols-pat")
+    notes = notepad.get_notes_dir(carol)
+    assert (notes / "plan.md").read_text(encoding="utf-8") == "# Carol's plan"
+    assert (notes / "plan_assets" / "img_1.png").read_bytes() == b"png"
+    config = core_app.get_config_loader(carol).user_folder
+    assert (config / "time_settings.yml").read_text(encoding="utf-8") == "rounding_minutes: 15\n"
+
+
+
+async def test_another_site_cannot_spend_the_sign_in(endpoints: User):
+    """The security review: a cross-site POST carries the Access cookie, so
+    it is refused before any endpoint runs; pages can't be framed."""
+    http = endpoints.http_client
+    _sign_in(endpoints, ADA)
+    files = {"file": ("shot.png", PNG)}
+
+    cross = await http.post("/upload_image", data={"note": "plan.md"}, files=files,
+                            headers={"Sec-Fetch-Site": "cross-site"})
+    same = await http.post("/upload_image", data={"note": "plan.md"}, files=files,
+                           headers={"Sec-Fetch-Site": "same-origin"})
+
+    assert cross.status_code == 403
+    assert same.status_code == 200 and "path" in same.json()
+    page = await http.get("/time")
+    assert page.headers["x-frame-options"] == "DENY"

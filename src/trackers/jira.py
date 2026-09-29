@@ -171,6 +171,12 @@ def _adf_text(node, limit: int = 2000) -> str:
     return "\n".join(blocks).strip()[:limit]
 
 
+# WorkTimer talks to Jira Cloud only: nothing is ever sent anywhere else,
+# whatever the tracker form says (the SSRF guard for every Jira request).
+_CLOUD_SITE = re.compile(r"https://[A-Za-z0-9-]+\.atlassian\.net")
+_ATLASSIAN_HOSTS = (".atlassian.net", ".atlassian.com")
+
+
 def _normalise_site(raw: str) -> str:
     """'yoursite.atlassian.net' (any spelling) → 'https://yoursite.atlassian.net'."""
     site = str(raw or "").strip().rstrip("/")
@@ -581,6 +587,7 @@ class JiraProvider(TrackerProvider):
     # ── HTTP plumbing (kept small so tests can monkeypatch _request) ──────
     def _request(self, method: str, path: str, **kwargs):
         """One Jira REST call; returns parsed JSON or raises for HTTP errors."""
+        self._check_site()
         resp = requests.request(
             method,
             f"{self.site}{path}",
@@ -591,6 +598,11 @@ class JiraProvider(TrackerProvider):
         )
         resp.raise_for_status()
         return resp.json() if resp.text else {}
+
+    def _check_site(self):
+        if not _CLOUD_SITE.fullmatch(self.site):
+            raise Exception(f"'{self.site}' is not a Jira Cloud site — use "
+                            "https://<name>.atlassian.net")
 
     # ── connection ────────────────────────────────────────────────────────
     def connect(self):
@@ -1069,6 +1081,7 @@ class JiraProvider(TrackerProvider):
             )
             return None
         try:
+            self._check_site()
             resp = requests.post(
                 f"{self.site}/rest/api/3/issue/{int(work_item_id)}/attachments",
                 auth=(self.email, self.api_token),
@@ -1090,15 +1103,28 @@ class JiraProvider(TrackerProvider):
         return None
 
     def owns_attachment_url(self, url) -> bool:
-        return str(url).startswith(f"{self.site}/rest/api/3/attachment/")
+        return bool(_CLOUD_SITE.fullmatch(self.site)) and self.owned_url(
+            url, self.site, prefix="/rest/api/3/attachment/")
 
     def fetch_attachment(self, url):
+        """The attachment's bytes. Jira answers with a redirect to its media
+        store: followed only to Atlassian's own hosts, over https, and
+        without the credentials."""
         if not self.owns_attachment_url(url):
             return None
         try:
-            resp = requests.get(
-                url, auth=(self.email, self.api_token), timeout=20
-            )
+            resp = requests.get(url, auth=(self.email, self.api_token), timeout=20,
+                                allow_redirects=False)
+            for _ in range(3):
+                if not resp.is_redirect:
+                    break
+                target = requests.compat.urljoin(resp.url, resp.headers["Location"])
+                host = (requests.utils.urlparse(target).hostname or "").lower()
+                if (requests.utils.urlparse(target).scheme != "https"
+                        or not host.endswith(_ATLASSIAN_HOSTS)):
+                    self.log.warning(f"Jira attachment redirect refused: {host}")
+                    return None
+                resp = requests.get(target, timeout=20, allow_redirects=False)
             resp.raise_for_status()
             return (resp.content, resp.headers.get("Content-Type"))
         except Exception as e:

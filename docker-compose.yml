@@ -83,6 +83,8 @@ services:
       - CF_ACCESS_TEAM_DOMAIN=${CF_ACCESS_TEAM_DOMAIN:-}
       - CF_ACCESS_AUD=${CF_ACCESS_AUD:-}
       - WORKTIMER_OWNER_EMAIL=${WORKTIMER_OWNER_EMAIL:-}
+    # One user's runaway import can't starve the database of memory.
+    mem_limit: ${WORKTIMER_MEM_LIMIT:-1536m}
     volumes:
       # Its own folder for the PAT key, notes and backups — never the SQLite
       # install's data/.

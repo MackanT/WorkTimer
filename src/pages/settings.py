@@ -278,7 +278,7 @@ def _render_tracker_defaults_card(core) -> None:
             )
 
 
-IMPORT_MAX_BYTES = 200 * 1024 * 1024
+IMPORT_MAX_BYTES = 95 * 1024 * 1024  # under Cloudflare's 100 MB request limit
 
 
 def _render_import_card(core) -> None:
@@ -288,7 +288,8 @@ def _render_import_card(core) -> None:
     db = core.query_engine.db
     if getattr(db, "backend", "sqlite") != "postgres":
         return
-    from .. import importer
+    from .. import import_bundle, importer
+    from .notepad import get_notes_dir
 
     muted = UI_STYLES.get_layout_classes("muted_text")
     state = {"prepared": None}
@@ -296,9 +297,11 @@ def _render_import_card(core) -> None:
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
         ui.label("Import").classes(f"text-sm font-semibold text-{core.theme.get('accent')}")
         ui.label(
-            "A WorkTimer 5.x database (worktimer.db) or a WorkTimer backup (.json.gz). "
-            "It is checked first; nothing is written until you import — into an empty "
-            "account, unless you replace everything."
+            "A WorkTimer 5.x database (worktimer.db); better, a zip of its data folder — "
+            "with its notes and tracker tokens — and its config folder beside it, for "
+            "your settings; or a WorkTimer backup (.json.gz). It is checked first; "
+            "nothing is written until you import — into an empty account, unless you "
+            "replace everything. Notes and settings already here are kept aside."
         ).classes("text-xs " + muted + " mb-2")
         summary = ui.column().classes("w-full gap-1")
         with ui.row().classes("w-full items-center gap-4 mt-2"):
@@ -336,7 +339,13 @@ def _render_import_card(core) -> None:
             import os
             import tempfile
 
-            data = e.content.read()
+            data = e.content.read(IMPORT_MAX_BYTES + 1)
+            if len(data) > IMPORT_MAX_BYTES:
+                summary.clear()
+                with summary:
+                    ui.label("✖ The file is over 95 MB — leave out data\\backups").classes(
+                        "text-xs text-negative")
+                return
             fd, path = tempfile.mkstemp(suffix=Path(e.name).suffix or ".bin")
             try:
                 with os.fdopen(fd, "wb") as f:
@@ -370,6 +379,25 @@ def _render_import_card(core) -> None:
                 ui.notify(f"Import failed: {ex}", type="negative", multi_line=True)
                 _update_button(state.get("empty", True))
                 return
+            placed = []
+            try:  # a zip's notes and settings, into this user's own folders
+                if prepared.note_files:
+                    moved = await asyncio.to_thread(
+                        import_bundle.place_notes, prepared.note_files, get_notes_dir(core.user_key))
+                    placed.append(f"{prepared.counts.get('notes', 0)} notes"
+                                  + (f" (earlier ones kept in {moved.name})" if moved else ""))
+                if prepared.setting_files:
+                    names = await asyncio.to_thread(
+                        import_bundle.place_settings, prepared.setting_files,
+                        core.config_loader.user_folder)
+                    for name in names:
+                        if name != "tracker_defaults.yml":  # read from disk when used
+                            core.config_loader.reload_config(name)
+                    placed.append(f"{len(names)} settings files (reload the page to see them)")
+            except Exception as ex:
+                core.logger.error(f"Placing the zip's notes and settings failed: {ex}")
+                ui.notify(f"The data is imported, but its notes and settings failed: {ex}",
+                          type="warning", multi_line=True)
             state["prepared"] = None
             replace.set_visibility(False)
             result_box.clear()
@@ -380,15 +408,16 @@ def _render_import_card(core) -> None:
                     rows=result.round(4).astype({"match": str}).to_dict("records"),
                 ).props("dense flat").classes("w-full")
             matched = bool(result["match"].all())
-            ui.notify("Imported — every customer's numbers match" if matched
-                      else "Imported — some numbers differ; see the table",
-                      type="positive" if matched else "warning")
+            ui.notify(("Imported — every customer's numbers match" if matched
+                       else "Imported — some numbers differ; see the table")
+                      + (f"; also {', '.join(placed)}" if placed else ""),
+                      type="positive" if matched else "warning", multi_line=True)
             core.event_bus.emit("ui_refresh_requested")
             core.force_tracker_reinit()
 
         import_button.on_click(_do_import)
         ui.upload(on_upload=_on_upload, auto_upload=True, max_file_size=IMPORT_MAX_BYTES,
-                  label="Choose a file").props('accept=".db,.gz" flat bordered').classes("w-full")
+                  label="Choose a file").props('accept=".db,.gz,.zip" flat bordered').classes("w-full")
 
 
 def _render_time_settings_card(core) -> None:

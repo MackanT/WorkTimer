@@ -211,6 +211,22 @@ class TrackerProvider(ABC):
         """Upload bytes; return an embeddable URL or None. `work_item_id`
         targets item-scoped stores (Jira); project-scoped ones ignore it."""
 
+    @staticmethod
+    def owned_url(url, base: str, prefix: str = "", contains: str = "") -> bool:
+        """`url` on exactly `base`'s scheme and host, inside `base`'s path
+        (then `prefix`), with `contains` in it — no userinfo, no '.' or '..'
+        segments. The SSRF guard behind owns_attachment_url."""
+        from urllib.parse import unquote, urlsplit
+
+        u, b = urlsplit(str(url)), urlsplit(str(base))
+        if (not b.netloc or u.scheme != b.scheme or u.netloc.lower() != b.netloc.lower()
+                or u.username or u.password):
+            return False
+        path = unquote(u.path)
+        if {".", ".."} & set(path.split("/")):
+            return False
+        return path.startswith(b.path.rstrip("/") + (prefix or "/")) and contains in path
+
     @abstractmethod
     def owns_attachment_url(self, url) -> bool:
         """True when `url` is an attachment URL served by this provider's

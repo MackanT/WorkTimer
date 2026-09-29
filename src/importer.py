@@ -1,8 +1,9 @@
 """Import into the Postgres WorkTimer (v6 Phase 4, docs/v6_plan.md §8).
 
-Two kinds of file: a WorkTimer 5.x database (SQLite, through the legacy
-mapping in src/importer_v5.py) and a v6 export (the app's own backup,
-.json.gz). Two steps, then a report:
+Three kinds of file: a WorkTimer 5.x database (SQLite, through the legacy
+mapping in src/importer_v5.py), a zip of a 5.x install's data folder — the
+database with its notes, tracker key and settings (src/import_bundle.py) —
+and a v6 export (the app's own backup, .json.gz). Two steps, then a report:
 
 1. ``prepare`` — read, transform and check; nothing is written. Problems
    (data v6 would refuse) stop here, with what to fix.
@@ -28,24 +29,33 @@ from decimal import Decimal
 
 import pandas as pd
 
-from . import clock, importer_v5
+from . import clock, import_bundle, importer_v5
 from .pat_crypto import decrypt_pat
 from .pg_database import PgDatabase
 
 GZIP_HEADER = b"\x1f\x8b"
+MAX_EXPORT_BYTES = 200 * 1024 * 1024  # a v6 export, unpacked
 
 
 @dataclass
 class Prepared:
-    kind: str                  # "5.x database" or "v6 export"
+    kind: str                  # "5.x database", "5.x data folder (zip)" or "v6 export"
     export: dict
     before: pd.DataFrame       # per customer: entries, hours, cost
     problems: list = field(default_factory=list)
     notes: list = field(default_factory=list)
+    note_files: dict = field(default_factory=dict)     # a zip's notes: path -> bytes
+    setting_files: dict = field(default_factory=dict)  # a zip's settings: name -> bytes
 
     @property
     def counts(self) -> dict:
-        return {t: len(rows) for t, rows in self.export.get("tables", {}).items()}
+        counts = {t: len(rows) for t, rows in self.export.get("tables", {}).items()}
+        if self.note_files:
+            counts["notes"] = sum(1 for p in self.note_files if p.endswith(".md"))
+            counts["note_images"] = sum(1 for p in self.note_files if "/" in p)
+        if self.setting_files:
+            counts["settings_files"] = len(self.setting_files)
+        return counts
 
 
 def _export_totals(export: dict) -> pd.DataFrame:
@@ -68,6 +78,14 @@ def _export_totals(export: dict) -> pd.DataFrame:
 
 def prepare(path, db: PgDatabase, pat_key_file=None) -> Prepared:
     """Read and check a file for import into `db`'s account — nothing is written."""
+    if import_bundle.is_bundle(path):
+        with import_bundle.opened(path) as bundle:
+            prepared = prepare(bundle.db_path, db, pat_key_file or bundle.pat_key_path)
+        if prepared.kind != "5.x database":
+            raise ValueError("The zip's worktimer.db is not a WorkTimer 5.x database")
+        prepared.kind = "5.x data folder (zip)"
+        prepared.note_files, prepared.setting_files = bundle.notes, bundle.settings
+        return prepared
     with open(path, "rb") as f:
         head = f.read(16)
     if head.startswith(importer_v5.SQLITE_HEADER):
@@ -78,8 +96,11 @@ def prepare(path, db: PgDatabase, pat_key_file=None) -> Prepared:
         return Prepared("5.x database", result.export, importer_v5.totals(tables),
                         result.problems, result.notes)
     if head.startswith(GZIP_HEADER):
-        with gzip.open(path, "rt", encoding="utf-8") as f:
-            export = json.load(f)
+        with gzip.open(path, "rb") as f:
+            raw = f.read(MAX_EXPORT_BYTES + 1)
+        if len(raw) > MAX_EXPORT_BYTES:
+            raise ValueError("The export unpacks to more than 200 MB")
+        export = json.loads(raw.decode("utf-8"))
         if export.get("format") != PgDatabase.EXPORT_FORMAT:
             raise ValueError("Not a WorkTimer export")
         if export.get("format_version") != 1:
@@ -95,7 +116,7 @@ def prepare(path, db: PgDatabase, pat_key_file=None) -> Prepared:
             notes.append(f"Tracker tokens that couldn't be read here — re-enter them in "
                          f"Settings: {', '.join(unreadable)}")
         return Prepared("v6 export", export, _export_totals(export), [], notes)
-    raise ValueError("Not a WorkTimer 5.x database or v6 export")
+    raise ValueError("Not a WorkTimer 5.x database, a zip of its data folder, or a v6 export")
 
 
 def report(before: pd.DataFrame, after: pd.DataFrame) -> pd.DataFrame:

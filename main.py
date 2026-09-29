@@ -51,6 +51,14 @@ def _describe_sign_in() -> str:
     multi-user needs Postgres (docs/v6_plan.md §2)."""
     auth = auth_config()  # AuthError on a bad WORKTIMER_AUTH setup
     if not auth.multi_user:
+        url = os.getenv("DATABASE_URL")
+        if url:  # refuse to start single-user on a database people signed in to
+            from src.globals import _shared_pools_for
+
+            try:
+                _shared_pools_for(url)
+            except Exception as e:
+                raise SystemExit(f"Refusing to start: {e}")
         return "none (single user)"
     if not os.getenv("DATABASE_URL"):
         raise SystemExit("WORKTIMER_AUTH=cloudflare-access needs Postgres: set DATABASE_URL.")
@@ -84,6 +92,12 @@ def main():
 
     # Initialize app
     initialize_app()
+    # Cross-site guard and page headers (src/http_safety.py).
+    from nicegui import app
+
+    from src.http_safety import install
+
+    install(app)
 
     # Start the server
     # Each route defined with @ui.page() is automatically registered.

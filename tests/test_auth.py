@@ -90,3 +90,18 @@ def test_the_owner_is_matched_by_email_whatever_its_case(monkeypatch):
     assert not config.is_owner(Identity(ADA, None))
     monkeypatch.delenv("WORKTIMER_OWNER_EMAIL")
     assert not AuthConfig.from_env().is_owner(Identity(ADA, "ada@example.com"))
+
+
+def test_the_header_and_the_cookie_must_name_the_same_user(verifier):
+    ada, bob = _token(), _token(sub="0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")
+
+    assert verifier.identity({"Cf-Access-Jwt-Assertion": ada}, {"CF_Authorization": ada}).sub == ADA
+    with pytest.raises(AuthError, match="different users"):
+        verifier.identity({"Cf-Access-Jwt-Assertion": bob}, {"CF_Authorization": ada})
+
+
+def test_the_owner_email_is_never_matched_through_unicode_folding():
+    config = AuthConfig("cloudflare-access", "https://t.cloudflareaccess.com", AUD, "mackan@example.com")
+
+    assert config.is_owner(Identity(ADA, "Mackan@Example.com"))
+    assert not config.is_owner(Identity(ADA, "macKan@example.com"))  # a Kelvin sign

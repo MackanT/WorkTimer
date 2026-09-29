@@ -60,7 +60,9 @@ def _fernet_for(db_file: str, log):
                     key = f.read().strip()
             else:
                 key = Fernet.generate_key()
-                with open(key_path, "wb") as f:
+                # readable by this account only — it unlocks every stored token
+                fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as f:
                     f.write(key)
                 log.info(f"Generated PAT encryption key at {key_path}")
             fernet = Fernet(key)

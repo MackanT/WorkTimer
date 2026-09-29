@@ -109,9 +109,11 @@ def user_key_for(identity) -> int:
     from .auth import auth_config
     from .pg_connection import LOCAL_USER
 
-    if identity is None:
-        return LOCAL_USER
     url = os.getenv("DATABASE_URL")
+    if identity is None:
+        if url:  # a single-user start refuses a database people have signed in to
+            _shared_pools_for(url)
+        return LOCAL_USER
     if not url:
         from .auth import AuthError
 

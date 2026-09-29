@@ -310,3 +310,27 @@ def test_the_reports_check_notices_a_difference(db, v5_file):
 
     assert months.set_index("month").loc["2026-08", "match"] == False  # noqa: E712
     assert months["match"].sum() == len(months) - 1
+
+
+def test_a_zipped_data_folder_brings_its_notes_tokens_and_settings(db, v5_file, tmp_path):
+    """Onboarding (v6 Phase 6): one zip of the 5.x data folder, its config
+    folder beside it."""
+    import zipfile
+
+    bundle_zip = tmp_path / "worktimer-data.zip"
+    with zipfile.ZipFile(bundle_zip, "w") as zf:
+        zf.write(v5_file, "data/worktimer.db")
+        zf.write(v5_file.parent / ".pat_key", "data/.pat_key")
+        zf.writestr("data/notes/plan.md", "# Plan")
+        zf.writestr("data/notes/plan_assets/img_1.png", b"png")
+        zf.writestr("config/time_settings.yml", "rounding_minutes: 15\n")
+
+    prepared, result = _report(db, bundle_zip)
+
+    assert prepared.kind == "5.x data folder (zip)"
+    assert result["match"].all(), result.to_string()
+    assert not any("re-enter" in n for n in prepared.notes)  # the zip's key read the token
+    assert db.get_tracker_credentials("Ops DevOps") == ("devops", "ops", "the-pat")
+    assert (prepared.counts["notes"], prepared.counts["note_images"],
+            prepared.counts["settings_files"]) == (1, 1, 1)
+    assert prepared.note_files["plan.md"] == b"# Plan"

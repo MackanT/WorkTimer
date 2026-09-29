@@ -27,6 +27,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+from psycopg.pq import TransactionStatus
 from psycopg.types.numeric import FloatLoader
 
 from . import clock
@@ -1633,11 +1634,15 @@ class PgDatabase:
         ``df.attrs["truncated"]`` says whether there were more)."""
         text = _user_select(query)
         with self._user_query_tx() as conn:
-            cur = conn.cursor()
-            cur.adapters.register_loader("numeric", FloatLoader)
-            cur.execute(text, prepare=True)
-            columns = [c.name for c in cur.description]
-            rows = cur.fetchmany(self.USER_QUERY_ROWS + 1)
+            # A server-side cursor: only the rows fetched cross over (a query
+            # returning millions can't fill this shared process's memory), it
+            # takes exactly one query, and it leaves nothing on the pooled
+            # connection for the next user to see. Closed with the transaction.
+            with conn.cursor(name="user_query") as cur:
+                cur.adapters.register_loader("numeric", FloatLoader)
+                cur.execute(text)
+                columns = [c.name for c in cur.description]
+                rows = cur.fetchmany(self.USER_QUERY_ROWS + 1)
         df = pd.DataFrame([tuple(map(_shown, row)) for row in rows[:self.USER_QUERY_ROWS]],
                           columns=columns)
         df.attrs["truncated"] = len(rows) > self.USER_QUERY_ROWS
@@ -1648,7 +1653,13 @@ class PgDatabase:
         (EXPLAIN), never run."""
         text = _user_select(query)
         with self._user_query_tx() as conn:
-            conn.cursor().execute("explain " + text, prepare=True)
+            # prepare=True: the extended protocol, which takes one statement
+            # only; then dropped — the pool's next user must not see it.
+            try:
+                conn.cursor().execute("explain " + text, prepare=True)
+            finally:
+                if conn.info.transaction_status == TransactionStatus.INTRANS:
+                    conn.execute("deallocate all")
 
     # ── import (Phase 4) ────────────────────────────────────────────────────
     # Loads data in the export shape (tables of rows with their source keys):

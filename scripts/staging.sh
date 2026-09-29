@@ -30,6 +30,10 @@ official=data-pg/OFFICIAL  # persisted, and outside git
 
 case "${1:-}" in
     up)
+        # A missing password would silently fall back to compose's public dev default.
+        for k in POSTGRES_PASSWORD WORKTIMER_APP_PASSWORD WORKTIMER_READONLY_PASSWORD; do
+            grep -qE "^$k=.+" .env 2>/dev/null || { echo "refused: set $k in .env" >&2; exit 2; }
+        done
         git pull --ff-only
         "${compose[@]}" up -d --build "${services[@]}"
         "${compose[@]}" ps

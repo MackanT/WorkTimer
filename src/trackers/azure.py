@@ -151,9 +151,7 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
 
     # ── attachments ───────────────────────────────────────────────────────
     def owns_attachment_url(self, url) -> bool:
-        return "/_apis/wit/attachments/" in str(url) and str(url).startswith(
-            self.organization_url
-        )
+        return self.owned_url(url, self.organization_url, contains="/_apis/wit/attachments/")
 
     def fetch_attachment(self, url):
         """Fetch an owned attachment with this org's PAT. (bytes, ctype) or None."""

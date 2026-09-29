@@ -23,6 +23,14 @@ _OP_TAB_LABELS = {"reenable": "Re-enable"}
 _WIDE_FIELD_TYPES = {"textarea", "editor_with_preview", "devops_id"}
 
 
+def _same_place(a: str, b: str) -> bool:
+    """The same tracker site/org, however it was typed."""
+    def norm(v):
+        v = str(v or "").strip().rstrip("/").lower()
+        return v if v.startswith("http") else f"https://{v}"
+    return norm(a) == norm(b)
+
+
 def _render_test_connection_button(core, widgets: dict, visible_fn) -> None:
     """'Test connection' on the tracker forms: builds a provider from the
     CURRENT form values (falling back to the stored, decrypted credentials
@@ -53,12 +61,15 @@ def _render_test_connection_button(core, widgets: dict, visible_fn) -> None:
             )
             if stored:
                 _stype, s_org, s_pat = stored
+                # A stored secret is only ever sent back where it came from:
+                # with the site/org changed, the token must be typed anew.
+                same_place = not org or _same_place(org, s_org)
                 org = org or s_org
-                if itype == "jira":
+                if same_place and itype == "jira":
                     s_email, _, s_token = s_pat.partition(":")
                     email = email or s_email
                     token = token or s_token
-                else:
+                elif same_place:
                     pat = pat or s_pat
 
         if itype == "jira":

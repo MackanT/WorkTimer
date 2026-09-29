@@ -11,6 +11,9 @@ from pathlib import Path
 
 from .pg_connection import LOCAL_USER
 
+# Images a note may carry: raster formats only (an SVG can carry script).
+NOTE_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
+
 
 def user_dir(data_dir, user_key: int) -> Path:
     """The user's own folder under `data_dir` (data/ itself for user 1)."""

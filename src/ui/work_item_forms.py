@@ -7,7 +7,6 @@ board can own the full DevOps workflow.
 
 import asyncio
 import copy
-import mimetypes
 import re as _re
 import time
 import uuid
@@ -18,6 +17,7 @@ from fastapi import UploadFile, File, Request, Response
 from .. import helpers
 from ..ui.dynamic_widgets import WIDGET_CLASSES
 from ..ui.work_item_handlers import WorkItemHandlers
+from ..http_safety import file_response
 
 
 # Images inserted on the ADD form for item-scoped attachment stores (Jira):
@@ -26,6 +26,10 @@ from ..ui.work_item_handlers import WorkItemHandlers
 # right after the item is created (see WorkItemHandlers.add_work_item).
 _STAGED_IMAGES: dict = {}  # token -> (filename, bytes, monotonic timestamp, user key)
 _STAGED_URL_RE = _re.compile(r"/staged_image/([0-9a-f]{32})")
+
+
+STAGED_MAX_BYTES = 10 * 1024 * 1024  # per image
+STAGED_MAX_PER_USER = 30
 
 
 def _prune_staged(max_age: float = 3600.0) -> None:
@@ -38,8 +42,17 @@ def _prune_staged(max_age: float = 3600.0) -> None:
 
 def stage_image(file_name: str, content: bytes, user_key: int) -> str:
     """Hold the user's image bytes until the work item exists; returns the
-    preview URL."""
+    preview URL. Raster images only, size-capped, a few per user at a time
+    (ValueError otherwise)."""
+    from ..http_safety import image_type
+
     _prune_staged()
+    if image_type(file_name) is None:
+        raise ValueError("Only images (PNG, JPEG, GIF, WebP, BMP) can be attached here")
+    if len(content) > STAGED_MAX_BYTES:
+        raise ValueError("Image too large (10 MB at most)")
+    if sum(1 for v in _STAGED_IMAGES.values() if v[3] == user_key) >= STAGED_MAX_PER_USER:
+        raise ValueError("Too many images waiting — save the work item first")
     token = uuid.uuid4().hex
     _STAGED_IMAGES[token] = (file_name or "image.png", content, time.monotonic(), user_key)
     return f"/staged_image/{token}"
@@ -84,9 +97,7 @@ async def staged_image(token: str, request: Request):
     item = _STAGED_IMAGES.get(token)
     if not item or item[3] != user_key:
         return Response(status_code=404)
-    media_type = mimetypes.guess_type(item[0])[0] or "image/png"
-    return Response(content=item[1], media_type=media_type,
-                    headers={"Cache-Control": "private, max-age=3600"})
+    return file_response(item[1], filename=item[0])
 
 
 @app.post("/upload_devops_image")
@@ -110,7 +121,10 @@ async def upload_devops_image(request: Request, file: UploadFile = File(...)):
     # Add-form paste for an item-scoped store: no item exists yet — stage
     # the bytes; add_work_item uploads them right after the create.
     if form.get("stage") and not work_item_id:
-        return {"path": stage_image(file.filename or "paste.png", content, user_key)}
+        try:
+            return {"path": stage_image(file.filename or "paste.png", content, user_key)}
+        except ValueError as e:
+            return {"error": str(e)}
     engine = get_tracker_engine(user_key)
     if engine is None:
         return {"error": "No DevOps connection"}
@@ -143,11 +157,8 @@ async def devops_attachment(url: str, request: Request):
     if not result:
         return Response(status_code=404)
     content, content_type = result
-    return Response(
-        content=content,
-        media_type=content_type or "application/octet-stream",
-        headers={"Cache-Control": "private, max-age=3600"},
-    )
+    # Images render; anything else (an SVG or HTML someone attached) downloads.
+    return file_response(content, content_type=content_type or "application/octet-stream")
 
 
 def _with_loading(button, handler):

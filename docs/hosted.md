@@ -104,12 +104,40 @@ in.
 
 ## After
 
+**Three settings on the Access application** (its *Settings / Advanced*
+section), from the security review: **cookie SameSite = Lax**, **HttpOnly**
+on, and **Binding Cookie** on. Add only login methods that verify the email
+(One-time PIN does): whoever proves an allowed address *is* that user here.
+
 - The SSH tunnel (`http://localhost:18080`) now shows "Not signed in" — use
   the domain. Single-user mode can't come back on this database: a
   single-user start refuses it once people have signed in.
-- **Colleagues:** add their email to the policy. Each imports their own 5.x
-  database through *Settings → Import* (their notes aren't part of that yet).
 - **When something is off:** `docker compose --profile postgres --profile hosted
   logs cloudflared` shows the tunnel; the app's log (`… logs worktimer-pg`)
   says why a page was refused ("no valid sign-in: …" — typically a wrong
   `CF_ACCESS_AUD` or team domain).
+
+## A colleague joins
+
+1. **You:** add their email to the Access application's `People` policy.
+2. **They, on the PC where they use WorkTimer 5.x:** close WorkTimer, open
+   its folder, select the **`data`** and **`config`** folders together →
+   right-click → *Send to → Compressed (zipped) folder*. Only those two — the
+   whole WorkTimer folder is far too big (it holds the Python environment).
+   The zip carries their database, their notes and pasted images, the key
+   that unlocks their tracker tokens, and their settings.
+   (5.x in Docker: its settings are inside the container — `docker cp
+   worktimer-worktimer-1:/app/config .` first, then zip `data` with that
+   `config`.)
+3. **They:** open `https://worktimer.<your domain>`, sign in with that email
+   and the emailed code — an empty WorkTimer of their own — then *Settings →
+   Data → Import* and choose the zip. It is checked first: the summary lists
+   customers, entries, notes and settings files, and any problem in the 5.x
+   data (with what to fix in 5.x) — nothing is written until *Import*.
+4. **Import:** every customer's entries, hours and cost, before and after,
+   side by side — all must match. Their trackers connect with the tokens
+   they had; reloading the page shows their settings.
+5. **They stop using 5.x** — its folder stays as a fallback.
+
+If the zip is over 95 MB (Cloudflare's upload limit is 100 MB), leave out
+`data\backups` (5.x's own backup copies).

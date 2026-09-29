@@ -863,8 +863,8 @@ has been fixed in the billing path since the last one.
 - **Tests:** two users end to end — neither can see the other's customers,
   board, tracker items or notes.
 
-**Status: live — slices 1–6 done** (2026-09-29): the server runs behind
-Cloudflare Access; a security review remains before colleagues join. Started beside
+**Status: live — slices 1–6 done, security-reviewed** (2026-09-29): the
+server runs behind Cloudflare Access; colleagues can join (hosted.md). Started beside
 the Phase 5 gate. Slice 1 is part of the gate's commit (`0699487`) and runs on
 staging in single-user mode — the regression run there (the 32 timer checks,
 a live tracker sync through the per-user engine) passed; later slices stay
@@ -984,8 +984,49 @@ everything that inventory found is per user or deliberately the install's
      application is the Cloudflare account, restricted to the account's own
      members — any other address is refused before it reaches the app. The
      One-time PIN method has to be added (hosted.md step 2).
-   - Still to see: a session expiring with a tab open (15-minute test
-     session, then 1 month).
+   - A session expiring with a tab open: after the 15-minute test session
+     the tab was sent back to Cloudflare's login, and a new sign-in picked up
+     where it was. Sessions are now 30 days.
+
+**Security review (2026-09-29)** — two independent read-only reviews, one of
+identity and isolation, one of endpoints, files and infrastructure. Neither
+found a way in without a valid sign-in, or to another user's rows (RLS, the
+per-user keying and the token checks held). Fixed:
+
+- **Files served back to the browser** ([src/http_safety.py](../src/http_safety.py)):
+  proxied tracker attachments, staged and note images render inline only as
+  raster images, anything else downloads — an SVG or HTML attachment can't
+  run on WorkTimer's origin — always with nosniff and a sandboxing CSP.
+  Staged images: images only, 10 MB, 30 per user.
+- **Cross-site requests:** state-changing requests another site started are
+  refused (Sec-Fetch-Site, else Origin/Host); pages can't be framed.
+- **Tracker URLs:** attachment URLs must match the tracker's scheme and host
+  exactly, no `..`; Jira is Cloud-only (`https://<name>.atlassian.net`) for
+  every request, and its attachment redirects are followed only to
+  Atlassian over https, without credentials. "Test connection" never sends a
+  stored token to a changed site.
+- **Query editor:** a server-side cursor (only the capped rows reach the
+  app; nothing left on the shared connection); migration 0005 closes other
+  sessions' queries, prepared statements and table statistics to the shared
+  read-only role, and caps its working memory and temp files.
+- **Memory and disk:** a v6 export's unpacking capped (200 MB), the zip's
+  (300 MB), uploads under Cloudflare's 100 MB limit (95 MB), the notepad
+  toolbar's images checked like pasted ones, a memory limit on the app
+  container.
+- **Fails closed:** a single-user start on a database people have signed in
+  to is refused at startup and for every endpoint (it used to fall back to
+  user 1 there); the Access header and cookie must name the same user; the
+  owner email matches plain ASCII only.
+- **Hygiene:** the PAT key file 0600, the backup dumps root-only,
+  `staging.sh up` refuses a `.env` without its passwords, `data/` ignored by
+  git as a whole, a note's filename escaped in the page's JavaScript.
+
+Deferred (low, noted): an open tab isn't re-verified when its Access session
+ends or is revoked (the socket keeps its sign-in until it reconnects);
+`is_enabled` is enforced at sign-in, not per transaction; one PAT key for all
+users (per-user derived keys would stop a copied ciphertext from being
+usable in another account); the app container still runs as root; a crafted
+5.x file runs through the old engine (a temp copy; CPU only).
 
 ---
 

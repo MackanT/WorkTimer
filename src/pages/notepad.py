@@ -22,9 +22,10 @@ from fastapi.responses import FileResponse, Response
 from nicegui import ui, app
 
 from ..auth import auth_config
+from ..http_safety import FILE_HEADERS, image_type
 from ..core.app import AppCore
 from ..pg_connection import LOCAL_USER
-from ..user_paths import pref_key, user_dir
+from ..user_paths import NOTE_IMAGE_SUFFIXES, pref_key, user_dir
 from ..ui.elements import toolbar, toolbar_group, page_card, toolbar_divider
 from ..ui.dynamic_widgets import render_markdown_toolbar
 from ..helpers import render_and_sanitize_markdown, UI_STYLES
@@ -235,7 +236,7 @@ def delete_note(notes_dir: Path, note: dict):
 
 
 # Pasted images: raster formats only (an SVG can carry script), size-capped.
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+IMAGE_SUFFIXES = NOTE_IMAGE_SUFFIXES
 IMAGE_MAX_BYTES = 10 * 1024 * 1024
 
 
@@ -286,7 +287,7 @@ async def notes_asset(folder: str, name: str, request: Request):
     path = get_notes_dir(user_key) / folder / name
     if not path.is_file():
         return Response(status_code=404)
-    return FileResponse(path, headers={"Cache-Control": "private, max-age=3600"})
+    return FileResponse(path, media_type=image_type(name), headers=FILE_HEADERS)
 
 # ── Main page ──────────────────────────────────────────────────────────────────
 
@@ -763,10 +764,14 @@ async def notepad_page():
                     note = active_note()
                     if not note:
                         return None
+                    ext = (Path(name).suffix or ".png").lower()
+                    if ext not in IMAGE_SUFFIXES or len(content) > IMAGE_MAX_BYTES:
+                        ui.notify("Images only (PNG, JPEG, GIF, WebP, BMP), 10 MB at most",
+                                  type="warning")
+                        return None
                     stem = Path(note["filename"]).stem
                     assets = get_notes_dir(core.user_key) / f"{stem}_assets"
                     assets.mkdir(parents=True, exist_ok=True)
-                    ext = Path(name).suffix or ".png"
                     fn = f"img_{int(time.time() * 1000)}{ext}"
                     (assets / fn).write_bytes(content)
                     return f"/notes_assets/{stem}_assets/{fn}"
@@ -824,7 +829,7 @@ async def notepad_page():
                                     const blob = item.getAsFile();
                                     const formData = new FormData();
                                     formData.append('file', blob, 'paste.png');
-                                    formData.append('note', "{note_filename}");
+                                    formData.append('note', {json.dumps(note_filename)});
 
                                     try {{
                                         const response = await fetch('/upload_image', {{

@@ -50,10 +50,13 @@ def test_writes_are_refused_with_a_readable_message(db, query):
 
 
 def test_a_write_past_the_text_check_is_stopped_by_the_database(db):
-    """A data-modifying WITH starts like a SELECT."""
+    """A data-modifying WITH starts like a SELECT. The server-side cursor
+    refuses it first (DECLARE takes no data-modifying WITH); the READ ONLY
+    transaction and the role would stop it next."""
     _acme_with_an_entry(db)
 
-    with pytest.raises((errors.ReadOnlySqlTransaction, errors.InsufficientPrivilege)):
+    with pytest.raises((errors.FeatureNotSupported, errors.ReadOnlySqlTransaction,
+                        errors.InsufficientPrivilege)):
         db.run_user_query("with gone as (delete from customers returning *) select * from gone")
 
     assert db.get_current_customer_names()["customer_name"].tolist() == ["Acme"]
@@ -83,11 +86,12 @@ def test_a_query_cannot_switch_to_another_user(db, pg_schema_db):
 
     with pytest.raises(errors.InsufficientPrivilege):  # migration 0002
         db.run_user_query("select set_config('app.user_id', '2', true)")
-    # pg_settings' update rule is closed too (0002); inside a WITH it doesn't
-    # even run — either way the query still sees only its own user's rows.
-    df = db.run_user_query("with x as (update pg_settings set setting = '2' "
-                           "where name = 'app.user_id') select customer_name from customers")
-    assert df["customer_name"].tolist() == ["Acme"]
+    # pg_settings' update rule is closed too (0002), and a data-modifying WITH
+    # doesn't get past the server-side cursor at all.
+    with pytest.raises(errors.FeatureNotSupported):
+        db.run_user_query("with x as (update pg_settings set setting = '2' "
+                          "where name = 'app.user_id') select customer_name from customers")
+    assert db.run_user_query("select customer_name from customers")["customer_name"].tolist() == ["Acme"]
 
 
 def test_long_queries_are_stopped(db, monkeypatch):
@@ -154,3 +158,30 @@ def test_the_default_queries_run_on_the_v6_schema(db):
     assert db.run_user_query(PgDatabase.DEFAULT_QUERIES["time"])["customer_name"].tolist() == ["Acme"]
     weekly = db.run_user_query(PgDatabase.DEFAULT_QUERIES["weekly"]).to_dict("records")
     assert weekly[0] == {"customer_name": "Acme", "project_name": "Build", "hours": 1.5}
+
+
+# ── the security review (v6 Phase 6): one shared role, many users ──────────
+
+
+@pytest.mark.parametrize("query", [
+    "select query from pg_stat_activity",
+    "select * from pg_stat_get_activity(null)",
+    "select name, statement from pg_prepared_statements",
+    "select relname, n_live_tup from pg_stat_user_tables",
+])
+def test_other_sessions_queries_and_statistics_are_closed(db, query):
+    """All users' editor queries share worktimer_readonly: what another
+    session runs, and per-table row counts, must not show through it."""
+    with pytest.raises(errors.InsufficientPrivilege):
+        db.run_user_query(query)
+
+
+def test_a_huge_result_never_crosses_over_whole(db):
+    """A server-side cursor: only the capped rows reach the app process."""
+    started = time.perf_counter()
+
+    df = db.run_user_query("select g from generate_series(1, 3000000) g")
+
+    assert len(df) == PgDatabase.USER_QUERY_ROWS and df.attrs["truncated"]
+    assert time.perf_counter() - started < 5
+

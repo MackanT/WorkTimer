@@ -39,8 +39,11 @@ class AuthConfig:
     owner_email: str | None = None  # whose first sign-in takes over user 1's data
 
     def is_owner(self, identity: "Identity") -> bool:
-        return bool(self.owner_email and identity.email
-                    and identity.email.strip().lower() == self.owner_email)
+        """The verified email is the owner's — plain ASCII only, so no Unicode
+        case folding (a Kelvin sign is not a k) can make another address match."""
+        email = (identity.email or "").strip()
+        return bool(self.owner_email and email and email.isascii()
+                    and email.lower() == self.owner_email)
 
     @property
     def multi_user(self) -> bool:
@@ -95,11 +98,15 @@ class AccessVerifier:
         return Identity(sub, claims.get("email") or None, claims.get("name") or None)
 
     def identity(self, headers, cookies) -> Identity:
-        """The identity of a request, from its header or cookie."""
-        token = headers.get(ACCESS_HEADER) or cookies.get(ACCESS_COOKIE)
-        if not token:
+        """The identity of a request, from its header or cookie — both must
+        name the same user when both are there."""
+        header, cookie = headers.get(ACCESS_HEADER), cookies.get(ACCESS_COOKIE)
+        if not (header or cookie):
             raise AuthError("no Access token — is the app reached through Cloudflare Access?")
-        return self.verify(token)
+        found = self.verify(header or cookie)
+        if header and cookie and cookie != header and self.verify(cookie).sub != found.sub:
+            raise AuthError("the Access header and cookie name different users")
+        return found
 
 
 _config: AuthConfig | None = None
