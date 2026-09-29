@@ -806,6 +806,14 @@ has been fixed in the billing path since the last one.
   never replaces the SQLite app's image.
 - **First import: `RESULT: match`** — every customer, and all months of the
   Reports check.
+- **Becoming the official WorkTimer** (decided 2026-09-29: the parallel run
+  ends early — three imports matched, and one online copy beats files sent
+  between three laptops): a last import of the 5.x database in use, then
+  `staging.sh official`, after which `import` refuses — it would replace
+  everything entered on the server ([staging.md](staging.md)). What
+  Settings saves and the browsers' preferences moved into `data-pg/`
+  (`WORKTIMER_SETTINGS_DIR`, `NICEGUI_STORAGE_PATH`), since the image's own
+  folders are replaced on every rebuild.
 - **Access:** through the SSH tunnel already in `~/.ssh/config`
   (`localhost:18080` → the server's `127.0.0.1:8080`); nothing new listens on
   the internet.

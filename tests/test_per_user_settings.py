@@ -21,6 +21,7 @@ CONFIG = Path(__file__).resolve().parents[1] / "config"
 def data(tmp_path, monkeypatch):
     """data/ (the database's folder) in a temp dir, as DB_NAME points there."""
     monkeypatch.setenv("DB_NAME", str(tmp_path / "worktimer.db"))
+    monkeypatch.delenv("WORKTIMER_SETTINGS_DIR", raising=False)
     return tmp_path
 
 
@@ -85,3 +86,19 @@ def test_preferences_are_keyed_by_user():
     assert pref_key(1, "report_customers") == "report_customers"  # saved ones survive
     assert pref_key(2, "report_customers") != pref_key(3, "report_customers")
     assert pref_key(2, "report_customers") != "report_customers"
+
+
+def test_the_settings_folder_can_live_outside_the_image(data, monkeypatch):
+    """Under Docker, config/ is the image's — replaced on every build — so
+    WORKTIMER_SETTINGS_DIR moves what is written into the mounted data/."""
+    monkeypatch.setenv("WORKTIMER_SETTINGS_DIR", str(data / "config"))
+    local = ConfigLoader(str(CONFIG), user_key=1)
+    ada = ConfigLoader(str(CONFIG), user_key=2)
+
+    assert local.user_path("time_settings.yml") == data / "config" / "time_settings.yml"
+    assert local.user_path("config_theme.yml") == data / "config" / "config_theme.yml"
+    assert local.user_path("config_ui.yml") == CONFIG / "config_ui.yml"  # what ships stays
+    assert ada.user_path("time_settings.yml") == data / "users" / "2" / "config" / "time_settings.yml"
+    assert ada.user_path("config_theme.yml") == data / "config" / "config_theme.yml"  # the install's
+    local.load_all()
+    assert (data / "config" / "config_theme.yml").exists()  # from the shipped template

@@ -322,16 +322,22 @@ class ConfigLoader:
 
     `config_folder` holds what ships — config_ui.yml, the styles, the
     templates — and is shared. The files Settings writes (USER_FILES) are the
-    user's own (v6 Phase 6): in `config_folder` itself for user 1, as always,
-    and in data/users/<key>/config/ for everyone else, created from the shared
-    templates where one exists. The theme stays the install's: the style
-    resolver is process-wide.
+    user's own (v6 Phase 6): in the settings folder for user 1 and in
+    data/users/<key>/config/ for everyone else, created from the shared
+    templates where one exists. The install's own written files
+    (INSTALL_FILES — the theme stays the install's: the style resolver is
+    process-wide) live in the settings folder too.
+
+    The settings folder is `config_folder` itself unless WORKTIMER_SETTINGS_DIR
+    names another — under Docker a folder in the mounted data/, because the
+    image's config/ is replaced on every build.
     """
 
     USER_FILES = frozenset({
         "time_settings.yml", "description_templates.yml", "devops_contacts.yml",
         "devops_tags.yml", "tracker_defaults.yml",
     })
+    INSTALL_FILES = frozenset({"config_theme.yml", "config_notepad.yml"})
 
     _REGISTRY: List[_ConfigSpec] = [
         _ConfigSpec(
@@ -385,15 +391,21 @@ class ConfigLoader:
         from .user_paths import user_dir
 
         self.config_folder = Path(config_folder)
+        self.settings_folder = Path(os.getenv("WORKTIMER_SETTINGS_DIR") or self.config_folder)
         self.user_key = user_key
-        self.user_folder = (self.config_folder if user_key == 1
+        self.user_folder = (self.settings_folder if user_key == 1
                             else user_dir(_data_dir(), user_key) / "config")
         self.configs: Dict[str, Any] = {}
 
     def user_path(self, filename: str) -> Path:
         """Where `filename` lives for this loader's user: their own folder for
-        a file Settings writes, the shared config folder otherwise."""
-        return (self.user_folder if filename in self.USER_FILES else self.config_folder) / filename
+        a file Settings writes, the settings folder for the install's written
+        files, the shared config folder for what ships."""
+        if filename in self.USER_FILES:
+            return self.user_folder / filename
+        if filename in self.INSTALL_FILES:
+            return self.settings_folder / filename
+        return self.config_folder / filename
 
     def _load_yaml(self, filename: str, required: bool = True) -> Optional[dict]:
         """Load a YAML file with error handling"""

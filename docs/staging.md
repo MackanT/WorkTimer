@@ -92,10 +92,40 @@ restarts the count (the next two imports must match on the new code).
 
 | | |
 |---|---|
-| `scripts/staging.sh status` | containers, and the latest reports' results |
-| `scripts/staging.sh up` | update: pull this branch, rebuild, restart |
+| `scripts/staging.sh status` | containers, whether official, and the latest reports' results |
+| `scripts/staging.sh up` | update: pull this branch, rebuild, restart — the data, settings and saved preferences stay |
+| `scripts/staging.sh official` | make this the official WorkTimer (below); imports are refused from then on |
 | `docker compose --profile postgres logs -f worktimer-pg` | the app's log |
 | `docker compose --profile postgres run --rm backup pg_restore --list /backups/<file>` | inspect a backup |
 
 Restore a backup (as the admin, with the app stopped): see the header of
 [scripts/pg_backup.sh](../scripts/pg_backup.sh).
+
+## Making it the official WorkTimer
+
+When the server is to become your daily WorkTimer — reached from any PC
+through its SSH tunnel — the parallel run ends. Once:
+
+1. On the PC whose 5.x database is the one you use: close WorkTimer 5.x, then
+   push that database a last time, with its tokens —
+   `uv run python scripts/push_to_staging.py --with-tokens --db <path to its worktimer.db>`
+   from a checkout, or by hand:
+
+   ```powershell
+   ssh worktimer mkdir -p /opt/worktimer/data-pg/import
+   scp "<its data folder>\worktimer.db" worktimer:/opt/worktimer/data-pg/import/worktimer.db
+   scp "<its data folder>\.pat_key" worktimer:/opt/worktimer/data-pg/import/pat_key.v5
+   ssh worktimer bash /opt/worktimer/scripts/staging.sh import
+   ```
+
+2. Check the report: `RESULT: match`, and no note that tracker tokens couldn't
+   be read.
+3. `ssh worktimer bash /opt/worktimer/scripts/staging.sh official` — from now
+   on `import` refuses: it would replace everything entered on the server.
+4. Stop entering time in 5.x; keep its database as a fallback. The nightly
+   backups are on the server itself, so until they are copied off it, save a
+   copy now and then with Settings → Download.
+
+Updates later are `staging.sh up`: the database is a Docker volume, and what
+Settings saves and the browsers' preferences are in `data-pg/`, so a rebuild
+keeps them.
