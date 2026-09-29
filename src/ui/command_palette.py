@@ -19,6 +19,7 @@ import math
 
 from nicegui import app, ui
 
+from ..user_paths import pref_key
 from .work_item_forms import open_add_work_item_dialog, open_work_item_dialog
 
 _MAX_ROWS = 12
@@ -101,7 +102,7 @@ def setup_command_palette(core) -> None:
             ("hierarchy", "Go to Board — Hierarchy view", "account_tree", "hierarchy tree epic graph"),
         ):
             async def _go_board_view(v=view_key):
-                app.storage.user["devops_view"] = v
+                app.storage.user[pref_key(core.user_key, "devops_view")] = v
                 _go_to("/board")
 
             cmds.append({
@@ -129,7 +130,7 @@ def setup_command_palette(core) -> None:
             # presets a customer whose tracker HAS that level — preferring the
             # board's remembered customer — so the type survives the dialog's
             # per-tracker validity snap.
-            remembered = app.storage.user.get("devops_customer")
+            remembered = app.storage.user.get(pref_key(core.user_key, "devops_customer"))
             type_presets: dict = {}
             for cust in (DO.manager.clients if DO.manager else {}):
                 for wtype in DO.type_hierarchy(cust):

@@ -60,7 +60,7 @@ def isolated_app(app_url, tmp_path_factory, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", app_url)
     # data/ for the PAT key and backups: a throwaway folder, not the real one.
     monkeypatch.setenv("DB_NAME", str(tmp_path_factory.mktemp("data") / "worktimer.db"))
-    monkeypatch.setattr(core_app, "_config_loader", None)
+    monkeypatch.setattr(core_app, "_config_loaders", {})
     monkeypatch.setattr(update_checker, "_fetch_latest_blocking", update_checker._current_version)
 
     async def offline(self):

@@ -443,8 +443,9 @@ class AppCore:
             from ..globals import request_user_key
 
             user_key = await request_user_key(context.client.request)
-        core = cls.get_or_create(config_loader=config_loader or get_config_loader(),
-                                 user_key=user_key)
+        core = cls.get_or_create(
+            config_loader=config_loader or get_config_loader(user_key or LOCAL_USER),
+            user_key=user_key)
 
         async with core._init_lock:
             if not core._initialized:
@@ -566,16 +567,16 @@ class AppCore:
 
 # ── Module-level config singleton ─────────────────────────────────────────────
 
-_config_loader: Optional[ConfigLoader] = None
+_config_loaders: Dict[int, ConfigLoader] = {}
 
 
-def get_config_loader() -> ConfigLoader:
+def get_config_loader(user_key: int = LOCAL_USER) -> ConfigLoader:
     """
     Get the shared config loader instance.
     Configs are immutable so sharing across clients is safe.
     """
-    global _config_loader
-    if _config_loader is None:
-        _config_loader = ConfigLoader()
-        _config_loader.load_all()
-    return _config_loader
+    if user_key not in _config_loaders:
+        loader = ConfigLoader(user_key=user_key)
+        loader.load_all()
+        _config_loaders[user_key] = loader
+    return _config_loaders[user_key]

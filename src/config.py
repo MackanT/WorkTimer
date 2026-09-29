@@ -306,8 +306,32 @@ class _ConfigSpec:
     default_factory: Optional[Callable] = None  # () -> model instance when file is missing
 
 
+def _db_path() -> str:
+    # `or`, not a getenv default: an empty DB_NAME (docker compose passes
+    # one for a variable missing from .env) would open data/ itself.
+    return os.path.join("data", os.getenv("DB_NAME") or "worktimer.db")
+
+
+def _data_dir() -> Path:
+    """The data folder: the database's (the PAT key, backups, users' files)."""
+    return Path(_db_path()).parent
+
+
 class ConfigLoader:
-    """Load and validate all configuration files"""
+    """Load and validate all configuration files.
+
+    `config_folder` holds what ships — config_ui.yml, the styles, the
+    templates — and is shared. The files Settings writes (USER_FILES) are the
+    user's own (v6 Phase 6): in `config_folder` itself for user 1, as always,
+    and in data/users/<key>/config/ for everyone else, created from the shared
+    templates where one exists. The theme stays the install's: the style
+    resolver is process-wide.
+    """
+
+    USER_FILES = frozenset({
+        "time_settings.yml", "description_templates.yml", "devops_contacts.yml",
+        "devops_tags.yml", "tracker_defaults.yml",
+    })
 
     _REGISTRY: List[_ConfigSpec] = [
         _ConfigSpec(
@@ -357,13 +381,23 @@ class ConfigLoader:
         ),
     ]
 
-    def __init__(self, config_folder: str = "config"):
+    def __init__(self, config_folder: str = "config", user_key: int = 1):
+        from .user_paths import user_dir
+
         self.config_folder = Path(config_folder)
+        self.user_key = user_key
+        self.user_folder = (self.config_folder if user_key == 1
+                            else user_dir(_data_dir(), user_key) / "config")
         self.configs: Dict[str, Any] = {}
+
+    def user_path(self, filename: str) -> Path:
+        """Where `filename` lives for this loader's user: their own folder for
+        a file Settings writes, the shared config folder otherwise."""
+        return (self.user_folder if filename in self.USER_FILES else self.config_folder) / filename
 
     def _load_yaml(self, filename: str, required: bool = True) -> Optional[dict]:
         """Load a YAML file with error handling"""
-        filepath = self.config_folder / filename
+        filepath = self.user_path(filename)
 
         if not filepath.exists():
             if required:
@@ -383,10 +417,11 @@ class ConfigLoader:
 
     def _ensure_from_template(self, filename: str) -> None:
         """Copy <filename>.template to <filename> if the live file does not exist."""
-        live = self.config_folder / filename
+        live = self.user_path(filename)
         template = self.config_folder / f"{filename}.template"
         if not live.exists():
             if template.exists():
+                live.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(template, live)
                 print(f"  Created {filename} from template")
             else:
@@ -406,10 +441,7 @@ class ConfigLoader:
 
     def _load_settings(self) -> None:
         """Load settings from environment variables (no YAML file)."""
-        # `or`, not a getenv default: an empty DB_NAME (docker compose passes
-        # one for a variable missing from .env) would open data/ itself.
-        db_name = os.getenv("DB_NAME") or "worktimer.db"
-        db_path = os.path.join("data", db_name)
+        db_path = _db_path()
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.configs["settings"] = ConfigSettings(
             db_path=db_path,
@@ -429,7 +461,7 @@ class ConfigLoader:
         # Optional per-install override written by Settings → "Time & billing".
         # Kept as its own small file so the app never rewrites the heavily
         # commented config_ui.yml; keys here win over its time_settings block.
-        ts_override = self.config_folder / "time_settings.yml"
+        ts_override = self.user_path("time_settings.yml")
         if ts_override.exists():
             overrides = self._load_yaml("time_settings.yml", required=False) or {}
             ui_yaml["time_settings"] = {
@@ -439,7 +471,7 @@ class ConfigLoader:
 
         # Optional per-install description-template override written by
         # Settings → Trackers → "Description templates" (same pattern).
-        dt_override = self.config_folder / "description_templates.yml"
+        dt_override = self.user_path("description_templates.yml")
         if dt_override.exists():
             dt = self._load_yaml("description_templates.yml", required=False) or {}
             merge_description_templates(ui_yaml, dt.get("templates") or {})

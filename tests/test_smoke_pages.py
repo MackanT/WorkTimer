@@ -69,7 +69,7 @@ def isolated_app(seeded_db, monkeypatch):
         "NiceGUI storage points at the real .nicegui/ — its test fixtures would "
         "delete it. The root conftest.py must set NICEGUI_STORAGE_PATH first.")
     monkeypatch.setenv("DB_NAME", str(seeded_db))
-    monkeypatch.setattr(core_app, "_config_loader", None)  # re-read DB_NAME
+    monkeypatch.setattr(core_app, "_config_loaders", {})  # re-read DB_NAME
     monkeypatch.setattr(update_checker, "_fetch_latest_blocking", update_checker._current_version)
 
     async def offline(self):

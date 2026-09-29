@@ -23,7 +23,9 @@ from nicegui import app, ui
 from ..core.app import AppCore
 from ..ui.elements import toolbar, toolbar_group
 from ..helpers import UI_STYLES
+from ..auth import auth_config
 from ..services.backups import create_backup, list_backups
+from ..user_paths import pref_key
 
 
 def _render_backup_card(core) -> None:
@@ -129,7 +131,7 @@ def _render_tracker_defaults_card(core) -> None:
             ui.label("No trackers configured yet.").classes("text-xs " + muted)
             return
 
-        stored = load_tracker_defaults(core.config_loader.config_folder)
+        stored = load_tracker_defaults(core.config_loader.user_folder)
         src_field = next(
             (
                 f
@@ -251,7 +253,7 @@ def _render_tracker_defaults_card(core) -> None:
             if not entry:
                 stored.pop(tname, None)
             try:
-                save_tracker_defaults(core.config_loader.config_folder, stored)
+                save_tracker_defaults(core.config_loader.user_folder, stored)
                 level = "all types" if wtype == ALL_TYPES else wtype
                 ui.notify(
                     f"Defaults saved for '{tname}' ({level})", type="positive"
@@ -572,7 +574,12 @@ def _fmt_time(dt) -> str:
 
 
 def _config_path(core: AppCore, filename: str) -> Path:
-    return core.config_loader.config_folder / filename
+    """The user's copy of a file Settings writes (shared files otherwise)."""
+    return core.config_loader.user_path(filename)
+
+
+def _template_path(core: AppCore, filename: str) -> Path:
+    return core.config_loader.config_folder / f"{filename}.template"
 
 
 def _load_yaml(path: Path) -> dict:
@@ -583,6 +590,7 @@ def _load_yaml(path: Path) -> dict:
 
 
 def _save_yaml(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         yaml.dump(
             data, f, allow_unicode=True, default_flow_style=False, sort_keys=False
@@ -764,7 +772,7 @@ async def _render_devops_contacts_tab(core: AppCore):
     """DevOps contacts editor — in-panel customer selector + per-customer detail."""
     path = _config_path(core, "devops_contacts.yml")
     selected: dict = {"customer": None}
-    contacts_template = path.parent / "devops_contacts.yml.template"
+    contacts_template = _template_path(core, "devops_contacts.yml")
 
     # Async click handler (not a bare asyncio task): NiceGUI keeps the slot
     # context for awaited handlers, which _confirm_reset's dialog needs.
@@ -1265,7 +1273,7 @@ async def _render_devops_tags_tab(core: AppCore):
                 tbl.on("edit", on_edit)
                 tbl.on("delete", on_delete)
 
-    tags_template = path.parent / "devops_tags.yml.template"
+    tags_template = _template_path(core, "devops_tags.yml")
 
     # Async click handler (not a bare asyncio task): NiceGUI keeps the slot
     # context for awaited handlers, which _confirm_reset's dialog needs.
@@ -1302,8 +1310,22 @@ async def _render_devops_tags_tab(core: AppCore):
 
 
 async def _render_theme_tab(core: AppCore):
+    """The app's palette — the install's, so editable only without sign-in —
+    and each user's own query-editor skin."""
+    if auth_config().multi_user:
+        with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
+            ui.label("App colours").classes(
+                f"text-sm font-semibold text-{core.theme.get('accent')}")
+            ui.label("Set for everyone on this server, by its administrator "
+                     "(config/config_theme.yml).").classes("text-xs opacity-70")
+    else:
+        await _render_palette(core)
+    _render_editor_skin_card(core)
+
+
+async def _render_palette(core: AppCore):
     theme_path = _config_path(core, "config_theme.yml")
-    template_path = theme_path.parent / "config_theme.yml.template"
+    template_path = _template_path(core, "config_theme.yml")
     data = _load_yaml(theme_path)
     colors = data.get("colors", {})
 
@@ -1471,10 +1493,13 @@ async def _render_theme_tab(core: AppCore):
         with ui.row().classes("gap-3 mt-4"):
             ui.button("Save Theme", icon="save", on_click=_save_theme).props("color=primary")
 
-    # ── Query-editor skin ─────────────────────────────────────────────────────
-    # Per-user (app.storage.user), unlike the app palette above which is shared —
-    # each person picks their own editor colours. The Query Editor reads the
-    # value on every page render, so it applies on the next visit.
+
+
+def _render_editor_skin_card(core: AppCore) -> None:
+    """Query-editor skin: per user (app.storage.user), unlike the app palette,
+    which is the install's — each person picks their own editor colours. The
+    Query Editor reads the value on every page render, so it applies on the
+    next visit."""
     with ui.card().props("flat bordered").classes("w-full rounded-lg p-4"):
         ui.label("Query editor skin").classes(
             f"text-sm font-semibold text-{core.theme.get('accent')}"
@@ -1484,7 +1509,7 @@ async def _render_theme_tab(core: AppCore):
             "Saved per user; the preview below applies immediately."
         ).classes("text-xs opacity-70 mb-2")
 
-        current = str(app.storage.user.get("query_editor_theme", "dracula"))
+        current = str(app.storage.user.get(pref_key(core.user_key, "query_editor_theme"), "dracula"))
         with ui.row().classes("w-full items-start gap-4"):
             preview = (
                 ui.codemirror(
@@ -1514,7 +1539,7 @@ async def _render_theme_tab(core: AppCore):
 
             def _on_skin(e):
                 skin = e.value or "dracula"
-                app.storage.user["query_editor_theme"] = skin
+                app.storage.user[pref_key(core.user_key, "query_editor_theme")] = skin
                 preview.set_theme(skin)
 
             ui.select(

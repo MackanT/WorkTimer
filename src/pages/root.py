@@ -16,6 +16,8 @@ from . import (
 )
 from ..auth import AuthError
 from ..core.app import AppCore
+from ..pg_connection import LOCAL_USER
+from ..user_paths import pref_key
 from ..ui.command_palette import setup_command_palette
 
 
@@ -236,8 +238,11 @@ async def _setup_spa_shell() -> bool:
 
             try:
                 current = _current_version()
-                last_seen = app.storage.general.get("last_seen_version")
-                app.storage.general["last_seen_version"] = current
+                store, key = ((app.storage.general, "last_seen_version")
+                              if core.user_key == LOCAL_USER
+                              else (app.storage.user, pref_key(core.user_key, "last_seen_version")))
+                last_seen = store.get(key)
+                store[key] = current
                 if not last_seen or last_seen == current or current == "unknown":
                     return  # first run ever, or no change — no popup
                 changelog = (
@@ -257,7 +262,7 @@ async def _setup_spa_shell() -> bool:
         # starts failing. The date is set on the tracker (Data Input →
         # Trackers); trackers without one are never nagged about.
         _today_str = str(clock.today_local())
-        if app.storage.user.get("token_expiry_notified") != _today_str:
+        if app.storage.user.get(pref_key(core.user_key, "token_expiry_notified")) != _today_str:
 
             async def _check_token_expiry():
                 from ..helpers import token_expiry_level
@@ -293,7 +298,7 @@ async def _setup_spa_shell() -> bool:
                     if notified:
                         # Stamp only when something fired — a date set later
                         # today should still warn on the next reload.
-                        app.storage.user["token_expiry_notified"] = _today_str
+                        app.storage.user[pref_key(core.user_key, "token_expiry_notified")] = _today_str
                 except Exception:
                     pass
 

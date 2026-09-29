@@ -17,6 +17,7 @@ import pandas as pd
 from nicegui import ui, app
 
 from ..core.app import AppCore
+from ..user_paths import pref_key
 from .. import helpers
 from ..helpers import UI_STYLES
 from ..ui.elements import toolbar, toolbar_group, page_card, segmented_chips
@@ -387,11 +388,11 @@ async def reports_page():
             return ", ".join(sel).replace('"', "'")
         return f"{len(sel)} customers selected"
 
-    _saved = app.storage.user.get("report_customers")
+    _saved = app.storage.user.get(pref_key(core.user_key, "report_customers"))
     _init_custs = [c for c in _saved if c in names] if isinstance(_saved, list) else []
-    _saved_basis = app.storage.user.get("report_round_basis")
+    _saved_basis = app.storage.user.get(pref_key(core.user_key, "report_round_basis"))
     _init_basis = _saved_basis if _saved_basis in _ROUND_BASES else "off"
-    _saved_min = app.storage.user.get("report_round_minutes")
+    _saved_min = app.storage.user.get(pref_key(core.user_key, "report_round_minutes"))
     _init_round = (
         int(_saved_min) if isinstance(_saved_min, (int, float)) else default_round
     )
@@ -636,7 +637,7 @@ async def reports_page():
     async def _on_customer(e):
         sel = [c for c in (e.value or []) if c in names]
         state["customers"] = sel
-        app.storage.user["report_customers"] = sel
+        app.storage.user[pref_key(core.user_key, "report_customers")] = sel
         cust_select.props(f'display-value="{_cust_display()}"')
         cust_select.update()
         await _load()
@@ -648,12 +649,12 @@ async def reports_page():
 
     async def _on_round_basis(e):
         state["round_basis"] = e.value or "off"
-        app.storage.user["report_round_basis"] = state["round_basis"]
+        app.storage.user[pref_key(core.user_key, "report_round_basis")] = state["round_basis"]
         await _load()
 
     async def _on_round_minutes(e):
         state["round"] = int(e.value or 0)
-        app.storage.user["report_round_minutes"] = state["round"]
+        app.storage.user[pref_key(core.user_key, "report_round_minutes")] = state["round"]
         await _load()
 
     def render_round_input():

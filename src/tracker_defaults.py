@@ -73,6 +73,7 @@ def save_tracker_defaults(config_folder, trackers: dict) -> None:
     """Persist the whole {tracker_name: {field: value}} map (empty values
     should be dropped by the caller — absent means 'no default')."""
     path = Path(config_folder) / _FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(
             {"trackers": trackers}, allow_unicode=True, sort_keys=False

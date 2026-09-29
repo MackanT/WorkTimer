@@ -855,14 +855,15 @@ has been fixed in the billing path since the last one.
 - **Tests:** two users end to end — neither can see the other's customers,
   board, tracker items or notes.
 
-**Status: in progress — slices 1–2 of 6 done** (2026-09-28). Started beside
+**Status: in progress — slices 1–3 of 6 done** (2026-09-28). Started beside
 the Phase 5 gate. Slice 1 is part of the gate's commit (`0699487`) and runs on
 staging in single-user mode — the regression run there (the 32 timer checks,
 a live tracker sync through the per-user engine) passed; later slices stay
 off staging until the gate passes. An inventory of process-wide state found
-more shared than the plan listed, so the work is cut into slices; **multi-user
-mode must not be deployed before slice 3** — settings are still shared
-between users until then.
+more shared than the plan listed, so the work is cut into slices. With slice 3
+everything that inventory found is per user or deliberately the install's
+(the theme, the PAT key, the update check); what remains is load (slice 4),
+the deployment (5) and the end-to-end run (6).
 
 1. **Identity, per-user data and tracker engine — done.**
    - [src/auth.py](../src/auth.py): `WORKTIMER_AUTH=cloudflare-access` (with
@@ -915,9 +916,28 @@ between users until then.
      root logger, pasted images end to end as two signed-in users.
      Mutation-checked: one shared notes folder, and process-wide loggers,
      each fail tests.
-3. **Settings:** what Settings writes into `config/` today — time and billing
-   defaults, description templates, contacts, tags, theme, tracker defaults —
-   becomes per user; `app.storage.user` keys namespaced by user.
+3. **Settings — done.**
+   - One `ConfigLoader` per user (`get_config_loader(user)`). What ships —
+     `config_ui.yml`, the styles, the `.template` defaults — stays shared in
+     `config/`; the files Settings writes (time and billing defaults,
+     description templates, contacts, tags, tracker defaults) are the user's:
+     in `config/` itself for user 1, as always, and in
+     `data/users/<key>/config/` for everyone else, created from the shared
+     templates. A new user starts from the shipped defaults, never from user
+     1's overrides.
+   - **The theme stays the install's:** the style resolver is process-wide,
+     so per-user palettes would repaint each other's pages. When people sign
+     in, Settings shows "set for everyone on this server" instead of the
+     palette editor; the query-editor skin stays each user's own.
+   - `app.storage.user` is keyed by the browser, and one browser can carry
+     several people: each preference key is the user's own (`pref_key`; user
+     1 keeps the plain keys, so saved preferences survive). The post-update
+     "what's new" popup is shown once per user, not once per install.
+   - Tests: loader folders, a user's time settings theirs alone, Settings'
+     writes and templates, tracker defaults, the loader registry, preference
+     keys, the palette as a signed-in user. Mutation-checked: every user
+     writing into `config/`, and the palette editable by every signed-in
+     user, each fail tests.
 4. **Sync scheduling:** per-user hourly and nightly syncs staggered, with a
    global concurrency cap.
 5. **Deploy:** the hosted compose profile with `cloudflared`, the Access
@@ -978,5 +998,5 @@ Not requirements — nothing is built for these; decide at the end.
 - [x] **3** Query editor lockdown
 - [ ] **4** SQLite importer — built; a colleague's file and a v4-era file still to run
 - [ ] **5** Gate: staging + parallel run
-- [ ] **6** Online — slices 1–2 of 6 (identity; files, endpoints, logs) done
+- [ ] **6** Online — slices 1–3 of 6 (identity; files, endpoints, logs; settings) done
 - [ ] **7** Release 6.0.0

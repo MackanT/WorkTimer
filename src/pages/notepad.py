@@ -24,7 +24,7 @@ from nicegui import ui, app
 from ..auth import auth_config
 from ..core.app import AppCore
 from ..pg_connection import LOCAL_USER
-from ..user_paths import user_dir
+from ..user_paths import pref_key, user_dir
 from ..ui.elements import toolbar, toolbar_group, page_card, toolbar_divider
 from ..ui.dynamic_widgets import render_markdown_toolbar
 from ..helpers import render_and_sanitize_markdown, UI_STYLES
@@ -429,7 +429,7 @@ async def notepad_page():
         # Survives page swaps and restarts — the sidebar shouldn't re-open
         # every group each time the user comes back to the notepad.
         try:
-            app.storage.user["notepad_collapsed_groups"] = sorted(
+            app.storage.user[pref_key(core.user_key, "notepad_collapsed_groups")] = sorted(
                 state["collapsed_groups"]
             )
         except Exception:
@@ -1060,7 +1060,7 @@ async def notepad_page():
     state["toolbar_container"] = ui.column().classes("w-full")
     try:
         state["collapsed_groups"] = set(
-            app.storage.user.get("notepad_collapsed_groups") or []
+            app.storage.user.get(pref_key(core.user_key, "notepad_collapsed_groups")) or []
         )
     except Exception:
         state["collapsed_groups"] = set()

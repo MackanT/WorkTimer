@@ -63,7 +63,7 @@ def hosted(app_url, ada_key, tmp_path_factory, monkeypatch):
     monkeypatch.setattr(auth, "_config", CONFIG)
     monkeypatch.setattr(auth, "_verifier", verifier())
     monkeypatch.setattr(notepad, "DATA_DIR", tmp_path_factory.mktemp("notes-data"))
-    monkeypatch.setattr(core_app, "_config_loader", None)
+    monkeypatch.setattr(core_app, "_config_loaders", {})
     monkeypatch.setattr(update_checker, "_fetch_latest_blocking", update_checker._current_version)
 
     async def offline(self):
@@ -171,3 +171,12 @@ async def test_notes_images_are_each_users_own(endpoints: User, ada_key):
     assert (await http.get(path)).status_code == 404  # not in Bob's notes
     http.headers.pop(ACCESS_HEADER)
     assert (await http.get(path)).status_code == 401
+
+
+async def test_the_app_palette_is_the_installs_when_people_sign_in(user: User):
+    _sign_in(user, ADA)
+    await user.open("/settings")
+    await page_built()
+    await user.should_see("Set for everyone on this server", retries=20)
+    await user.should_not_see("Save Theme")
+    await user.should_see("Query editor skin")  # each user's own

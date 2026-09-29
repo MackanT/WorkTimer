@@ -308,7 +308,7 @@ async def open_work_item_dialog(
                             )
                             branch_tpl = defaults_for(
                                 load_tracker_defaults(
-                                    core.config_loader.config_folder
+                                    core.config_loader.user_folder
                                 ),
                                 tracker_map.get(customer, ""),
                                 item_type,
@@ -646,7 +646,7 @@ async def open_add_work_item_dialog(
                         wtype = tw.widget.value if tw else None
                         defaults = defaults_for(
                             load_tracker_defaults(
-                                core.config_loader.config_folder
+                                core.config_loader.user_folder
                             ),
                             tracker_map.get(cust_now, ""),
                             wtype,
@@ -728,7 +728,7 @@ async def open_add_work_item_dialog(
                             tw = widgets.get("work_item_type")
                             tpl = defaults_for(
                                 load_tracker_defaults(
-                                    core.config_loader.config_folder
+                                    core.config_loader.user_folder
                                 ),
                                 tracker_map.get(cust_now, ""),
                                 tw.widget.value if tw else None,
@@ -983,7 +983,7 @@ async def render_devops_form(
         try:
             item_handlers = WorkItemHandlers(
                 core.tracker_engine, core.logger,
-                config_folder=core.config_loader.config_folder,
+                config_folder=core.config_loader.user_folder,
             )
             if operation == "add":
                 wid_title = widgets.get("work_item_title")
@@ -1127,7 +1127,7 @@ async def render_devops_form(
         _setup_conditional_visibility(widgets, fields_by_name, hidden)
         item_handlers_setup = WorkItemHandlers(
             core.tracker_engine, core.logger,
-            config_folder=core.config_loader.config_folder,
+            config_folder=core.config_loader.user_folder,
         )
         if operation == "add":
             load_fn = item_handlers_setup.setup_add_tab_handlers(widgets)

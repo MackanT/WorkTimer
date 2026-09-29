@@ -11,6 +11,7 @@ import asyncio
 import math
 from nicegui import app, context, ui
 from ..core.app import AppCore
+from ..user_paths import pref_key
 from .. import helpers
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
 from ..ui.work_item_forms import open_add_work_item_dialog, open_work_item_dialog
@@ -80,7 +81,7 @@ async def board_page():
         "customer": None,
         "type": _work_item_types()[0],
         "search": "",
-        "include_done": bool(app.storage.user.get("board_include_done", False)),
+        "include_done": bool(app.storage.user.get(pref_key(core.user_key, "board_include_done"), False)),
     }
     known_cols: dict = {}  # (customer, type) -> ordered list; never shrinks
     ui_state: dict = {"loading": False}
@@ -89,7 +90,7 @@ async def board_page():
     if DO is not None and DO.df is not None:
         customer_names = sorted(DO.df["customer_name"].dropna().unique().tolist())
     if customer_names:
-        _saved_cust = app.storage.user.get("devops_customer")
+        _saved_cust = app.storage.user.get(pref_key(core.user_key, "devops_customer"))
         filter_state["customer"] = (
             _saved_cust if _saved_cust in customer_names else customer_names[0]
         )
@@ -112,7 +113,7 @@ async def board_page():
     # Board and Hierarchy are two lenses on the same work-item data, toggled in
     # the toolbar. The hierarchy is embedded here (its own page was retired); it
     # reads the shared customer selection.
-    view_state = {"view": app.storage.user.get("devops_view", "board")}
+    view_state = {"view": app.storage.user.get(pref_key(core.user_key, "devops_view"), "board")}
     hier = create_hierarchy_view(core, lambda: filter_state["customer"])
 
     def _columns_cache():
@@ -660,7 +661,7 @@ async def board_page():
 
     def _on_include_done(e):
         filter_state["include_done"] = bool(e.value)
-        app.storage.user["board_include_done"] = filter_state["include_done"]
+        app.storage.user[pref_key(core.user_key, "board_include_done")] = filter_state["include_done"]
         render_board.refresh()
 
     async def _on_refresh():
@@ -673,7 +674,7 @@ async def board_page():
         if value == view_state["view"]:
             return
         view_state["view"] = value
-        app.storage.user["devops_view"] = value
+        app.storage.user[pref_key(core.user_key, "devops_view")] = value
         if value == "hierarchy":
             hier.set_customer(filter_state["customer"])
         render_view_toggle.refresh()
@@ -790,7 +791,7 @@ async def board_page():
 
                 async def _on_customer_change(e):
                     filter_state["customer"] = e.value
-                    app.storage.user["devops_customer"] = e.value
+                    app.storage.user[pref_key(core.user_key, "devops_customer")] = e.value
                     # Trackers differ in type names (User Story vs Story) — a
                     # stale type from the previous customer would blank the
                     # board, so snap to the new tracker's preferred level.

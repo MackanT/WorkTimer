@@ -10,6 +10,7 @@ import copy
 from nicegui import ui, app
 from nicegui.events import KeyEventArguments
 from ..core.app import AppCore
+from ..user_paths import pref_key
 from ..globals import SaveData
 from .. import helpers
 from ..ui.keyboard_handlers import setup_debug_keyboard_handlers
@@ -32,13 +33,14 @@ async def query_editor_page():
     QE = core.query_engine
     LOG = core.logger
 
-    if "query_editor_query" not in app.storage.user:
+    query_key = pref_key(core.user_key, "query_editor_query")
+    if query_key not in app.storage.user:
         try:
-            app.storage.user["query_editor_query"] = (
+            app.storage.user[query_key] = (
                 QE.df[QE.df["query_name"] == "time"]["query_sql"].values[0]
             )
         except Exception:
-            app.storage.user["query_editor_query"] = QE.db.EDITOR_FALLBACK_QUERY
+            app.storage.user[query_key] = QE.db.EDITOR_FALLBACK_QUERY
 
     config_query = core.query_config if hasattr(core, "query_config") else {}
 
@@ -514,22 +516,23 @@ async def query_editor_page():
             # Draggable horizontal split: editor on top, results below. Drag the
             # bar to trade vertical space between writing a query and reading its
             # output. The position is remembered per user.
-            split_val = app.storage.user.get("query_editor_split", 35)
+            split_val = app.storage.user.get(pref_key(core.user_key, "query_editor_split"), 35)
             with (
                 ui.splitter(horizontal=True, value=split_val)
                 .classes("w-full")
                 .style("flex: 1; min-height: 0;")
             ) as splitter:
-                splitter.bind_value(app.storage.user, "query_editor_split")
+                splitter.bind_value(app.storage.user, pref_key(core.user_key, "query_editor_split"))
                 with splitter.before:
                     # Skin is a per-user pick from Settings → Theme (falls back
                     # to the historical default).
                     editor = ui.codemirror(
-                        app.storage.user.get("query_editor_query", ""),
+                        app.storage.user.get(query_key, ""),
                         language="SQLite",
-                        theme=str(app.storage.user.get("query_editor_theme", "dracula")),
+                        theme=str(app.storage.user.get(
+                            pref_key(core.user_key, "query_editor_theme"), "dracula")),
                     ).classes("w-full h-full")
-                    editor.bind_value(app.storage.user, "query_editor_query")
+                    editor.bind_value(app.storage.user, query_key)
 
                     # Ctrl+Enter inside the editor: run the query WITHOUT letting
                     # the keypress reach CodeMirror (it inserted a newline into
