@@ -9,6 +9,9 @@
 #     pg_restore --clean --if-exists -d worktimer /backups/worktimer_<stamp>.dump
 set -eu
 
+# Given a command (the `run --rm backup pg_restore …` above), run that, not the loop.
+[ "$#" -gt 0 ] && exec "$@"
+
 interval="${BACKUP_INTERVAL_SECONDS:-86400}"
 keep="${BACKUP_KEEP:-14}"
 

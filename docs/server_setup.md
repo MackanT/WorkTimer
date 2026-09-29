@@ -172,5 +172,7 @@ Disconnect before measuring the app's own memory, or the numbers are skewed.
   - When a session expires with a tab open, NiceGUI's reconnect is redirected
     to the login page and the tab shows "reconnecting" — a reload brings up
     the login. Rare with a one-month session.
-- [ ] `pg_dump` backups to object storage
+- [ ] Backups off the server: enable Hetzner Backups (console), and copy the
+      nightly dumps to a PC with `scripts/pull_backups.py` on a schedule
+      ([staging.md](staging.md), Backups); object storage later if wanted
 - [ ] Non-root admin user (currently root-only, acceptable for a single admin)

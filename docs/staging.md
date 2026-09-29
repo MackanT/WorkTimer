@@ -98,8 +98,44 @@ restarts the count (the next two imports must match on the new code).
 | `docker compose --profile postgres logs -f worktimer-pg` | the app's log |
 | `docker compose --profile postgres run --rm backup pg_restore --list /backups/<file>` | inspect a backup |
 
-Restore a backup (as the admin, with the app stopped): see the header of
+## Backups
+
+**On the server:** the `backup` service dumps the whole database into
+`/opt/worktimer/backups-pg` once a day (the newest 14 kept) —
 [scripts/pg_backup.sh](../scripts/pg_backup.sh).
+
+**Off the server** — the server is the only live copy, so its backups must
+not live only on it:
+
+- **Hetzner Backups:** in the Hetzner console, the server → *Backups* → enable.
+  Seven daily snapshots of the whole server, about 20 % of its price.
+- **Copies on your PC:** from the WorkTimer checkout,
+
+  ```powershell
+  uv run python scripts/pull_backups.py --to "C:\Users\<you>\OneDrive\WorkTimer-backups"
+  ```
+
+  copies each dump not already there (the newest 30 kept; a OneDrive folder
+  adds a cloud copy). To run it daily: Task Scheduler → *Create Basic Task* →
+  daily, some time after lunch (the dump is written around midday) → *Start a
+  program*: `uv`, arguments `run python scripts\pull_backups.py --to "<that
+  folder>"`, *Start in*: the checkout folder.
+
+**Restore** (as the admin; the app stopped so nothing writes meanwhile), on
+the server in `/opt/worktimer`:
+
+```bash
+docker compose --profile postgres stop worktimer-pg
+docker compose --profile postgres run --rm backup \
+  pg_restore --clean --if-exists -d worktimer /backups/worktimer_<stamp>.dump
+docker compose --profile postgres start worktimer-pg
+```
+
+From a copy on your PC (the server lost): set a new server up as above
+(`staging.sh up`), `scp` the dump into its `/opt/worktimer/backups-pg/`, then
+restore the same way. Checked 2026-09-29: a dump restored into a scratch
+database held every entry, customer, work item, tracker token and security
+rule of the live one at dump time.
 
 ## Making it the official WorkTimer
 
