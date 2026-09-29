@@ -1050,7 +1050,11 @@ usable in another account); the app container still runs as root; a crafted
 
 - Compose finalised: self-host, plus the hosted profile with `cloudflared`.
 - README rewritten: install is `docker compose up -d`; moving from 5.x is the
-  importer; using the hosted instance needs only a browser.
+  importer; using the hosted instance needs only a browser. How to use the
+  app is no longer its job: that is [guide.md](guide.md), the in-app Guide
+  tab (2026-09-29) — correct for both modes, with signing in, the 5.x zip
+  import and what is private; `docs/README.md` stays the GitHub page and
+  `pyproject.toml`'s readme.
 - Changelog with the breaking changes: Docker required for self-hosting, saved
   queries need rewriting, PATs re-entered after import.
 - Colleague onboarding: each imports their own 5.x database through

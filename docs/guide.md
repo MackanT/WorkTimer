@@ -1,51 +1,54 @@
 # WorkTimer — User Guide
 
-Welcome to **WorkTimer** — a locally hosted web application for time tracking with tracker integration (Azure DevOps and Jira).
+WorkTimer tracks your billable hours across customers and projects, with
+Azure DevOps and Jira boards, reports, notes and a query editor. Most people
+use the shared **hosted WorkTimer** in the browser; it can also run on your
+own PC ([Running it yourself](#running-it-yourself)).
 
 ---
 
-## Getting Started
+## Getting started
 
-### Requirements
+### Signing in
 
-- **Python 3.11+** with [`uv`](https://docs.astral.sh/uv/) for running directly, **or**
-- **Docker** for 24/7 operation
+Open the WorkTimer address you were given and enter your email. You get a
+one-time code by email — type it in, and you stay signed in for 30 days on
+that browser. Only emails the administrator has added can sign in.
 
-### Install
+The first time, your WorkTimer is empty, and it is **yours alone**: nobody
+else signed in sees your entries, customers, trackers, notes or settings
+([Your data](#your-data)).
 
-```powershell
-# 1. Get the code
-git clone https://github.com/MackanT/worktimer
-cd worktimer
+### Moving from WorkTimer 5.x
 
-# 2. Install uv (first time only — then restart your terminal)
-pip install uv
+Bring everything along in one zip:
 
-# 3. Sync the dependencies
-uv sync
-```
+1. On the PC where you use 5.x, **close WorkTimer**, open its folder, select
+   the **`data`** and **`config`** folders together → right-click → *Send to
+   → Compressed (zipped) folder*. Only those two: the whole folder is far too
+   big. The zip carries your database, notes and pasted images, the key that
+   unlocks your tracker tokens, and your settings.
+   (5.x in Docker: first `docker cp worktimer-worktimer-1:/app/config .`, then
+   zip `data` with that `config`.)
+2. In the hosted WorkTimer: *Settings → Data → Import*, and choose the zip.
+   It is checked first — the summary lists customers, entries, notes and
+   settings files, and any problem in the 5.x data with what to fix there.
+   Nothing is written until you press **Import**.
+3. After the import, every customer's entries, hours and cost are shown
+   before and after, side by side — they should all match. Your trackers
+   connect with the tokens you had; reload the page to see your settings.
+4. Stop using 5.x — keep its folder as a fallback.
 
-### Starting the application
+If the zip is over 95 MB, leave out `data\backups` (5.x's own backup copies).
+Only `worktimer.db` works too, but then your notes and settings stay behind
+and the tracker tokens must be entered again. Saved queries you wrote
+yourself come along, but need rewriting: the table names changed.
 
-**Option A — Direct Python (recommended for development)**
-```powershell
-uv run -m main
-```
-
-**Option B — Docker (recommended for 24/7 operation)**
-```powershell
-docker compose up -d --build
-```
-
-Both options read `DB_NAME` and `DEBUG_MODE` from a `.env` file in the project root. The app runs fine without one (defaults: `worktimer.db`, port 8080) — to customise, copy `.env.template` to `.env` and edit it; `.env` is gitignored, so each install keeps its own settings.
-
-Then open **`http://localhost:8080`** in your browser.
-
-### First-time setup
+### Starting fresh
 
 Entity management lives in **dialogs**: click **Data Input** in the nav bar and pick an entity (Customers / Trackers / Projects / Bonus) — the dialog opens over whatever page you're on. The command palette (**Ctrl + K**) opens the same dialogs directly ("Add customer", "Update tracker", …).
 
-1. **Add a customer** — *Data Input → Customers*, fill in the name and wage, click **Add**
+1. **Add a customer** — *Data Input → Customers*, fill in the name, hourly rate and currency, click **Add**
 2. **Add a project** — *Data Input → Projects* (or the **＋ Add project** button on the customer's card on the Time Tracker), enter a name, click **Add**
 3. **Optionally configure a bonus** — *Data Input → Bonus*, fill in the bonus percent, click **Add**
 4. **Optionally connect a tracker** — *Data Input → Trackers*, then link it on the customer (see [Tracker integration](#tracker-integration) below)
@@ -62,10 +65,10 @@ WorkTimer has a fixed top navigation bar with the following pages:
 | **Data Input** | A dropdown menu — manage customers, trackers, projects and bonuses in dialogs |
 | **Board** | Kanban board + hierarchy view of tracker work items (shown when a tracker is configured) |
 | **Reports** | Time analytics dashboard — tiles, charts, CSV export |
-| **Query Editor** | Write and run SQL against the local database |
-| **Tasks** | Built-in task manager — disabled by default, enable in `config/config_ui.yml` |
+| **Query Editor** | Write and run SQL over your data |
+| **Tasks** | Built-in task manager — shown when switched on for this WorkTimer |
 | **Notepad** | Markdown notes organised in a sidebar |
-| **Log** | Real-time application log |
+| **Log** | Real-time log of what WorkTimer does for you |
 | **Documentation** | This guide, plus shortcuts, changelog and tracker contacts |
 | **Settings** | Tracker sync/defaults/contacts, tags, theme, and data tools |
 
@@ -83,11 +86,14 @@ Track billable hours across customers and projects.
 - **Quick-adds** — a dashed *Add customer* card sits at the end of the row; every customer card has an *＋ Add project* button
 - **Edit Order** — drag rows to reorder projects (a light line shows where the drop lands), use the arrows for single steps, or hit the **sort** button on a card to order that customer's projects by the last 60 days of logged time; **Save Order** persists
 
+A running timer keeps running when you close the tab — it shows as a pill in
+the nav bar wherever you open WorkTimer next.
+
 ---
 
 ## Board & Hierarchy
 
-A Kanban view of the connected trackers' work items, from the local cache.
+A Kanban view of the connected trackers' work items, from WorkTimer's copy of them.
 
 - **Customer tabs** switch between connected customers; type chips follow the customer's tracker levels (Azure: Epic/Feature/User Story; Jira: Epic/Story/Sub-task)
 - **Drag a card** between columns to move it (Azure: board column; Jira: a workflow status transition)
@@ -104,7 +110,7 @@ A Kanban view of the connected trackers' work items, from the local cache.
 A visual analytics dashboard for your tracked time.
 
 - **Filters** — pick customers (one, several, or all) and a period (Day / Week / Month / Year / Custom)
-- **Stat tiles** — hours, billable amount and target utilisation for the selection
+- **Stat tiles** — hours, billable amount and target utilisation for the selection; amounts are shown per currency when customers bill in different ones
 - **Charts** — daily hours trend, hours by project, hours by customer, and top work items, coloured by each customer's colour
 - **Billing rounding** — round the billable tiles/CSV up to an increment, applied *per entry*, *per work item*, *per project* or on the *grand total*; display-only, never written to the database (the default increment comes from *Settings → Data*)
 - **CSV export** — download the current selection for invoicing or further analysis
@@ -116,8 +122,8 @@ A visual analytics dashboard for your tracked time.
 Each dialog has operation tabs (Add / Update / Disable / Re-enable — Delete for trackers) and closes on a successful save.
 
 ### Customers
-- **Add** — name, wage, optional tracker link
-- **Update** — rename, link/unlink a tracker, pick the tracker project, expected work %, colour
+- **Add** — name, hourly rate, currency, optional tracker link
+- **Update** — rename, link/unlink a tracker, pick the tracker project, expected work %, colour; the currency only until the customer has time entries
 - **Disable / Re-enable** — soft-archive without losing historical entries (disabled customers disappear from the board and pickers; their cached items return on re-enable)
 
 ### Trackers
@@ -144,13 +150,14 @@ Created from the Board/Hierarchy ＋ or the palette, for any level of the custom
 
 ## Query Editor
 
-A full SQL editor for custom data analysis.
+A SQL editor for your own analysis. Queries only read, and only ever see
+your data.
 
 - **Preset queries** — click a built-in query to load it instantly
 - **Custom queries** — write SQL, save with a name, run later
 - **Execute** — press **F5**, **ctrl+enter** or the Run button
-- **Edit results** — click any row in the result table to open an edit dialog
-- **Copy results** — disable edit mode to copy rows into memory (csv-format)
+- **Edit results** — with *Edit Mode* on, click a cell of a time entry, customer or project to change it
+- **Copy results** — with *Edit Mode* off, select rows and copy them (csv-format)
 - **Syntax feedback** — the editor highlights errors before you run
 - **Skins** — pick your own editor colour scheme under *Settings → Theme*
 
@@ -160,18 +167,17 @@ A full SQL editor for custom data analysis.
 
 A markdown-based notebook with a VS Code-style sidebar.
 
-- Notes are stored as `.md` files under `data/notes/`
+- Your notes are your own — pasted images included
 - Assign colors, icons, and groups from the right-click menu; a `/` in the group name nests sub-groups ("Customer/Project"), and collapsing a parent hides its subtree
 - **Drag notes** to reorder — drop on another note to insert before it (adopting its group) or on a group header to move into that group; a light line previews the landing spot
 - Click rendered content to switch to split editor + preview mode; press **Escape** to return
 - Pin notes to keep them at the top
-- An external **Todo** note (`docs/todo.md`) is always pinned and is read-write
 
 ---
 
 ## Settings
 
-Four tabs, matching the app's standard layout:
+Four tabs, matching the app's standard layout. Everything here is your own.
 
 ### Trackers
 - **Synchronisation** — incremental/full sync buttons with last-sync times
@@ -183,23 +189,24 @@ Four tabs, matching the app's standard layout:
 Define tags used to categorise work items — icon + colour per tag, add/edit/delete in the table.
 
 ### Theme
-- **Theme colours** — customise the app colour scheme (Quasar + Tailwind token pairs). Press **Save Theme**, then reload (**Ctrl + R**) to apply
-- **Query editor skin** — your personal colour scheme for the SQL editor, with a live preview; saved per user
+- **Theme colours** — your colour scheme for the app (Quasar + Tailwind token pairs). Press **Save Theme**, then reload (**Ctrl + R**) to apply
+- **Query editor skin** — your colour scheme for the SQL editor, with a live preview
 
 ### Data
-- **Backup** — list of recent backups, *Backup now*, and a browser download
-- **Time & billing defaults** — global rounding / currency / target settings used by Reports
-- **About** — version and update status, plus **Report a bug** / **Request a feature** buttons that open a prefilled GitHub issue (app version and run mode filled in; also available from the command palette)
+- **Backup** — *Backup now* keeps a copy of your data, listed here; *Download* saves one to your PC
+- **Import** — bring in a 5.x zip or database, or a WorkTimer backup ([Moving from WorkTimer 5.x](#moving-from-worktimer-5x))
+- **Time & billing defaults** — rounding and target settings used by Reports
+- **About** — version, plus **Report a bug** / **Request a feature** buttons that open a prefilled GitHub issue (also available from the command palette)
 
 ---
 
 ## Log
 
-Real-time view of all application events.
+Real-time view of what WorkTimer does for you — syncs, saves, errors.
 
 - Colour-coded by level: Info (white), Warning (yellow), Error (red)
 - Each entry shows timestamp, level, source engine, and message
-- **Logs are in-memory only** — they reset on restart and are not saved to disk
+- **Logs are in-memory only** — they reset when WorkTimer restarts
 
 ---
 
@@ -216,47 +223,45 @@ WorkTimer speaks to **Azure DevOps** and **Jira Cloud** through per-tracker conn
 
 What works on both trackers: board + hierarchy, search, create/update/move work items, comments, image attachments, time-entry linking and comment write-back. Jira specifics: board moves are workflow transitions, status *is* the board column, and markdown converts to native Jira formatting (headings, lists, tables, checkboxes, code, images) in both directions.
 
-**Credentials are encrypted at rest** with a key stored at `data/.pat_key`. The key is deliberately excluded from backups — a backup restored on another machine needs the tokens re-entered.
+**Tokens are stored encrypted.** Where they can't be read — a backup
+restored elsewhere, or a 5.x `worktimer.db` imported without its zip — enter
+them again on the tracker.
 
 Sync schedule (background):
 - **Incremental** — every hour
-- **Full** — daily at 2 AM (or trigger either manually from Settings → Trackers)
+- **Full** — nightly, between 02:00 and 04:00
+- Or trigger either from *Settings → Trackers* (or Ctrl+K → "Sync trackers")
 
 ---
 
-## Docker deployment
+## Your data
 
-Needs Docker (e.g. Docker Desktop). The image builds locally from the cloned
-repo — no registry involved:
+On the hosted WorkTimer, each person has their own account. Your time
+entries, customers, trackers and their tokens, notes, settings, theme, saved
+queries and log are yours: nobody else signed in can see them, and the Query
+Editor reads only your rows. The administrator, who runs the server, can
+reach its database and backups — as with any hosted service.
 
-```powershell
-# First start, and after every `git pull` (build + run detached)
-docker compose up -d --build
+The server is backed up every night. Your own copy is a click away:
+*Settings → Data → Download*.
 
-# View live logs
-docker compose logs -f
+---
 
-# Stop
-docker compose down
-```
+## Running it yourself
 
-The database file is volume-mounted so data persists across restarts and
-rebuilds. See `docker-compose.yml` for the mount path, and the `.env` file
-for the database name.
-
-By default the container is only reachable from the machine running it
-(`http://localhost:8080`). WorkTimer has no login, so network access is an
-explicit opt-in: set `HOST=0.0.0.0` in `.env` and run `docker compose up -d`
-to reach it from other devices on your network. Anyone on that network can
-then read your data and tracker credentials.
+WorkTimer also runs on your own PC, with Python or Docker — see the
+[README on GitHub](https://github.com/mackant/worktimer/blob/main/docs/README.md)
+for installing and updating. There, WorkTimer has no sign-in and everything
+lives in its `data/` folder: notes in `data/notes/` (with a pinned Todo note,
+`docs/todo.md`), backups in `data/backups/`, and the key that unlocks your
+tracker tokens in `data/.pat_key` — never copied into backups.
 
 ---
 
 ## Troubleshooting
 
-**App won't start**
-- Check port 8080 is not used by another process
-- Verify Python 3.11+ is installed
+**"Reconnecting" or a sign-in page after a long time away**
+- Your 30-day sign-in ran out: reload the page and sign in again with the emailed code
 
 **Tracker items not appearing**
 - Use **Test connection** on the tracker to verify the credentials
@@ -267,13 +272,12 @@ then read your data and tracker credentials.
 **Sync data is stale**
 - Run a Full Sync from Settings → Trackers (or Ctrl+K → "Sync trackers")
 
-**Tokens unreadable after restoring a backup**
-- Expected: the encryption key (`data/.pat_key`) never travels with backups — re-enter the credentials on the trackers
+**Tokens unreadable after an import or restore**
+- Re-enter the credentials on the trackers (see [Tracker integration](#tracker-integration))
+
+**A saved query fails after moving from 5.x**
+- The table names changed: open the query, look up the new names in the preset queries, and save it again
 
 **UI not updating**
 - Hard-refresh the browser: **Ctrl + Shift + R** (F5 is reserved by the app)
 - Check the Log page for errors
-
-**Database errors**
-- Ensure the `data/` directory is writable
-- Check the Log page for SQL error details

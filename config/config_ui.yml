@@ -896,7 +896,7 @@ info_page:
     meta:
       icon: menu_book
       friendly_name: Guide
-      file: README.md
+      file: guide.md
   shortcuts:
     meta:
       icon: keyboard
