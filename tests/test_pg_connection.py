@@ -242,3 +242,29 @@ def test_the_sign_in_role_acts_only_through_its_functions(pg_schema_db):
         owned = admin.execute("select proname from pg_proc where proowner = "
                               "'worktimer_signin'::regrole order by 1").fetchall()
     assert owned == [("app_sign_in",), ("app_signed_in_users",)]
+
+
+def test_the_owners_first_sign_in_takes_over_the_local_data(pools, pg_schema_db):
+    """Going online (migration 0004): the single-user data is user 1's, and
+    its owner's first sign-in must land there, not in a new empty account."""
+    with pools.transaction(LOCAL_USER) as conn:
+        conn.execute("insert into customers (customer_name) values ('Acme')")
+
+    assert pools.sign_in(SUB, "owner@example.com", "Owner", claim_local=True) == LOCAL_USER
+    assert pools.sign_in(SUB, "owner@example.com") == LOCAL_USER  # and stays theirs
+    assert pools.signed_in_users() == 1  # single-user mode now refuses this database
+    with pools.transaction(LOCAL_USER) as conn:
+        assert conn.execute("select customer_name from customers").fetchall() == [("Acme",)]
+    with psycopg.connect(pg_schema_db) as admin:
+        assert admin.execute("select bk_user, email from users where key_user = 1").fetchone() == (
+            SUB, "owner@example.com")
+
+
+def test_the_local_data_is_taken_over_once_and_only_when_asked(pools):
+    other = pools.sign_in("someone-else", "x@example.com")  # no flag: their own user
+    early = pools.sign_in("early-owner")  # signed in before being named owner
+    assert LOCAL_USER not in (other, early)
+
+    assert pools.sign_in("early-owner", claim_local=True) == early  # keeps their own
+    assert pools.sign_in(SUB, claim_local=True) == LOCAL_USER
+    assert pools.sign_in("third", claim_local=True) not in (LOCAL_USER, other, early)  # taken

@@ -36,6 +36,11 @@ class AuthConfig:
     mode: str = "local"
     team_domain: str | None = None  # https://<team>.cloudflareaccess.com
     audience: str | None = None  # the Access application's AUD tag
+    owner_email: str | None = None  # whose first sign-in takes over user 1's data
+
+    def is_owner(self, identity: "Identity") -> bool:
+        return bool(self.owner_email and identity.email
+                    and identity.email.strip().lower() == self.owner_email)
 
     @property
     def multi_user(self) -> bool:
@@ -56,7 +61,8 @@ class AuthConfig:
                             "(the Access application's audience tag)")
         if not team.startswith("https://"):
             team = "https://" + team.removeprefix("http://")
-        return cls(mode, team, audience)
+        owner = (os.getenv("WORKTIMER_OWNER_EMAIL") or "").strip().lower() or None
+        return cls(mode, team, audience, owner)
 
 
 class AccessVerifier:

@@ -78,6 +78,11 @@ services:
       # — the image's own folders are replaced on every rebuild.
       - WORKTIMER_SETTINGS_DIR=/app/data/config
       - NICEGUI_STORAGE_PATH=/app/data/.nicegui
+      # Sign-in (docs/hosted.md). Unset = one user, no login, as before.
+      - WORKTIMER_AUTH=${WORKTIMER_AUTH:-}
+      - CF_ACCESS_TEAM_DOMAIN=${CF_ACCESS_TEAM_DOMAIN:-}
+      - CF_ACCESS_AUD=${CF_ACCESS_AUD:-}
+      - WORKTIMER_OWNER_EMAIL=${WORKTIMER_OWNER_EMAIL:-}
     volumes:
       # Its own folder for the PAT key, notes and backups — never the SQLite
       # install's data/.
@@ -107,6 +112,21 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Hosted (docs/hosted.md): the Cloudflare tunnel. It connects outbound to
+  # Cloudflare and reaches the app over the compose network
+  # (http://worktimer-pg:8080) — nothing new listens on the server, and every
+  # request has passed the Access login first. The tunnel's public hostname
+  # and target are set in the Cloudflare dashboard.
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}
+    profiles: ["hosted"]
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - worktimer-pg
     restart: unless-stopped
 
 volumes:

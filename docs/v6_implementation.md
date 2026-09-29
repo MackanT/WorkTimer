@@ -958,8 +958,20 @@ everything that inventory found is per user or deliberately the install's
    - Tests: the spread, the waits, the cap across five users, one user's syncs
      serial. Mutation-checked: no cap, no hourly offset, and a skipped
      same-night slot each fail tests.
-5. **Deploy:** the hosted compose profile with `cloudflared`, the Access
-   application and policy, one-month sessions.
+5. **Deploy — built, waiting for the Cloudflare side.**
+   - Compose profile `hosted`: a `cloudflared` service (token from `.env`)
+     that reaches the app over the compose network; `staging.sh up` adds it
+     when `.env` has a tunnel token. The app's sign-in settings come from
+     `.env`, unset meaning single-user as before.
+   - **Migration 0004 — the owner takes over the local data:** the server's
+     data is user 1's ('local'), and its owner's first sign-in must land
+     there, not in a new empty account. With `WORKTIMER_OWNER_EMAIL` set, that
+     verified email's first sign-in takes user 1 over, once; anyone else gets
+     their own account. Afterwards single-user mode refuses the database.
+   - [hosted.md](hosted.md): the runbook — domain, Zero Trust team, tunnel,
+     Access application, the server's `.env`, and the two-person test.
+   - Tests: the takeover (once, only when asked, never over someone who
+     signed in earlier), owner matching, the hosted user lookup.
 6. **Two users end to end** in a real browser, then colleagues.
 
 ---

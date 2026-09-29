@@ -5,6 +5,7 @@ Pages and endpoints are opened as simulated users carrying Access tokens
 their own user — created on the first sign-in — and sees only their own data.
 """
 
+import dataclasses
 import logging
 
 import pytest
@@ -17,7 +18,7 @@ from _access import ADA, BOB, CONFIG, OTHER_KEY, token, verifier  # noqa: E402
 from _smoke import page_built  # noqa: E402
 from src import auth  # noqa: E402
 from src import globals as wt_globals  # noqa: E402
-from src.auth import ACCESS_HEADER, AuthConfig  # noqa: E402
+from src.auth import ACCESS_HEADER, AuthConfig, Identity  # noqa: E402
 from src.core import app as core_app  # noqa: E402
 from src.pages import notepad, root  # noqa: E402
 from src.pg_connection import ConfigError, PgConfig, Pools  # noqa: E402
@@ -180,3 +181,13 @@ async def test_the_app_palette_is_the_installs_when_people_sign_in(user: User):
     await user.should_see("Set for everyone on this server", retries=20)
     await user.should_not_see("Save Theme")
     await user.should_see("Query editor skin")  # each user's own
+
+
+async def test_the_owners_first_sign_in_lands_in_the_single_user_data(monkeypatch):
+    """Going online: WORKTIMER_OWNER_EMAIL's first sign-in takes over user 1.
+    Last in the module — it takes user 1 over."""
+    monkeypatch.setattr(auth, "_config", dataclasses.replace(CONFIG, owner_email="owner@example.com"))
+
+    assert wt_globals.user_key_for(Identity("not-the-owner", "x@example.com")) != 1
+    assert wt_globals.user_key_for(Identity("owner-sub", "Owner@Example.com")) == 1
+    assert wt_globals.user_key_for(Identity("owner-sub", "owner@example.com")) == 1

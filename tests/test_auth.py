@@ -64,6 +64,7 @@ def test_config_defaults_to_single_user(monkeypatch):
 
 
 def test_cloudflare_access_needs_its_team_and_audience(monkeypatch):
+    monkeypatch.delenv("WORKTIMER_OWNER_EMAIL", raising=False)
     monkeypatch.setenv("WORKTIMER_AUTH", "cloudflare-access")
     monkeypatch.delenv("CF_ACCESS_TEAM_DOMAIN", raising=False)
     monkeypatch.setenv("CF_ACCESS_AUD", AUD)
@@ -74,3 +75,18 @@ def test_cloudflare_access_needs_its_team_and_audience(monkeypatch):
     monkeypatch.setenv("WORKTIMER_AUTH", "none")
     with pytest.raises(AuthError, match="must be one of"):
         AuthConfig.from_env()
+
+
+def test_the_owner_is_matched_by_email_whatever_its_case(monkeypatch):
+    monkeypatch.setenv("WORKTIMER_AUTH", "cloudflare-access")
+    monkeypatch.setenv("CF_ACCESS_TEAM_DOMAIN", "acme.cloudflareaccess.com")
+    monkeypatch.setenv("CF_ACCESS_AUD", AUD)
+    monkeypatch.setenv("WORKTIMER_OWNER_EMAIL", " Ada@Example.com ")
+
+    config = AuthConfig.from_env()
+    assert config.owner_email == "ada@example.com"
+    assert config.is_owner(Identity(ADA, "ADA@example.COM"))
+    assert not config.is_owner(Identity(ADA, "bob@example.com"))
+    assert not config.is_owner(Identity(ADA, None))
+    monkeypatch.delenv("WORKTIMER_OWNER_EMAIL")
+    assert not AuthConfig.from_env().is_owner(Identity(ADA, "ada@example.com"))

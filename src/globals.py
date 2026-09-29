@@ -104,7 +104,9 @@ def _shared_pools_for(url: str):
 
 def user_key_for(identity) -> int:
     """The user a request acts as: user 1 in single-user mode (no identity),
-    else the verified identity's user — created on its first sign-in."""
+    else the verified identity's user — created on its first sign-in; the
+    owner's first sign-in (WORKTIMER_OWNER_EMAIL) takes over user 1's data."""
+    from .auth import auth_config
     from .pg_connection import LOCAL_USER
 
     if identity is None:
@@ -114,7 +116,8 @@ def user_key_for(identity) -> int:
         from .auth import AuthError
 
         raise AuthError("Signing in needs Postgres: set DATABASE_URL")
-    return _shared_pools_for(url).sign_in(identity.sub, identity.email, identity.name)
+    return _shared_pools_for(url).sign_in(identity.sub, identity.email, identity.name,
+                                          claim_local=auth_config().is_owner(identity))
 
 
 async def request_user_key(request) -> int:

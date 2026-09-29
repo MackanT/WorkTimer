@@ -19,13 +19,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 compose=(docker compose --profile postgres)
+services=(migrate worktimer-pg backup)
+# Hosted (docs/hosted.md): with a tunnel token in .env, cloudflared runs too.
+if grep -qE '^CLOUDFLARE_TUNNEL_TOKEN=.+' .env 2>/dev/null; then
+    compose+=(--profile hosted)
+    services+=(cloudflared)
+fi
 reports=staging-reports
 official=data-pg/OFFICIAL  # persisted, and outside git
 
 case "${1:-}" in
     up)
         git pull --ff-only
-        "${compose[@]}" up -d --build migrate worktimer-pg backup
+        "${compose[@]}" up -d --build "${services[@]}"
         "${compose[@]}" ps
         ;;
     import)
