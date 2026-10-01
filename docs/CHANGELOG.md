@@ -7,6 +7,23 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
+### 6.0.0 (2026-10-01)
+- **Major changes**
+  - ad **WorkTimer online.** A hosted WorkTimer runs in the browser, from any PC: sign in with your email and a one-time code sent to it, and stay signed in for 30 days. Each person has their own account — entries, customers, trackers and their tokens, notes, settings and colour theme are private to them. Ask the administrator to add your email.
+  - ad **moving from 5.x in one step.** Zip your WorkTimer folder's `data` and `config` folders and import the zip under *Settings → Data → Import*: the database, notes with their images, tracker tokens and settings all come along. The zip is checked before anything is written, and afterwards every customer's hours and cost are shown before and after, side by side. *Documentation → Guide* has the steps.
+  - up **your own install keeps working as before.** On your own PC WorkTimer still runs on its SQLite database, without sign-in — update as usual. If you move to the hosted WorkTimer, stop using your own install afterwards and keep its folder as a fallback.
+  - ad **PostgreSQL** behind the hosted WorkTimer (Docker Compose profiles `postgres` and `hosted`): the database itself keeps each user's rows apart, and the whole database plus everyone's notes and settings are backed up every night, with one copy a month kept for a year.
+- **Features** (hosted WorkTimer)
+  - ad **a currency per customer** — set when adding the customer, changeable until it has time entries; Reports show the amounts per currency.
+  - up **the Query Editor only reads, and only your data.** Saved queries written for 5.x need rewriting, since the tables were renamed — the import keeps them and says so.
+  - ad **Backup now** and **Download** (*Settings → Data*) save your own data, as a file Import reads back.
+  - ad a new **Guide** on the Documentation page, for the hosted and the self-hosted WorkTimer.
+- **Minor improvements**
+  - up **uploads are images only** — images pasted or uploaded in notes and work items must be PNG, JPEG, GIF, WebP or BMP, up to 10 MB each; other tracker attachments open as downloads.
+  - up **WorkTimer's pages can't be embedded in, or driven from, other sites** — security headers, and requests from other sites refused.
+- **Bug Fixes**
+  - fx **the Documentation tabs work under Docker.** The Guide, Changelog and Tracker Contacts tabs showed "file not found" in a Docker install (the file names' case differed); only Shortcuts loaded.
+
 ### 5.1.2 (2026-09-27)
 - **Bug Fixes**
   - fx **a raise no longer resets the customer's settings.** Entering a raise (adding the customer again with a new wage) created the customer's new version without its colour, expected work % and tracker project — and with no project set, the tracker silently switched to the organisation's first project, so the Board, the sync and new work items went to the wrong project. A raise now keeps every setting you leave blank. Settings already cleared this way are restored automatically on the next start.

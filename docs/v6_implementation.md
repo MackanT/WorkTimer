@@ -1048,6 +1048,12 @@ usable in another account); the app container still runs as root; a crafted
 
 ## Phase 7 — Release 6.0.0
 
+**Status: 6.0.0 on `main` (2026-10-01)**, with colleagues on the hosted
+instance: version bumped, a changelog entry for both audiences (the hosted
+WorkTimer, and installs that stay on SQLite), and the server switched to
+`main`. Still to come, as 6.0.x: Postgres as the self-host default (step 9),
+a required real `POSTGRES_PASSWORD`, and the README rewrite below.
+
 - Compose finalised: self-host, plus the hosted profile with `cloudflared`.
 - README rewritten: install is `docker compose up -d`; moving from 5.x is the
   importer; using the hosted instance needs only a browser. How to use the
@@ -1103,4 +1109,4 @@ Not requirements — nothing is built for these; decide at the end.
 - [ ] **4** SQLite importer — built; a colleague's file and a v4-era file still to run
 - [ ] **5** Gate: staging + parallel run
 - [x] **6** Online — live behind Cloudflare Access (security review before colleagues)
-- [ ] **7** Release 6.0.0
+- [ ] **7** Release 6.0.0 — on `main` 2026-10-01; README and self-host default to follow
