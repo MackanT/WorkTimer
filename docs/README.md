@@ -165,7 +165,6 @@ A markdown-based notebook with a VS Code-style sidebar.
 - **Drag notes** to reorder — drop on another note to insert before it (adopting its group) or on a group header to move into that group; a light line previews the landing spot
 - Click rendered content to switch to split editor + preview mode; press **Escape** to return
 - Pin notes to keep them at the top
-- An external **Todo** note (`docs/todo.md`) is always pinned and is read-write
 
 ---
 
