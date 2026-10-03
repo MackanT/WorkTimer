@@ -109,6 +109,279 @@ def _render_test_connection_button(core, widgets: dict, visible_fn) -> None:
     btn.on("click", _with_loading(btn, _test))
 
 
+async def _projects_of_tracker(core, tracker_name: str) -> tuple[list, str | None]:
+    """(projects, note): the projects a tracker connection can see — from a
+    live connection of a customer on it, else by connecting with its stored
+    credentials (as Test connection does). Where it can't list them (no
+    token, unreachable), the projects its customers use, with a note why."""
+    eng = getattr(core, "tracker_engine", None)
+    live = eng.get_available_projects() if eng is not None else {}
+    details = await core.query_engine.function_db("get_current_customer_details")
+    on_tracker = details[details["tracker_name"] == tracker_name]
+    for customer in on_tracker["customer_name"]:
+        if live.get(customer):
+            return list(live[customer]), None
+    in_use = sorted({p for p in on_tracker["tracker_project"] if p})
+    stored = await core.query_engine.function_db("get_tracker_credentials", tracker_name)
+    if not stored or not stored[1] or not stored[2]:
+        return in_use, "No token stored for this tracker: only projects already in use"
+    row = {"customer_name": tracker_name, "integration_type": stored[0], "org_url": stored[1],
+           "pat_token": stored[2], "tracker_project": None}
+
+    def _connect():
+        from ..trackers.registry import create_provider_for_row
+
+        provider = create_provider_for_row(row, core.logger)
+        if provider is None:
+            return []
+        provider.connect()
+        return list(provider.available_projects)
+
+    try:
+        return await asyncio.to_thread(_connect), None
+    except Exception as e:
+        core.logger.warning(f"Could not list the projects of tracker '{tracker_name}': {e}")
+        return in_use, "Tracker not reachable: only projects already in use"
+
+
+def _wire_tracker_projects(core, widgets: dict, data_fetcher) -> None:
+    """The Update form's Tracker project follows the selected TRACKER (its
+    projects, fetched once per tracker per dialog), with the customer's own
+    project preselected while its own tracker is selected. A project that
+    can't be listed (offline, no token) still shows — saving keeps it — and
+    a hint says when the list is only the projects already in use."""
+    if not all(n in widgets for n in ("customer_name", "tracker_name", "tracker_project")):
+        return
+    customer, tracker, project = (widgets[n] for n in ("customer_name", "tracker_name",
+                                                       "tracker_project"))
+    cache: dict = {}
+    latest = {"n": 0}  # a customer change and its tracker change both refresh: the last wins
+
+    async def refresh(_=None):
+        latest["n"] = n = latest["n"] + 1
+        name = tracker.value
+        if name and name not in cache:
+            cache[name] = await _projects_of_tracker(core, name)
+        if n != latest["n"]:
+            return
+        options, note = cache[name] if name else ([], None)
+        options = list(options)
+        own_tracker = (await data_fetcher("tracker_current") or {}).get(customer.value)
+        own_project = (await data_fetcher("tracker_project_current") or {}).get(customer.value)
+        if n != latest["n"]:
+            return
+        value = project.value
+        if name and name == own_tracker:
+            value = own_project or None
+        elif value not in options:
+            value = None
+        if value and value not in options:
+            options.append(value)
+        project.widget.options = options
+        project.widget.value = value
+        if note:
+            project.widget.props(f'hint="{note}"')
+        else:
+            project.widget.props(remove="hint")
+        project.widget.update()
+
+    customer.widget.on_value_change(refresh)
+    tracker.widget.on_value_change(refresh)
+
+
+def _amount(value) -> str:
+    return f"{value:,.2f}".replace(",", " ")
+
+
+def _difference(value) -> str:
+    return f"{value:+,.2f}".replace(",", " ")
+
+
+def _rate(wage: int, currency: str) -> str:
+    return f"{wage:,} {currency}".replace(",", " ")
+
+
+def _effect_rows(plan: dict) -> list[tuple[str, str]]:
+    """What saving re-prices, as (label, value) rows for a confirmation."""
+    n, currency = plan["entries"], plan["currency"]
+    if not n:
+        return [("Time entries re-priced", "none")]
+    first, last = plan["first_day"], plan["last_day"]
+    span = f"{first:%Y-%m-%d}" + ("" if first == last else f" – {last:%Y-%m-%d}")
+    return [
+        ("Time entries re-priced", f"{n}, dated {span}"),
+        ("Amount before", f"{_amount(plan['cost_before'])} {currency}"),
+        ("Amount after", f"{_amount(plan['cost_after'])} {currency}"),
+        ("Difference", f"{_difference(plan['cost_after'] - plan['cost_before'])} {currency}"),
+    ]
+
+
+_INVOICED_NOTE = ("Reports and the Time Tracker show the new amounts, also for time "
+                  "already invoiced.")
+
+
+async def _confirm(title: str, rows: list[tuple[str, str]], ok: str, note: str = None) -> bool:
+    muted = helpers.UI_STYLES.get_layout_classes("muted_text")
+    with ui.dialog() as dialog, ui.card().classes("p-4 gap-3").style("max-width: 34rem"):
+        ui.label(title).classes("text-base font-semibold")
+        with ui.grid(columns="auto auto").classes("gap-x-6 gap-y-1 text-sm"):
+            for label, value in rows:
+                ui.label(label).classes(muted)
+                ui.label(value).classes("tabular-nums")
+        if note:
+            ui.label(note).classes("text-xs " + muted)
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=lambda: dialog.submit(False)).props("flat no-caps")
+            ui.button(ok, on_click=lambda: dialog.submit(True)).props("color=primary no-caps")
+    confirmed = await dialog
+    dialog.delete()
+    return bool(confirmed)
+
+
+# The Update form's rate fields → preview_customer_rate's parameters.
+_RATE_FIELDS = {"customer_name": "customer_name", "wage": "wage", "rate_from": "valid_from"}
+
+
+def _rate_values(values: dict) -> dict | None:
+    """The preview's arguments from the form's values; None until all are set."""
+    args = {param: values.get(field) for field, param in _RATE_FIELDS.items()}
+    return None if any(v in (None, "") for v in args.values()) else args
+
+
+def _rate_table(periods: list, currency: str, accent: str, changed=(), on_remove=None,
+                effects=None) -> None:
+    """Rate periods as From / To / Rate rows — the `changed` ones stand out.
+    With `on_remove`, every change after the first has a ✕; with `effects`
+    (per period: entries re-priced, cost before, after), what saving
+    re-prices shows beside each changed period."""
+    muted = helpers.UI_STYLES.get_layout_classes("muted_text")
+    heads = ["From", "To", "Rate"]
+    if effects is not None:
+        heads += ["Re-priced", "Change"]
+    if on_remove:
+        heads.append("")
+    with ui.grid(columns=" ".join(["auto"] * len(heads))).classes(
+            "gap-x-4 gap-y-0 items-center text-xs leading-5"):
+        for head in heads:
+            ui.label(head).classes(muted + (" text-right" if head in ("Re-priced", "Change") else ""))
+        for i, (start, end, wage) in enumerate(periods):
+            mark = f" font-semibold text-{accent}" if (start, end, wage) in changed else ""
+            ui.label(f"{start:%Y-%m-%d}").classes(mark)
+            ui.label(f"{end:%Y-%m-%d}" if end else "ongoing").classes(mark)
+            ui.label(_rate(wage, currency)).classes("text-right tabular-nums" + mark)
+            if effects is not None:
+                n, before, after = effects[i]
+                shown = n or mark
+                ui.label(f"{n} {'entry' if n == 1 else 'entries'}" if shown else "").classes(
+                    "text-right tabular-nums" + mark)
+                ui.label(_difference(after - before) if n else ("–" if mark else "")).classes(
+                    "text-right tabular-nums" + mark)
+            if not on_remove:
+                continue
+            if i == 0:
+                ui.label("")
+            else:
+                ui.button(icon="close",
+                          on_click=lambda _=None, s=start, w=periods[i - 1][2]: on_remove(s, w)
+                          ).props("flat dense round size=xs color=grey-6").tooltip(
+                    "Remove this change: the earlier rate applies again")
+
+
+def _render_rate_preview(core, widgets: dict) -> None:
+    """Under the Update form: the customer's rates (each change removable),
+    and — once the rate or its date is changed — the rates after saving and
+    the logged time re-priced. Kept current as the fields change, in a
+    steady space so the dialog doesn't jump while typing."""
+    muted = helpers.UI_STYLES.get_layout_classes("muted_text")
+    accent = core.theme.get("accent")
+    # Framed like the form's read-only fields (Quasar's dashed outline), and
+    # shown once there is something to frame.
+    box = ui.column().classes("w-full gap-1 items-center rounded").style(
+        "border: 1px dashed rgba(128, 128, 128, 0.5); padding: 0.5rem 0.75rem")
+    box.set_visibility(False)
+    latest = {"n": 0}  # an older preview finishing late must not win
+
+    async def remove(start, earlier_wage):
+        name = widgets["customer_name"].value
+        args = {"customer_name": name, "wage": earlier_wage, "valid_from": start}
+        try:
+            plan = await core.query_engine.function_db("preview_customer_rate", **args)
+            rows = [(f"Rate from {start:%Y-%m-%d}",
+                     f"{_rate(earlier_wage, plan['currency'])} (the earlier rate)"),
+                    *_effect_rows(plan)]
+            if not await _confirm(f"Remove the rate change on {start:%Y-%m-%d}?", rows, "Remove",
+                                  note=_INVOICED_NOTE if plan["entries"] else None):
+                return
+            plan = await core.query_engine.function_db("set_customer_rate", **args)
+        except Exception as e:
+            ui.notify(f"Error: {e}", type="negative")
+            return
+        core.logger.info(f"Removed the rate change on {start} for '{name}'")
+        ui.notify(f"Rate change on {start:%Y-%m-%d} removed", color="positive")
+        core.event_bus.emit("ui_refresh_requested")
+        # The form's rate is today's again — saving it untouched changes nothing.
+        from ..pg_database import _rate_on
+
+        widgets["wage"].value = _rate_on(plan["after"], clock.today_local())
+        widgets["rate_from"].value = clock.today_local().isoformat()
+        await refresh()
+
+    async def refresh(_=None):
+        latest["n"] = n = latest["n"] + 1
+        args = _rate_values({k: widgets[k].value for k in _RATE_FIELDS if k in widgets})
+        if args is None:
+            box.clear()
+            box.set_visibility(False)
+            return
+        try:
+            plan = await core.query_engine.function_db("preview_customer_rate", **args)
+        except Exception as e:
+            plan = e
+        if n != latest["n"]:
+            return
+        box.clear()
+        box.set_visibility(True)
+        with box:
+            if isinstance(plan, Exception):
+                ui.label(str(plan)).classes("text-xs text-negative")
+                return
+            before, after, currency = plan["before"], plan["after"], plan["currency"]
+            changed = after != before or plan["entries"]
+            rows = len(before) + 3  # title, header, the rows, and one a change can add
+            with ui.row().classes("w-full gap-10 items-start justify-center no-wrap").style(
+                    f"min-height: {rows * 1.25}rem"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Hourly rates").classes("text-xs font-semibold leading-5")
+                    _rate_table(before, currency, accent, on_remove=remove)
+                with ui.column().classes("gap-0"):
+                    ui.label("After saving").classes("text-xs font-semibold leading-5")
+                    if changed:
+                        _rate_table(after, currency, accent,
+                                    changed=[p for p in after if p not in before],
+                                    effects=plan["effects"])
+                    else:
+                        ui.label("Change the rate or its date to see the result here.").classes(
+                            "text-xs leading-5 " + muted)
+
+    for name in _RATE_FIELDS:
+        if name in widgets:
+            widgets[name].widget.on_value_change(refresh)
+
+
+async def _confirm_rate_change(core, values: dict) -> bool:
+    """Saving re-prices logged time: say what changes, and ask first."""
+    args = _rate_values(values)
+    if args is None:
+        return True
+    plan = await core.query_engine.function_db("preview_customer_rate", **args)
+    if not plan["entries"]:
+        return True
+    rows = [("New rate", f"{_rate(plan['wage'], plan['currency'])} from "
+                         f"{plan['valid_from']:%Y-%m-%d}"), *_effect_rows(plan)]
+    return await _confirm(f"Change the hourly rate of {plan['customer_name']}?", rows,
+                          "Change rate", note=_INVOICED_NOTE)
+
+
 def entity_sections(core) -> dict:
     """{entity_key: section} for the configured manageable entities —
     feeds the nav bar's Data menu and the palette's shortcuts."""
@@ -274,6 +547,13 @@ async def render_entity_form(
             for name, widget in widgets.items()
             if _visible(name)
         }
+        if entity_type == "customer" and operation == "update" and "wage" in kwargs:
+            try:
+                if not await _confirm_rate_change(core, kwargs):
+                    return
+            except Exception as e:
+                ui.notify(f"Error: {e}", type="negative")
+                return
         # Snapshot before the values get cleared below — used to decide whether
         # this change touched tracker connections (see re-init at the end).
         devops_touched = entity_type == "tracker" or (
@@ -373,6 +653,11 @@ async def render_entity_form(
                 parent_map[field_name] = dw
                 dynamic_widgets.append(dw)
 
+        if entity_type == "customer" and operation == "update" and "wage" in widgets:
+            _render_rate_preview(core, widgets)
+        if entity_type == "customer" and operation == "update":
+            _wire_tracker_projects(core, widgets, data_fetcher)
+
         with ui.row().classes("w-full justify-end gap-2"):
             if entity_type == "tracker" and operation in ("add", "update"):
                 _render_test_connection_button(core, widgets, _visible)
@@ -454,7 +739,7 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     data_sources["tracker_project_current"] = {}
                     data_sources["expected_work_pct"] = {}
                     data_sources["color"] = {}
-                    data_sources["currency_current"] = {}
+                    data_sources["wage_current"] = {}  # the rate in force today (Postgres)
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
                         data_sources["new_customer_name"][cname] = cname
@@ -469,12 +754,8 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                             if pd.notna(row["expected_work_pct"]) else 0
                         )
                         data_sources["color"][cname] = row["color"] or ""
-                        data_sources["currency_current"][cname] = row.get("currency") or ""
-                    # Available projects per customer, from the live connections.
-                    eng = getattr(core, "tracker_engine", None)
-                    data_sources["tracker_projects"] = (
-                        eng.get_available_projects() if eng is not None else {}
-                    )
+                        if pd.notna(row.get("wage")):
+                            data_sources["wage_current"][cname] = int(row["wage"])
 
             elif operation == "reenable":
                 # Get customers that are disabled and have no active entry
