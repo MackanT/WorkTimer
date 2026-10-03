@@ -1071,6 +1071,9 @@ a required real `POSTGRES_PASSWORD`, and the README rewrite below.
 
 ## After 6.0.0
 
+Released as **6.1.0** (2026-10-03): the hourly rate, the currency and the
+tracker project below.
+
 - **Hourly rate from any date** (2026-10-01, a colleague's request): the
   Customers dialog's *Update* tab has *Hourly rate* and *Rate from*
   (Postgres only, `backend:` fields) — a rate from a date, back in time or
@@ -1090,14 +1093,28 @@ a required real `POSTGRES_PASSWORD`, and the README rewrite below.
   rate set again from its date, previewed and confirmed, after which the
   form's rate resets to today's. What a change re-prices shows per period
   (entries, amount difference: the plan's `effects`) in the After-saving
-  table, and the confirmations list it as label / value rows.
+  table, and the confirmations list it as label / value rows. The 5.x raise
+  (adding the customer again) takes the same path, so a back-dated raise
+  also re-prices time logged since its date. Tests:
+  [test_pg_database.py](../tests/test_pg_database.py) (hourly rates),
+  the dialog in [test_smoke_pages_pg.py](../tests/test_smoke_pages_pg.py).
 - **The currency is out of the customer forms** (2026-10-03): every
   customer is SEK (insert_customer's default) until other currencies are
   needed; the data layer, Reports' per-currency amounts and the import keep
-  supporting them. The 5.x raise (adding the customer again) takes the same path, so a
-  back-dated raise also re-prices time logged since its date. Tests:
-  [test_pg_database.py](../tests/test_pg_database.py) (hourly rates),
-  the dialog in [test_smoke_pages_pg.py](../tests/test_smoke_pages_pg.py).
+  supporting them.
+- **Tracker project follows the selected tracker** (2026-10-03): the
+  Update tab's *Tracker project* (was "Project") listed the projects of the
+  customer's live connection — empty when linking a tracker to a customer
+  without one, or switching tracker, until saved and reconnected. Now
+  `_wire_tracker_projects` (add_data.py) lists the selected tracker's
+  projects: a live connection of a customer on it, else a connection with
+  its stored credentials (as Test connection), once per tracker per dialog;
+  without a token or reachable tracker, the projects its customers use, with
+  a hint. The customer's own project is preselected on its own tracker, and
+  a stored project always shows, so saving can't clear it. With it, a fix in
+  the shared dropdown: a parent change whose new parent has no default
+  clears the value — a customer without a tracker kept the previous
+  customer's, and saving linked it.
 
 ---
 
