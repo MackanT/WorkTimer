@@ -5,6 +5,9 @@ rules, the query editor's row edit (plan step 2), soft delete, the work-item
 cache, and one API instance per user.
 """
 
+from datetime import date, timedelta
+from decimal import Decimal
+
 import pandas as pd
 import pytest
 
@@ -304,6 +307,174 @@ def test_tracker_tokens_round_trip_through_the_key_in_secrets_dir(db, tmp_path):
     assert db.get_trackers().iloc[0]["pat_token"].startswith("enc:")
     assert db.get_tracker_credentials("Ops") == ("devops", "ops", "secret-pat")
     assert (tmp_path / ".pat_key").exists()
+
+
+# ── hourly rates: from any date, re-pricing that span ──────────────────────
+
+
+def _rates(db):
+    df = db.fetch_query("select valid_from::text, valid_to::text, wage from customer_wages "
+                        "order by valid_from")
+    return [tuple(None if pd.isna(v) else v for v in r) for r in df.itertuples(index=False)]
+
+
+def _log(db, *days, project="Build", customer="Acme"):
+    for day in days:
+        db.insert_manual_time_row(*_pid(db, project, customer), f"{day} 09:00", f"{day} 11:00")
+
+
+def test_a_rate_set_back_in_time_re_prices_only_its_span(db):
+    _acme(db)  # 1000 from 2026-01-01
+    _log(db, "2026-08-03", "2026-09-02", "2026-10-05")
+    db.set_customer_rate("Acme", 1200, "2026-10-01")
+
+    plan = db.set_customer_rate("Acme", 1100, "2026-09-01")  # until the October change
+
+    assert _rates(db) == [("2026-01-01", "2026-08-31", 1000), ("2026-09-01", "2026-09-30", 1100),
+                          ("2026-10-01", None, 1200)]
+    assert [(e["wage_snapshot"], e["cost"]) for e in _entries(db)] == [
+        (1000, 2000), (1100, 2200), (1200, 2400)]
+    assert (plan["entries"], plan["first_day"], plan["last_day"]) == (
+        1, date(2026, 9, 2), date(2026, 9, 2))
+    assert (plan["cost_before"], plan["cost_after"]) == (Decimal("2000.00"), Decimal("2200.00"))
+    assert plan["effects"] == [(0, 0, 0), (1, Decimal("2000.00"), Decimal("2200.00")), (0, 0, 0)]
+
+
+def test_the_preview_changes_nothing(db):
+    _acme(db)
+    _log(db, "2026-09-02")
+
+    plan = db.preview_customer_rate("Acme", 1500, "2026-09-01")
+
+    assert plan["before"] == [(date(2026, 1, 1), None, 1000)]
+    assert plan["after"] == [(date(2026, 1, 1), date(2026, 8, 31), 1000), (date(2026, 9, 1), None, 1500)]
+    assert (plan["entries"], plan["cost_after"], plan["currency"]) == (1, Decimal("3000.00"), "SEK")
+    assert "changes" not in plan
+    assert _rates(db) == [("2026-01-01", None, 1000)]
+    assert _entries(db)[0]["cost"] == 2000
+
+
+def test_setting_the_rate_from_before_a_change_again_removes_it(db):
+    _acme(db)
+    _log(db, "2026-09-02")
+    db.set_customer_rate("Acme", 1200, "2026-09-01")
+
+    db.set_customer_rate("Acme", 1000, "2026-09-01")
+
+    assert _rates(db) == [("2026-01-01", None, 1000)]
+    assert _entries(db)[0]["cost"] == 2000
+
+
+def test_a_rate_from_before_the_first_one_starts_the_history(db):
+    _acme(db)
+    _log(db, "2025-12-15")  # before the first rate: priced at it
+
+    db.set_customer_rate("Acme", 900, "2025-12-01")
+
+    assert _rates(db) == [("2025-12-01", "2025-12-31", 900), ("2026-01-01", None, 1000)]
+    assert _entries(db)[0]["wage_snapshot"] == 900
+
+
+def test_a_rate_merges_with_the_next_one_when_they_are_equal():
+    from src.pg_database import _with_rate
+
+    periods = [(date(2026, 1, 1), date(2026, 8, 31), 1000), (date(2026, 9, 1), None, 1200)]
+
+    assert _with_rate(periods, date(2026, 8, 1), 1200) == [
+        (date(2026, 1, 1), date(2026, 7, 31), 1000), (date(2026, 8, 1), None, 1200)]
+
+
+def test_re_pricing_keeps_the_bonus_rate_and_reaches_a_running_timer(db):
+    db.insert_bonus("2026-01-01", 10)
+    _acme(db)
+    _log(db, "2026-09-02")
+    db.insert_timer_start_row(*_pid(db, "Build"), "2026-09-03 09:00")
+
+    db.set_customer_rate("Acme", 1500, "2026-09-01")
+
+    done, running = _entries(db)
+    assert (done["wage_snapshot"], done["cost"]) == (1500, 3000)
+    assert db.fetch_query("select user_bonus from time_entries order by key_time_entry")[
+        "user_bonus"].iloc[0] == 300
+    assert running["wage_snapshot"] == 1500 and pd.isna(running["cost"])
+    db.insert_time_row(*_pid(db, "Build"), end_time="2026-09-03 10:00")
+    assert _entries(db)[1]["cost"] == 1500  # stopped at the new rate
+
+
+def test_only_the_customers_live_entries_change(db):
+    _acme(db)
+    db.insert_customer("Beta", "2026-01-01", 800)
+    db.insert_project("Beta", "Ops")
+    _log(db, "2026-09-02", "2026-09-03")
+    _log(db, "2026-09-02", project="Ops", customer="Beta")
+    db.delete_time_entry(_entries(db)[1]["id"])
+
+    plan = db.set_customer_rate("Acme", 1500, "2026-09-01")
+
+    assert plan["entries"] == 1
+    assert [e["wage_snapshot"] for e in _entries(db)] == [1500, 1000, 800]
+
+
+def test_a_back_dated_raise_re_prices_the_time_logged_since(db):
+    """Adding the customer again with a new wage (the 5.x raise) goes the
+    same way: from its date, the new wage — also for time already logged."""
+    _acme(db)
+    _log(db, "2026-08-03", "2026-09-02")
+
+    db.insert_customer("Acme", "2026-09-01", 1200)
+
+    assert [e["wage_snapshot"] for e in _entries(db)] == [1000, 1200]
+    assert _rates(db) == [("2026-01-01", "2026-08-31", 1000), ("2026-09-01", None, 1200)]
+
+
+def test_the_update_form_sets_the_rate_with_the_rest(db):
+    _acme(db)
+    _log(db, "2026-09-02")
+
+    db.update_customer("Acme", "Acme AB", color="#123456", wage=1500, rate_from="2026-09-01")
+
+    assert _rates(db) == [("2026-01-01", "2026-08-31", 1000), ("2026-09-01", None, 1500)]
+    assert _entries(db)[0]["cost"] == 3000
+    assert db.get_current_customer_names()["customer_name"].tolist() == ["Acme AB"]
+
+
+def test_an_update_with_the_rate_left_as_it_was_changes_no_rate(db):
+    """The form prefills the rate in force today — not a later one already
+    set — so saving it untouched (a rename, say) changes no rate."""
+    _acme(db)
+    later = date.today() + timedelta(days=30)
+    db.set_customer_rate("Acme", 1300, later.isoformat())
+    [prefill] = db.get_current_customer_details()["wage"].tolist()
+
+    db.update_customer("Acme", "Acme", wage=prefill, rate_from=date.today().isoformat())
+
+    assert prefill == 1000
+    assert _rates(db) == [("2026-01-01", (later - timedelta(days=1)).isoformat(), 1000),
+                          (later.isoformat(), None, 1300)]
+
+
+def test_a_negative_rate_or_an_unknown_customer_is_refused(db):
+    _acme(db)
+
+    with pytest.raises(ValueError, match="negative"):
+        db.set_customer_rate("Acme", -1, "2026-09-01")
+    with pytest.raises(ValueError, match="No customer"):
+        db.preview_customer_rate("Nobody", 100, "2026-09-01")
+    assert _rates(db) == [("2026-01-01", None, 1000)]
+
+
+def test_a_rate_change_reaches_only_the_users_own_customer(db, pg_schema_db, tmp_path):
+    with psycopg.connect(pg_schema_db) as admin:
+        user2 = admin.execute("insert into users (bk_user) values ('second') "
+                              "returning key_user").fetchone()[0]
+    other = PgDatabase(db.pools, db.log_engine, user_key=user2, secrets_dir=str(tmp_path))
+    _acme(db)
+    other.insert_customer("Acme", "2026-01-01", 500)
+
+    other.set_customer_rate("Acme", 700, "2026-01-01")
+
+    assert db.get_data_input_list()["wage"].tolist() == [1000]
+    assert other.get_data_input_list()["wage"].tolist() == [700]
 
 
 # ── one instance per user ───────────────────────────────────────────────────

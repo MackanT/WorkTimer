@@ -162,6 +162,51 @@ def _money(started: datetime, ended: datetime, wage: int, bonus: Decimal):
     return hours, cost, user_bonus
 
 
+def _public(plan: dict) -> dict:
+    """A rate plan without the internals only the write needs."""
+    return {k: v for k, v in plan.items() if k not in ("key", "changes")}
+
+
+def _repriced(plan: dict) -> str:
+    return f"; {plan['entries']} time entries re-priced" if plan["entries"] else ""
+
+
+def _day(date_key: int) -> date:
+    return date(date_key // 10000, date_key // 100 % 100, date_key % 100)
+
+
+def _period_of(periods: list[tuple], day: date) -> int:
+    """The index of the period whose rate applies on `day`, as _snapshots
+    looks it up: the period holding the day, else the first."""
+    for i, (start, end, _) in enumerate(periods):
+        if start <= day and (end is None or day <= end):
+            return i
+    return 0
+
+
+def _rate_on(periods: list[tuple], day: date) -> int:
+    """The rate in force on `day` (0 without any period)."""
+    return periods[_period_of(periods, day)][2] if periods else 0
+
+
+def _with_rate(periods: list[tuple], start: date, wage: int) -> list[tuple]:
+    """`periods` — (valid_from, valid_to or None, wage), oldest first — with
+    `wage` in force from `start` until the next change after it: a period it
+    cuts into ends the day before, one starting that day is replaced, and
+    neighbours with the same rate merge."""
+    later = [p for p in periods if p[0] > start]
+    end = later[0][0] - timedelta(days=1) if later else None
+    earlier = [(f, t if t is not None and t < start else start - timedelta(days=1), w)
+               for f, t, w in periods if f < start]
+    merged = []
+    for f, t, w in sorted([*earlier, (start, end, wage), *later]):
+        if merged and merged[-1][2] == w and merged[-1][1] == f - timedelta(days=1):
+            merged[-1] = (merged[-1][0], t, w)
+        else:
+            merged.append((f, t, w))
+    return merged
+
+
 class PgDatabase:
     backend = "postgres"
 
@@ -448,18 +493,17 @@ class PgDatabase:
                 assignments = ", ".join(f"{c} = %({c})s" for c in changes)
                 conn.execute(f"update customers set {assignments} where key_customer = %(key)s",
                              {**changes, "key": key})
-                current = conn.execute(
-                    "select key_customer_wage, valid_from from customer_wages "
-                    "where fk_customer = %s and valid_to is null", (key,)).fetchone()
-                if current is not None:
-                    if start <= current[1]:
-                        raise ValueError(
-                            f"A wage change for '{customer_name}' must start after "
-                            f"{current[1]:%Y-%m-%d}, when the current wage began")
-                    conn.execute("update customer_wages set valid_to = %s "
-                                 "where key_customer_wage = %s",
-                                 (start - timedelta(days=1), current[0]))
-                self.log_engine.info(f"New wage {wage} for '{customer_name}' from {start}")
+                current = self._one(conn, "select valid_from from customer_wages "
+                                          "where fk_customer = %s and valid_to is null", (key,))
+                if current is not None and start <= current:
+                    raise ValueError(
+                        f"A wage change for '{customer_name}' must start after "
+                        f"{current:%Y-%m-%d}, when the current wage began")
+                plan = self._rate_plan(conn, customer_name, wage, start)
+                self._apply_rate_plan(conn, plan)
+                self.log_engine.info(f"New wage {wage} for '{customer_name}' from {start}"
+                                     f"{_repriced(plan)}")
+                return
             conn.execute("insert into customer_wages (fk_customer, wage, valid_from) "
                          "values (%s, %s, %s)", (key, wage, start))
 
@@ -467,13 +511,22 @@ class PgDatabase:
         self, customer_name: str, new_customer_name: str, org_url: str = None,
         pat_token: str = None, tracker_project: str = None, expected_work_pct: float = None,
         color: str = None, integration_type: str = None, tracker_name: str = None,
-        currency: str = None,
+        currency: str = None, wage=None, rate_from=None,
     ):
         """Rename and edit settings. None leaves a setting unchanged; "" clears
         it. The tracker type comes from the linked tracker. The currency can
-        change only while the customer has no time entries (v6_plan §4)."""
+        change only while the customer has no time entries (v6_plan §4).
+        `wage` from `rate_from` is set as set_customer_rate does — a no-op when
+        that is already the rate from then until the next change."""
         currency = _currency(currency)
         with self._tx() as conn:
+            if wage not in (None, "") and rate_from:
+                plan = self._rate_plan(conn, customer_name, wage, rate_from)
+                self._apply_rate_plan(conn, plan)
+                if plan["after"] != plan["before"] or plan["entries"]:
+                    self.log_engine.info(
+                        f"Rate {plan['wage']} {plan['currency']} for '{customer_name}' "
+                        f"from {plan['valid_from']}{_repriced(plan)}")
             changes = {"customer_name": new_customer_name}
             if currency is not None:
                 current = conn.execute(
@@ -497,6 +550,90 @@ class PgDatabase:
             assignments = ", ".join(f"{c} = %({c})s" for c in changes)
             conn.execute(f"update customers set {assignments} where customer_name = %(name)s",
                          {**changes, "name": customer_name})
+
+    # ── hourly rates ────────────────────────────────────────────────────────
+
+    def preview_customer_rate(self, customer_name: str, wage, valid_from) -> dict:
+        """What set_customer_rate would change, without changing it: the rate
+        periods before and after, and the time entries it re-prices."""
+        with self._tx() as conn:
+            return _public(self._rate_plan(conn, customer_name, wage, valid_from))
+
+    def set_customer_rate(self, customer_name: str, wage, valid_from) -> dict:
+        """`wage` becomes the customer's hourly rate from `valid_from` until the
+        next change after it — back-dated or not. Entries dated in that span
+        are re-priced at it: the one exception to entries keeping the rate
+        they were logged at (v6_plan §3) is changing the rate for their dates."""
+        with self._tx() as conn:
+            plan = self._rate_plan(conn, customer_name, wage, valid_from)
+            self._apply_rate_plan(conn, plan)
+        self.log_engine.info(f"Rate {plan['wage']} {plan['currency']} for '{customer_name}' "
+                             f"from {plan['valid_from']}{_repriced(plan)}")
+        return _public(plan)
+
+    def _rate_plan(self, conn, customer_name: str, wage, valid_from) -> dict:
+        wage = int(round(float(wage)))
+        if wage < 0:
+            raise ValueError("An hourly rate can't be negative")
+        start = date.fromisoformat(str(valid_from)[:10])
+        row = conn.execute("select key_customer, currency from customers where customer_name = %s",
+                           (customer_name,)).fetchone()
+        if row is None:
+            raise ValueError(f"No customer named '{customer_name}'")
+        key, currency = row
+        before = [tuple(p) for p in conn.execute(
+            "select valid_from, valid_to, wage from customer_wages where fk_customer = %s "
+            "order by valid_from", (key,))]
+        after = _with_rate(before, start, wage)
+        changes, days = [], []
+        cost_before = cost_after = Decimal(0)
+        # Per period after the change: (entries re-priced, their cost before, after).
+        effects = [[0, Decimal(0), Decimal(0)] for _ in after]
+        for entry, date_key, started, ended, old_wage, bonus, cost in conn.execute(
+                "select te.key_time_entry, te.fk_date, te.started_at, te.ended_at, "
+                "te.wage_snapshot, te.bonus_pct_snapshot, te.cost "
+                "from time_entries te join projects p on p.key_project = te.fk_project "
+                "where p.fk_customer = %s and te.deleted_at is null", (key,)):
+            day = _day(date_key)
+            new_wage = _rate_on(after, day)
+            if new_wage == _rate_on(before, day) or new_wage == old_wage:
+                continue  # the rate for its day is unchanged, or already its own
+            effect = effects[_period_of(after, day)]
+            effect[0] += 1
+            new_cost = new_bonus = None
+            if ended is not None:  # a running timer is priced when it stops
+                _, new_cost, new_bonus = _money(started, ended, new_wage, bonus or 0)
+                cost_before += cost or 0
+                cost_after += new_cost
+                effect[1] += cost or 0
+                effect[2] += new_cost
+            changes.append((new_wage, new_cost, new_bonus, entry))
+            days.append(day)
+        return {
+            "key": key, "customer_name": customer_name, "currency": currency,
+            "wage": wage, "valid_from": start, "before": before, "after": after,
+            "changes": changes, "entries": len(changes),
+            "effects": [tuple(e) for e in effects],
+            "first_day": min(days, default=None), "last_day": max(days, default=None),
+            "cost_before": cost_before, "cost_after": cost_after,
+        }
+
+    @staticmethod
+    def _apply_rate_plan(conn, plan: dict) -> None:
+        # Periods that stay keep their rows; valid_from is unique per customer.
+        for valid_from, _, _ in (p for p in plan["before"] if p not in plan["after"]):
+            conn.execute("delete from customer_wages where fk_customer = %s and valid_from = %s",
+                         (plan["key"], valid_from))
+        new = [(plan["key"], *p) for p in plan["after"] if p not in plan["before"]]
+        with conn.cursor() as cur:
+            if new:
+                cur.executemany(
+                    "insert into customer_wages (fk_customer, valid_from, valid_to, wage) "
+                    "values (%s, %s, %s, %s)", new)
+            if plan["changes"]:
+                cur.executemany(
+                    "update time_entries set wage_snapshot = %s, cost = %s, user_bonus = %s "
+                    "where key_time_entry = %s", plan["changes"])
 
     def disable_customer(self, customer_name: str):
         self.execute_query("update customers set is_enabled = false where customer_name = %s",
@@ -826,12 +963,23 @@ class PgDatabase:
             f"select c.customer_name from customers c where c.is_enabled order by {_CUSTOMER_ORDER}")
 
     def get_current_customer_details(self) -> pd.DataFrame:
-        """Update-dialog prefills for every enabled customer."""
+        """Update-dialog prefills for every enabled customer — the hourly rate
+        the one in force today (as _snapshots finds it), so a form saved with
+        the rate untouched changes no rate."""
         return self.fetch_query(
             f"""
             select c.customer_name, c.tracker_project, c.expected_work_pct, c.color,
-                   t.tracker_name, c.currency
+                   t.tracker_name, c.currency, w.wage
             from customers c left join trackers t on t.key_tracker = c.fk_tracker
+            left join lateral (
+                select w.wage from customer_wages w
+                where w.fk_customer = c.key_customer
+                order by ((now() at time zone (select timezone from users
+                                               where key_user = app_user()))::date
+                          between w.valid_from and coalesce(w.valid_to, 'infinity')) desc,
+                         w.valid_from
+                limit 1
+            ) w on true
             where c.is_enabled
             order by {_CUSTOMER_ORDER}
             """)
