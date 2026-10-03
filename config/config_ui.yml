@@ -392,12 +392,6 @@ add_data_page:
           label: Colour
           type: color
           optional: true
-        - name: currency
-          label: Currency (fixed once time is logged)
-          type: input
-          default: SEK
-          optional: true
-          backend: postgres
       action:
         function: "insert_customer"
         main_action: "Customer"
@@ -427,13 +421,12 @@ add_data_page:
           default_source: tracker_current
           parent: customer_name
           optional: true
+        # The selected tracker's projects — wired in add_data.py, since they
+        # follow the Tracker field, not only the customer.
         - name: "tracker_project"
-          label: "Project"
+          label: "Tracker project"
           type: select
           options: []
-          options_source: tracker_projects
-          default_source: tracker_project_current
-          parent: customer_name
           optional: true
         - name: expected_work_pct
           label: Expected work %
@@ -451,12 +444,23 @@ add_data_page:
           options_source: color
           parent: customer_name
           optional: true
-        - name: currency
-          label: Currency (fixed once time is logged)
-          type: input
+        # Postgres only: a rate from any date, re-pricing the time logged
+        # where it changes (previewed under the form).
+        - name: wage
+          label: Hourly rate
+          type: number
+          step: 1
+          min: 0
           options: []
-          options_source: currency_current
+          options_source: wage_current
           parent: customer_name
+          optional: true
+          backend: postgres
+        - name: rate_from
+          label: Rate from
+          type: date
+          options: []
+          options_source: today
           optional: true
           backend: postgres
       action:

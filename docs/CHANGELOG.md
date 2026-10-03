@@ -7,6 +7,16 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
+### 6.1.0 (2026-10-03)
+- **Features** (hosted WorkTimer)
+  - ad **change a customer's hourly rate from any date, also back in time.** *Customers → Update* has *Hourly rate* and *Rate from*: the new rate applies from that date until the customer's next rate change. Under the form, *Hourly rates* lists the customer's rates, and *After saving* shows the result — beside each changed period, how many time entries get the new price and how the amount changes. Saving asks first when logged time changes price. A change entered by mistake goes with its **✕** in the list: the earlier rate applies again. Time dated before a change keeps its price.
+  - up a raise entered the 5.x way — adding the customer again with a new wage — also re-prices the time already logged from its date.
+- **Minor improvements**
+  - up **Tracker project** (was "Project") in *Customers → Update* lists the projects of the tracker selected beside it — also one the customer isn't linked to yet. Without a token for that tracker, it offers the projects other customers already use on it, and says so.
+  - up the customer forms no longer ask for a currency: new customers are in SEK. Other currencies can return when they are needed.
+- **Bug Fixes**
+  - fx **switching to a customer without a tracker** in *Customers → Update* kept the previous customer's tracker selected — and saving linked it to the wrong customer. The work-item form's *Assigned To* likewise no longer keeps the previous customer's person.
+
 ### 6.0.0 (2026-10-01)
 - **Major changes**
   - ad **WorkTimer online.** A hosted WorkTimer runs in the browser, from any PC: sign in with your email and a one-time code sent to it, and stay signed in for 30 days. Each person has their own account — entries, customers, trackers and their tokens, notes, settings and colour theme are private to them. Ask the administrator to add your email.

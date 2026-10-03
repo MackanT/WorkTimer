@@ -48,7 +48,7 @@ yourself come along, but need rewriting: the table names changed.
 
 Entity management lives in **dialogs**: click **Data Input** in the nav bar and pick an entity (Customers / Trackers / Projects / Bonus) — the dialog opens over whatever page you're on. The command palette (**Ctrl + K**) opens the same dialogs directly ("Add customer", "Update tracker", …).
 
-1. **Add a customer** — *Data Input → Customers*, fill in the name, hourly rate and currency, click **Add**
+1. **Add a customer** — *Data Input → Customers*, fill in the name and hourly rate, click **Add**
 2. **Add a project** — *Data Input → Projects* (or the **＋ Add project** button on the customer's card on the Time Tracker), enter a name, click **Add**
 3. **Optionally configure a bonus** — *Data Input → Bonus*, fill in the bonus percent, click **Add**
 4. **Optionally connect a tracker** — *Data Input → Trackers*, then link it on the customer (see [Tracker integration](#tracker-integration) below)
@@ -110,7 +110,7 @@ A Kanban view of the connected trackers' work items, from WorkTimer's copy of th
 A visual analytics dashboard for your tracked time.
 
 - **Filters** — pick customers (one, several, or all) and a period (Day / Week / Month / Year / Custom)
-- **Stat tiles** — hours, billable amount and target utilisation for the selection; amounts are shown per currency when customers bill in different ones
+- **Stat tiles** — hours, billable amount and target utilisation for the selection
 - **Charts** — daily hours trend, hours by project, hours by customer, and top work items, coloured by each customer's colour
 - **Billing rounding** — round the billable tiles/CSV up to an increment, applied *per entry*, *per work item*, *per project* or on the *grand total*; display-only, never written to the database (the default increment comes from *Settings → Data*)
 - **CSV export** — download the current selection for invoicing or further analysis
@@ -122,8 +122,9 @@ A visual analytics dashboard for your tracked time.
 Each dialog has operation tabs (Add / Update / Disable / Re-enable — Delete for trackers) and closes on a successful save.
 
 ### Customers
-- **Add** — name, hourly rate, currency, optional tracker link
-- **Update** — rename, link/unlink a tracker, pick the tracker project, expected work %, colour; the currency only until the customer has time entries
+- **Add** — name, hourly rate, optional tracker link
+- **Update** — rename, link/unlink a tracker and pick its *Tracker project* (the DevOps/Jira project the Board, sync and new work items use — listed from the selected tracker; without its token, only the projects other customers already use on it), expected work %, colour
+- **Hourly rate** (in *Update*) — a new rate from any date (*Rate from*), also back in time: it applies until the customer's next rate change. Below the form, *Hourly rates* lists the customer's rates (from, to, rate); once you change the rate or its date, *After saving* shows the result, and beside each changed period how many time entries get the new price and how the amount changes — saving asks first. Time dated before the change keeps its price. A change entered by mistake goes with its **✕** in the list: the earlier rate applies again
 - **Disable / Re-enable** — soft-archive without losing historical entries (disabled customers disappear from the board and pickers; their cached items return on re-enable)
 
 ### Trackers
