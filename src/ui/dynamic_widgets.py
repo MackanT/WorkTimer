@@ -797,6 +797,11 @@ class DynamicDropDown(DynamicWidget):
                 ) if isinstance(normalized_options, (list, dict)) else set()
                 if not option_values or coerced_default in option_values:
                     self.widget.value = coerced_default
+            elif parent_val is not None:
+                # The new parent has none of its own: none, not the last
+                # parent's (a customer without a tracker kept the previous
+                # customer's — and saving linked it).
+                self.widget.value = None
 
         self.widget.update()
 
