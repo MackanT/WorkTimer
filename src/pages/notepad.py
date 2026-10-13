@@ -340,6 +340,16 @@ async def notepad_page():
         idx = state["active_index"]
         return notes[idx] if notes and 0 <= idx < len(notes) else None
 
+    # The note open last opens again — per user, like the collapsed groups.
+    active_key = pref_key(core.user_key, "notepad_active_note")
+
+    def remember_active():
+        note = active_note()
+        try:
+            app.storage.user[active_key] = note["filename"] if note else ""
+        except Exception:
+            pass  # a preference: never worth failing the page over
+
     def filtered_notes() -> list[tuple[int, dict]]:
         """Return (original_index, note) pairs matching search query."""
         q = state["search_query"].lower().strip()
@@ -410,6 +420,8 @@ async def notepad_page():
             new_filename = save_note(notes_dir, note, content)
             note["content"] = content
             note["filename"] = new_filename
+            if new_filename != old_filename:
+                remember_active()  # renamed by its new title
 
             if not note["readonly_name"]:
                 note["title"] = title_from_content(content, new_filename)
@@ -1002,6 +1014,7 @@ async def notepad_page():
     def select_note(index: int):
         state["active_index"] = index
         state["edit_mode"] = False
+        remember_active()
         render_toolbar_bar()
         render_sidebar()
         render_content()
@@ -1021,6 +1034,7 @@ async def notepad_page():
         state["notes"].append(note)
         state["active_index"] = len(state["notes"]) - 1
         state["edit_mode"] = True
+        remember_active()
         render_toolbar_bar()
         render_sidebar()
         render_content()
@@ -1056,6 +1070,7 @@ async def notepad_page():
             max(0, state["active_index"] - 1) if state["notes"] else 0
         )
         state["edit_mode"] = False
+        remember_active()
         render_toolbar_bar()
         render_sidebar()
         render_content()
@@ -1069,6 +1084,12 @@ async def notepad_page():
         )
     except Exception:
         state["collapsed_groups"] = set()
+    try:
+        last = app.storage.user.get(active_key)
+    except Exception:
+        last = None
+    state["active_index"] = next(
+        (i for i, n in enumerate(state["notes"]) if last and n["filename"] == last), 0)
     render_toolbar_bar()
 
     with page_card(scrollable=False):

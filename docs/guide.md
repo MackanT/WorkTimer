@@ -44,6 +44,14 @@ Only `worktimer.db` works too, but then your notes and settings stay behind
 and the tracker tokens must be entered again. Saved queries you wrote
 yourself come along, but need rewriting: the table names changed.
 
+### Moving from Excel
+
+Keep your time in an Excel sheet? Copy it — header row included — and paste
+it into *Settings → Data → Import time from Excel*. WorkTimer recognises the
+columns, creates your customers and projects, and asks only for each new
+customer's hourly rate. Step by step:
+[Documentation → Excel import](/info?tab=excel_import).
+
 ### Starting fresh
 
 Entity management lives in **dialogs**: click **Data Input** in the nav bar and pick an entity (Customers / Trackers / Projects / Bonus) — the dialog opens over whatever page you're on. The command palette (**Ctrl + K**) opens the same dialogs directly ("Add customer", "Update tracker", …).
@@ -69,7 +77,7 @@ WorkTimer has a fixed top navigation bar with the following pages:
 | **Tasks** | Built-in task manager — shown when switched on for this WorkTimer |
 | **Notepad** | Markdown notes organised in a sidebar |
 | **Log** | Real-time log of what WorkTimer does for you |
-| **Documentation** | This guide, plus shortcuts, changelog and tracker contacts |
+| **Documentation** | This guide, plus the Excel import, shortcuts, changelog and tracker contacts |
 | **Settings** | Tracker sync/defaults/contacts, tags, theme, and data tools |
 
 ---
@@ -196,6 +204,7 @@ Define tags used to categorise work items — icon + colour per tag, add/edit/de
 ### Data
 - **Backup** — *Backup now* keeps a copy of your data, listed here; *Download* saves one to your PC
 - **Import** — bring in a 5.x zip or database, or a WorkTimer backup ([Moving from WorkTimer 5.x](#moving-from-worktimer-5x))
+- **Import time from Excel** — paste a time report copied from Excel; its customers and projects are created, and an import can be undone ([Documentation → Excel import](/info?tab=excel_import))
 - **Time & billing defaults** — rounding and target settings used by Reports
 - **About** — version, plus **Report a bug** / **Request a feature** buttons that open a prefilled GitHub issue (also available from the command palette)
 

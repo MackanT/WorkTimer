@@ -477,6 +477,108 @@ def test_a_rate_change_reaches_only_the_users_own_customer(db, pg_schema_db, tmp
     assert other.get_data_input_list()["wage"].tolist() == [700]
 
 
+# ── pasted time (the Excel import) ─────────────────────────────────────────
+
+
+def _pasted(*rows):
+    """Entries as src/paste_import.parse makes them: (day, customer, project,
+    hours[, comment])."""
+    from src.paste_import import Entry
+
+    return [Entry(n, date.fromisoformat(day), customer, project, Decimal(str(hours)), None, None,
+                  rest[0] if rest else "")
+            for n, (day, customer, project, hours, *rest) in enumerate(rows, start=2)]
+
+
+def test_a_paste_creates_its_customers_projects_and_entries(db):
+    _acme(db)  # 1000 from 2026-01-01
+    entries = _pasted(("2026-03-02", "acme ", "Build", 2, "Review"),
+                      ("2026-03-02", "Beta AB", "General", 1.5),
+                      ("2026-03-04", "Beta AB", "Ops", 3),
+                      ("2025-11-03", "Old Corp", "General", 4))
+
+    check = db.check_pasted_entries(entries)
+    result = db.import_pasted_entries(entries, rates={"Beta AB": 950}, inactive={"Old Corp"})
+
+    assert check["acme "] == {"name": "Acme", "exists": True, "enabled": True,
+                              "new_projects": [], "already_here": 0}
+    assert check["Beta AB"]["new_projects"] == ["General", "Ops"] and not check["Beta AB"]["exists"]
+    assert (result["entries"], result["skipped"]) == (4, 0)
+    assert result["customers"] == ["Beta AB", "Old Corp"]
+    assert result["projects"] == ["Beta AB / General", "Beta AB / Ops", "Old Corp / General"]
+    rows = db.fetch_query(
+        "select c.customer_name, p.project_name, te.started_at, te.wage_snapshot, te.cost, "
+        "te.comment, c.is_enabled from time_entries te join projects p on p.key_project = "
+        "te.fk_project join customers c on c.key_customer = p.fk_customer "
+        "order by te.key_time_entry").to_dict("records")
+    assert [(r["customer_name"], r["project_name"], r["wage_snapshot"], r["cost"])
+            for r in rows] == [("Acme", "Build", 1000, 2000), ("Beta AB", "General", 950, 1425),
+                               ("Beta AB", "Ops", 950, 2850), ("Old Corp", "General", 0, 0)]
+    # Hours only: from 08:00 local (07:00 UTC in March), one after another.
+    assert [r["started_at"].isoformat() for r in rows[:2]] == [
+        "2026-03-02T07:00:00+00:00", "2026-03-02T09:00:00+00:00"]
+    assert rows[0]["comment"] == "Review" and rows[3]["is_enabled"] is False
+    assert sorted(_rates(db)) == [("2025-11-03", None, 0), ("2026-01-01", None, 1000),
+                                  ("2026-03-02", None, 950)]
+
+
+def test_pasting_the_same_table_again_adds_nothing(db):
+    entries = _pasted(("2026-03-02", "Acme", "Build", 1, "Call"),
+                      ("2026-03-02", "Acme", "Build", 1, "Call"),  # two calls that day
+                      ("2026-03-03", "Acme", "Build", 2))
+    db.import_pasted_entries(entries, rates={"Acme": 1000})
+
+    again = db.import_pasted_entries(entries + _pasted(("2026-03-04", "Acme", "Build", 1)))
+
+    assert db.check_pasted_entries(entries)["Acme"]["already_here"] == 3
+    assert (again["entries"], again["skipped"]) == (1, 3)
+    assert len(_entries(db)) == 4
+
+
+def test_an_import_is_undone_as_a_whole(db):
+    first = db.import_pasted_entries(_pasted(("2026-03-02", "Acme", "Build", 1),
+                                             ("2026-03-03", "Acme", "Build", 2)),
+                                     rates={"Acme": 1000})
+    db.import_pasted_entries(_pasted(("2026-03-04", "Acme", "Build", 3)))
+
+    imports = db.get_imports()
+    removed = db.undo_import(first["import_batch"])
+
+    assert imports["entries"].tolist() == [1, 2]  # newest first
+    assert removed == 2
+    assert [pd.notna(e["deleted_at"]) for e in _entries(db)] == [True, True, False]
+    assert db.get_imports()["entries"].tolist() == [1, 0]
+    assert db.get_current_customer_names()["customer_name"].tolist() == ["Acme"]  # stays
+    db.import_pasted_entries(_pasted(("2026-03-02", "Acme", "Build", 1)))  # undone: not "here"
+    assert len([e for e in _entries(db) if pd.isna(e["deleted_at"])]) == 2
+
+
+def test_imported_entries_are_in_the_backup(db, tmp_path):
+    import gzip
+    import json
+
+    result = db.import_pasted_entries(_pasted(("2026-03-02", "Acme", "Build", 1)))
+
+    with gzip.open(db.backup_to(str(tmp_path / "export.json.gz")), "rt", encoding="utf-8") as f:
+        [entry] = json.load(f)["tables"]["time_entries"]
+    assert entry["import_batch"] == result["import_batch"]
+
+
+def test_an_import_reaches_only_the_users_own_data(db, pg_schema_db, tmp_path):
+    with psycopg.connect(pg_schema_db) as admin:
+        user2 = admin.execute("insert into users (bk_user) values ('second') "
+                              "returning key_user").fetchone()[0]
+    other = PgDatabase(db.pools, db.log_engine, user_key=user2, secrets_dir=str(tmp_path))
+    _acme(db)
+    mine = db.import_pasted_entries(_pasted(("2026-03-02", "Acme", "Build", 1)))
+
+    theirs = other.import_pasted_entries(_pasted(("2026-03-02", "Acme", "Build", 1)))
+
+    assert theirs["customers"] == ["Acme"]  # their own Acme, not mine
+    assert other.undo_import(mine["import_batch"]) == 0
+    assert other.get_imports()["import_batch"].tolist() == [theirs["import_batch"]]
+
+
 # ── one instance per user ───────────────────────────────────────────────────
 
 

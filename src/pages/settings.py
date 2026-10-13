@@ -25,6 +25,7 @@ from ..ui.elements import toolbar, toolbar_group
 from ..helpers import UI_STYLES
 from ..services.backups import create_backup, list_backups
 from ..user_paths import pref_key
+from .excel_import import render_excel_import_card
 
 
 def _render_backup_card(core) -> None:
@@ -797,10 +798,19 @@ def _render_description_templates_card(core) -> None:
 
 
 async def _render_devops_contacts_tab(core: AppCore):
-    """DevOps contacts editor — in-panel customer selector + per-customer detail."""
+    """DevOps contacts editor — in-panel customer selector + per-customer detail.
+    Every customer linked to a tracker is listed, whether or not the contacts
+    file has it yet: its entry is written on its first edit."""
     path = _config_path(core, "devops_contacts.yml")
     selected: dict = {"customer": None}
     contacts_template = _template_path(core, "devops_contacts.yml")
+    try:
+        details = await core.query_engine.function_db("get_current_customer_details")
+        tracker_customers = [r["customer_name"] for r in details.to_dict("records")
+                             if r.get("tracker_name")]
+    except Exception as e:
+        core.logger.warning(f"Listing the customers with a tracker failed: {e}")
+        tracker_customers = []
 
     # Async click handler (not a bare asyncio task): NiceGUI keeps the slot
     # context for awaited handlers, which _confirm_reset's dialog needs.
@@ -876,7 +886,8 @@ async def _render_devops_contacts_tab(core: AppCore):
     # ── rebuild helpers ───────────────────────────────────────────────────────
     def _refresh_customer_select():
         dd = _load_yaml(path)
-        names = list(dd.get("customers", {}).keys())
+        in_file = list(dd.get("customers", {}).keys())
+        names = tracker_customers + [n for n in in_file if n not in tracker_customers]
         if selected["customer"] not in names:
             selected["customer"] = names[0] if names else None
         cust_select.set_options(names, value=selected["customer"])
@@ -886,7 +897,8 @@ async def _render_devops_contacts_tab(core: AppCore):
         customer = selected["customer"]
         if not customer:
             with detail_col:
-                ui.label("No customers yet — use Add customer above.").classes(
+                ui.label("No customers yet — link one to a tracker, or use Add customer "
+                         "above.").classes(
                     UI_STYLES.get_layout_classes("muted_text_sm")
                 )
             return
@@ -1095,6 +1107,11 @@ async def _render_devops_contacts_tab(core: AppCore):
                 )
                 assignees = cdata.get("assignees", [])
                 current_default = cdata.get("default_assignee", "")
+                # Only one of the assignees can be the default: a select refuses
+                # any other starting value — "" for a customer just added, or an
+                # assignee since removed — and the whole card failed to appear.
+                if current_default not in assignees:
+                    current_default = None
                 with ui.row().classes("items-center gap-2"):
                     default_sel = (
                         ui.select(assignees, label="Default Assignee", value=current_default)
@@ -1575,9 +1592,11 @@ def _render_editor_skin_card(core: AppCore) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def settings_page():
+async def settings_page(tab: str = None):
     """Settings page — toolbar tabs with four sections (DevOps / Tags / Theme / Data),
-    matching the navigation idiom of the Data Input and Documentation pages."""
+    matching the navigation idiom of the Data Input and Documentation pages;
+    `tab` (/settings?tab=data) opens one of them."""
+    start_tab = tab if tab in ("devops", "tags", "theme", "data") else "devops"
     core = await AppCore.get_or_initialize()
 
     from ..services.services import TrackerSyncService
@@ -1592,7 +1611,7 @@ async def settings_page():
             ui.label("Settings").classes(UI_STYLES.get_layout_classes("page_title"))
 
         with (
-            ui.tabs(value="devops")
+            ui.tabs(value=start_tab)
             .props(
                 f'horizontal dense active-color="{core.theme.get("accent")}" '
                 f'indicator-color="{core.theme.get("accent")}"'
@@ -1648,7 +1667,7 @@ async def settings_page():
                 )
 
     with (
-        ui.tab_panels(main_tabs, value="devops")
+        ui.tab_panels(main_tabs, value=start_tab)
         .props("vertical")
         .classes("wt-page-content w-full")
         .style("background: transparent;")
@@ -1676,5 +1695,6 @@ async def settings_page():
                 with ui.column().classes("w-full gap-4 p-4"):
                     _render_backup_card(core)
                     _render_import_card(core)
+                    render_excel_import_card(core)
                     _render_time_settings_card(core)
                     await _render_about_card(core)

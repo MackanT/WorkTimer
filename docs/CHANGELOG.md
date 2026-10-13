@@ -7,6 +7,16 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
+### 6.2.0 (2026-10-13)
+- **Features** (hosted WorkTimer)
+  - ad **import time from Excel.** Copy your time report in Excel — its header row included — and paste it under *Settings → Data → Import time from Excel*. WorkTimer recognises the columns (Swedish or English headers, or what they hold) and lets you correct them, then lists every customer with its entries, hours, period and projects, asking only each new customer's hourly rate and whether it is still active. Customers and projects not in WorkTimer yet are created. Rows to fix are listed with their row number, and nothing is saved until you press Import. Entries already in WorkTimer are skipped, so pasting again is safe — and an import can be undone in one step. *Documentation → Excel import* has the steps.
+- **Minor improvements**
+  - up **Settings → Trackers → contacts lists every customer linked to a tracker**, without adding it by hand first.
+  - up the Documentation and Settings pages open on the tab a link names, so the Excel import's doc and its Settings card link to each other.
+- **Bug Fixes**
+  - fx **Notepad opens the note you had open last**, instead of always the first one.
+  - fx **the Default Assignee card** in *Settings → Trackers → contacts* no longer disappears for a customer without a default yet — or whose default was removed from its assignees — so a default can be set, and new work items get it preselected.
+
 ### 6.1.0 (2026-10-03)
 - **Features** (hosted WorkTimer)
   - ad **change a customer's hourly rate from any date, also back in time.** *Customers → Update* has *Hourly rate* and *Rate from*: the new rate applies from that date until the customer's next rate change. Under the form, *Hourly rates* lists the customer's rates, and *After saving* shows the result — beside each changed period, how many time entries get the new price and how the amount changes. Saving asks first when logged time changes price. A change entered by mistake goes with its **✕** in the list: the earlier rate applies again. Time dated before a change keeps its price.

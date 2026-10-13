@@ -287,3 +287,42 @@ async def test_without_a_token_a_tracker_offers_the_projects_in_use(user: User, 
 
     assert projects == ["Alpha", "Beta"]
     assert note.startswith("No token stored")
+
+
+async def test_time_pasted_from_excel_is_imported_and_undone(user: User, app_url, tmp_path):
+    """Settings → Data → Import time from Excel: a pasted report's columns are
+    guessed, its new customer gets a rate, Import saves it, Undo removes it.
+    After the page tests — it adds to the shared seed."""
+    from nicegui import ui
+
+    await user.open("/settings")
+    await page_built()
+    with user.client:
+        [paste] = [e for e in user.client.elements.values() if isinstance(e, ui.textarea)
+                   and e.props.get("placeholder") == "Paste your time report here"]
+        paste.value = ("Datum\tKund\tTimmar\tKommentar\n"
+                       "2026-03-02\tPaste AB\t7,5\tWorkshop\n"
+                       "2026-03-03\tPaste AB\t2\tReview\n")
+    await user.should_see("Import 2 entries", retries=50)
+    await user.should_see("Paste AB")
+    with user.client:
+        [rate] = [e for e in user.client.elements.values()
+                  if isinstance(e, ui.number) and e.props.get("suffix") == "SEK"]
+        rate.value = 1200
+    user.find(kind=ui.button, content="Import 2 entries").click()
+    await user.should_see("Imported 2 time entries", retries=50)
+
+    pools = Pools(PgConfig(app_url), max_size=1)
+    db = PgDatabase(pools, logging.getLogger("smoke.seed"), secrets_dir=str(tmp_path))
+    pasted = ("select te.cost from time_entries te join projects p on p.key_project = "
+              "te.fk_project join customers c on c.key_customer = p.fk_customer "
+              "where c.customer_name = 'Paste AB' and te.deleted_at is null order by te.fk_date")
+    assert db.fetch_query(pasted)["cost"].tolist() == [9000, 2400]
+
+    await user.should_see("Earlier imports", retries=50)
+    user.find(kind=ui.button, content="Undo").click()
+    await user.should_see("Undo the import of", retries=50)
+    user.find(kind=ui.button, content="Undo import").click()
+    await user.should_see("Import undone: 2 time entries removed", retries=50)
+    assert db.fetch_query(pasted).empty
+    pools.close()
