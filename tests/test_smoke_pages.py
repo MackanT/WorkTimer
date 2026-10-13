@@ -102,3 +102,52 @@ async def test_a_link_can_open_a_pages_tab(user: User, path, panel):
 
     [panels] = [e for e in user.client.elements.values() if isinstance(e, ui.tab_panels)]
     assert panels.value == panel
+
+
+async def test_the_notepad_reopens_the_note_open_last(user: User, tmp_path, monkeypatch):
+    from nicegui import ui
+    from nicegui.testing.user_interaction import UserInteraction
+
+    from src.pages import notepad
+
+    monkeypatch.setattr(notepad, "DATA_DIR", tmp_path)  # never the real data/notes
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "alpha.md").write_text("# Alpha\n\nalpha body text", encoding="utf-8")
+    (notes / "beta.md").write_text("# Beta\n\nbeta body text", encoding="utf-8")
+
+    await user.open("/notepad")
+    await page_built()
+    with user.client:
+        [beta] = [e for e in user.client.elements.values()
+                  if isinstance(e, ui.label) and e.text == "Beta"]
+    UserInteraction(user, {beta.parent_slot.parent}, None).click()  # its sidebar row
+    await user.should_see("beta body text")
+
+    await user.open("/notepad")
+    await page_built()
+
+    await user.should_see("beta body text")
+    await user.should_not_see("alpha body text")
+
+
+async def test_tracker_customers_are_listed_for_their_contacts(user: User, seeded_db):
+    """Settings → Trackers → contacts: a customer linked to a tracker is listed
+    without being added by hand — and its Default Assignee card appears even
+    with no default yet (a select refused the empty value, and the card
+    failed). Last: it links a seeded customer to a tracker."""
+    from nicegui import ui
+
+    db = Database(str(seeded_db), logging.getLogger("smoke.seed"))
+    db.insert_tracker("Ops DevOps", "devops", org_url="ops", pat_token="pat")
+    db.update_customer("Beta", "Beta", tracker_name="Ops DevOps")
+    db.close()
+
+    await user.open("/settings")
+    await page_built()
+
+    with user.client:
+        [customers] = [e for e in user.client.elements.values()
+                       if isinstance(e, ui.select) and e.props.get("label") == "Customer"]
+    assert customers.options[0] == "Beta"
+    await user.should_see("Default Assignee")
