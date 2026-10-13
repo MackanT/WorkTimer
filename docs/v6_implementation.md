@@ -1150,6 +1150,12 @@ tracker project below.
   [test_paste_import.py](../tests/test_paste_import.py), the pasted-time part
   of [test_pg_database.py](../tests/test_pg_database.py), and paste → import →
   undo in [test_smoke_pages_pg.py](../tests/test_smoke_pages_pg.py).
+- **Released as 6.2.0** (2026-10-13): the Excel import, with two fixes —
+  Notepad reopens the note open last (`notepad_active_note` in the user's
+  storage, like the collapsed groups), and *Settings → Trackers → contacts*
+  lists every customer with a tracker and no longer loses its Default
+  Assignee card: a select refused the starting value `""` (a customer just
+  added) or a default since removed from the assignees.
 
 ---
 
