@@ -87,3 +87,18 @@ async def test_page_renders_without_errors(user: User, path):
     await page_built()
     if PAGES[path]:
         await user.should_see(PAGES[path])
+
+
+@pytest.mark.parametrize("path, panel", [
+    ("/info?tab=excel_import", "excel_import"),  # the Settings card's "How it works"
+    ("/settings?tab=data", "data"),  # the Excel import doc's way back
+    ("/info?tab=nonsense", "info"),  # an unknown tab: the first
+])
+async def test_a_link_can_open_a_pages_tab(user: User, path, panel):
+    from nicegui import ui
+
+    await user.open(path)
+    await page_built()
+
+    [panels] = [e for e in user.client.elements.values() if isinstance(e, ui.tab_panels)]
+    assert panels.value == panel

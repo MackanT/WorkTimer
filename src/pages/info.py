@@ -12,8 +12,9 @@ from ..helpers import UI_STYLES
 from pathlib import Path
 
 
-async def info_page():
-    """Documentation page - renders the docs/ markdown files as tabs
+async def info_page(tab: str = None):
+    """Documentation page - renders the docs/ markdown files as tabs; `tab`
+    (/info?tab=excel_import) opens one of them.
 
     Note: No @ui.page decorator - accessed via SPA sub_pages in root.py
     Direct access to /info is handled by redirect in root.py
@@ -23,6 +24,7 @@ async def info_page():
     core = await AppCore.get_or_initialize()
 
     info_page_config = core.ui_config.get("info_page", {})
+    start_tab = tab if tab in info_page_config else next(iter(info_page_config))
 
     # ========================================================================
     # Toolbar Controls
@@ -35,7 +37,7 @@ async def info_page():
                 ui.icon("menu_book", size="md").classes(f"text-{core.theme.get('accent')}")
                 ui.label("Documentation").classes(UI_STYLES.get_layout_classes("page_title"))
             with (
-                ui.tabs(value="info")
+                ui.tabs(value=start_tab)
                 .props(
                     f'horizontal dense active-color="{core.theme.get("accent")}" indicator-color="{core.theme.get("accent")}"'
                 )
@@ -62,8 +64,6 @@ async def info_page():
                     except Exception as e:
                         content = f"Error loading content: {e}"
                     ui.markdown(content=content)
-
-    start_tab = next(iter(info_page_config))
 
     with (
         ui.tab_panels(main_tabs, value=start_tab)

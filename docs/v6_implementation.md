@@ -1116,6 +1116,41 @@ tracker project below.
   clears the value — a customer without a tracker kept the previous
   customer's, and saving linked it.
 
+- **Import time from Excel** (2026-10-13, a colleague's request; for people
+  who keep their time in Excel and start with an empty account). No template:
+  the user copies their own sheet, header included, and pastes it into
+  *Settings → Data* (Postgres only). [src/paste_import.py](../src/paste_import.py)
+  reads the tab-separated paste (`csv`, so quoted cells keep their line
+  breaks), guesses each column from Swedish/English headers, else from its
+  content (dates, numbers, times of day; customer = the most repeated text,
+  comment = the most varied, project = repeated text), and turns rows into
+  entries or row-numbered problems; rows with no time are skipped. A name
+  written in several ways takes its first spelling. Dates: ISO, d/m/y (month
+  first only when a value forces it), Excel serials; hours `7,5`/`7:30`/`7 h`;
+  start/end as an alternative to hours. Hours-only rows are placed from 08:00,
+  one after another per day.
+  The screen ([src/pages/excel_import.py](../src/pages/excel_import.py)):
+  per-column dropdowns, then one table per customer with entries, hours,
+  period, projects (new marked), entries already here, and for a new customer
+  its hourly rate and *Active* (ticked with time in the last 90 days;
+  unticked: created disabled). Import is blocked while rows need fixing.
+  The data layer (`check_pasted_entries`, `import_pasted_entries`,
+  `get_imports`, `undo_import`): one transaction; customers and projects
+  matched case- and space-insensitively, the rest created; entries priced by
+  date as every entry; an entry already here (customer, project, day, minutes,
+  comment) skipped as often as it is here, so pasting again adds nothing while
+  repeats within one paste stay. Each import's entries carry its id
+  (`time_entries.import_batch`, migration 0006 — a column, not a table, so no
+  new RLS or grants), and Undo soft-deletes them; customers and projects it
+  created stay. The export writes the id as text. Socket.IO's message limit
+  is raised to 5 MB (main.py): the paste arrives in one message, and above
+  1 MB the connection dropped. User doc: [excel_import.md](excel_import.md),
+  the Documentation page's *Excel import* tab, linked both ways with
+  Settings (`/info?tab=…`, `/settings?tab=…`). Tests:
+  [test_paste_import.py](../tests/test_paste_import.py), the pasted-time part
+  of [test_pg_database.py](../tests/test_pg_database.py), and paste → import →
+  undo in [test_smoke_pages_pg.py](../tests/test_smoke_pages_pg.py).
+
 ---
 
 ## Maybe, after 6.0.0

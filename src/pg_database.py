@@ -21,6 +21,8 @@ import gzip
 import json
 import os
 import re
+import uuid
+from collections import Counter
 from datetime import date, datetime, timedelta
 from textwrap import dedent
 from decimal import ROUND_HALF_UP, Decimal
@@ -1657,7 +1659,7 @@ class PgDatabase:
     def _exported(value):
         """JSON for a column value — money and hours exact (Decimal as text),
         times ISO 8601 with their UTC offset."""
-        if isinstance(value, Decimal):
+        if isinstance(value, (Decimal, uuid.UUID)):
             return str(value)
         if isinstance(value, (datetime, date)):
             return value.isoformat()
@@ -1808,6 +1810,155 @@ class PgDatabase:
             finally:
                 if conn.info.transaction_status == TransactionStatus.INTRANS:
                     conn.execute("deallocate all")
+
+    # ── pasted time (the Excel import) ──────────────────────────────────────
+    # Rows pasted from a spreadsheet (src/paste_import.py) become ordinary
+    # entries — wage and bonus by their date, as every entry — tagged with
+    # their import's id, so the whole import can be undone. Customers and
+    # projects match by name, ignoring case and extra spaces; the rest are
+    # created. An entry already here (same customer, project, day, minutes
+    # and comment) is skipped — as often as it is already here, so pasting
+    # the same table again adds nothing, while repeats within one paste stay.
+
+    @staticmethod
+    def _name_key(name: str) -> str:
+        return " ".join(str(name).split()).casefold()
+
+    @classmethod
+    def _entry_key(cls, e) -> tuple:
+        return (cls._name_key(e.customer), cls._name_key(e.project), _date_key(e.day),
+                int((e.hours * 60).quantize(Decimal(1), ROUND_HALF_UP)), e.comment or "")
+
+    def _paste_targets(self, conn) -> tuple[dict, dict, Counter]:
+        """(customers by name key → (key, name, enabled), projects by
+        (customer key, name key) → (key, name), entry keys already here)."""
+        customers = {self._name_key(n): (k, n, enabled) for k, n, enabled in conn.execute(
+            "select key_customer, customer_name, is_enabled from customers")}
+        projects = {(c, self._name_key(n)): (k, n) for k, c, n in conn.execute(
+            "select key_project, fk_customer, project_name from projects")}
+        here = Counter(
+            (self._name_key(c), self._name_key(p), d, int(m), cm)
+            for c, p, d, m, cm in conn.execute(
+                """
+                select c.customer_name, p.project_name, te.fk_date,
+                       round(te.duration_hours * 60), coalesce(te.comment, '')
+                from time_entries te
+                join projects p on p.key_project = te.fk_project
+                join customers c on c.key_customer = p.fk_customer
+                where te.deleted_at is null and te.ended_at is not null
+                """))
+        return customers, projects, here
+
+    def check_pasted_entries(self, entries: list) -> dict:
+        """What import_pasted_entries would do, without doing it: per
+        customer as pasted — whether it exists (its name here, enabled or
+        not), its projects not here yet, and how many of its entries are
+        already here."""
+        with self._tx() as conn:
+            customers, projects, here = self._paste_targets(conn)
+        result: dict = {}
+        for e in entries:
+            existing = customers.get(self._name_key(e.customer))
+            info = result.setdefault(e.customer, {
+                "name": existing[1] if existing else e.customer, "exists": existing is not None,
+                "enabled": existing[2] if existing else True, "new_projects": [], "already_here": 0})
+            if (existing is None or (existing[0], self._name_key(e.project)) not in projects) \
+                    and e.project not in info["new_projects"]:
+                info["new_projects"].append(e.project)
+            key = self._entry_key(e)
+            if here[key]:
+                here[key] -= 1
+                info["already_here"] += 1
+        return result
+
+    def import_pasted_entries(self, entries: list, rates: dict = None, inactive=()) -> dict:
+        """Import `entries` in one transaction. A new customer gets its rate
+        from `rates` (by its name as pasted; 0 if missing) from its first
+        imported day, and is created disabled when in `inactive`; customers
+        here keep their rates and state."""
+        from .paste_import import placed
+
+        rates = {self._name_key(k): v for k, v in (rates or {}).items()}
+        inactive = {self._name_key(n) for n in inactive}
+        first_day: dict = {}
+        for e in entries:
+            k = self._name_key(e.customer)
+            first_day[k] = min(first_day.get(k, e.day), e.day)
+        batch = str(uuid.uuid4())
+        new_customers, new_projects, rows = [], [], []
+        skipped = 0
+        with self._tx() as conn:
+            tz = self._timezone(conn)
+            customers, projects, here = self._paste_targets(conn)
+            snapshots: dict = {}
+            for e, (start, end) in zip(entries, placed(entries)):
+                key = self._entry_key(e)
+                if here[key]:
+                    here[key] -= 1
+                    skipped += 1
+                    continue
+                ck = self._name_key(e.customer)
+                if ck not in customers:
+                    enabled = ck not in inactive
+                    customer = self._one(
+                        conn, "insert into customers (customer_name, is_enabled) values (%s, %s) "
+                              "returning key_customer", (e.customer, enabled))
+                    conn.execute("insert into customer_wages (fk_customer, wage, valid_from) "
+                                 "values (%s, %s, %s)",
+                                 (customer, int(round(float(rates.get(ck) or 0))), first_day[ck]))
+                    customers[ck] = (customer, e.customer, enabled)
+                    new_customers.append(e.customer)
+                customer, customer_name, _ = customers[ck]
+                pk = (customer, self._name_key(e.project))
+                if pk not in projects:
+                    projects[pk] = (self._one(
+                        conn, "insert into projects (fk_customer, project_name) values (%s, %s) "
+                              "returning key_project", (customer, e.project)), e.project)
+                    new_projects.append(f"{customer_name} / {e.project}")
+                project = projects[pk][0]
+                if (project, e.day) not in snapshots:
+                    snapshots[project, e.day] = self._snapshots(conn, project, e.day)
+                wage, bonus = snapshots[project, e.day]
+                started, ended = start.replace(tzinfo=tz), end.replace(tzinfo=tz)
+                hours, cost, user_bonus = _money(started, ended, wage or 0, bonus or 0)
+                rows.append((project, started, ended, _date_key(start), hours, wage, bonus, cost,
+                             user_bonus, e.comment or None, batch))
+            if rows:
+                with conn.cursor() as cur:
+                    cur.executemany(
+                        "insert into time_entries (fk_project, started_at, ended_at, fk_date, "
+                        "duration_hours, wage_snapshot, bonus_pct_snapshot, cost, user_bonus, "
+                        "comment, import_batch) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        rows)
+        self.log_engine.info(
+            f"Imported {len(rows)} pasted time entries ({skipped} already here); "
+            f"new customers: {', '.join(new_customers) or 'none'}")
+        return {"import_batch": batch, "entries": len(rows), "skipped": skipped,
+                "customers": new_customers, "projects": new_projects}
+
+    def get_imports(self) -> pd.DataFrame:
+        """The pasted-time imports, newest first: import_batch, imported_at,
+        entries (still there), first_day and last_day (YYYYMMDD)."""
+        return self.fetch_query(
+            """
+            select import_batch::text as import_batch, min(created_at) as imported_at,
+                   count(*) filter (where deleted_at is null) as entries,
+                   min(fk_date) as first_day, max(fk_date) as last_day
+            from time_entries
+            where import_batch is not null
+            group by import_batch
+            order by imported_at desc
+            """)
+
+    def undo_import(self, import_batch: str) -> int:
+        """Remove (soft-delete) every entry the import added; the customers
+        and projects it created stay. Returns how many entries went."""
+        with self._tx() as conn:
+            removed = conn.execute(
+                "update time_entries set deleted_at = now() "
+                "where import_batch = %s and deleted_at is null", (import_batch,)).rowcount
+        self.log_engine.info(f"Undid import {import_batch}: {removed} time entries removed")
+        return removed
 
     # ── import (Phase 4) ────────────────────────────────────────────────────
     # Loads data in the export shape (tables of rows with their source keys):

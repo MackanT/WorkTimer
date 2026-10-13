@@ -25,6 +25,7 @@ from ..ui.elements import toolbar, toolbar_group
 from ..helpers import UI_STYLES
 from ..services.backups import create_backup, list_backups
 from ..user_paths import pref_key
+from .excel_import import render_excel_import_card
 
 
 def _render_backup_card(core) -> None:
@@ -1575,9 +1576,11 @@ def _render_editor_skin_card(core: AppCore) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def settings_page():
+async def settings_page(tab: str = None):
     """Settings page — toolbar tabs with four sections (DevOps / Tags / Theme / Data),
-    matching the navigation idiom of the Data Input and Documentation pages."""
+    matching the navigation idiom of the Data Input and Documentation pages;
+    `tab` (/settings?tab=data) opens one of them."""
+    start_tab = tab if tab in ("devops", "tags", "theme", "data") else "devops"
     core = await AppCore.get_or_initialize()
 
     from ..services.services import TrackerSyncService
@@ -1592,7 +1595,7 @@ async def settings_page():
             ui.label("Settings").classes(UI_STYLES.get_layout_classes("page_title"))
 
         with (
-            ui.tabs(value="devops")
+            ui.tabs(value=start_tab)
             .props(
                 f'horizontal dense active-color="{core.theme.get("accent")}" '
                 f'indicator-color="{core.theme.get("accent")}"'
@@ -1648,7 +1651,7 @@ async def settings_page():
                 )
 
     with (
-        ui.tab_panels(main_tabs, value="devops")
+        ui.tab_panels(main_tabs, value=start_tab)
         .props("vertical")
         .classes("wt-page-content w-full")
         .style("background: transparent;")
@@ -1676,5 +1679,6 @@ async def settings_page():
                 with ui.column().classes("w-full gap-4 p-4"):
                     _render_backup_card(core)
                     _render_import_card(core)
+                    render_excel_import_card(core)
                     _render_time_settings_card(core)
                     await _render_about_card(core)

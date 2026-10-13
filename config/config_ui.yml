@@ -901,6 +901,11 @@ info_page:
       icon: menu_book
       friendly_name: Guide
       file: guide.md
+  excel_import:
+    meta:
+      icon: table_view
+      friendly_name: Excel import
+      file: excel_import.md
   shortcuts:
     meta:
       icon: keyboard

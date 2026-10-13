@@ -98,6 +98,12 @@ def main():
     from src.http_safety import install
 
     install(app)
+    # A message from the browser may be up to 5 MB (Socket.IO's default is
+    # 1 MB): a time report pasted for the Excel import arrives in one, and a
+    # larger one would drop the connection instead of being refused politely.
+    from nicegui import core
+
+    core.sio.eio.max_http_buffer_size = 5_000_000
 
     # Start the server
     # Each route defined with @ui.page() is automatically registered.
