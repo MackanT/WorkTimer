@@ -16,7 +16,7 @@ from .. import helpers
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
 from ..ui.work_item_forms import open_add_work_item_dialog, open_work_item_dialog
 from ..trackers.base import DEFAULT_TYPE_HIERARCHY
-from ..trackers.process import REMOVED
+from ..trackers.process import REMOVED, guess_category, is_open
 from .hierarchy import create_hierarchy_view
 
 
@@ -92,6 +92,7 @@ async def board_page():
         "include_done": bool(app.storage.user.get(pref_key(core.user_key, "board_include_done"), False)),
     }
     known_cols: dict = {}  # (board, type) -> ordered list; never shrinks
+    open_kids: set = set()  # (customer, id) of cards whose children are listed
     ui_state: dict = {"loading": False}
 
     boards = DO.boards() if DO is not None else []
@@ -466,8 +467,87 @@ async def board_page():
             on_success=_after,
         )
 
+    # ── children under a card ─────────────────────────────────────────────────
+    def _open_children() -> dict[int, list[dict]]:
+        """{parent id: its open children} among the tab's customer's items —
+        not started or in progress, never Resolved (the stop dialog's rule)."""
+        if DO is None or DO.df is None or DO.df.empty or "parent_id" not in DO.df.columns:
+            return {}
+        sub = DO.df[DO.df["customer_name"] == filter_state["customer"]]
+        cats = (sub["state_category"] if "state_category" in sub.columns
+                else sub["state"].map(guess_category))
+        sub = sub[[is_open(st, c if isinstance(c, str) else None)
+                   for st, c in zip(sub["state"], cats)]]
+        kids: dict[int, list[dict]] = {}
+        for _, r in sub.sort_values("id").iterrows():
+            pid = r.get("parent_id")
+            if pid is not None and not (isinstance(pid, float) and math.isnan(pid)):
+                kids.setdefault(int(pid), []).append(r.to_dict())
+        return kids
+
+    def _child_level(wtype: str) -> tuple[str, str] | None:
+        """The level below `wtype` in the tab's project: (its name, its
+        default type) — None on the lowest level."""
+        if DO is None:
+            return None
+        customer, project = filter_state["customer"], filter_state["project"]
+        process = DO.process(customer, project)
+        if process is not None:
+            levels = [(lv.name, lv.types) for lv in process.levels]
+        else:
+            levels = [(t[:-1] + "ies" if t.endswith("y") else t + "s", lv)
+                      for lv in DO.levels(customer, project) for t in lv[:1]]
+        idx = next((i for i, (_, types) in enumerate(levels) if wtype in types), None)
+        if idx is None or idx + 1 >= len(levels):
+            return None
+        name, types = levels[idx + 1]
+        return name, types[0]
+
+    def _toggle_kids(key) -> None:
+        open_kids.symmetric_difference_update({key})
+        render_board.refresh()
+
+    async def _add_child(row: dict, child_type: str) -> None:
+        """＋ on a card: a new child under it — its list opens, so the child
+        shows once it's made."""
+        open_kids.add((str(row.get("customer_name") or ""), int(row.get("id", 0))))
+        await _open_add_dialog(
+            preset_type=child_type,
+            preset_parent=str(row.get("display_name")
+                              or f"{row.get('type')}: {int(row.get('id', 0))} - {row.get('title')}"),
+        )
+
+    def _render_children(key, kids: list[dict], level: tuple[str, str]):
+        """The count line ("▸ 3 Tasks") and, opened, one row per child."""
+        is_open_now = key in open_kids
+        name, single = level
+        with ui.row().classes("items-center gap-1 w-full cursor-pointer no-wrap").style(
+            "margin-top:4px;"
+        ).on("click.stop", lambda e, k=key: _toggle_kids(k)):
+            ui.icon("expand_more" if is_open_now else "chevron_right", size="16px").classes(
+                f"text-{muted} shrink-0")
+            ui.label(f"{len(kids)} {single if len(kids) == 1 else name}").classes(
+                f"text-xs text-{muted}")
+        if not is_open_now:
+            return
+        with ui.column().classes("w-full").style("gap: 2px; padding-left: 0.6rem;"):
+            for kid in kids:
+                async def _open_kid(e, r=kid):
+                    await _on_card_click(r)
+
+                with ui.row().classes("items-center gap-1 w-full no-wrap cursor-pointer").style(
+                    "padding: 1px 2px; border-radius: 4px;"
+                ).on("click.stop", _open_kid):
+                    ui.label(f"#{int(kid['id'])}").classes(f"text-xs text-{muted} shrink-0")
+                    ui.label(str(kid.get("title") or "")).classes("text-xs flex-1").style(
+                        "overflow:hidden; text-overflow:ellipsis; white-space:nowrap;")
+                    ui.badge(str(kid.get("state") or "")).props("color=grey-8 rounded").classes(
+                        "text-xs shrink-0")
+
     # ── card renderer ──────────────────────────────────────────────────────────
-    def _render_card(row: dict):
+    def _render_card(row: dict, kids: dict | None = None):
+        """One card; `kids` (the open children by parent) adds its list and
+        its ＋ — left out where cards are only shown (the Done popup)."""
         item_id = int(row.get("id", 0))
         title = str(row.get("title") or "Untitled")
         priority = row.get("priority")
@@ -518,6 +598,13 @@ async def board_page():
                 # Show a "Done" chip only when the item is in the done sub-state
                 if board_column_done:
                     ui.badge("✓ Done").props("color=positive rounded").classes("text-xs shrink-0")
+                level = _child_level(str(row.get("type"))) if kids is not None else None
+                if level is not None:
+                    async def _on_add_child(e, r=row, t=level[1]):
+                        await _add_child(r, t)
+
+                    ui.button(icon="add").props("flat dense round size=xs color=grey-5").classes(
+                        "shrink-0").on("click.stop", _on_add_child).tooltip(f"Add a {level[1]} under #{item_id}")
 
             ui.label(title).classes("text-sm").style(
                 "word-break:break-word; white-space:normal; line-height:1.3; margin-top:2px;"
@@ -530,6 +617,9 @@ async def board_page():
                     )
             if assigned:
                 ui.label(f"👤 {assigned}").classes(f"text-xs text-{muted}").style("margin-top:3px;")
+            if level is not None and kids.get(item_id):
+                _render_children((str(row.get("customer_name") or ""), item_id),
+                                 kids[item_id], level)
 
     parent_label_cache: dict[int, str] = {}
 
@@ -578,6 +668,7 @@ async def board_page():
             return
 
         data = _board_data()
+        kids = _open_children()
         if not data:
             with ui.column().classes("items-center justify-center w-full").style("padding: 4rem;"):
                 ui.icon("inbox", size="xl").classes(f"text-{muted}")
@@ -621,7 +712,7 @@ async def board_page():
                                 ui.element("div").classes("w-full").style(
                                     "border-top: 1px solid rgba(255, 255, 255, 0.08);"
                                 )
-                            _render_card(card_row)
+                            _render_card(card_row, kids)
 
     # ── Done drop-zone (persistent, outside the scrollable column area) ────────
     async def _open_done_popup(items: list[dict]):

@@ -420,3 +420,54 @@ async def test_the_task_chip_shows_states_and_a_drop_changes_the_state(user: Use
     assert await _until(lambda: updated), list(user.notify.messages)
     assert updated == [("Beta", 7, {"System.State": "New"})]
     assert engine.df.set_index("id").loc[7, "state"] == "New"
+
+
+async def test_a_card_lists_its_open_children_and_its_plus_adds_one(user: User):
+    """A story's open tasks fold into "1 Task" under its card — the closed one
+    left out — that a click opens; its ＋ opens the add form for a Task under it."""
+    from nicegui import ui
+    from nicegui.testing.user_interaction import UserInteraction
+
+    from src.pages.board import board_page
+    from src.trackers.process import AGILE
+
+    await user.open("/time")
+    await page_built()
+    core = core_app._app_cores[user.client.id]
+    core.tracker_engine = engine = _projects_engine(core, {"Beta": ["Ops"]},
+                                                    [("Beta", 3, "Ops", "Beta story")])
+    engine.manager.clients["Beta"]._processes = {"Ops": AGILE}
+    story = engine.df.iloc[0].to_dict()
+    for wid, title, st in ((7, "Write tests", "Active"), (8, "Old task", "Closed")):
+        engine.df.loc[len(engine.df)] = {**story, "type": "Task", "id": wid, "title": title,
+                                         "state": st, "parent_id": 3, "board_column": "",
+                                         "display_name": f"Task: {wid} - {title}"}
+    engine.columns_cache["Beta"] = {t: ["New", "Active", "Closed"] for t in AGILE.types}
+    with user.client:
+        await board_page()
+    await user.should_see("1 Task")
+    await user.should_not_see("Write tests")
+
+    def stopped(element) -> bool:
+        return any(lis.type == "click.stop" for lis in element._event_listeners.values())
+
+    with user.client:
+        [count_line] = [e.parent_slot.parent for e in user.client.elements.values()
+                        if isinstance(e, ui.label) and e.text == "1 Task"]
+    UserInteraction(user, {count_line}, None).trigger("click.stop")
+    await user.should_see("Write tests")
+    await user.should_not_see("Old task")
+
+    with user.client:
+        [plus] = [e for e in user.client.elements.values()
+                  if isinstance(e, ui.button) and e.props.get("icon") == "add" and stopped(e)]
+    UserInteraction(user, {plus}, None).trigger("click.stop")
+
+    def inputs():
+        return {e.props.get("label"): e for e in user.client.elements.values()
+                if isinstance(e, (ui.input, ui.select))}
+
+    assert await _until(lambda: "Parent" in inputs()
+                        and inputs()["Work Item Type"].value == "Task"
+                        and inputs()["Parent"].value == "User Story: 3 - Beta story"), {
+        k: getattr(v, "value", None) for k, v in inputs().items()}
