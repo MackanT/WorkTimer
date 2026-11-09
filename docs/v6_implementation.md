@@ -1230,6 +1230,14 @@ tracker project below.
   the task nodes in [test_hierarchy.py](../tests/test_hierarchy.py), the
   Board, add form and stop dialog in
   [test_smoke_pages.py](../tests/test_smoke_pages.py).
+- **Released as 6.3.0** (2026-11-09): the two above, the Board cards' child
+  lists with their ＋, and three fixes — date and time fields typed as
+  `YYYY-MM-DD HH:MM` with a 24-hour picker (`elements.datetime_input`; a
+  native datetime-local field followed each PC's regional settings), branch
+  names with accents folded to plain letters (`base._plain`), and a
+  work-item dialog turning persistent on the first edit the user makes
+  (`_watch_user_edits`: browser `update:` events only). Deploying runs
+  migration 0007.
 
 ---
 

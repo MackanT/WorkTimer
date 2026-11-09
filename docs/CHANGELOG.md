@@ -7,6 +7,20 @@ A modern web-based time tracking application with built-in task management and A
 ---
 
 ## Changelog
+### 6.3.0 (2026-11-09)
+- **Features** (hosted WorkTimer)
+  - ad **several Azure DevOps projects per customer.** *Customers → Update* has *More tracker projects*: other projects of the same Azure DevOps organisation. Each project gets its own Board tab with its own items and columns, a new work item goes to the project you choose, and the stop dialog picks the project before the work item. Comments, edits, links and branches reach the item's own project.
+  - ad **Azure DevOps projects on any process** — Basic, Agile, Scrum, CMMI or a custom one. WorkTimer reads each project's own levels, boards and states, so a Basic project shows Epics, Issues and Tasks with To Do, Doing and Done, and new work items get that project's types and states.
+  - ad **tasks.** Tasks are synced too. The Board has a *Task* chip that shows every task with its states as the columns — drag a task to change its state. In the Hierarchy, a story's tasks fold into one *3 tasks* node that opens on click, and *＋ task* adds one.
+  - ad **see and add children right on the Board.** A card with open children shows a count line (*▸ 3 Tasks*, *▸ 4 Stories*, *▸ 2 Features*) that opens a list under the card; click a child to open it. The small **＋** on a card adds a child one level down — a feature under an epic, a story under a feature, a task under a story.
+- **Minor improvements**
+  - up **open and closed work items follow each state's meaning in Azure DevOps**, not Agile's state names: the stop dialog and the work-item pickers offer everything not started or in progress — tasks included, and on any process — and finished items are hidden on the Board and in the Hierarchy.
+  - up **Settings → Trackers** lists your projects' own work-item types (Issue, Task, Bug …) for the form defaults and description templates, each with its own states.
+- **Bug Fixes**
+  - fx **dates and times look the same on every computer** — *YYYY-MM-DD HH:MM*, 24-hour — in the stop dialog, manual entries, editing an entry and the Reports date range, with a calendar and a clock to pick from. Some computers showed AM/PM or 11/09/2026.
+  - fx **branch names** turn *å ä ö* into *a a o* (and other accents into plain letters) instead of a dash.
+  - fx **a work-item dialog you've typed in no longer closes on a click outside it** (or Esc); *Cancel* asks before your edits are thrown away.
+
 ### 6.2.0 (2026-10-13)
 - **Features** (hosted WorkTimer)
   - ad **import time from Excel.** Copy your time report in Excel — its header row included — and paste it under *Settings → Data → Import time from Excel*. WorkTimer recognises the columns (Swedish or English headers, or what they hold) and lets you correct them, then lists every customer with its entries, hours, period and projects, asking only each new customer's hourly rate and whether it is still active. Customers and projects not in WorkTimer yet are created. Rows to fix are listed with their row number, and nothing is saved until you press Import. Entries already in WorkTimer are skipped, so pasting again is safe — and an import can be undone in one step. *Documentation → Excel import* has the steps.
