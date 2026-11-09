@@ -22,6 +22,7 @@ from ..helpers import UI_STYLES, extract_devops_id
 from .. import helpers
 
 from ..ui.elements import (
+    datetime_input,
     toolbar,
     toolbar_group,
     entity_card_shell,
@@ -145,6 +146,74 @@ def recommended_first(cust_df: pd.DataFrame, selectable_labels: list, default_id
     rec = [labels_by_id[i] for i in order if labels_by_id.get(i) in selectable]
     rec_set = set(rec)
     return rec + [lbl for lbl in selectable_labels if lbl not in rec_set], len(rec)
+
+
+def build_devops_selector(tracker_engine, c_name, git_id, has_git_id):
+    """Render DevOps ID dropdown + 'Store to DevOps' toggle. Returns (id_input, id_checkbox).
+
+    When the project has a default work item, that item and its whole
+    subtree (an Epic's features/stories, a Feature's stories) are listed
+    first as the recommended picks; everything else follows. A customer
+    with several tracker projects picks the project first — the default
+    work item's, else the main one — and the list shows its items; the
+    comment then goes to the chosen item, in its project."""
+    id_checkbox = None
+    all_df = tracker_engine.df[tracker_engine.df["customer_name"] == c_name]
+    projects = tracker_engine.projects(c_name)
+    project_select = None
+    if len(projects) > 1 and "project" in all_df.columns:
+        start = projects[0]
+        if has_git_id:
+            own = all_df.loc[all_df["id"] == git_id, "project"].dropna()
+            if not own.empty and own.iloc[0] in projects:
+                start = own.iloc[0]
+        project_select = ui.select(
+            projects, value=start, label="Tracker project",
+        ).classes("w-full -mb-2")
+
+    def _options(project):
+        cust_df = (all_df if project is None
+                   else all_df[tracker_engine.project_mask(all_df, c_name, project)])
+        # Newest (highest id) first — most likely related to current work.
+        id_options = cust_df[tracker_engine.open_mask(cust_df)][
+            ["display_name", "id"]
+        ].dropna().sort_values("id", ascending=False)
+        options = id_options["display_name"].tolist()
+        rec_count = 0
+        if has_git_id:
+            options, rec_count = recommended_first(cust_df, options, git_id)
+        # Dict options: the VALUE stays the clean display name (what
+        # extract_devops_id parses and preselection matches); the LABEL marks
+        # the default item's subtree with a star so related items stand out.
+        return id_options, {
+            o: (f"★ {o}" if i < rec_count else o) for i, o in enumerate(options)
+        }
+
+    id_options, option_map = _options(project_select.value if project_select else None)
+    id_input = ui.select(
+        option_map,
+        with_input=True,
+        label="Tracker-ID",
+    ).classes("w-full -mb-2")
+    if has_git_id:
+        match = id_options[id_options["id"] == git_id]
+        id_input.value = match["display_name"].iloc[0] if not match.empty else None
+    if project_select is not None:
+        def _on_project(e):
+            _, options_now = _options(e.value)
+            id_input.set_options(
+                options_now,
+                value=id_input.value if id_input.value in options_now else None,
+            )
+
+        project_select.on_value_change(_on_project)
+    with ui.row().classes("w-full items-center justify-between -mt-2"):
+        def toggle_switch():
+            id_checkbox.value = not id_checkbox.value
+            id_checkbox.update()
+        ui.label("Store to tracker").on("click", toggle_switch).classes("cursor-pointer")
+        id_checkbox = ui.switch(value=has_git_id).props("dense")
+    return id_input, id_checkbox
 
 
 def format_value(value: float, is_time: bool, currency: str = "SEK") -> str:
@@ -431,44 +500,6 @@ async def time_tracking_page():
                 )
             ui.button("Close", on_click=on_close).props("flat").classes(btn_classes)
 
-    def _build_devops_selector(tracker_engine, c_name, git_id, has_git_id):
-        """Render DevOps ID dropdown + 'Store to DevOps' toggle. Returns (id_input, id_checkbox).
-
-        When the project has a default work item, that item and its whole
-        subtree (an Epic's features/stories, a Feature's stories) are listed
-        first as the recommended picks; everything else follows."""
-        id_checkbox = None
-        cust_df = tracker_engine.df[tracker_engine.df["customer_name"] == c_name]
-        # Newest (highest id) first — most likely related to current work.
-        id_options = cust_df[cust_df["state"].isin(["Active", "New"])][
-            ["display_name", "id"]
-        ].dropna().sort_values("id", ascending=False)
-        options = id_options["display_name"].tolist()
-        rec_count = 0
-        if has_git_id:
-            options, rec_count = recommended_first(cust_df, options, git_id)
-        # Dict options: the VALUE stays the clean display name (what
-        # extract_devops_id parses and preselection matches); the LABEL marks
-        # the default item's subtree with a star so related items stand out.
-        option_map = {
-            o: (f"★ {o}" if i < rec_count else o) for i, o in enumerate(options)
-        }
-        id_input = ui.select(
-            option_map,
-            with_input=True,
-            label="Tracker-ID",
-        ).classes("w-full -mb-2")
-        if has_git_id:
-            match = id_options[id_options["id"] == git_id]
-            id_input.value = match["display_name"].iloc[0] if not match.empty else None
-        with ui.row().classes("w-full items-center justify-between -mt-2"):
-            def toggle_switch():
-                id_checkbox.value = not id_checkbox.value
-                id_checkbox.update()
-            ui.label("Store to tracker").on("click", toggle_switch).classes("cursor-pointer")
-            id_checkbox = ui.switch(value=has_git_id).props("dense")
-        return id_input, id_checkbox
-
     async def show_time_entry_dialog(
         customer_id: int,
         project_id: int,
@@ -513,7 +544,7 @@ async def time_tracking_page():
         )
         start_str = str(running.iloc[0]["start_time"]) if not running.empty else None
         now_dt = clock.now_local()
-        dt_local_fmt = "%Y-%m-%dT%H:%M"
+        dt_local_fmt = "%Y-%m-%d %H:%M"
         db_fmt = "%Y-%m-%d %H:%M:%S"
 
         _stop_card.clear()
@@ -558,7 +589,7 @@ async def time_tracking_page():
             def _update_end_hint():
                 if _end_shown["v"]:
                     end_hint.set_text(
-                        "Stop: " + str(end_input.value or "").replace("T", " ")
+                        "Stop: " + str(end_input.value or "")
                     )
                 else:
                     end_hint.set_text("Stop: now")
@@ -580,28 +611,22 @@ async def time_tracking_page():
                 ).tooltip("Set a custom stop time (defaults to when you save)")
 
             end_input = (
-                ui.input(
-                    label="Stop time",
-                    value=now_dt.strftime(dt_local_fmt),
+                datetime_input(
+                    "Stop time",
+                    now_dt.strftime(dt_local_fmt),
                     on_change=lambda e: _update_end_hint(),
                 )
-                .props('type="datetime-local" dense outlined')
+                .props("dense outlined")
                 .classes("w-64 self-end")
                 .tooltip("When the timer actually stopped")
             )
-            if start_str:
-                try:
-                    _min = datetime.strptime(start_str, db_fmt).strftime(dt_local_fmt)
-                    end_input.props(f'min="{_min}"')
-                except ValueError:
-                    pass
             end_input.set_visibility(False)
 
             # DevOps ID selector (if available)
             id_input = None
             id_checkbox = None
             if has_devops:
-                id_input, id_checkbox = _build_devops_selector(
+                id_input, id_checkbox = build_devops_selector(
                     core.tracker_engine, c_name, git_id, has_git_id
                 )
 
@@ -794,7 +819,7 @@ async def time_tracking_page():
 
         now = clock.now_local()
         one_hour_ago = now - timedelta(hours=1)
-        dt_fmt = "%Y-%m-%dT%H:%M"
+        dt_fmt = "%Y-%m-%d %H:%M"
 
         _manual_card.clear()
         with _manual_card:
@@ -804,22 +829,15 @@ async def time_tracking_page():
             )
 
             with ui.row().classes("w-full gap-3"):
-                start_input = (
-                    ui.input(label="Start time", value=one_hour_ago.strftime(dt_fmt))
-                    .props('type="datetime-local"')
-                    .classes("flex-1")
-                )
-                end_input = (
-                    ui.input(label="End time", value=now.strftime(dt_fmt))
-                    .props('type="datetime-local"')
-                    .classes("flex-1")
-                )
+                start_input = datetime_input(
+                    "Start time", one_hour_ago.strftime(dt_fmt)).classes("flex-1")
+                end_input = datetime_input("End time", now.strftime(dt_fmt)).classes("flex-1")
 
             id_input = None
             id_checkbox = None
             git_id_number_input = None
             if has_devops:
-                id_input, id_checkbox = _build_devops_selector(
+                id_input, id_checkbox = build_devops_selector(
                     core.tracker_engine, c_name, git_id, has_git_id
                 )
             else:
@@ -883,7 +901,7 @@ async def time_tracking_page():
         p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
 
         now = clock.now_local()
-        dt_fmt = "%Y-%m-%dT%H:%M"
+        dt_fmt = "%Y-%m-%d %H:%M"
 
         _manual_start_card.clear()
         with _manual_start_card:
@@ -892,11 +910,7 @@ async def time_tracking_page():
                 f"text-caption text-{core.theme.get('muted')} -mt-2 mb-2"
             )
 
-            start_input = (
-                ui.input(label="Start time", value=now.strftime(dt_fmt))
-                .props('type="datetime-local"')
-                .classes("w-full")
-            )
+            start_input = datetime_input("Start time", now.strftime(dt_fmt)).classes("w-full")
 
             async def handle_save():
                 try:
@@ -938,7 +952,7 @@ async def time_tracking_page():
         )
         c_name = info.iloc[0]["customer_name"] if not info.empty else "Unknown"
         p_name = info.iloc[0]["project_name"] if not info.empty else "Unknown"
-        dt_fmt = "%Y-%m-%dT%H:%M"
+        dt_fmt = "%Y-%m-%d %H:%M"
         editing = {"id": None}
 
         async def _reload_list():
@@ -989,12 +1003,10 @@ async def time_tracking_page():
             if editing["id"] == tid:
                 with ui.column().classes("w-full gap-1").style(hairline):
                     with ui.row().classes("w-full gap-2 no-wrap"):
-                        s_in = ui.input(value=start.replace(" ", "T")[:16]).props(
-                            'type="datetime-local" dense outlined'
-                        ).classes("flex-1")
-                        e_in = ui.input(value=end.replace(" ", "T")[:16]).props(
-                            'type="datetime-local" dense outlined'
-                        ).classes("flex-1")
+                        s_in = datetime_input(value=start[:16]).props(
+                            "dense outlined").classes("flex-1")
+                        e_in = datetime_input(value=end[:16]).props(
+                            "dense outlined").classes("flex-1")
                     c_in = ui.textarea(value=comment, placeholder="Comment").props(
                         "dense outlined autogrow"
                     ).classes("w-full")

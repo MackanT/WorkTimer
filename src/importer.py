@@ -134,8 +134,9 @@ def report(before: pd.DataFrame, after: pd.DataFrame) -> pd.DataFrame:
 def compare_reports(v5_path, db: PgDatabase, today: date | None = None) -> pd.DataFrame:
     """Month by month from the first 5.x entry to this month: the Reports
     page's totals (hours, cost, entries, days) from 5.x and from Postgres —
-    the report queries themselves, not just the stored rows. Hours may drift
-    by a running timer's seconds; cost by < half an öre per entry."""
+    the report queries themselves, not just the stored rows. Hours are the
+    completed ones: a running timer's live hours differ across a clock change
+    (5.x counts wall-clock time). Cost may drift by < half an öre per entry."""
     today = today or clock.today_local()
     rows = []
     with importer_v5.opened(v5_path) as v5:
@@ -150,12 +151,12 @@ def compare_reports(v5_path, db: PgDatabase, today: date | None = None) -> pd.Da
             n = int(old["n"])
             rows.append({
                 "month": month.strftime("%Y-%m"),
-                "hours_5x": round(float(old["h"]), 4), "hours_v6": round(float(new["h"]), 4),
+                "hours_5x": round(float(old["cth"]), 4), "hours_v6": round(float(new["cth"]), 4),
                 "cost_5x": round(float(old["c"]), 2), "cost_v6": round(float(new["c"]), 2),
                 "entries_5x": n, "entries_v6": int(new["n"]),
                 "days_5x": int(old["d"]), "days_v6": int(new["d"]),
                 "match": (n == int(new["n"]) and int(old["d"]) == int(new["d"])
-                          and abs(float(old["h"]) - float(new["h"])) <= 0.0001 * max(n, 1) + 0.02
+                          and abs(float(old["cth"]) - float(new["cth"])) <= 0.0001 * max(n, 1) + 0.02
                           and abs(float(old["c"]) - float(new["c"])) <= 0.005 * max(n, 1)),
             })
             month = last + timedelta(days=1)

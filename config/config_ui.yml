@@ -80,6 +80,13 @@ board_devops_forms:
         options: []
         options_source: customer_data
         optional: False
+      # Where the item is created — shown only for a customer with several
+      # tracker projects; the dialog fills it (add_data's board tab presets it).
+      - name: tracker_project
+        label: Tracker project
+        type: select
+        options: []
+        optional: True
       - name: work_item_type
         label: Work Item Type
         type: select
@@ -126,8 +133,10 @@ board_devops_forms:
           - Other
         optional: True
         conditional: true
+        # @working: the working level of any process (Issue, Product Backlog
+        # Item, Requirement …); @child: any type that takes a parent.
         visible_when:
-          work_item_type: [User Story, Story]
+          work_item_type: [User Story, Story, "@working"]
       - name: contact_person
         label: Contact Person
         type: select
@@ -138,7 +147,7 @@ board_devops_forms:
         parent: customer_name
         conditional: true
         visible_when:
-          work_item_type: [User Story, Story]
+          work_item_type: [User Story, Story, "@working"]
       - name: assigned_to
         label: Assigned To
         type: select
@@ -163,7 +172,7 @@ board_devops_forms:
         parent: customer_name
         conditional: true
         visible_when:
-          work_item_type: [Feature, User Story, Story, Sub-task]
+          work_item_type: [Feature, User Story, Story, Sub-task, "@child"]
       - name: priority
         label: Priority
         type: select
@@ -266,7 +275,7 @@ board_devops_forms:
           # Jira's working level shares the User Story template.
           Story: *story_template
     rows:
-      - [customer_name, work_item_type, work_item_title]
+      - [customer_name, tracker_project, work_item_type, work_item_title]
       - [parent_name, assigned_to]
       - [contact_person, source]
       - [state, priority, board_column]
@@ -428,6 +437,17 @@ add_data_page:
           type: select
           options: []
           optional: true
+        # More projects of the same Azure DevOps org — each gets its own Board
+        # tab. Wired with the Tracker project in add_data.py; Postgres only.
+        - name: extra_tracker_projects
+          label: More tracker projects
+          type: select
+          multiple: true
+          with_input: false
+          allow_custom: false
+          options: []
+          optional: true
+          backend: postgres
         - name: expected_work_pct
           label: Expected work %
           type: number

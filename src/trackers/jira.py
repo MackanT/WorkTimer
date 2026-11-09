@@ -938,7 +938,8 @@ class JiraProvider(TrackerProvider):
 
     # ── writes ────────────────────────────────────────────────────────────
     def create_item(self, type_key, title, description=None,
-                    additional_fields=None, markdown=False, parent=None):
+                    additional_fields=None, markdown=False, parent=None,
+                    project=None):
         """Create an issue at the given hierarchy level. `markdown` is
         accepted for signature parity — text becomes minimal ADF either way.
         The success message keeps the Azure-era 'ID <n>' shape the handler
@@ -1071,7 +1072,7 @@ class JiraProvider(TrackerProvider):
             return (False, f"Error moving issue: {e}")
 
     # ── attachments (per-issue) ───────────────────────────────────────────
-    def upload_attachment(self, file_name, content, work_item_id=None):
+    def upload_attachment(self, file_name, content, work_item_id=None, project=None):
         """Attach bytes to a specific issue and return the authenticated
         content URL — embedded as external media on save, proxied by the
         app's /devops_attachment endpoint for the preview."""

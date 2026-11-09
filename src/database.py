@@ -1988,6 +1988,9 @@ class Database:
                 f"Invalid mode '{mode}'. Must be 'replace', 'append', or 'merge'.",
             )
             return
+        # One tracker project per customer here: the frame's project (several
+        # per customer, on Postgres) has no column in this table.
+        df = df.drop(columns=["project"], errors="ignore")
 
         with self._conn_lock:
             if mode == "replace":

@@ -17,6 +17,7 @@ import pandas as pd
 import requests
 
 from .base import TrackerCapabilities, TrackerProvider, WORK_ITEM_COLUMNS
+from .process import AGILE
 from .registry import register_provider
 from ..tracker_manager import AzureDevOpsClient
 
@@ -53,11 +54,10 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
     provider_key = "devops"
     display_name = "Azure DevOps"
 
-    _TYPE_HIERARCHY = ("Epic", "Feature", "User Story")
-
     @classmethod
     def type_hierarchy(cls) -> tuple:
-        return cls._TYPE_HIERARCHY
+        """The class default (Agile); each project's own: process(project)."""
+        return AGILE.types
 
     @classmethod
     def capabilities(cls) -> TrackerCapabilities:
@@ -74,19 +74,22 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
         org = row.get("org_url")
         if _blankish(pat) or _blankish(org):
             return None
+        extra = row.get("extra_tracker_projects")
         provider = cls(
             str(pat),
             f"https://dev.azure.com/{str(org).strip()}",
             log,
             project_name=row.get("tracker_project"),
+            extra_projects=list(extra) if isinstance(extra, (list, tuple)) else [],
         )
         provider.customer_name = str(row.get("customer_name") or "")
         return provider
 
     # ── data ──────────────────────────────────────────────────────────────
     def fetch_work_items(self, min_id=None, min_changed_date=None):
-        """Fetch this customer's Epics/Features/User Stories as the canonical
-        work-item DataFrame (WORK_ITEM_COLUMNS schema)."""
+        """Fetch this customer's work items on its projects' backlog levels
+        (tasks included) as the canonical work-item DataFrame
+        (WORK_ITEM_COLUMNS schema)."""
         status, items = self.get_workitem_level(
             level=None, return_full=True, min_id=min_id,
             min_changed_date=min_changed_date,
@@ -102,14 +105,16 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
                 return af.get("displayName", af.get("uniqueName", ""))
             return str(af)
 
-        wanted = set(self._TYPE_HIERARCHY)
-        root = self._TYPE_HIERARCHY[0]
         rows = []
         for item in items:
             fields = getattr(item, "fields", {}) or {}
             wtype = fields.get("System.WorkItemType")
-            if wtype not in wanted:
+            project = fields.get("System.TeamProject")
+            process = self.process(project)
+            if process.level_of(wtype) is None:
                 continue
+            if project:
+                self._project_of[int(item.id)] = project
             rows.append(
                 {
                     "customer_name": self.customer_name,
@@ -117,7 +122,8 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
                     "id": item.id,
                     "title": fields.get("System.Title"),
                     "state": fields.get("System.State"),
-                    "parent_id": None if wtype == root else fields.get("System.Parent"),
+                    "parent_id": (None if wtype in process.root_types
+                                  else fields.get("System.Parent")),
                     "board_column": fields.get("System.BoardColumn", ""),
                     "board_column_done": int(bool(fields.get("System.BoardColumnDone", False))),
                     "assigned_to": _assigned_to(fields),
@@ -126,6 +132,7 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
                     # Already in the expand="All" payload — cached as plain text
                     # so board search / palette find can match description bodies.
                     "description": _plain_text(fields.get("System.Description")),
+                    "project": project,
                 }
             )
         if not rows:
@@ -135,19 +142,14 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
     # ── mutations ─────────────────────────────────────────────────────────
     def create_item(
         self, type_key, title, description=None, additional_fields=None,
-        markdown=False, parent=None,
+        markdown=False, parent=None, project=None,
     ):
-        """Create a work item of `type_key`, dispatching to the level-specific
-        creators (the root level takes no parent)."""
-        if type_key == "Epic":
-            return self.create_epic(title, description, additional_fields, markdown)
-        if type_key == "Feature":
-            return self.create_feature(
-                title, description, additional_fields, markdown, parent
-            )
-        return self.create_user_story(
-            title, description, additional_fields, markdown, parent
-        )
+        """Create a work item of `type_key` in `project` (default: the main
+        one) — the root level takes no parent."""
+        if type_key in self.process(project).root_types:
+            parent = None
+        return self._create_work_item(
+            type_key, title, description, additional_fields, markdown, parent, project)
 
     # ── attachments ───────────────────────────────────────────────────────
     def owns_attachment_url(self, url) -> bool:

@@ -11,6 +11,7 @@ hierarchy, search, work-item pickers, reports) renders from that frame.
 """
 
 import re
+import unicodedata
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -31,7 +32,14 @@ WORK_ITEM_COLUMNS = [
     "changed_date",
     "priority",
     "description",  # plain-text (tags stripped, truncated) — for search only
+    "project",  # the tracker project the item lives in (None if one per customer)
 ]
+
+def board_key(customer: str, project: str | None = None) -> str:
+    """A Board tab's key: the customer — or, for one of a customer's several
+    tracker projects, 'Customer · Project'."""
+    return f"{customer} · {project}" if project else customer
+
 
 # Work-item levels root → leaf. Used as the fallback wherever no provider is
 # connected (e.g. rendering the board type chips before any data loads).
@@ -63,15 +71,25 @@ class TrackerCapabilities:
     branches: bool = False
 
 
+# Letters NFKD can't split into a plain letter and its accent.
+_PLAIN_LETTERS = str.maketrans({"ø": "o", "æ": "ae", "ß": "ss", "đ": "d", "ł": "l"})
+
+
+def _plain(text) -> str:
+    """Lower-case text with its accents dropped: å ä ö → a a o, é → e."""
+    text = unicodedata.normalize("NFKD", str(text or "").lower().translate(_PLAIN_LETTERS))
+    return "".join(c for c in text if not unicodedata.combining(c))
+
+
 def suggest_branch_name(item_type, item_id, title, template=None) -> str:
     """Branch name for a work item. With no template:
     '<level>/<id>-<title-slug>' ('User Story' → 'story'). A template (the
     tracker's per-type "Branch name template" setting) may place
     {{type}}, {{id}} and {{title}} freely, e.g. 'feat/{{id}}-{{title}}'.
     Editable in the dialog — a starting point, not an enforced convention."""
-    words = str(item_type or "").strip().lower().split()
+    words = _plain(item_type).strip().split()
     type_part = re.sub(r"[^a-z0-9]+", "", words[-1]) if words else ""
-    slug = re.sub(r"[^a-z0-9]+", "-", str(title or "").lower()).strip("-")[:40]
+    slug = re.sub(r"[^a-z0-9]+", "-", _plain(title)).strip("-")[:40]
     slug = slug.rstrip("-")
     tpl = str(template or "").strip()
     if tpl:
@@ -128,13 +146,13 @@ class TrackerProvider(ABC):
         connection, or (False, msg). Default: not supported."""
         return (False, "Member listing is not supported for this tracker")
 
-    def list_repositories(self) -> list:
-        """Git repos available for branch creation: [{id, name,
-        default_branch, project_id}]. Empty where the tracker hosts none
-        (capabilities().branches gates the UI)."""
+    def list_repositories(self, project=None) -> list:
+        """Git repos available for branch creation — in `project` where a
+        customer has several: [{id, name, default_branch, project_id}]. Empty
+        where the tracker hosts none (capabilities().branches gates the UI)."""
         return []
 
-    def list_branches(self, repo_id) -> list:
+    def list_branches(self, repo_id, project=None) -> list:
         """Branch names in a repo (for the base-branch picker). Empty where
         unsupported."""
         return []
@@ -145,6 +163,12 @@ class TrackerProvider(ABC):
         """Create a branch from the source branch's tip and link it to the
         work item. (ok, message). Default: not supported."""
         return (False, "Branch creation is not supported for this tracker")
+
+    def process(self, project=None):
+        """The work-item process of `project` (levels, boards, states with
+        their category — see process.py), or None where the tracker has none
+        to read: the class-level type_hierarchy() etc. then apply."""
+        return None
 
     def state_options(self) -> list:
         """State names for this tracker's work items, offered by the State
@@ -183,10 +207,10 @@ class TrackerProvider(ABC):
     @abstractmethod
     def create_item(
         self, type_key, title, description=None, additional_fields=None,
-        markdown=False, parent=None,
+        markdown=False, parent=None, project=None,
     ):
-        """Create a work item of `type_key` (a value from type_hierarchy()).
-        Returns (status, payload)."""
+        """Create a work item of `type_key` (a value from type_hierarchy()) —
+        in `project`, where a customer has several. Returns (status, payload)."""
 
     @abstractmethod
     def update_work_item_fields(self, work_item_id, fields, markdown=False):
@@ -207,9 +231,10 @@ class TrackerProvider(ABC):
 
     # ── attachments ───────────────────────────────────────────────────────
     @abstractmethod
-    def upload_attachment(self, file_name, content, work_item_id=None):
+    def upload_attachment(self, file_name, content, work_item_id=None, project=None):
         """Upload bytes; return an embeddable URL or None. `work_item_id`
-        targets item-scoped stores (Jira); project-scoped ones ignore it."""
+        targets item-scoped stores (Jira); project-scoped ones use it (or
+        `project`) to pick the project."""
 
     @staticmethod
     def owned_url(url, base: str, prefix: str = "", contains: str = "") -> bool:

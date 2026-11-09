@@ -513,13 +513,15 @@ class PgDatabase:
         self, customer_name: str, new_customer_name: str, org_url: str = None,
         pat_token: str = None, tracker_project: str = None, expected_work_pct: float = None,
         color: str = None, integration_type: str = None, tracker_name: str = None,
-        currency: str = None, wage=None, rate_from=None,
+        currency: str = None, wage=None, rate_from=None, extra_tracker_projects=None,
     ):
         """Rename and edit settings. None leaves a setting unchanged; "" clears
         it. The tracker type comes from the linked tracker. The currency can
         change only while the customer has no time entries (v6_plan §4).
         `wage` from `rate_from` is set as set_customer_rate does — a no-op when
-        that is already the rate from then until the next change."""
+        that is already the rate from then until the next change.
+        `extra_tracker_projects`: the tracker projects linked beyond the main
+        one (a list; [] unlinks them all)."""
         currency = _currency(currency)
         with self._tx() as conn:
             if wage not in (None, "") and rate_from:
@@ -545,6 +547,14 @@ class PgDatabase:
                 changes["fk_tracker"] = self._tracker_key(conn, tracker_name) if tracker_name else None
             if tracker_project is not None:
                 changes["tracker_project"] = tracker_project or None
+            if extra_tracker_projects is not None:
+                main = tracker_project or self._one(
+                    conn, "select tracker_project from customers where customer_name = %s",
+                    (customer_name,))
+                extras = [str(p).strip() for p in extra_tracker_projects
+                          if p and str(p).strip()]
+                changes["extra_tracker_projects"] = list(dict.fromkeys(
+                    p for p in extras if p != main))
             if expected_work_pct is not None:
                 changes["expected_work_pct"] = expected_work_pct
             if color is not None:
@@ -970,8 +980,8 @@ class PgDatabase:
         the rate untouched changes no rate."""
         return self.fetch_query(
             f"""
-            select c.customer_name, c.tracker_project, c.expected_work_pct, c.color,
-                   t.tracker_name, c.currency, w.wage
+            select c.customer_name, c.tracker_project, c.extra_tracker_projects,
+                   c.expected_work_pct, c.color, t.tracker_name, c.currency, w.wage
             from customers c left join trackers t on t.key_tracker = c.fk_tracker
             left join lateral (
                 select w.wage from customer_wages w
@@ -1127,7 +1137,7 @@ class PgDatabase:
         return self.fetch_query(
             f"""
             select c.customer_name, t.pat_token, t.org_url, c.tracker_project,
-                   t.integration_type
+                   c.extra_tracker_projects, t.integration_type
             from customers c join trackers t on t.key_tracker = c.fk_tracker
             where c.is_enabled and coalesce(t.pat_token, '') != '' and coalesce(t.org_url, '') != ''
             order by {_CUSTOMER_ORDER}
@@ -1446,7 +1456,7 @@ class PgDatabase:
                w.bk_parent_work_item as parent_id, w.board_column,
                w.is_done::integer as board_column_done, w.assigned_to,
                to_char(w.changed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') as changed_date,
-               w.priority, w.description_text as description
+               w.priority, w.description_text as description, w.tracker_project as project
         from work_items w join customers c on c.key_customer = w.fk_customer
     """
     _WORK_ITEM_FIELDS = {  # WORK_ITEM_COLUMNS name → column
@@ -1454,6 +1464,7 @@ class PgDatabase:
         "parent_id": "bk_parent_work_item", "board_column": "board_column",
         "board_column_done": "is_done", "assigned_to": "assigned_to",
         "changed_date": "changed_at", "priority": "priority", "description": "description_text",
+        "project": "tracker_project",
     }
 
     @staticmethod
@@ -1970,7 +1981,8 @@ class PgDatabase:
         "trackers": ("key_tracker", ["tracker_name", "integration_type", "org_url", "pat_token",
                                      "token_expires", "created_at"], {}),
         "customers": ("key_customer", ["customer_name", "currency", "color", "fk_tracker",
-                                       "tracker_project", "expected_work_pct", "sort_order",
+                                       "tracker_project", "extra_tracker_projects",
+                                       "expected_work_pct", "sort_order",
                                        "is_enabled", "created_at"], {"fk_tracker": "trackers"}),
         "customer_wages": ("key_customer_wage", ["fk_customer", "wage", "valid_from", "valid_to",
                                                  "created_at"], {"fk_customer": "customers"}),
@@ -1993,7 +2005,8 @@ class PgDatabase:
         "work_items": ("key_work_item", ["fk_customer", "bk_work_item", "bk_parent_work_item",
                                          "display_ref", "item_type", "title", "state",
                                          "board_column", "is_done", "assigned_to", "changed_at",
-                                         "priority", "description_text", "synced_at"],
+                                         "priority", "description_text", "tracker_project",
+                                         "synced_at"],
                        {"fk_customer": "customers"}),
     }
     _NUMERIC = {"duration_hours", "cost", "user_bonus", "bonus_pct_snapshot", "bonus_pct",
@@ -2003,7 +2016,7 @@ class PgDatabase:
     def _import_value(self, column: str, value):
         """An export value (JSON text for money, dates, times) as its column's type."""
         if value is None:
-            return None
+            return [] if column == "extra_tracker_projects" else None
         if column in self._NUMERIC:
             return Decimal(str(value))
         if column in self._DATES:

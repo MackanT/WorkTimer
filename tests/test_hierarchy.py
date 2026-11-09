@@ -211,3 +211,58 @@ def test_focus_options_lists_epics_and_features_only():
     # Epics are listed before Features.
     keys = [k for k in opts if k]
     assert keys.index("1") < keys.index("2")
+
+
+def _story_with_tasks():
+    return _df([
+        {"customer_name": "A", "type": "Epic", "id": 1, "title": "E", "state": "Active", "parent_id": None},
+        {"customer_name": "A", "type": "User Story", "id": 2, "title": "US", "state": "Active", "parent_id": 1},
+        {"customer_name": "A", "type": "Task", "id": 5, "title": "T1", "state": "Active", "parent_id": 2},
+        {"customer_name": "A", "type": "Bug", "id": 6, "title": "B1", "state": "New", "parent_id": 2},
+        {"customer_name": "A", "type": "Task", "id": 7, "title": "Old", "state": "Closed", "parent_id": 2},
+        {"customer_name": "A", "type": "User Story", "id": 3, "title": "Bare", "state": "New", "parent_id": 1},
+    ])
+
+
+def test_a_storys_tasks_fold_into_one_count_node():
+    code = build_mermaid(_story_with_tasks(), "A", task_types=("Task", "Bug"),
+                         task_parents=("User Story",))
+
+    assert 't2("2 tasks ▸")' in code and "n2 --> t2" in code  # the closed one not counted
+    assert "n5(" not in code and "n6(" not in code
+    assert 'a3("＋ task")' in code and "n3 --> a3" in code  # no tasks: just the ＋
+    assert "a1(" not in code and "a2(" not in code  # an Epic gets no ＋, nor an open list
+
+
+def test_an_open_task_list_shows_its_tasks_and_a_plus_at_the_end():
+    code = build_mermaid(_story_with_tasks(), "A", task_types=("Task", "Bug"),
+                         open_tasks={2}, task_parents=("User Story",))
+
+    assert 't2("2 tasks ▾")' in code
+    assert {"t2 --> n5", "t2 --> n6", "t2 --> a2"} <= set(code.splitlines())
+    assert "n2 --> n5" not in code and "n7(" not in code
+
+
+def test_without_task_types_tasks_draw_as_before():
+    code = build_mermaid(_story_with_tasks(), "A")
+
+    assert "n2 --> n5" in code and "t2(" not in code and "a3(" not in code
+
+
+def test_closed_and_done_follow_the_state_category():
+    df = _df([
+        {"customer_name": "A", "type": "Epic", "id": 1, "title": "E", "state": "Doing",
+         "state_category": "InProgress", "parent_id": None},
+        {"customer_name": "A", "type": "Issue", "id": 2, "title": "I1", "state": "Done",
+         "state_category": "Completed", "parent_id": 1},
+        {"customer_name": "A", "type": "Issue", "id": 3, "title": "I2", "state": "Shipping",
+         "state_category": "Resolved", "parent_id": 1},
+        {"customer_name": "A", "type": "Issue", "id": 4, "title": "I3", "state": "To Do",
+         "state_category": "Proposed", "parent_id": 1},
+    ])
+
+    code = build_mermaid(df, "A", count_type="Issue")
+
+    assert "n2(" not in code  # Basic's Done is closed: hidden
+    assert "class n3 done;" in code and "class n4 done;" not in code
+    assert "2 of 3 done" in build_mermaid(df, "A", include_closed=True, count_type="Issue")

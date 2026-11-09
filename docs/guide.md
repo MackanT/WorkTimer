@@ -88,7 +88,7 @@ Track billable hours across customers and projects.
 
 - **Time span** — filter by Day, Week, Month, Year, All-Time, or a custom date range
 - **Start/stop** — click the checkbox next to any project to start or stop a timer
-- **Stop dialog** — add a comment, link a tracker work item (★ marks items related to the project's default), re-assign the project, or set a custom stop time
+- **Stop dialog** — add a comment, link a tracker work item (★ marks items related to the project's default), re-assign the project, or set a custom stop time. For a customer with several tracker projects, pick the *Tracker project* first — the work-item list then shows its items, and the comment goes there
 - **Right-click a project row** — add/manage time entries, update the project (rename, default Git-ID), or disable it
 - **Right-click a customer header** — update the customer, add a project, or disable the customer
 - **Quick-adds** — a dashed *Add customer* card sits at the end of the row; every customer card has an *＋ Add project* button
@@ -103,13 +103,16 @@ the nav bar wherever you open WorkTimer next.
 
 A Kanban view of the connected trackers' work items, from WorkTimer's copy of them.
 
-- **Customer tabs** switch between connected customers; type chips follow the customer's tracker levels (Azure: Epic/Feature/User Story; Jira: Epic/Story/Sub-task)
+- **Customer tabs** switch between connected customers — a customer with several tracker projects gets one tab per project (*Acme · Mobile*), each with that project's items and board columns; type chips follow the project's own levels, tasks included (Azure reads them per project: Epic/Feature/User Story/Task on Agile, Epic/Issue/Task on Basic, Scrum, CMMI or a custom process; Jira: Epic/Story/Sub-task)
 - **Drag a card** between columns to move it (Azure: board column; Jira: a workflow status transition)
+- **Tasks** have no board in Azure DevOps: the *Task* chip shows every task with its states as the columns, and dragging a task changes its state
+- **Children under a card** — a card with open children shows a count line (*▸ 3 Tasks*, *▸ 4 Stories*); click it to list them, and click a child to open it. The small **＋** on a card adds a child one level down (Epic → Feature → User Story → Task) under it
 - **Click a card** to open the full dialog — description (markdown editor + preview), state/assignee/priority, comments, image insert/paste, and an *Open in tracker* link
 - **Create branch** (Azure DevOps) — the branch button in the card dialog creates a git branch in Azure Repos from a source branch's tip and links it to the work item (its Development area); repo, name and source are editable, with a `story/123-title` style suggestion prefilled. The naming is configurable per tracker/type (see Settings), and the add form has an **Auto-create git branch** switch — turning it on reveals the branch-name template and a base-branch dropdown (repo default preselected), and the branch is made right after the item
 - **Search** filters by title, assignee, state, column, id, description and the parent chain; *Incl. done* extends to closed items
 - **＋** adds a work item with the current customer/type preset
-- The **Hierarchy** toggle renders the same data as a tree, coloured by board column, with story-progress rollups and a Focus selector; ＋ pre-parents under the focused node
+- The **Hierarchy** toggle renders the same data as a tree, coloured by board column, with story-progress rollups and a Focus selector; ＋ pre-parents under the focused node. A story's tasks fold into one *3 tasks ▸* node that opens on click; *＋ task* adds one under the story
+- **Open and done** follow each state's category in the tracker, not its name: an item is open while it's not started or in progress (never *Resolved*) — what the stop dialog and the work-item pickers offer — and closed once completed or removed
 
 ---
 
@@ -131,7 +134,7 @@ Each dialog has operation tabs (Add / Update / Disable / Re-enable — Delete fo
 
 ### Customers
 - **Add** — name, hourly rate, optional tracker link
-- **Update** — rename, link/unlink a tracker and pick its *Tracker project* (the DevOps/Jira project the Board, sync and new work items use — listed from the selected tracker; without its token, only the projects other customers already use on it), expected work %, colour
+- **Update** — rename, link/unlink a tracker and pick its *Tracker project* (the DevOps/Jira project the Board, sync and new work items use — listed from the selected tracker; without its token, only the projects other customers already use on it), *More tracker projects* (Azure DevOps, on the hosted WorkTimer: more projects of the same organisation — each gets its own Board tab, and new work items can go to any of them), expected work %, colour
 - **Hourly rate** (in *Update*) — a new rate from any date (*Rate from*), also back in time: it applies until the customer's next rate change. Below the form, *Hourly rates* lists the customer's rates (from, to, rate); once you change the rate or its date, *After saving* shows the result, and beside each changed period how many time entries get the new price and how the amount changes — saving asks first. Time dated before the change keeps its price. A change entered by mistake goes with its **✕** in the list: the earlier rate applies again
 - **Disable / Re-enable** — soft-archive without losing historical entries (disabled customers disappear from the board and pickers; their cached items return on re-enable)
 
@@ -150,7 +153,7 @@ A tracker is a connection (type + org/site + credentials) that customers link to
 - **Add** — record a bonus percentage with a start date (defaults to 0 % when unset)
 
 ### Work items
-Created from the Board/Hierarchy ＋ or the palette, for any level of the customer's tracker:
+Created from the Board/Hierarchy ＋ or the palette, for any level of the customer's tracker project — the types, states and parents follow the chosen *Tracker project*:
 - Markdown descriptions with live preview and image insert/paste
 - Parent pre-selection and per-level description templates (editable in *Settings → Trackers*)
 - Per-tracker/per-type field defaults apply automatically (see Settings)

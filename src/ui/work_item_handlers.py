@@ -11,6 +11,7 @@ import asyncio
 from collections import defaultdict
 
 from .. import helpers
+from ..trackers.base import board_key
 
 
 class WorkItemHandlers:
@@ -45,24 +46,29 @@ class WorkItemHandlers:
         await self.preload_cached_board_columns()
 
     async def preload_cached_board_columns(self):
+        """Board columns for every Board tab — a customer, or each of its
+        tracker projects — cached by the tab's key."""
         loop = asyncio.get_event_loop()
+        boards = [(key, customer, project) for key, customer, project in self.DO.boards()
+                  if customer in self.DO.manager.clients]
+        boards += [(c, c, None) for c in self.DO.manager.clients
+                   if c not in {b[1] for b in boards}]
         tasks = [
-            loop.run_in_executor(None, self.load_board_columns, customer, board_type)
-            for customer in self.DO.manager.clients.keys()
-            for board_type in ["Epic", "Feature", "User Story"]
-            if self.devops_columns_cache[customer].get(board_type) is None
+            loop.run_in_executor(
+                None, self.load_board_columns, customer, board_type, project, key)
+            for key, customer, project in boards
+            for board_type in self.DO.type_hierarchy(customer, project)
+            if self.devops_columns_cache[key].get(board_type) is None
         ]
         if tasks:
             await asyncio.gather(*tasks)
 
-    def load_board_columns(self, customer_name: str, board_type: str):
-        """Loads and caches board columns for a given customer and board type."""
-        board_types = {
-            "Epic": "Epics",
-            "Feature": "Features",
-            "User Story": "Stories",
-        }
-
+    def load_board_columns(self, customer_name: str, board_type: str,
+                           project: str | None = None, key: str | None = None):
+        """Loads and caches board columns for a given customer (one of its
+        tracker projects, under `key`) and work-item type — the board its
+        project's process puts that type on. The main project's are also the
+        customer's own — what Settings' defaults offer."""
         if not customer_name or not self.DO.manager:
             return None
         client = self.DO.manager._get_client(customer_name)
@@ -71,11 +77,36 @@ class WorkItemHandlers:
         fetch_columns = getattr(client, "get_board_columns_via_team_autodetect", None)
         if fetch_columns is None:
             return None  # provider has no board-column API — cache stays empty
-        col_status, columns = fetch_columns(
-            board_type=board_types.get(board_type, "Stories")
-        )
-        self.devops_columns_cache[customer_name][board_type] = columns
+        process = self.DO.process(customer_name, project)
+        board = process.board(board_type) if process else board_type
+        if board is None:
+            return None  # the task level: no board — its states are the columns
+        kwargs = {"project": project} if project else {}
+        col_status, columns = fetch_columns(board_type=board, **kwargs)
+        if not col_status or not isinstance(columns, list):
+            # e.g. "No board 'Stories' found in any team" — cache "none", not
+            # the message, which the board drew one column per letter of.
+            self.LOG.warning(
+                f"No {board_type} board columns for {key or customer_name}: {columns}")
+            columns, col_status = [], False
+        self.devops_columns_cache[key or customer_name][board_type] = columns
+        if project and project == getattr(client, "project_name", None):
+            self.devops_columns_cache[customer_name][board_type] = columns
         return columns, col_status
+
+    async def _board_columns(self, customer, board_type, project=None):
+        """(columns, ok) of a customer's board — of one of its tracker
+        projects when it has several — from the cache, else loaded once;
+        (None, False) when they can't be had."""
+        multi = bool(project) and len(self.DO.projects(customer)) > 1
+        key = board_key(customer, project) if multi else customer
+        cached = self.devops_columns_cache[key].get(board_type)
+        if cached is not None:
+            return cached, True
+        result = await asyncio.to_thread(
+            self.load_board_columns, customer, board_type,
+            project if multi else None, key)
+        return result if result is not None else (None, False)
 
     async def _write_through_cache(self, work_item_id: int, fields: dict, customer_name: str = None):
         """Persist live API field values to the local DB cache and reload the df."""
@@ -106,6 +137,9 @@ class WorkItemHandlers:
         title = wid["work_item_title"]
         description = wid.get("description_editor", "")
         customer_name = wid["customer_name"]
+        # One of the customer's tracker projects (the add form shows the
+        # choice only when it has several); None: the main one.
+        project = wid.get("tracker_project") or None
 
         if not self.DO or not self.DO.manager:
             return False, "DevOps manager not available"
@@ -135,12 +169,12 @@ class WorkItemHandlers:
             ),
             additional_fields=additional_fields,
             markdown=True,
+            project=project,
         )
 
-        # Parent applies to every level below the hierarchy root (Azure:
-        # Feature/User Story; Jira: Story/Sub-task).
-        root_type = self.DO.type_hierarchy(customer_name)[0]
-        if work_item_type != root_type:
+        # Parent applies to every level below the project's root (Azure:
+        # all but Epic; Jira: Story/Sub-task).
+        if work_item_type not in self.DO.levels(customer_name, project)[0]:
             parent_id = None
             if wid.get("parent_name"):
                 parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
@@ -245,7 +279,9 @@ class WorkItemHandlers:
 
         try:
             mgr = self.DO.manager
-            repos = await asyncio.to_thread(mgr.list_repositories, customer_name)
+            # The new item's own project's repos.
+            repos = await asyncio.to_thread(
+                mgr.list_repositories, customer_name, work_item_id)
             if not repos:
                 return False, (
                     "Branch not created — no repositories found "
@@ -385,12 +421,15 @@ class WorkItemHandlers:
             # --- b_type from df cache (not in description response) ---
             b_type = work_item_display.split(":")[0].strip()
             cached_col = ""
+            item_project = None
             if self.DO.df is not None:
                 matches = self.DO.df[self.DO.df["id"] == int(work_item_id)]
                 if not matches.empty:
                     cached_row = matches.iloc[0]
                     b_type = str(cached_row.get("type", b_type))
                     cached_col = str(cached_row.get("board_column", "") or "")
+                    project = cached_row.get("project")
+                    item_project = project if isinstance(project, str) else None
 
             # --- Description + live scalar fields: one API call, free extra data ---
             # Blocking API call — worker thread keeps the dialog responsive.
@@ -454,17 +493,14 @@ class WorkItemHandlers:
                 self._set_widget_value_safe(current_column_widget, current_col, "string")
                 current_column_widget.widget.props("readonly outlined")
 
-            # Board column options from preloaded cache (API only called once at startup)
-            cached_list = self.devops_columns_cache[c_name].get(b_type)
-            if cached_list is None:
-                result = await asyncio.to_thread(self.load_board_columns, c_name, b_type)
-                if result is None:
-                    self.LOG.warning(f"Could not load board columns for {c_name}/{b_type}")
-                    return
-                columns, col_status = result
-            else:
-                columns = cached_list
-                col_status = True
+            # Board column options from preloaded cache (API only called once
+            # at startup) — the item's own project's board; a task has none.
+            if b_type in self.DO.task_types(c_name, item_project):
+                return
+            columns, col_status = await self._board_columns(c_name, b_type, item_project)
+            if columns is None:
+                self.LOG.warning(f"Could not load board columns for {c_name}/{b_type}")
+                return
 
             if col_status and board_column_widget:
                 board_column_widget.widget.options = columns
@@ -498,6 +534,7 @@ class WorkItemHandlers:
         customer_widget = widgets.get("customer_name")
         work_item_widget = widgets.get("work_item_type")
         board_column_widget = widgets.get("board_column")
+        project_widget = widgets.get("tracker_project")
 
         load_columns_for_customer = None
 
@@ -507,17 +544,16 @@ class WorkItemHandlers:
             async def load_columns_for_customer(e=None):
                 c_name = customer_widget.value if customer_widget else None
                 b_type = work_item_widget.value if work_item_widget else None
-                cached_list = self.devops_columns_cache[c_name].get(b_type)
-
-                if cached_list is None:
-                    result = await asyncio.to_thread(self.load_board_columns, c_name, b_type)
-                    if result is None:
-                        self.LOG.warning(f"Could not load board columns for {c_name}/{b_type}")
-                        return
-                    columns, col_status = result
-                else:
-                    columns = cached_list
-                    col_status = True
+                project = project_widget.value if project_widget is not None else None
+                if b_type in self.DO.task_types(c_name, project):
+                    board_column_widget.widget.options = []  # no board on the task level
+                    board_column_widget.widget.value = None
+                    board_column_widget.widget.update()
+                    return
+                columns, col_status = await self._board_columns(c_name, b_type, project)
+                if columns is None:
+                    self.LOG.warning(f"Could not load board columns for {c_name}/{b_type}")
+                    return
 
                 if col_status and columns:
                     board_column_widget.widget.options = columns
@@ -530,6 +566,8 @@ class WorkItemHandlers:
 
             customer_widget.on("update:model-value", load_columns_for_customer)
             work_item_widget.on("update:model-value", load_columns_for_customer)
+            if project_widget is not None:
+                project_widget.on("update:model-value", load_columns_for_customer)
 
         # Initialize preview
         if editor_widget and preview_widget:

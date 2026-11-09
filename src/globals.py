@@ -6,7 +6,8 @@ from .tracker_manager import TrackerManager
 # avoids a circular import.
 from .trackers import azure as _azure_tracker  # noqa: F401
 from .trackers import jira as _jira_tracker  # noqa: F401
-from .trackers.base import DEFAULT_STATE_OPTIONS, DEFAULT_TYPE_HIERARCHY
+from .trackers.base import DEFAULT_STATE_OPTIONS, DEFAULT_TYPE_HIERARCHY, board_key
+from .trackers.process import categories, guess_category, is_open
 from .database import Database
 from collections import defaultdict
 from dataclasses import dataclass
@@ -209,6 +210,8 @@ class TrackerEngine:
         # customers only (WorkItemHandlers fills it).
         self.columns_cache = defaultdict(dict)
         self.preload_started = False
+        # (customer, project) fetched in full by this engine — see _unsynced_customers.
+        self._fully_fetched: set = set()
 
     def _user_key(self) -> int:
         return getattr(self.query_engine, "user_key", 1)
@@ -285,41 +288,90 @@ class TrackerEngine:
         """
         return bool(self.manager and customer_name in self.manager.clients)
 
+    def projects(self, customer_name: str) -> list:
+        """The customer's tracker projects, main first: its connection's —
+        else (not connected) those of its cached work items."""
+        if self.manager:
+            projects = self.manager.projects(customer_name)
+            if projects:
+                return projects
+        if self.df is not None and "project" in self.df.columns:
+            cached = self.df.loc[self.df["customer_name"] == customer_name, "project"]
+            return list(dict.fromkeys(cached.dropna()))
+        return []
+
+    def project_mask(self, df: pd.DataFrame, customer: str, project: str | None = None):
+        """Rows of `customer` — in `project` when given. An item cached
+        without a project (before its customer linked several) counts as the
+        main project's until a sync records it."""
+        mask = df["customer_name"] == customer
+        if project and "project" in df.columns:
+            in_project = df["project"] == project
+            if project == (self.projects(customer) or [None])[0]:
+                in_project |= df["project"].isna()
+            mask &= in_project
+        return mask
+
+    def boards(self) -> list[tuple[str, str, str | None]]:
+        """The Board's tabs as (key, customer, project), by customer name: one
+        per customer with work items — or, for a customer with several
+        tracker projects, one per project (also those without items yet)."""
+        customers = set()
+        if self.df is not None:
+            customers |= set(self.df["customer_name"].dropna())
+        if self.manager:
+            customers |= {c for c in self.manager.clients if len(self.manager.projects(c)) > 1}
+        tabs = []
+        for customer in sorted(customers):
+            projects = self.projects(customer)
+            if len(projects) > 1:
+                tabs += [(board_key(customer, p), customer, p) for p in projects]
+            else:
+                tabs.append((customer, customer, None))
+        return tabs
+
     def get_available_projects(self) -> dict:
         """{customer_name: [project names in their org]} for connected customers,
         or {} when no manager. Feeds the customer form's project picker."""
         return self.manager.get_available_projects() if self.manager else {}
 
     def upload_attachment(self, customer_name, file_name, content,
-                          work_item_id=None):
+                          work_item_id=None, project=None):
         """Upload bytes as a tracker attachment for a customer; returns the URL
         or None. Used to embed pasted/inserted images in work-item
-        descriptions. `work_item_id` targets item-scoped stores (Jira)."""
+        descriptions. `work_item_id` targets item-scoped stores (Jira) and
+        the item's project; `project` names a new item's."""
         return (
             self.manager.upload_attachment(
-                customer_name, file_name, content, work_item_id
+                customer_name, file_name, content, work_item_id, project=project
             )
             if self.manager
             else None
         )
 
-    def get_work_item_options(self, customer_name: str | None = None):
+    @staticmethod
+    def open_mask(df: pd.DataFrame) -> pd.Series:
+        """The items still to work on — by state category, so any process
+        and tracker (process.is_open: not started or in progress, never
+        Resolved)."""
+        return pd.Series([is_open(s, c) for s, c in zip(df["state"], categories(df))],
+                         index=df.index, dtype=bool)
+
+    def get_work_item_options(self, customer_name: str | None = None,
+                              project: str | None = None):
         """Active DevOps work items for the Git-ID picker.
 
         With ``customer_name``, returns a flat list of ``{"label", "id"}`` for
         that customer. Without it, returns ``{customer_name: [...]}`` for every
         customer. Empty (list/dict respectively) when DevOps data isn't loaded,
-        so callers degrade to manual id entry. Uses the same Active/New filter
-        as the timer dialog's work-item selector.
+        so callers degrade to manual id entry. Uses the same open-items rule
+        as the timer dialog's work-item selector (open_mask).
         """
         if self.df is None or self.df.empty:
             return [] if customer_name is not None else {}
-        # Provider-neutral "open item" filter — state NAMES differ per tracker
-        # (ADO: Active/New..., Jira: To Do/In Progress...), so exclude the
-        # done-ish ones instead of whitelisting Azure's.
-        active = self.df[~self.df["state"].isin(["Resolved", "Closed", "Removed", "Done"])]
+        active = self.df[self.open_mask(self.df)]
         if customer_name is not None:
-            active = active[active["customer_name"] == customer_name]
+            active = active[self.project_mask(active, customer_name, project)]
         # Newest (highest id) first — most likely related to current work.
         active = active.sort_values("id", ascending=False)
 
@@ -384,6 +436,47 @@ class TrackerEngine:
         # off the event loop so the UI stays responsive during startup.
         self.manager = await asyncio.to_thread(TrackerManager, df, self.log)
 
+    async def _unsynced_customers(self) -> set:
+        """Customers with a tracker project that has nothing cached of one of
+        its process' types (tasks, a project on another process — or, without
+        a process, nothing at all where a customer has several) — and that
+        this engine hasn't fetched in full already."""
+        if self.manager is None:
+            return set()
+        df = self.df
+        if df is None:
+            df = await self.query_engine.function_db("get_visible_devops_items")
+        cached = (set(zip(df["customer_name"], df["project"], df["type"]))
+                  if df is not None and not df.empty and "project" in df.columns else set())
+        done = getattr(self, "_fully_fetched", set())
+
+        def gap(customer, project, several) -> bool:
+            process = self.process(customer, project)
+            if process is None:
+                return several and not any(c == customer and p == project for c, p, _ in cached)
+            return any((customer, project, t) not in cached
+                       for t in process.types + process.task_types)
+
+        unsynced = set()
+        for customer in self.manager.clients:
+            projects = self.manager.projects(customer)
+            if any((customer, p) not in done and gap(customer, p, len(projects) > 1)
+                   for p in projects):
+                unsynced.add(customer)
+        return unsynced
+
+    def _remember_projects(self) -> None:
+        """Tell each connection with several projects where its cached items
+        live — per-item calls then need no lookup."""
+        if self.manager is None or self.df is None or "project" not in self.df.columns:
+            return
+        for customer, client in self.manager.clients.items():
+            known = getattr(client, "_project_of", None)
+            if known is None or len(getattr(client, "projects", None) or []) <= 1:
+                continue
+            rows = self.df[(self.df["customer_name"] == customer) & self.df["project"].notna()]
+            known.update(zip(rows["id"].astype(int), rows["project"]))
+
     def provider_label(self, customer_name: str | None = None) -> str:
         """The customer's tracker name for UI labels ('Azure DevOps'/'Jira')."""
         if self.manager and customer_name in (self.manager.clients or {}):
@@ -399,39 +492,86 @@ class TrackerEngine:
             return self.manager.clients[customer_name].capabilities()
         return TrackerCapabilities()
 
-    def state_options(self, customer_name: str | None = None) -> list:
-        """State names for a customer's tracker (Jira: its project statuses,
-        cached on the provider after the first fetch). May do one blocking
-        HTTP call on a cache miss — call via to_thread from async code."""
+    def _client(self, customer_name: str | None = None):
+        """The customer's connection — any one without a customer; None
+        when nothing is connected."""
+        clients = (self.manager.clients or {}) if self.manager else {}
+        if customer_name in clients:
+            return clients[customer_name]
+        return None if customer_name else next(iter(clients.values()), None)
+
+    def process(self, customer_name: str | None = None, project: str | None = None):
+        """The process (levels, boards, states — trackers/process.py) of the
+        customer's tracker project, its main one by default; None for a
+        tracker without one (Jira) or when not connected."""
+        client = self._client(customer_name)
+        return client.process(project) if client is not None else None
+
+    def state_options(self, customer_name: str | None = None, project: str | None = None,
+                      wtype: str | None = None) -> list:
+        """State names for a customer's tracker — of one type, in one of its
+        projects, where its process says (Jira: its project statuses, cached
+        on the provider after the first fetch). May do one blocking HTTP
+        call on a cache miss — call via to_thread from async code."""
         if self.manager and customer_name in (self.manager.clients or {}):
             try:
-                states = self.manager.clients[customer_name].state_options()
+                process = self.process(customer_name, project)
+                states = (process.state_options(wtype) if process
+                          else self.manager.clients[customer_name].state_options())
                 if states:
                     return list(states)
             except Exception as e:
                 self.log.error(f"State options failed for {customer_name}: {e}")
         return list(DEFAULT_STATE_OPTIONS)
 
-    def preferred_type(self, customer_name: str | None = None) -> str:
-        """The default board level for a customer's tracker (User Story for
-        DevOps, Story for Jira — its Sub-task leaf is auxiliary)."""
-        if self.manager:
-            if customer_name and customer_name in self.manager.clients:
-                return self.manager.clients[customer_name].preferred_type()
-            for client in self.manager.clients.values():
-                return client.preferred_type()
-        return DEFAULT_TYPE_HIERARCHY[-1]
+    def preferred_type(self, customer_name: str | None = None, project: str | None = None) -> str:
+        """The default board level for a customer's tracker project (User
+        Story on Agile, Issue on Basic, Story for Jira — its Sub-task leaf is
+        auxiliary)."""
+        client = self._client(customer_name) or self._client()
+        if client is None:
+            return DEFAULT_TYPE_HIERARCHY[-1]
+        process = client.process(project)
+        return process.working_type if process else client.preferred_type()
 
-    def type_hierarchy(self, customer_name: str | None = None) -> tuple:
-        """Work-item levels root → leaf for a customer's tracker (falls back to
-        the default hierarchy when no provider is connected). UI code should
+    def type_hierarchy(self, customer_name: str | None = None, project: str | None = None) -> tuple:
+        """Work-item types root → the working level for a customer's tracker
+        project (falls back to the default hierarchy when no provider is
+        connected) — the task level apart: task_types(). UI code should
         consume this instead of hard-coding Epic/Feature/User Story."""
-        if self.manager:
-            if customer_name and customer_name in self.manager.clients:
-                return self.manager.clients[customer_name].type_hierarchy()
-            for client in self.manager.clients.values():
-                return client.type_hierarchy()
-        return DEFAULT_TYPE_HIERARCHY
+        client = self._client(customer_name) or self._client()
+        if client is None:
+            return DEFAULT_TYPE_HIERARCHY
+        process = client.process(project)
+        return process.types if process else client.type_hierarchy()
+
+    def levels(self, customer_name: str | None = None, project: str | None = None) -> list:
+        """Each work-item level's types root → leaf, the task level included —
+        one type per level for a tracker without a process."""
+        client = self._client(customer_name) or self._client()
+        process = client.process(project) if client is not None else None
+        if process is None:
+            return [(t,) for t in self.type_hierarchy(customer_name)]
+        return [level.types for level in process.levels]
+
+    def task_types(self, customer_name: str | None = None, project: str | None = None) -> tuple:
+        """The types on the level below the working one (Task; Bug where a
+        team tracks bugs with tasks) — none for a tracker without one."""
+        process = self.process(customer_name, project)
+        return process.task_types if process else ()
+
+    def _state_categories(self, df: pd.DataFrame) -> pd.Series:
+        """Each item's state category (Proposed, InProgress, Resolved,
+        Completed, Removed) from its project's process — guessed from the
+        state's name where there is none."""
+        def category(row):
+            process = self.process(row["customer_name"], row.get("project"))
+            return (process.category(row["type"], row["state"]) if process
+                    else guess_category(row["state"]))
+
+        if self._client() is None:
+            return df["state"].map(guess_category)
+        return df.apply(category, axis=1)
 
     async def refresh_tracker_data(self, incremental: bool = False):
         if not self.manager:
@@ -461,6 +601,18 @@ class TrackerEngine:
                 self.log.info(
                     f"Performing incremental refresh with max IDs per customer: {max_ids}",
                 )
+                # A tracker project linked since (or cached before projects
+                # were recorded), or types not synced before (tasks), have
+                # older items the watermark would skip: such a customer is
+                # fetched in full, once.
+                unsynced = await self._unsynced_customers()
+                for customer in unsynced:
+                    max_ids.pop(customer, None)
+                    changed_dates.pop(customer, None)
+                    self._fully_fetched.update(
+                        (customer, p) for p in self.manager.projects(customer))
+                if unsynced:
+                    self.log.info(f"Fetching in full (a project or type not synced yet): {sorted(unsynced)}")
             else:
                 self.log.warning(
                     "No existing devops data found, performing full refresh"
@@ -520,5 +672,7 @@ class TrackerEngine:
             self.df["display_name"] = self.df.apply(
                 lambda row: f"{row['type']}: {int(row['id'])} - {row['title']}", axis=1
             )
+            self.df["state_category"] = self._state_categories(self.df)
+            self._remember_projects()
             self.log.info(f"DevOps dataframe loaded with {len(self.df)} rows")
 

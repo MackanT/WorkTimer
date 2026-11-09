@@ -134,6 +134,7 @@ async def upload_devops_image(request: Request, file: UploadFile = File(...)):
         file.filename or "paste.png",
         content,
         int(work_item_id) if work_item_id else None,
+        project=form.get("project") or None,
     )
     return {"path": url} if url else {"error": "Upload failed"}
 
@@ -235,30 +236,17 @@ async def open_work_item_dialog(
     with ui.dialog().props("maximized") as dlg:
         with ui.card().style(_DIALOG_CARD_STYLE).props("flat bordered"):
             form_actions: dict = {"submit": None}
-            dirty_state: dict = {"is_dirty": False, "programmatic": True}
+            dirty_state: dict = {"is_dirty": False}
 
-            def _mark_dirty(_e=None):
-                if not dirty_state["programmatic"]:
-                    dirty_state["is_dirty"] = True
+            def _mark_dirty():
+                dirty_state["is_dirty"] = True
+                dlg.props("persistent")  # an outside click or Esc no longer closes it
 
             def _confirm_discard_or_close():
                 if not dirty_state["is_dirty"]:
                     dlg.close()
                     return
-                with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
-                    ui.label("Discard unsaved changes?").classes("text-sm font-semibold")
-                    ui.label("Your edits in this work item will be lost.").classes(
-                        "text-xs text-grey-5"
-                    )
-                    with ui.row().classes("w-full justify-end gap-2 mt-2"):
-                        ui.button("Keep editing", on_click=confirm_dlg.close).props("flat")
-
-                        def _discard():
-                            confirm_dlg.close()
-                            dlg.close()
-
-                        ui.button("Discard", on_click=_discard).props("color=negative")
-                confirm_dlg.open()
+                _confirm_discard(dlg, "Your edits in this work item will be lost.")
 
             async def _submit_from_header():
                 submit_fn = form_actions.get("submit")
@@ -295,7 +283,7 @@ async def open_work_item_dialog(
                             ui.notify("No tracker connection", type="warning")
                             return
                         repos = await asyncio.to_thread(
-                            manager.list_repositories, customer
+                            manager.list_repositories, customer, item_id
                         )
                         if not repos:
                             ui.notify(
@@ -455,6 +443,8 @@ async def open_work_item_dialog(
                         await widgets["work_item"].refresh()
                         widgets["work_item"].widget.value = display_name
                         widgets["work_item"].widget.update()
+                    if "state" in widgets:
+                        await widgets["state"].refresh()  # the item's type's states
                     if load_fn:
                         try:
                             await load_fn(None)
@@ -467,11 +457,7 @@ async def open_work_item_dialog(
                                 type="warning",
                             )
 
-                    dirty_state["programmatic"] = False
-                    for field_name in ("state", "assigned_to", "priority", "description_editor"):
-                        w = widgets.get(field_name)
-                        if w:
-                            w.on_value_change(_mark_dirty)
+                    _watch_user_edits(widgets, _mark_dirty)
 
                     # Images: upload as tracker attachments (button + paste), now
                     # that we know the customer — only for trackers that support
@@ -519,14 +505,16 @@ async def open_add_work_item_dialog(
     preset_type: str | None = None,
     preset_parent: str | None = None,
     on_success=None,
+    preset_project: str | None = None,
 ):
     """Open the full DevOps add form in a dialog, page-independently.
 
     Used by the board (＋ button), the hierarchy view (＋ with `preset_parent`
     pre-selecting the focused node as parent) and the command palette ("Add
-    Epic/Feature/User Story" over whatever page is open). `on_success` (async,
-    optional) runs after a successful save. Returns the dialog so long-lived
-    callers can dispose of it on close."""
+    Epic/Feature/User Story" over whatever page is open). `preset_project`
+    (the board's tab) picks which of a customer's tracker projects gets the
+    item. `on_success` (async, optional) runs after a successful save.
+    Returns the dialog so long-lived callers can dispose of it on close."""
     add_cfg = core.ui_config.get("board_devops_forms", {}).get("add", {})
     muted = core.theme.get("muted")
 
@@ -557,10 +545,22 @@ async def open_add_work_item_dialog(
                 ui.space()
                 _add_btn = ui.button("Add", icon="save").props("dense color=primary")
                 _add_btn.on("click", _with_loading(_add_btn, _submit_from_header))
-                ui.button("Cancel", icon="close", on_click=dlg.close).props(
+                ui.button("Cancel", icon="close", on_click=lambda: _cancel_add()).props(
                     "flat dense color=grey-6"
                 )
             ui.separator()
+
+            add_state = {"edited": False}
+
+            def _on_user_edit():
+                add_state["edited"] = True
+                dlg.props("persistent")  # an outside click or Esc no longer closes it
+
+            def _cancel_add():
+                if add_state["edited"]:
+                    _confirm_discard(dlg, "The new work item hasn't been added yet.")
+                else:
+                    dlg.close()
 
             async def _on_add_success():
                 dlg.close()
@@ -575,6 +575,7 @@ async def open_add_work_item_dialog(
 
             _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
             form_actions["submit"] = submit_fn
+            _watch_user_edits(widgets, _on_user_edit)
 
             if widgets:
                 if preset_customer and "customer_name" in widgets:
@@ -587,21 +588,49 @@ async def open_add_work_item_dialog(
                     widgets["work_item_type"].widget.value = preset_type
                     widgets["work_item_type"].widget.update()
 
+                project_state = {"preset": preset_project}
+
+                def _sync_project_field(_e=None):
+                    """Tracker project: the customer's projects, shown only
+                    when it has several; the board tab's project first time,
+                    else the main one when the current pick doesn't fit."""
+                    pw = widgets.get("tracker_project")
+                    cw = widgets.get("customer_name")
+                    if pw is None:
+                        return
+                    cust_now = cw.widget.value if cw else None
+                    projects = (
+                        core.tracker_engine.projects(cust_now)
+                        if (cust_now and core.tracker_engine is not None) else []
+                    )
+                    wanted = project_state.pop("preset", None) or pw.widget.value
+                    pw.widget.set_options(
+                        projects,
+                        value=wanted if wanted in projects else (projects[0] if projects else None),
+                    )
+                    pw.widget.set_visibility(len(projects) > 1)
+
+                def _add_project() -> str | None:
+                    pw = widgets.get("tracker_project")
+                    return pw.widget.value if (pw is not None and pw.widget.visible) else None
+
                 def _sync_add_header(_e=None):
                     if "work_item_type" in widgets:
                         type_label.set_text(
                             str(widgets["work_item_type"].widget.value or "")
                         )
                     if "customer_name" in widgets:
+                        customer = str(widgets["customer_name"].widget.value or "")
+                        project = _add_project()
                         customer_label.set_text(
-                            str(widgets["customer_name"].widget.value or "")
+                            f"{customer} · {project}" if project else customer
                         )
 
                 def _snap_type_to_customer(_e=None):
                     """Keep the type valid for the selected customer's tracker
-                    (mirrors the board's customer-switch snap): a pick that's
-                    valid for the new tracker survives; an invalid one becomes
-                    the tracker's preferred level."""
+                    project (mirrors the board's customer-switch snap): a pick
+                    that's valid there survives; an invalid one becomes the
+                    project's preferred level."""
                     tw = widgets.get("work_item_type")
                     cw = widgets.get("customer_name")
                     if tw is None or cw is None or core.tracker_engine is None:
@@ -609,28 +638,61 @@ async def open_add_work_item_dialog(
                     cust_now = cw.widget.value
                     if not cust_now:
                         return
-                    types = core.tracker_engine.type_hierarchy(cust_now)
-                    if tw.widget.value not in types:
-                        tw.widget.value = core.tracker_engine.preferred_type(cust_now)
+                    DO = core.tracker_engine
+                    project = _add_project()
+                    if tw.widget.value not in _form_types(DO, cust_now, project):
+                        tw.widget.value = DO.preferred_type(cust_now, project)
                         tw.widget.update()
                         _sync_add_header()
-                    # Same for State: Azure's default "New" means nothing to a
-                    # Jira workflow — snap to the tracker's first state.
+                    _snap_state()
+                    _sync_board_column_field()
+
+                def _sync_board_column_field():
+                    """State IS the board column for some trackers (Jira), and
+                    the task level has no board — hide the Initial Board
+                    Column input there."""
+                    bc, cw = widgets.get("board_column"), widgets.get("customer_name")
+                    tw = widgets.get("work_item_type")
+                    if bc is None or cw is None or not cw.widget.value or tw is None:
+                        return
+                    DO = core.tracker_engine
+                    on_board = (DO.capabilities(cw.widget.value).distinct_board_column
+                                and tw.widget.value not in DO.task_types(
+                                    cw.widget.value, _add_project()))
+                    bc.widget.set_visibility(on_board)
+                    if not on_board and bc.widget.value:
+                        bc.widget.value = None
+                        bc.widget.update()
+
+                def _snap_state():
+                    """Azure's default "New" means nothing to a Jira workflow
+                    or a Basic project — snap to the type's first state."""
                     sw = widgets.get("state")
-                    if sw is not None:
-                        states = core.tracker_engine.state_options(cust_now)
-                        if states and sw.widget.value not in states:
-                            sw.widget.value = states[0]
-                            sw.widget.update()
-                    # State IS the board column for some trackers (Jira) —
-                    # hide the redundant Initial Board Column input there.
-                    caps = core.tracker_engine.capabilities(cust_now)
-                    bc = widgets.get("board_column")
-                    if bc is not None:
-                        bc.widget.set_visibility(caps.distinct_board_column)
-                        if not caps.distinct_board_column and bc.widget.value:
-                            bc.widget.value = None
-                            bc.widget.update()
+                    cw = widgets.get("customer_name")
+                    tw = widgets.get("work_item_type")
+                    if sw is None or cw is None or not cw.widget.value:
+                        return
+                    states = core.tracker_engine.state_options(
+                        cw.widget.value, _add_project(), tw.widget.value if tw else None)
+                    if states and sw.widget.value not in states:
+                        sw.widget.value = states[0]
+                        sw.widget.update()
+
+                async def _follow_type(_e=None):
+                    """A type's own states and parents (a Task's are stories)."""
+                    _sync_board_column_field()
+                    for name in ("state", "parent_name"):
+                        if name in widgets:
+                            await widgets[name].refresh()
+                    _snap_state()
+
+                async def _follow_project(_e=None):
+                    """Another tracker project may run another process (Basic:
+                    Epic/Issue/Task) — its types, then their states."""
+                    if "work_item_type" in widgets:
+                        await widgets["work_item_type"].refresh()
+                    _snap_type_to_customer()
+                    await _follow_type()
 
                 def _apply_tracker_defaults(_e=None):
                     """Configured per-tracker/per-type prefills (Settings →
@@ -756,18 +818,21 @@ async def open_add_work_item_dialog(
                             nb.widget.update()
                         branch_state["auto_name"] = tpl
 
-                        if sb is not None and branch_state["customer"] != cust_now:
+                        place = (cust_now, _add_project())
+                        if sb is not None and branch_state["customer"] != place:
                             manager = getattr(core.tracker_engine, "manager", None)
                             repos = (
                                 await asyncio.to_thread(
-                                    manager.list_repositories, cust_now
+                                    manager.list_repositories, cust_now,
+                                    None, place[1],
                                 )
                                 if manager else []
                             )
-                            branch_state["customer"] = cust_now
+                            branch_state["customer"] = place
                             if repos:
                                 branches = await asyncio.to_thread(
-                                    manager.list_branches, cust_now, repos[0]["id"]
+                                    manager.list_branches, cust_now, repos[0]["id"],
+                                    None, place[1],
                                 )
                                 default_b = repos[0]["default_branch"]
                                 sb.widget.options = branches or [default_b]
@@ -784,16 +849,23 @@ async def open_add_work_item_dialog(
 
                 if "work_item_type" in widgets:
                     widgets["work_item_type"].on_value_change(_sync_add_header)
+                    widgets["work_item_type"].on_value_change(_follow_type)
                     # Per-type defaults follow the level selection.
                     widgets["work_item_type"].on_value_change(
                         _apply_tracker_defaults
                     )
                     widgets["work_item_type"].on_value_change(_sync_branch_fields)
                 if "customer_name" in widgets:
+                    widgets["customer_name"].on_value_change(_sync_project_field)
                     widgets["customer_name"].on_value_change(_sync_add_header)
                     widgets["customer_name"].on_value_change(_snap_type_to_customer)
                     widgets["customer_name"].on_value_change(_apply_tracker_defaults)
                     widgets["customer_name"].on_value_change(_sync_branch_fields)
+                if "tracker_project" in widgets:
+                    widgets["tracker_project"].on_value_change(_sync_add_header)
+                    widgets["tracker_project"].on_value_change(_follow_project)
+                    widgets["tracker_project"].on_value_change(_sync_branch_fields)
+                _sync_project_field()
                 _sync_add_header()
 
                 # The type is a parent-dependent select: refresh loads its
@@ -877,7 +949,8 @@ async def open_add_work_item_dialog(
                             return stage_image(name, content, core.user_key)
                         return await asyncio.to_thread(
                             core.tracker_engine.upload_attachment,
-                            cust_now, name, content,
+                            cust_now, name, content, None,
+                            project=_add_project(),
                         )
 
                     desc.enable_image_upload(
@@ -890,6 +963,8 @@ async def open_add_work_item_dialog(
                         cust_now = cust_w.widget.value
                         caps = core.tracker_engine.capabilities(cust_now)
                         paste_fields = {"customer": cust_now or ""}
+                        if _add_project():
+                            paste_fields["project"] = _add_project()
                         if caps.attachments_require_item:
                             # Pastes are staged too — see /upload_devops_image.
                             paste_fields["stage"] = "1"
@@ -905,6 +980,8 @@ async def open_add_work_item_dialog(
                             )
 
                     cust_w.on_value_change(_sync_paste_customer)
+                    if "tracker_project" in widgets:
+                        widgets["tracker_project"].on_value_change(_sync_paste_customer)
                     _sync_paste_customer()
 
     dlg.open()
@@ -1044,9 +1121,36 @@ async def render_devops_form(
             [f.get("name") or f.get("field_id")] for f in fields
         ]
 
+        def _form_scope(customer):
+            """(customer, tracker project, work-item type) the per-project
+            options follow — a new item's from the add form's fields, an
+            existing item's from its cached row."""
+            def value(name):
+                w = widgets.get(name)
+                return w.widget.value if w is not None else None
+
+            project, wtype = value("tracker_project"), value("work_item_type")
+            df, shown = core.tracker_engine.df, value("work_item")
+            if shown and df is not None:
+                rows = df[(df["customer_name"] == customer) & (df["display_name"] == shown)]
+                if not rows.empty:
+                    project, wtype = rows.iloc[0].get("project"), rows.iloc[0]["type"]
+            return customer, project if isinstance(project, str) else None, wtype
+
         async def devops_data_fetcher(source_key, parent_val=None):
             if source_key == "devops_tags":
                 return core.devops_tags_config.devops_tags or []
+            if (parent_val and core.tracker_engine is not None
+                    and source_key in ("work_item_types", "work_item_states", "parent_names")):
+                DO = core.tracker_engine
+                customer, project, wtype = _form_scope(parent_val)
+                if source_key == "work_item_types":
+                    return _form_types(DO, customer, project)
+                if source_key == "parent_names":
+                    return _parent_options(DO, customer, project, wtype)
+                if DO.process(customer, project) is not None:  # in memory — no yield
+                    return DO.state_options(customer, project, wtype)
+                return await asyncio.to_thread(DO.state_options, customer, project, wtype)
             if source_key not in data_sources:
                 return [] if parent_val is not None else ""
             data = data_sources[source_key]
@@ -1134,8 +1238,22 @@ async def render_devops_form(
                         parent_map[field_name] = dw
                         dynamic_widgets.append(dw)
 
+        def _type_roles(wtype) -> set:
+            """The level roles `visible_when` may name besides type names:
+            @child (takes a parent), @working (the working level)."""
+            DO, cw = core.tracker_engine, widgets.get("customer_name")
+            if DO is None or cw is None or not cw.widget.value:
+                return set()
+            customer, project, _ = _form_scope(cw.widget.value)
+            levels = DO.levels(customer, project)
+            working = DO.preferred_type(customer, project)
+            roles = {"@child"} if levels and wtype not in levels[0] else set()
+            if any(wtype in lv and working in lv for lv in levels):
+                roles.add("@working")
+            return roles
+
         helpers.setup_template_handling(widgets)
-        _setup_conditional_visibility(widgets, fields_by_name, hidden)
+        _setup_conditional_visibility(widgets, fields_by_name, hidden, _type_roles)
         item_handlers_setup = WorkItemHandlers(
             core.tracker_engine, core.logger,
             config_folder=core.config_loader.user_folder,
@@ -1225,13 +1343,15 @@ async def render_devops_form(
     return refresh_all_widgets, widgets, load_fn, on_submit
 
 
-def _setup_conditional_visibility(widgets: dict, fields_by_name: dict, hidden: set) -> None:
+def _setup_conditional_visibility(widgets: dict, fields_by_name: dict, hidden: set,
+                                  roles=None) -> None:
     """Wire `conditional: true` / `visible_when:` field configs to widget visibility.
 
     Restores a feature the legacy form factory used to provide: e.g. the DevOps
     add form hides Source/Contact/Parent unless the work item type matches.
     Bound via on_value_change, which also fires on programmatic value sets
-    (e.g. the board dialog pre-selecting the work item type).
+    (e.g. the board dialog pre-selecting the work item type). `roles(value)`
+    names the roles a value also matches (a type's level: @child, @working).
     """
     conditional = [
         (name, cfg.get("visible_when"))
@@ -1252,7 +1372,8 @@ def _setup_conditional_visibility(widgets: dict, fields_by_name: dict, hidden: s
                     visible = False
                     break
                 if isinstance(cond_values, list):
-                    if value not in cond_values:
+                    if value not in cond_values and not (
+                            roles and roles(value) & set(cond_values)):
                         visible = False
                         break
                 elif value != cond_values:
@@ -1266,6 +1387,61 @@ def _setup_conditional_visibility(widgets: dict, fields_by_name: dict, hidden: s
             widgets[cond_field].on_value_change(apply_visibility)
 
     apply_visibility()
+
+
+def _form_types(DO, customer, project=None) -> list:
+    """Every type a new item can have in the customer's tracker project,
+    root → leaf (tasks included)."""
+    return [t for level in DO.levels(customer, project) for t in level]
+
+
+def _parent_options(DO, customer, project=None, wtype=None) -> list:
+    """Possible parents of a new `wtype` item: the project's items on a
+    strictly higher level (Azure: a Task under its Story, Feature or Epic;
+    Jira: Sub-task under Epic/Story — the tracker rejects invalid picks with
+    its own msg). Without a type: every level but the lowest."""
+    if DO.df is None or DO.df.empty:
+        return []
+    levels = DO.levels(customer, project)
+    index = next((i for i, lv in enumerate(levels) if wtype in lv), len(levels) - 1)
+    above = {t for lv in levels[:index] for t in lv}
+    df = DO.df
+    return df[DO.project_mask(df, customer, project) & df["type"].isin(above)][
+        "display_name"].tolist()
+
+
+def _confirm_discard(dlg, message: str) -> None:
+    """Ask before closing a dialog whose edits would be lost."""
+    with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
+        ui.label("Discard unsaved changes?").classes("text-sm font-semibold")
+        ui.label(message).classes("text-xs text-grey-5")
+        with ui.row().classes("w-full justify-end gap-2 mt-2"):
+            ui.button("Keep editing", on_click=confirm_dlg.close).props("flat")
+
+            def _discard():
+                confirm_dlg.close()
+                dlg.close()
+
+            ui.button("Discard", on_click=_discard).props("color=negative")
+    confirm_dlg.on("hide", lambda: confirm_dlg.delete())
+    confirm_dlg.open()
+
+
+def _watch_user_edits(widgets: dict, on_edit) -> None:
+    """`on_edit` on the first change the user makes in any field — a browser
+    event, so the form's own prefills, defaults and templates don't count."""
+    seen = {"edited": False}
+
+    def _edited(_e=None):
+        if not seen["edited"]:
+            seen["edited"] = True
+            on_edit()
+
+    for dw in widgets.values():
+        element = getattr(dw, "widget", None)
+        prop = getattr(element, "VALUE_PROP", None)
+        if prop:
+            element.on(f"update:{prop}", _edited)
 
 
 async def prepare_devops_data_sources(core, operation: str) -> dict:
@@ -1289,24 +1465,18 @@ async def prepare_devops_data_sources(core, operation: str) -> dict:
             customer_df = DO.df[DO.df["customer_name"] == customer]
             work_items[customer] = customer_df["display_name"].tolist()
 
-            # Parent options per level from the customer's tracker hierarchy:
-            # anything at a strictly higher level qualifies (Azure: User Story
-            # under Epic or Feature; Jira: Story under Epic, Sub-task under
-            # Epic/Story — the tracker rejects invalid picks with its own msg).
-            levels = list(DO.type_hierarchy(customer))
+            # The no-data fallback — the dialog's fetcher answers per
+            # tracker project and type (_parent_options).
             parent_names[customer] = {
-                level: customer_df[customer_df["type"].isin(levels[:i])][
-                    "display_name"
-                ].tolist()
-                for i, level in enumerate(levels)
+                t: _parent_options(DO, customer, wtype=t) for t in _form_types(DO, customer)
             }
 
         data_sources["work_items"] = work_items
         data_sources["parent_names"] = parent_names
-        # Per-customer type options, driven by the tracker (Azure:
-        # Epic/Feature/User Story; Jira: Epic/Story/Sub-task).
+        # Per-customer type options, driven by the tracker (Azure: the main
+        # project's levels, tasks included; Jira: Epic/Story/Sub-task).
         data_sources["work_item_types"] = {
-            c: list(DO.type_hierarchy(c)) for c in customer_names
+            c: _form_types(DO, c) for c in customer_names
         }
         # Per-customer state options (Jira: project statuses; may fetch once
         # per provider → keep it off the event loop).

@@ -19,6 +19,7 @@ import math
 
 from nicegui import app, ui
 
+from ..trackers.process import category_of, is_open
 from ..user_paths import pref_key
 from .work_item_forms import open_add_work_item_dialog, open_work_item_dialog
 
@@ -26,7 +27,6 @@ _MAX_ROWS = 12
 _ROW_SELECTED_STYLE = "background: rgba(56, 189, 248, 0.18);"
 
 # Find-mode "done" styling mirrors the hierarchy's grey-out rule.
-_DONE_STATES = {"Resolved", "Closed", "Removed"}
 _DONE_COLUMN_TOKENS = {"done", "closed", "resolved", "completed"}
 
 
@@ -348,7 +348,7 @@ def setup_command_palette(core) -> None:
         for _, r in sub.head(_MAX_ROWS).iterrows():
             row_dict = r.to_dict()
             done = (
-                str(r.get("state") or "") in _DONE_STATES
+                not is_open(r.get("state"), category_of(r.get("state"), r.get("state_category")))
                 or str(r.get("board_column") or "").strip().lower()
                 in _DONE_COLUMN_TOKENS
             )

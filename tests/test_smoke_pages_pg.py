@@ -326,3 +326,53 @@ async def test_time_pasted_from_excel_is_imported_and_undone(user: User, app_url
     await user.should_see("Import undone: 2 time entries removed", retries=50)
     assert db.fetch_query(pasted).empty
     pools.close()
+
+
+async def test_more_tracker_projects_are_chosen_in_the_update_tab(user: User, app_url, tmp_path,
+                                                                 monkeypatch):
+    """Customers → Update: an Azure DevOps customer's More tracker projects —
+    the tracker's other projects, its stored picks preselected — saved with
+    the rest. After the page tests."""
+    from nicegui import ui
+    from nicegui.testing.user_interaction import UserInteraction
+
+    from src.pages import add_data
+    from src.pages.add_data import open_entity_dialog
+
+    pools = Pools(PgConfig(app_url), max_size=1)
+    db = PgDatabase(pools, logging.getLogger("smoke.seed"), secrets_dir=str(tmp_path))
+    db.insert_tracker("Multi DevOps", "devops", org_url="multi", pat_token="pat")
+    db.insert_customer("Multi AB", "2026-01-01", 1000, tracker_name="Multi DevOps",
+                       tracker_project="Platform")
+    db.update_customer("Multi AB", "Multi AB", extra_tracker_projects=["Mobile"])
+
+    async def listed(core, name):
+        return ["Platform", "Mobile", "Data"], None
+
+    monkeypatch.setattr(add_data, "_projects_of_tracker", listed)
+
+    await user.open("/time")
+    await page_built()
+    core = core_app._app_cores[user.client.id]
+    with user.client:
+        await open_entity_dialog(core, "customer", "update", presets={"customer_name": "Multi AB"})
+        panel = next(e for e in user.client.elements.values()
+                     if isinstance(e, ui.tab_panel) and e.props.get("name") == "update")
+        selects = {e.props.get("label"): e for e in panel.descendants() if isinstance(e, ui.select)}
+        save = next(e for e in panel.descendants() if isinstance(e, ui.button) and e.text == "Update")
+    extra = selects["More tracker projects"]
+    for _ in range(60):
+        if extra.options == ["Mobile", "Data"]:
+            break
+        await asyncio.sleep(0.05)
+    assert (extra.options, extra.value, extra.visible) == (["Mobile", "Data"], ["Mobile"], True)
+
+    with user.client:
+        extra.value = ["Mobile", "Data"]
+    UserInteraction(user, {save}, None).click()
+    await user.should_see("customer Multi AB updated!", retries=50)
+
+    [row] = [r for r in db.get_current_customer_details().to_dict("records")
+             if r["customer_name"] == "Multi AB"]
+    assert row["extra_tracker_projects"] == ["Mobile", "Data"]
+    pools.close()
