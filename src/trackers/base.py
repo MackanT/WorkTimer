@@ -11,6 +11,7 @@ hierarchy, search, work-item pickers, reports) renders from that frame.
 """
 
 import re
+import unicodedata
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -70,15 +71,25 @@ class TrackerCapabilities:
     branches: bool = False
 
 
+# Letters NFKD can't split into a plain letter and its accent.
+_PLAIN_LETTERS = str.maketrans({"ø": "o", "æ": "ae", "ß": "ss", "đ": "d", "ł": "l"})
+
+
+def _plain(text) -> str:
+    """Lower-case text with its accents dropped: å ä ö → a a o, é → e."""
+    text = unicodedata.normalize("NFKD", str(text or "").lower().translate(_PLAIN_LETTERS))
+    return "".join(c for c in text if not unicodedata.combining(c))
+
+
 def suggest_branch_name(item_type, item_id, title, template=None) -> str:
     """Branch name for a work item. With no template:
     '<level>/<id>-<title-slug>' ('User Story' → 'story'). A template (the
     tracker's per-type "Branch name template" setting) may place
     {{type}}, {{id}} and {{title}} freely, e.g. 'feat/{{id}}-{{title}}'.
     Editable in the dialog — a starting point, not an enforced convention."""
-    words = str(item_type or "").strip().lower().split()
+    words = _plain(item_type).strip().split()
     type_part = re.sub(r"[^a-z0-9]+", "", words[-1]) if words else ""
-    slug = re.sub(r"[^a-z0-9]+", "-", str(title or "").lower()).strip("-")[:40]
+    slug = re.sub(r"[^a-z0-9]+", "-", _plain(title)).strip("-")[:40]
     slug = slug.rstrip("-")
     tpl = str(template or "").strip()
     if tpl:

@@ -15,8 +15,12 @@ class _NullLog:
 def test_suggest_branch_name_levels_and_slug():
     assert (
         suggest_branch_name("User Story", 123, "Fix the Läge thing!")
-        == "story/123-fix-the-l-ge-thing"
+        == "story/123-fix-the-lage-thing"
     )
+    # å ä ö (and other accents) become their plain letters, not a dash.
+    assert suggest_branch_name("Task", 5, "Åtgärda höjd på Ö-sidan") == (
+        "task/5-atgarda-hojd-pa-o-sidan")
+    assert suggest_branch_name("Task", 6, "Smørbrød Æble café") == "task/6-smorbrod-aeble-cafe"
     assert suggest_branch_name("Feature", 7, "") == "feature/7"
     assert suggest_branch_name("", 9, "x") == "item/9-x"
     # Slug capped, no trailing dash.
