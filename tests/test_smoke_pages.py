@@ -501,3 +501,28 @@ async def test_the_stop_dialog_offers_open_items_of_any_process_tasks_included(u
                        if getattr(e, "props", {}).get("label") == "Tracker project")
         project.value = "Data"
     assert list(id_input.options) == ["Issue: 4 - Doing issue"]
+
+
+async def test_a_datetime_field_reads_the_same_on_every_computer(user: User):
+    """Typed or picked, always 'YYYY-MM-DD HH:MM' in 24 hours — a native
+    datetime-local field showed AM/PM on PCs set up that way."""
+    from nicegui import ui
+
+    from src.ui.elements import datetime_input
+
+    await user.open("/time")
+    await page_built()
+    changes = []
+    with user.client:
+        field = datetime_input("Stop time", "2026-11-09 14:30",
+                               on_change=lambda e: changes.append(e.value))
+        clock = next(e for e in field.descendants() if isinstance(e, ui.time))
+        calendar = next(e for e in field.descendants() if isinstance(e, ui.date))
+
+    assert field.props["type"] == "text" and field.props["mask"] == "####-##-## ##:##"
+    assert "format24h" in clock.props and calendar.value == "2026-11-09 14:30"
+    with user.client:
+        field.value = "2026-11-0"  # still typing
+        clock.value = "2026-11-09 16:05"
+    assert changes == ["2026-11-09 16:05"] and field.value == "2026-11-09 16:05"
+

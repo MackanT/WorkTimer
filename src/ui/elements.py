@@ -261,6 +261,33 @@ def toolbar_group(theme, label: str | None = None, divider_after: bool = True):
         toolbar_divider(theme)
 
 
+def datetime_input(label: str | None = None, value: str = "", *, date_only: bool = False,
+                   on_change=None) -> ui.input:
+    """A date-time field shown the same on every computer — 'YYYY-MM-DD HH:MM',
+    24-hour (or 'YYYY-MM-DD') — typed, or picked from a calendar and a clock.
+    A native datetime-local field follows each PC's regional settings (AM/PM
+    on some). `on_change` fires once the value is complete, not per keystroke."""
+    mask = "YYYY-MM-DD" if date_only else "YYYY-MM-DD HH:mm"
+    length = len("2026-01-31" if date_only else "2026-01-31 23:59")
+
+    def _changed(e):
+        if on_change is not None and len(str(e.value or "")) == length:
+            return on_change(e)
+
+    with ui.input(label, value=value, on_change=_changed).props(
+        f'mask="{"####-##-##" if date_only else "####-##-## ##:##"}"'
+    ) as field:
+        with ui.menu().props("no-parent-event") as menu:
+            with ui.row().classes("no-wrap gap-0"):
+                ui.date(mask=mask).bind_value(field)
+                if not date_only:
+                    ui.time(mask=mask).props("format24h").bind_value(field)
+        with field.add_slot("append"):
+            ui.icon("event" if date_only else "schedule").classes("cursor-pointer").on(
+                "click", menu.open)
+    return field
+
+
 def segmented_chips(theme, options, active_value, on_select) -> None:
     """A row of pill buttons in the shared "chip" style (as on the board's type
     filter): the active option is filled with the accent colour, the rest are

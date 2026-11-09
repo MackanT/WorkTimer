@@ -22,6 +22,7 @@ from ..helpers import UI_STYLES, extract_devops_id
 from .. import helpers
 
 from ..ui.elements import (
+    datetime_input,
     toolbar,
     toolbar_group,
     entity_card_shell,
@@ -543,7 +544,7 @@ async def time_tracking_page():
         )
         start_str = str(running.iloc[0]["start_time"]) if not running.empty else None
         now_dt = clock.now_local()
-        dt_local_fmt = "%Y-%m-%dT%H:%M"
+        dt_local_fmt = "%Y-%m-%d %H:%M"
         db_fmt = "%Y-%m-%d %H:%M:%S"
 
         _stop_card.clear()
@@ -588,7 +589,7 @@ async def time_tracking_page():
             def _update_end_hint():
                 if _end_shown["v"]:
                     end_hint.set_text(
-                        "Stop: " + str(end_input.value or "").replace("T", " ")
+                        "Stop: " + str(end_input.value or "")
                     )
                 else:
                     end_hint.set_text("Stop: now")
@@ -610,21 +611,15 @@ async def time_tracking_page():
                 ).tooltip("Set a custom stop time (defaults to when you save)")
 
             end_input = (
-                ui.input(
-                    label="Stop time",
-                    value=now_dt.strftime(dt_local_fmt),
+                datetime_input(
+                    "Stop time",
+                    now_dt.strftime(dt_local_fmt),
                     on_change=lambda e: _update_end_hint(),
                 )
-                .props('type="datetime-local" dense outlined')
+                .props("dense outlined")
                 .classes("w-64 self-end")
                 .tooltip("When the timer actually stopped")
             )
-            if start_str:
-                try:
-                    _min = datetime.strptime(start_str, db_fmt).strftime(dt_local_fmt)
-                    end_input.props(f'min="{_min}"')
-                except ValueError:
-                    pass
             end_input.set_visibility(False)
 
             # DevOps ID selector (if available)
@@ -824,7 +819,7 @@ async def time_tracking_page():
 
         now = clock.now_local()
         one_hour_ago = now - timedelta(hours=1)
-        dt_fmt = "%Y-%m-%dT%H:%M"
+        dt_fmt = "%Y-%m-%d %H:%M"
 
         _manual_card.clear()
         with _manual_card:
@@ -834,16 +829,9 @@ async def time_tracking_page():
             )
 
             with ui.row().classes("w-full gap-3"):
-                start_input = (
-                    ui.input(label="Start time", value=one_hour_ago.strftime(dt_fmt))
-                    .props('type="datetime-local"')
-                    .classes("flex-1")
-                )
-                end_input = (
-                    ui.input(label="End time", value=now.strftime(dt_fmt))
-                    .props('type="datetime-local"')
-                    .classes("flex-1")
-                )
+                start_input = datetime_input(
+                    "Start time", one_hour_ago.strftime(dt_fmt)).classes("flex-1")
+                end_input = datetime_input("End time", now.strftime(dt_fmt)).classes("flex-1")
 
             id_input = None
             id_checkbox = None
@@ -913,7 +901,7 @@ async def time_tracking_page():
         p_name = df.iloc[0]["project_name"] if not df.empty else "Unknown"
 
         now = clock.now_local()
-        dt_fmt = "%Y-%m-%dT%H:%M"
+        dt_fmt = "%Y-%m-%d %H:%M"
 
         _manual_start_card.clear()
         with _manual_start_card:
@@ -922,11 +910,7 @@ async def time_tracking_page():
                 f"text-caption text-{core.theme.get('muted')} -mt-2 mb-2"
             )
 
-            start_input = (
-                ui.input(label="Start time", value=now.strftime(dt_fmt))
-                .props('type="datetime-local"')
-                .classes("w-full")
-            )
+            start_input = datetime_input("Start time", now.strftime(dt_fmt)).classes("w-full")
 
             async def handle_save():
                 try:
@@ -968,7 +952,7 @@ async def time_tracking_page():
         )
         c_name = info.iloc[0]["customer_name"] if not info.empty else "Unknown"
         p_name = info.iloc[0]["project_name"] if not info.empty else "Unknown"
-        dt_fmt = "%Y-%m-%dT%H:%M"
+        dt_fmt = "%Y-%m-%d %H:%M"
         editing = {"id": None}
 
         async def _reload_list():
@@ -1019,12 +1003,10 @@ async def time_tracking_page():
             if editing["id"] == tid:
                 with ui.column().classes("w-full gap-1").style(hairline):
                     with ui.row().classes("w-full gap-2 no-wrap"):
-                        s_in = ui.input(value=start.replace(" ", "T")[:16]).props(
-                            'type="datetime-local" dense outlined'
-                        ).classes("flex-1")
-                        e_in = ui.input(value=end.replace(" ", "T")[:16]).props(
-                            'type="datetime-local" dense outlined'
-                        ).classes("flex-1")
+                        s_in = datetime_input(value=start[:16]).props(
+                            "dense outlined").classes("flex-1")
+                        e_in = datetime_input(value=end[:16]).props(
+                            "dense outlined").classes("flex-1")
                     c_in = ui.textarea(value=comment, placeholder="Comment").props(
                         "dense outlined autogrow"
                     ).classes("w-full")

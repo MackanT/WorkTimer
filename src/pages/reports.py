@@ -20,7 +20,7 @@ from ..core.app import AppCore
 from ..user_paths import pref_key
 from .. import helpers
 from ..helpers import UI_STYLES
-from ..ui.elements import toolbar, toolbar_group, page_card, segmented_chips
+from ..ui.elements import datetime_input, toolbar, toolbar_group, page_card, segmented_chips
 
 _PERIODS = ["Day", "Week", "Month", "Year", "Custom"]
 
@@ -681,12 +681,10 @@ async def reports_page():
                 state["custom_end"] = e.value
                 await _load()
 
-            ui.input("From", value=state["custom_start"], on_change=_cs).props(
-                "type=date dense outlined"
-            ).classes("w-36")
-            ui.input("To", value=state["custom_end"], on_change=_ce).props(
-                "type=date dense outlined"
-            ).classes("w-36")
+            datetime_input("From", state["custom_start"], date_only=True, on_change=_cs).props(
+                "dense outlined").classes("w-40")
+            datetime_input("To", state["custom_end"], date_only=True, on_change=_ce).props(
+                "dense outlined").classes("w-40")
 
     def _export_csv():
         start, end = state["range"]
