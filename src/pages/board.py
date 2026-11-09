@@ -77,23 +77,29 @@ async def board_page():
 
     # ── per-client mutable state (captured by all inner closures) ──────────────
     drag_state: dict = {"card": None}
+    # "board" is the selected tab: a customer, or one of a customer's several
+    # tracker projects ("Customer · Project"); "customer"/"project" resolve it.
     filter_state: dict = {
+        "board": None,
         "customer": None,
+        "project": None,
         "type": _work_item_types()[0],
         "search": "",
         "include_done": bool(app.storage.user.get(pref_key(core.user_key, "board_include_done"), False)),
     }
-    known_cols: dict = {}  # (customer, type) -> ordered list; never shrinks
+    known_cols: dict = {}  # (board, type) -> ordered list; never shrinks
     ui_state: dict = {"loading": False}
 
-    customer_names: list[str] = []
-    if DO is not None and DO.df is not None:
-        customer_names = sorted(DO.df["customer_name"].dropna().unique().tolist())
-    if customer_names:
-        _saved_cust = app.storage.user.get(pref_key(core.user_key, "devops_customer"))
-        filter_state["customer"] = (
-            _saved_cust if _saved_cust in customer_names else customer_names[0]
+    boards = DO.boards() if DO is not None else []
+    board_names = [key for key, _, _ in boards]
+    board_scope = {key: (customer, project) for key, customer, project in boards}
+    customer_names = list(dict.fromkeys(customer for _, customer, _ in boards))
+    if board_names:
+        _saved_board = app.storage.user.get(pref_key(core.user_key, "devops_customer"))
+        filter_state["board"] = (
+            _saved_board if _saved_board in board_names else board_names[0]
         )
+        filter_state["customer"], filter_state["project"] = board_scope[filter_state["board"]]
         # Preferred level for THIS customer's tracker (Jira's leaf is Sub-task
         # but its working level is Story; Azure's leaf User Story is both).
         if DO is not None:
@@ -114,7 +120,8 @@ async def board_page():
     # the toolbar. The hierarchy is embedded here (its own page was retired); it
     # reads the shared customer selection.
     view_state = {"view": app.storage.user.get(pref_key(core.user_key, "devops_view"), "board")}
-    hier = create_hierarchy_view(core, lambda: filter_state["customer"])
+    hier = create_hierarchy_view(core, lambda: filter_state["customer"],
+                                 lambda: filter_state["project"])
 
     def _columns_cache():
         """This user's engine's board-column cache (empty until trackers are up)."""
@@ -122,17 +129,23 @@ async def board_page():
 
     # Seed known_cols from the ADO column cache (pre-loaded at startup).
     # Without this, the first render derives order from df insertion order which is arbitrary.
-    for _cn in customer_names:
+    for _bn, (_cn, _) in board_scope.items():
         for _wt in _work_item_types(_cn):
-            _c = _columns_cache().get(_cn, {}).get(_wt)
+            _c = _columns_cache().get(_bn, {}).get(_wt)
             if _c:
-                known_cols[(_cn, _wt)] = list(_c)
+                known_cols[(_bn, _wt)] = list(_c)
 
     # ── data helpers ───────────────────────────────────────────────────────────
-    def _column_order(customer: str, item_type: str) -> list[str]:
+    def _in_board(board: str | None):
+        """Rows of a Board tab: its customer's — and its project's, where the
+        customer has several."""
+        customer, project = board_scope.get(board, (None, None))
+        return DO.project_mask(DO.df, customer, project)
+
+    def _column_order(board: str, item_type: str) -> list[str]:
         """Return ordered column list; once a column is known it stays visible."""
-        key = (customer, item_type)
-        cached = _columns_cache().get(customer, {}).get(item_type)
+        key = (board, item_type)
+        cached = _columns_cache().get(board, {}).get(item_type)
         if cached:
             result = list(cached)
             for c in known_cols.get(key, []):
@@ -145,8 +158,8 @@ async def board_page():
         result = list(known_cols.get(key, []))
         if DO is not None and DO.df is not None:
             mask = DO.df["type"] == item_type
-            if customer:
-                mask &= DO.df["customer_name"] == customer
+            if board:
+                mask &= _in_board(board)
             for c in DO.df[mask]["board_column"].dropna().unique().tolist():
                 if c and c not in result:
                     result.append(c)
@@ -194,12 +207,12 @@ async def board_page():
         """
         if DO is None or DO.df is None:
             return {}
-        cust = filter_state["customer"]
+        board = filter_state["board"]
         wtype = filter_state["type"]
 
         base_mask = DO.df["type"] == wtype
-        if cust:
-            base_mask &= DO.df["customer_name"] == cust
+        if board:
+            base_mask &= _in_board(board)
 
         # Free-text search across each card's visible fields (title, assignee,
         # state, board column, and #id) — case-insensitive substring match.
@@ -244,7 +257,7 @@ async def board_page():
                 haystack = haystack + " " + DO.df["parent_id"].map(_ancestor_text)
             base_mask &= haystack.str.lower().str.contains(query, regex=False, na=False)
 
-        ordered_cols_all = _column_order(cust, wtype)
+        ordered_cols_all = _column_order(board, wtype)
         done_cols = {c for c in ordered_cols_all if _col_norm(c) in DONE_TOKENS}
 
         # "Include done" surfaces Done/closed items too, but only alongside an
@@ -269,24 +282,24 @@ async def board_page():
 
         return data
 
-    def _done_target_column(cust: str, wtype: str) -> str | None:
+    def _done_target_column(board: str, wtype: str) -> str | None:
         """The canonical Done-token column name to drop items onto, if any."""
-        if not cust:
+        if not board:
             return None
-        for col in _column_order(cust, wtype):
+        for col in _column_order(board, wtype):
             if _col_norm(col) in DONE_TOKENS:
                 return col
         return None
 
-    def _done_items(cust: str, wtype: str) -> tuple[list[dict], int]:
+    def _done_items(board: str, wtype: str) -> tuple[list[dict], int]:
         """Return (most-recent DONE_COLUMN_LIMIT done items, total done count).
 
         Includes terminal-state items (e.g. Closed), which are otherwise hidden
         from the regular board columns — this is the only place they're shown.
         """
-        if DO is None or DO.df is None or not cust:
+        if DO is None or DO.df is None or not board:
             return [], 0
-        base_mask = (DO.df["type"] == wtype) & (DO.df["customer_name"] == cust)
+        base_mask = (DO.df["type"] == wtype) & _in_board(board)
         done_mask = base_mask & DO.df["board_column"].apply(
             lambda v: _col_norm(v) in DONE_TOKENS
         )
@@ -411,6 +424,7 @@ async def board_page():
         await open_add_work_item_dialog(
             core,
             preset_customer=filter_state.get("customer"),
+            preset_project=filter_state.get("project"),
             preset_type=preset_type or filter_state.get("type", "User Story"),
             preset_parent=preset_parent,
             on_success=_after,
@@ -532,7 +546,7 @@ async def board_page():
             with ui.column().classes("items-center justify-center w-full").style("padding: 4rem;"):
                 ui.icon("inbox", size="xl").classes(f"text-{muted}")
                 ui.label(
-                    f"No active {filter_state['type']} items for {cust}."
+                    f"No active {filter_state['type']} items for {filter_state['board'] or cust}."
                 ).classes(f"text-{muted} mt-2")
             return
 
@@ -602,10 +616,10 @@ async def board_page():
 
     @ui.refreshable
     def render_done_zone():
-        cust = filter_state["customer"]
+        board = filter_state["board"]
         wtype = filter_state["type"]
-        target_col = _done_target_column(cust, wtype)
-        recent, total = _done_items(cust, wtype) if target_col else ([], 0)
+        target_col = _done_target_column(board, wtype)
+        recent, total = _done_items(board, wtype) if target_col else ([], 0)
 
         with (
             ui.card()
@@ -769,46 +783,49 @@ async def board_page():
             ui.icon("view_kanban", size="md").classes(f"text-{core.theme.get('accent')}")
             ui.label("Board").classes(helpers.UI_STYLES.get_layout_classes("page_title"))
 
-        if len(customer_names) > 1:
+        if len(board_names) > 1:
             with toolbar_group(core.theme, "Customer", divider_after=True):
                 with (
-                    ui.tabs(value=filter_state["customer"])
+                    ui.tabs(value=filter_state["board"])
                     .props(
                         f'horizontal dense active-color="{core.theme.get("accent")}" '
                         f'indicator-color="{core.theme.get("accent")}"'
                     )
                     .classes(helpers.UI_STYLES.get_layout_classes("tab_label"))
                 ) as cust_tabs:
-                    for c in customer_names:
-                        with ui.tab(c, label=""):
+                    for b in board_names:
+                        c = board_scope[b][0]
+                        with ui.tab(b, label=""):
                             with ui.row().classes("items-center gap-1.5 no-wrap"):
                                 if cust_colors.get(c):
                                     ui.element("div").style(
                                         f"width:9px; height:9px; border-radius:50%;"
                                         f" flex:0 0 auto; background:{cust_colors[c]};"
                                     )
-                                ui.label(c)
+                                ui.label(b)
 
                 async def _on_customer_change(e):
-                    filter_state["customer"] = e.value
+                    filter_state["board"] = e.value
+                    customer, project = board_scope[e.value]
+                    filter_state["customer"], filter_state["project"] = customer, project
                     app.storage.user[pref_key(core.user_key, "devops_customer")] = e.value
                     # Trackers differ in type names (User Story vs Story) — a
                     # stale type from the previous customer would blank the
                     # board, so snap to the new tracker's preferred level.
-                    types = _work_item_types(e.value)
+                    types = _work_item_types(customer)
                     if filter_state["type"] not in types:
                         filter_state["type"] = (
-                            DO.preferred_type(e.value) if DO is not None else types[0]
+                            DO.preferred_type(customer) if DO is not None else types[0]
                         )
                     render_type_chips.refresh()
                     render_board.refresh()
                     render_done_zone.refresh()
-                    hier.set_customer(e.value)
+                    hier.set_customer(customer, project)
 
                 cust_tabs.on_value_change(_on_customer_change)
-        elif customer_names:
+        elif board_names:
             with toolbar_group(core.theme, "Customer", divider_after=True):
-                ui.label(customer_names[0]).classes("text-white text-sm shrink-0")
+                ui.label(board_names[0]).classes("text-white text-sm shrink-0")
 
         with toolbar_group(core.theme, "View", divider_after=True):
             render_view_toggle()
@@ -830,7 +847,7 @@ async def board_page():
         # reload this page once, now that data exists (the automatic version
         # of the manual F5 that used to be needed).
         eng = core.tracker_engine
-        if (DO is None or not customer_names) and eng is not None:
+        if (DO is None or not board_names) and eng is not None:
             if eng.df is not None and not eng.df.empty:
                 try:
                     if board_container.id in page_client.elements:

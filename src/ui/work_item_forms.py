@@ -134,6 +134,7 @@ async def upload_devops_image(request: Request, file: UploadFile = File(...)):
         file.filename or "paste.png",
         content,
         int(work_item_id) if work_item_id else None,
+        project=form.get("project") or None,
     )
     return {"path": url} if url else {"error": "Upload failed"}
 
@@ -295,7 +296,7 @@ async def open_work_item_dialog(
                             ui.notify("No tracker connection", type="warning")
                             return
                         repos = await asyncio.to_thread(
-                            manager.list_repositories, customer
+                            manager.list_repositories, customer, item_id
                         )
                         if not repos:
                             ui.notify(
@@ -519,14 +520,16 @@ async def open_add_work_item_dialog(
     preset_type: str | None = None,
     preset_parent: str | None = None,
     on_success=None,
+    preset_project: str | None = None,
 ):
     """Open the full DevOps add form in a dialog, page-independently.
 
     Used by the board (＋ button), the hierarchy view (＋ with `preset_parent`
     pre-selecting the focused node as parent) and the command palette ("Add
-    Epic/Feature/User Story" over whatever page is open). `on_success` (async,
-    optional) runs after a successful save. Returns the dialog so long-lived
-    callers can dispose of it on close."""
+    Epic/Feature/User Story" over whatever page is open). `preset_project`
+    (the board's tab) picks which of a customer's tracker projects gets the
+    item. `on_success` (async, optional) runs after a successful save.
+    Returns the dialog so long-lived callers can dispose of it on close."""
     add_cfg = core.ui_config.get("board_devops_forms", {}).get("add", {})
     muted = core.theme.get("muted")
 
@@ -587,14 +590,42 @@ async def open_add_work_item_dialog(
                     widgets["work_item_type"].widget.value = preset_type
                     widgets["work_item_type"].widget.update()
 
+                project_state = {"preset": preset_project}
+
+                def _sync_project_field(_e=None):
+                    """Tracker project: the customer's projects, shown only
+                    when it has several; the board tab's project first time,
+                    else the main one when the current pick doesn't fit."""
+                    pw = widgets.get("tracker_project")
+                    cw = widgets.get("customer_name")
+                    if pw is None:
+                        return
+                    cust_now = cw.widget.value if cw else None
+                    projects = (
+                        core.tracker_engine.projects(cust_now)
+                        if (cust_now and core.tracker_engine is not None) else []
+                    )
+                    wanted = project_state.pop("preset", None) or pw.widget.value
+                    pw.widget.set_options(
+                        projects,
+                        value=wanted if wanted in projects else (projects[0] if projects else None),
+                    )
+                    pw.widget.set_visibility(len(projects) > 1)
+
+                def _add_project() -> str | None:
+                    pw = widgets.get("tracker_project")
+                    return pw.widget.value if (pw is not None and pw.widget.visible) else None
+
                 def _sync_add_header(_e=None):
                     if "work_item_type" in widgets:
                         type_label.set_text(
                             str(widgets["work_item_type"].widget.value or "")
                         )
                     if "customer_name" in widgets:
+                        customer = str(widgets["customer_name"].widget.value or "")
+                        project = _add_project()
                         customer_label.set_text(
-                            str(widgets["customer_name"].widget.value or "")
+                            f"{customer} · {project}" if project else customer
                         )
 
                 def _snap_type_to_customer(_e=None):
@@ -756,18 +787,21 @@ async def open_add_work_item_dialog(
                             nb.widget.update()
                         branch_state["auto_name"] = tpl
 
-                        if sb is not None and branch_state["customer"] != cust_now:
+                        place = (cust_now, _add_project())
+                        if sb is not None and branch_state["customer"] != place:
                             manager = getattr(core.tracker_engine, "manager", None)
                             repos = (
                                 await asyncio.to_thread(
-                                    manager.list_repositories, cust_now
+                                    manager.list_repositories, cust_now,
+                                    None, place[1],
                                 )
                                 if manager else []
                             )
-                            branch_state["customer"] = cust_now
+                            branch_state["customer"] = place
                             if repos:
                                 branches = await asyncio.to_thread(
-                                    manager.list_branches, cust_now, repos[0]["id"]
+                                    manager.list_branches, cust_now, repos[0]["id"],
+                                    None, place[1],
                                 )
                                 default_b = repos[0]["default_branch"]
                                 sb.widget.options = branches or [default_b]
@@ -790,10 +824,15 @@ async def open_add_work_item_dialog(
                     )
                     widgets["work_item_type"].on_value_change(_sync_branch_fields)
                 if "customer_name" in widgets:
+                    widgets["customer_name"].on_value_change(_sync_project_field)
                     widgets["customer_name"].on_value_change(_sync_add_header)
                     widgets["customer_name"].on_value_change(_snap_type_to_customer)
                     widgets["customer_name"].on_value_change(_apply_tracker_defaults)
                     widgets["customer_name"].on_value_change(_sync_branch_fields)
+                if "tracker_project" in widgets:
+                    widgets["tracker_project"].on_value_change(_sync_add_header)
+                    widgets["tracker_project"].on_value_change(_sync_branch_fields)
+                _sync_project_field()
                 _sync_add_header()
 
                 # The type is a parent-dependent select: refresh loads its
@@ -877,7 +916,8 @@ async def open_add_work_item_dialog(
                             return stage_image(name, content, core.user_key)
                         return await asyncio.to_thread(
                             core.tracker_engine.upload_attachment,
-                            cust_now, name, content,
+                            cust_now, name, content, None,
+                            project=_add_project(),
                         )
 
                     desc.enable_image_upload(
@@ -890,6 +930,8 @@ async def open_add_work_item_dialog(
                         cust_now = cust_w.widget.value
                         caps = core.tracker_engine.capabilities(cust_now)
                         paste_fields = {"customer": cust_now or ""}
+                        if _add_project():
+                            paste_fields["project"] = _add_project()
                         if caps.attachments_require_item:
                             # Pastes are staged too — see /upload_devops_image.
                             paste_fields["stage"] = "1"
@@ -905,6 +947,8 @@ async def open_add_work_item_dialog(
                             )
 
                     cust_w.on_value_change(_sync_paste_customer)
+                    if "tracker_project" in widgets:
+                        widgets["tracker_project"].on_value_change(_sync_paste_customer)
                     _sync_paste_customer()
 
     dlg.open()

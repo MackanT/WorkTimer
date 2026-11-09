@@ -31,7 +31,14 @@ WORK_ITEM_COLUMNS = [
     "changed_date",
     "priority",
     "description",  # plain-text (tags stripped, truncated) — for search only
+    "project",  # the tracker project the item lives in (None if one per customer)
 ]
+
+def board_key(customer: str, project: str | None = None) -> str:
+    """A Board tab's key: the customer — or, for one of a customer's several
+    tracker projects, 'Customer · Project'."""
+    return f"{customer} · {project}" if project else customer
+
 
 # Work-item levels root → leaf. Used as the fallback wherever no provider is
 # connected (e.g. rendering the board type chips before any data loads).
@@ -128,13 +135,13 @@ class TrackerProvider(ABC):
         connection, or (False, msg). Default: not supported."""
         return (False, "Member listing is not supported for this tracker")
 
-    def list_repositories(self) -> list:
-        """Git repos available for branch creation: [{id, name,
-        default_branch, project_id}]. Empty where the tracker hosts none
-        (capabilities().branches gates the UI)."""
+    def list_repositories(self, project=None) -> list:
+        """Git repos available for branch creation — in `project` where a
+        customer has several: [{id, name, default_branch, project_id}]. Empty
+        where the tracker hosts none (capabilities().branches gates the UI)."""
         return []
 
-    def list_branches(self, repo_id) -> list:
+    def list_branches(self, repo_id, project=None) -> list:
         """Branch names in a repo (for the base-branch picker). Empty where
         unsupported."""
         return []
@@ -183,10 +190,10 @@ class TrackerProvider(ABC):
     @abstractmethod
     def create_item(
         self, type_key, title, description=None, additional_fields=None,
-        markdown=False, parent=None,
+        markdown=False, parent=None, project=None,
     ):
-        """Create a work item of `type_key` (a value from type_hierarchy()).
-        Returns (status, payload)."""
+        """Create a work item of `type_key` (a value from type_hierarchy()) —
+        in `project`, where a customer has several. Returns (status, payload)."""
 
     @abstractmethod
     def update_work_item_fields(self, work_item_id, fields, markdown=False):
@@ -207,9 +214,10 @@ class TrackerProvider(ABC):
 
     # ── attachments ───────────────────────────────────────────────────────
     @abstractmethod
-    def upload_attachment(self, file_name, content, work_item_id=None):
+    def upload_attachment(self, file_name, content, work_item_id=None, project=None):
         """Upload bytes; return an embeddable URL or None. `work_item_id`
-        targets item-scoped stores (Jira); project-scoped ones ignore it."""
+        targets item-scoped stores (Jira); project-scoped ones use it (or
+        `project`) to pick the project."""
 
     @staticmethod
     def owned_url(url, base: str, prefix: str = "", contains: str = "") -> bool:

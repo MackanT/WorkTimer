@@ -88,7 +88,7 @@ Track billable hours across customers and projects.
 
 - **Time span** — filter by Day, Week, Month, Year, All-Time, or a custom date range
 - **Start/stop** — click the checkbox next to any project to start or stop a timer
-- **Stop dialog** — add a comment, link a tracker work item (★ marks items related to the project's default), re-assign the project, or set a custom stop time
+- **Stop dialog** — add a comment, link a tracker work item (★ marks items related to the project's default), re-assign the project, or set a custom stop time. For a customer with several tracker projects, pick the *Tracker project* first — the work-item list then shows its items, and the comment goes there
 - **Right-click a project row** — add/manage time entries, update the project (rename, default Git-ID), or disable it
 - **Right-click a customer header** — update the customer, add a project, or disable the customer
 - **Quick-adds** — a dashed *Add customer* card sits at the end of the row; every customer card has an *＋ Add project* button
@@ -103,7 +103,7 @@ the nav bar wherever you open WorkTimer next.
 
 A Kanban view of the connected trackers' work items, from WorkTimer's copy of them.
 
-- **Customer tabs** switch between connected customers; type chips follow the customer's tracker levels (Azure: Epic/Feature/User Story; Jira: Epic/Story/Sub-task)
+- **Customer tabs** switch between connected customers — a customer with several tracker projects gets one tab per project (*Acme · Mobile*), each with that project's items and board columns; type chips follow the customer's tracker levels (Azure: Epic/Feature/User Story; Jira: Epic/Story/Sub-task)
 - **Drag a card** between columns to move it (Azure: board column; Jira: a workflow status transition)
 - **Click a card** to open the full dialog — description (markdown editor + preview), state/assignee/priority, comments, image insert/paste, and an *Open in tracker* link
 - **Create branch** (Azure DevOps) — the branch button in the card dialog creates a git branch in Azure Repos from a source branch's tip and links it to the work item (its Development area); repo, name and source are editable, with a `story/123-title` style suggestion prefilled. The naming is configurable per tracker/type (see Settings), and the add form has an **Auto-create git branch** switch — turning it on reveals the branch-name template and a base-branch dropdown (repo default preselected), and the branch is made right after the item
@@ -131,7 +131,7 @@ Each dialog has operation tabs (Add / Update / Disable / Re-enable — Delete fo
 
 ### Customers
 - **Add** — name, hourly rate, optional tracker link
-- **Update** — rename, link/unlink a tracker and pick its *Tracker project* (the DevOps/Jira project the Board, sync and new work items use — listed from the selected tracker; without its token, only the projects other customers already use on it), expected work %, colour
+- **Update** — rename, link/unlink a tracker and pick its *Tracker project* (the DevOps/Jira project the Board, sync and new work items use — listed from the selected tracker; without its token, only the projects other customers already use on it), *More tracker projects* (Azure DevOps, on the hosted WorkTimer: more projects of the same organisation — each gets its own Board tab, and new work items can go to any of them), expected work %, colour
 - **Hourly rate** (in *Update*) — a new rate from any date (*Rate from*), also back in time: it applies until the customer's next rate change. Below the form, *Hourly rates* lists the customer's rates (from, to, rate); once you change the rate or its date, *After saving* shows the result, and beside each changed period how many time entries get the new price and how the amount changes — saving asks first. Time dated before the change keeps its price. A change entered by mistake goes with its **✕** in the list: the earlier rate applies again
 - **Disable / Re-enable** — soft-archive without losing historical entries (disabled customers disappear from the board and pickers; their cached items return on re-enable)
 

@@ -95,15 +95,35 @@ class TrackerManager:
             for name, client in self.clients.items()
         }
 
-    def list_repositories(self, customer_name):
-        """Git repos for a customer's tracker (empty where unsupported)."""
-        client = self._get_client(customer_name)
-        return client.list_repositories() if client else []
+    def projects(self, customer_name) -> list:
+        """The tracker projects a customer's connection covers, main first
+        (several only for an Azure DevOps customer that links more)."""
+        client = self.clients.get(customer_name)
+        return list(getattr(client, "projects", None) or []) if client else []
 
-    def list_branches(self, customer_name, repo_id):
+    @staticmethod
+    def _project(client, work_item_id=None, project=None):
+        """`project`, else the work item's own, else None (the main one)."""
+        if project:
+            return project
+        project_for = getattr(client, "project_for", None)
+        return project_for(work_item_id) if (work_item_id and project_for) else None
+
+    def list_repositories(self, customer_name, work_item_id=None, project=None):
+        """Git repos for a customer's tracker (empty where unsupported) — in
+        `project`, or the work item's project, else the main one."""
+        client = self._get_client(customer_name)
+        if not client:
+            return []
+        return client.list_repositories(project=self._project(client, work_item_id, project))
+
+    def list_branches(self, customer_name, repo_id, work_item_id=None, project=None):
         """Branch names in one of a customer's repos ([] where unsupported)."""
         client = self._get_client(customer_name)
-        return client.list_branches(repo_id) if client else []
+        if not client:
+            return []
+        return client.list_branches(
+            repo_id, project=self._project(client, work_item_id, project))
 
     def create_branch(
         self, customer_name, repo_id, project_id, branch_name,
@@ -118,14 +138,15 @@ class TrackerManager:
         )
 
     def upload_attachment(self, customer_name, file_name, content,
-                          work_item_id=None):
+                          work_item_id=None, project=None):
         """Upload bytes as a tracker attachment for a customer; returns the
         attachment URL or None. `work_item_id` targets item-scoped stores
-        (Jira); project-scoped providers ignore it."""
+        (Jira) — and, for project-scoped ones, the item's project; `project`
+        names it outright (a new item's)."""
         client = self._get_client(customer_name)
         if not client:
             return None
-        return client.upload_attachment(file_name, content, work_item_id)
+        return client.upload_attachment(file_name, content, work_item_id, project=project)
 
     def fetch_attachment(self, url):
         """Fetch an attachment's bytes via whichever connected provider owns the
@@ -244,14 +265,18 @@ class TrackerManager:
         additional_fields=None,
         markdown=False,
         parent=None,
+        project=None,
     ):
         """Create a work item of `type_key` (a value from the provider's
-        type_hierarchy()). Provider-neutral generic behind the named wrappers."""
+        type_hierarchy()) — in `project`, one of the customer's tracker
+        projects (None: the main one). Provider-neutral generic behind the
+        named wrappers."""
         client = self._get_client(customer_name)
         if not client:
             return (False, f"No tracker connection for {customer_name}")
         return client.create_item(
-            type_key, title, description, additional_fields, markdown, parent
+            type_key, title, description, additional_fields, markdown, parent,
+            project=project,
         )
 
     def get_epics_feature_df(self, max_ids: dict = None, changed_dates: dict = None):
@@ -296,7 +321,8 @@ class TrackerManager:
 
 class AzureDevOpsClient:
     def __init__(
-        self, personal_access_token, organization_url, log, project_name=None
+        self, personal_access_token, organization_url, log, project_name=None,
+        extra_projects=None,
     ):
         self.personal_access_token = personal_access_token
         self.organization_url = organization_url
@@ -304,10 +330,19 @@ class AzureDevOpsClient:
         self.connection = None
         # User-selected project for this customer (None = auto: first project).
         self.configured_project = _clean_project(project_name)
+        self.project_name = self.configured_project  # the one in use, after connect()
+        # More projects of the same org this customer links (may be none).
+        self.configured_extra = [
+            p for p in (_clean_project(x) for x in (extra_projects or [])) if p
+        ]
         # All project names in the org, cached at connect() for the picker.
         self.available_projects = []
-        # Git repos of the project, cached on first list_repositories().
-        self._repos_cache = None
+        # The projects this customer covers, main first (set at connect()).
+        self.projects = []
+        # Work item id → its project, for customers with several.
+        self._project_of: dict = {}
+        # Git repos per project, cached on first list_repositories().
+        self._repos_cache: dict = {}
 
     def connect(self):
         # Create a connection to the Azure DevOps organization
@@ -334,6 +369,16 @@ class AzureDevOpsClient:
                     f"in {self.organization_url}; using '{chosen}'"
                 )
             self.project_name = chosen
+            extra = []
+            for p in self.configured_extra:
+                if p not in self.available_projects:
+                    self.log.warning(
+                        f"Linked DevOps project '{p}' not found in "
+                        f"{self.organization_url}; left out"
+                    )
+                elif p != chosen and p not in extra:
+                    extra.append(p)
+            self.projects = [chosen] + extra
 
         except Exception as e:
             msg = str(e).lower()
@@ -348,6 +393,34 @@ class AzureDevOpsClient:
                 self.log.error(f"Failed to connect to Azure DevOps: {e}")
                 raise Exception(f"Failed to connect to Azure DevOps: {e}")
 
+    def _team_project_clause(self) -> str:
+        """WIQL: this customer's projects — one query covers them all."""
+        names = ", ".join(
+            "'" + str(p).replace("'", "''") + "'"
+            for p in (self.projects or [self.project_name])
+        )
+        return f"[System.TeamProject] IN ({names})"
+
+    def project_for(self, work_item_id=None) -> str:
+        """The project a work item lives in: the main one unless the customer
+        has several — then the sync's record of it, else one org-wide read."""
+        if not work_item_id or len(self.projects) <= 1:
+            return self.project_name
+        wid = int(work_item_id)
+        if wid not in self._project_of:
+            try:
+                item = self.wit_client.get_work_item(wid, fields=["System.TeamProject"])
+                fields = getattr(item, "fields", None) or {}
+                self._project_of[wid] = fields.get("System.TeamProject") or self.project_name
+            except Exception as e:
+                self.log.warning(f"Could not look up the project of #{wid}: {e}")
+                return self.project_name
+        return self._project_of[wid]
+
+    def _target_project(self, project=None) -> str:
+        """`project` when it is one of this customer's, else the main one."""
+        return project if project in self.projects else self.project_name
+
     def get_work_item_tracking_client(self):
         if not self.connection:
             self.log.error("Connection not established. Call connect() first.")
@@ -355,17 +428,18 @@ class AzureDevOpsClient:
         return self.connection.clients.get_work_item_tracking_client()
 
     # ── git branches ──────────────────────────────────────────────────────
-    def list_repositories(self):
-        """Git repos in this client's project for the create-branch dialog:
-        [{id, name, default_branch, project_id}], the repo matching the
-        project name first. Cached after the first fetch. Requires a PAT
-        with Code (Read) scope — an empty list on a working connection
-        usually means the scope is missing."""
-        if self._repos_cache is not None:
-            return self._repos_cache
+    def list_repositories(self, project=None):
+        """Git repos in one of this customer's projects (default: the main
+        one) for the create-branch dialog: [{id, name, default_branch,
+        project_id}], the repo matching the project name first. Cached after
+        the first fetch. Requires a PAT with Code (Read) scope — an empty
+        list on a working connection usually means the scope is missing."""
+        project = self._target_project(project)
+        if project in self._repos_cache:
+            return self._repos_cache[project]
         try:
             resp = requests.get(
-                f"{self.organization_url}/{self.project_name}"
+                f"{self.organization_url}/{project}"
                 "/_apis/git/repositories?api-version=7.0",
                 auth=("", self.personal_access_token),
                 timeout=20,
@@ -391,22 +465,22 @@ class AzureDevOpsClient:
             # The repo named like the project is almost always the target.
             repos.sort(
                 key=lambda r: (
-                    r["name"].lower() != str(self.project_name).lower(),
+                    r["name"].lower() != str(project).lower(),
                     r["name"].lower(),
                 )
             )
-            self._repos_cache = repos
+            self._repos_cache[project] = repos
             return repos
         except Exception as e:
             self.log.error(f"Repository listing failed: {e}")
             return []
 
-    def list_branches(self, repo_id):
+    def list_branches(self, repo_id, project=None):
         """Branch names in a repo, default-branch conventions first ([] on
         error). Feeds the base-branch picker."""
         try:
             resp = requests.get(
-                f"{self.organization_url}/{self.project_name}"
+                f"{self.organization_url}/{self._target_project(project)}"
                 f"/_apis/git/repositories/{repo_id}/refs"
                 "?filter=heads/&api-version=7.0",
                 auth=("", self.personal_access_token),
@@ -432,8 +506,9 @@ class AzureDevOpsClient:
         link it to the work item (shows under the item's Development area,
         like Azure DevOps' own "create branch" button). Requires a PAT with
         Code (Read & Write) scope. Returns (ok, message)."""
+        item_project = self.project_for(work_item_id)
         base = (
-            f"{self.organization_url}/{self.project_name}"
+            f"{self.organization_url}/{item_project}"
             f"/_apis/git/repositories/{repo_id}"
         )
         auth = ("", self.personal_access_token)
@@ -504,7 +579,7 @@ class AzureDevOpsClient:
                             }
                         ],
                         int(work_item_id),
-                        project=self.project_name,
+                        project=item_project,
                     )
                 except Exception as e:
                     self.log.error(f"Branch link failed for #{work_item_id}: {e}")
@@ -522,17 +597,18 @@ class AzureDevOpsClient:
             self.log.error(f"Branch creation failed: {e}")
             return (False, f"Branch creation failed: {e}")
 
-    def upload_attachment(self, file_name, content, work_item_id=None):
+    def upload_attachment(self, file_name, content, work_item_id=None, project=None):
         """Upload `content` (bytes) as a project attachment and return its URL,
         which can be embedded in a work-item description (e.g. ![](url)). Returns
-        None on failure. `work_item_id` is accepted for provider parity and
-        ignored — ADO attachments are project-scoped."""
+        None on failure. ADO attachments are project-scoped: `project` (a new
+        item's), else the work item's, else the main one."""
         try:
             # create_attachment streams via data.read(), so it needs a file-like
             # object — wrap the raw bytes in BytesIO.
             ref = self.wit_client.create_attachment(
                 upload_stream=io.BytesIO(content),
-                project=self.project_name,
+                project=(self._target_project(project) if project
+                         else self.project_for(work_item_id)),
                 file_name=file_name,
             )
             return ref.url
@@ -546,7 +622,7 @@ class AzureDevOpsClient:
             comment_obj = CommentCreate(text=comment_text)
             self.wit_client.add_comment(
                 request=comment_obj,
-                project=self.project_name,
+                project=self.project_for(work_item_id),
                 work_item_id=work_item_id,
             )
         except AzureDevOpsServiceError as e:
@@ -579,7 +655,7 @@ class AzureDevOpsClient:
         query = f"""
             SELECT [System.Id], [System.Title], [System.State], [System.WorkItemType]
             FROM WorkItems
-            WHERE [System.TeamProject] = '{self.project_name}'
+            WHERE {self._team_project_clause()}
         """
         if level:
             query += f" AND [System.WorkItemType] = '{level}'"
@@ -628,7 +704,7 @@ class AzureDevOpsClient:
         """
         try:
             result = self.wit_client.get_comments(
-                project=self.project_name, work_item_id=int(work_item_id)
+                project=self.project_for(work_item_id), work_item_id=int(work_item_id)
             )
             raw = getattr(result, "comments", None) or []
 
@@ -659,7 +735,8 @@ class AzureDevOpsClient:
 
     def get_work_item_url(self, work_item_id: int) -> str:
         """Build the Azure DevOps web URL for a work item."""
-        return f"{self.organization_url}/{self.project_name}/_workitems/edit/{int(work_item_id)}"
+        return (f"{self.organization_url}/{self.project_for(work_item_id)}"
+                f"/_workitems/edit/{int(work_item_id)}")
 
     def _create_work_item(
         self,
@@ -669,9 +746,11 @@ class AzureDevOpsClient:
         additional_fields=None,
         markdown=False,
         parent=None,
+        project=None,
     ):
         """
-        Create a work item in Azure DevOps.
+        Create a work item in Azure DevOps — in `project`, one of this
+        customer's projects (default: the main one).
 
         Args:
             work_item_type: "User Story", "Epic", or "Feature"
@@ -725,16 +804,19 @@ class AzureDevOpsClient:
                         "path": "/relations/-",
                         "value": {
                             "rel": "System.LinkTypes.Hierarchy-Reverse",
-                            "url": f"{self.organization_url}/{self.project_name}/_apis/wit/workItems/{parent}",
+                            # Org-wide: the parent may live in another project.
+                            "url": f"{self.organization_url}/_apis/wit/workItems/{parent}",
                         },
                     }
                 )
 
+            target = self._target_project(project)
             work_item = self.wit_client.create_work_item(
-                patch_document, project=self.project_name, type=work_item_type
+                patch_document, project=target, type=work_item_type
             )
+            self._project_of[int(work_item.id)] = target
 
-            self.log.info(f"Created {work_item_type} with ID {work_item.id}")
+            self.log.info(f"Created {work_item_type} with ID {work_item.id} in {target}")
             return (True, f"Created {work_item_type} with ID {work_item.id}")
 
         except AzureDevOpsServiceError as e:
@@ -751,10 +833,12 @@ class AzureDevOpsClient:
         additional_fields=None,
         markdown=False,
         parent=None,
+        project=None,
     ):
         """Create a new User Story work item in Azure DevOps."""
         return self._create_work_item(
-            "User Story", title, description, additional_fields, markdown, parent
+            "User Story", title, description, additional_fields, markdown, parent,
+            project,
         )
 
     def create_epic(
@@ -763,10 +847,11 @@ class AzureDevOpsClient:
         description=None,
         additional_fields=None,
         markdown=False,
+        project=None,
     ):
         """Create a new Epic work item in Azure DevOps."""
         return self._create_work_item(
-            "Epic", title, description, additional_fields, markdown
+            "Epic", title, description, additional_fields, markdown, None, project
         )
 
     def create_feature(
@@ -776,10 +861,12 @@ class AzureDevOpsClient:
         additional_fields=None,
         markdown=False,
         parent=None,
+        project=None,
     ):
         """Create a new Feature work item in Azure DevOps."""
         return self._create_work_item(
-            "Feature", title, description, additional_fields, markdown, parent
+            "Feature", title, description, additional_fields, markdown, parent,
+            project,
         )
 
     def get_work_item_description(self, work_item_id: int):
@@ -867,7 +954,7 @@ class AzureDevOpsClient:
                 return (True, f"No changes needed for work item {work_item_id}")
 
             self.wit_client.update_work_item(
-                patch_document, int(work_item_id), project=self.project_name
+                patch_document, int(work_item_id), project=self.project_for(work_item_id)
             )
 
             field_names = list(fields.keys())
@@ -1004,15 +1091,18 @@ class AzureDevOpsClient:
             self.log.error(f"Error moving work item to board column: {e}")
             return (False, f"Error: {e}")
 
-    def get_board_columns_via_team_autodetect(self, board_type: str = None) -> tuple:
-        """Fallback: auto-detect team and fetch columns via board API."""
+    def get_board_columns_via_team_autodetect(self, board_type: str = None,
+                                              project: str = None) -> tuple:
+        """Fallback: auto-detect team and fetch columns via board API — of
+        `project`, one of this customer's (default: the main one)."""
         try:
+            project = self._target_project(project)
             core_client = self.connection.clients.get_core_client()
             work_client = self.connection.clients.get_work_client()
-            teams = core_client.get_teams(self.project_name)
+            teams = core_client.get_teams(project)
 
             for t in teams:
-                team_context = TeamContext(project=self.project_name, team=t.name)
+                team_context = TeamContext(project=project, team=t.name)
                 boards = work_client.get_boards(team_context)
                 stories_board = next((b for b in boards if b.name == board_type), None)
                 if not stories_board:

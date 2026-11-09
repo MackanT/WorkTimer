@@ -732,12 +732,16 @@ class DynamicDropDown(DynamicWidget):
 
         initial_options = self._normalize_options_for_select(initial_options)
 
+        multiple = bool(self.field_config.get("multiple", False))
         widget = ui.select(
             options=initial_options,
             label=self.label,
             with_input=with_input,
+            multiple=multiple,
             **self.widget_kwargs,
         ).props("outlined")
+        if multiple:
+            widget.props("use-chips")
 
         # Apply custom value mode if enabled
         if with_input and allow_custom:

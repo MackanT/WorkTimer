@@ -316,24 +316,35 @@ def focus_options(
     return opts
 
 
-def create_hierarchy_view(core, get_customer):
+def create_hierarchy_view(core, get_customer, get_project=lambda: None):
     """Embeddable Hierarchy view (Mermaid tree + its toolbar controls) for the
     Board page's view toggle. `get_customer` returns the currently-selected
-    customer (shared with the board). Returns a controller exposing
-    render_controls(), render_zoom_controls(), render_content(), set_customer()
-    and refresh()."""
+    customer (shared with the board), `get_project` its tracker project when
+    the board's tab is one of a customer's several. Returns a controller
+    exposing render_controls(), render_zoom_controls(), render_content(),
+    set_customer() and refresh()."""
     DO = core.tracker_engine
     muted = core.theme.get("muted")
 
     state = {
         "customer": get_customer(),
+        "project": get_project(),
         "show_closed": False,
         "focus_id": None,
         "zoom": 1.0,
         "direction": "TD",
     }
-    if DO is not None and DO.df is not None and state["customer"]:
-        state["focus_id"] = default_focus_id(DO.df, state["customer"], state["show_closed"])
+    def _items():
+        """The work items in view: all — or, on one of a customer's several
+        tracker projects, that project's."""
+        df = DO.df if DO is not None else None
+        if df is None or not state["project"] or "project" not in df.columns:
+            return df
+        return df[(df["customer_name"] != state["customer"])
+                  | DO.project_mask(df, state["customer"], state["project"])]
+
+    if DO is not None and _items() is not None and state["customer"]:
+        state["focus_id"] = default_focus_id(_items(), state["customer"], state["show_closed"])
 
     def _apply_zoom():
         ui.run_javascript(
@@ -343,7 +354,7 @@ def create_hierarchy_view(core, get_customer):
 
     @ui.refreshable
     def render_graph():
-        if DO is None or DO.df is None or not state["customer"]:
+        if DO is None or _items() is None or not state["customer"]:
             with ui.column().classes("items-center justify-center w-full").style(
                 "padding: 4rem;"
             ):
@@ -352,7 +363,7 @@ def create_hierarchy_view(core, get_customer):
             return
 
         code = build_mermaid(
-            DO.df,
+            _items(),
             state["customer"],
             include_closed=state["show_closed"],
             focus_id=state["focus_id"],
@@ -380,9 +391,9 @@ def create_hierarchy_view(core, get_customer):
         from the same mapping build_mermaid uses, so it always matches."""
         sub = (
             _visible_sub(
-                DO.df, state["customer"], state["show_closed"], state["focus_id"]
+                _items(), state["customer"], state["show_closed"], state["focus_id"]
             )
-            if (DO is not None and DO.df is not None)
+            if (DO is not None and _items() is not None)
             else pd.DataFrame()
         )
         entries = list(column_styles(sub).items())
@@ -413,12 +424,12 @@ def create_hierarchy_view(core, get_customer):
     def render_focus_select():
         opts = (
             focus_options(
-                DO.df,
+                _items(),
                 state["customer"],
                 state["show_closed"],
                 parent_types=tuple(DO.type_hierarchy(state["customer"])[:-1]),
             )
-            if (DO is not None and DO.df is not None and state["customer"])
+            if (DO is not None and _items() is not None and state["customer"])
             else {"": "Whole tree"}
         )
         value = "" if state["focus_id"] is None else str(state["focus_id"])
@@ -438,10 +449,10 @@ def create_hierarchy_view(core, get_customer):
         sel.on_value_change(_on_focus)
 
     async def _open_item_dialog(item_id: int):
-        if DO is None or DO.df is None:
+        if DO is None or _items() is None:
             return
-        match = DO.df[
-            (DO.df["id"] == item_id) & (DO.df["customer_name"] == state["customer"])
+        match = _items()[
+            (_items()["id"] == item_id) & (_items()["customer_name"] == state["customer"])
         ]
         if match.empty:
             return
@@ -554,11 +565,12 @@ def create_hierarchy_view(core, get_customer):
             render_graph()
         _ensure_client_js()
 
-    def set_customer(customer):
+    def set_customer(customer, project=None):
         state["customer"] = customer
+        state["project"] = project
         state["focus_id"] = (
-            default_focus_id(DO.df, customer, state["show_closed"])
-            if (DO is not None and DO.df is not None and customer)
+            default_focus_id(_items(), customer, state["show_closed"])
+            if (DO is not None and _items() is not None and customer)
             else None
         )
         render_focus_select.refresh()
@@ -568,11 +580,11 @@ def create_hierarchy_view(core, get_customer):
         """The currently focused work item as {id, type, title, display_name},
         or None when viewing the whole tree (or the item can't be resolved).
         Lets the board's add dialog pre-parent new items under the focus."""
-        if state["focus_id"] is None or DO is None or DO.df is None:
+        if state["focus_id"] is None or DO is None or _items() is None:
             return None
-        match = DO.df[
-            (DO.df["id"] == state["focus_id"])
-            & (DO.df["customer_name"] == state["customer"])
+        match = _items()[
+            (_items()["id"] == state["focus_id"])
+            & (_items()["customer_name"] == state["customer"])
         ]
         if match.empty:
             return None

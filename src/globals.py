@@ -6,7 +6,7 @@ from .tracker_manager import TrackerManager
 # avoids a circular import.
 from .trackers import azure as _azure_tracker  # noqa: F401
 from .trackers import jira as _jira_tracker  # noqa: F401
-from .trackers.base import DEFAULT_STATE_OPTIONS, DEFAULT_TYPE_HIERARCHY
+from .trackers.base import DEFAULT_STATE_OPTIONS, DEFAULT_TYPE_HIERARCHY, board_key
 from .database import Database
 from collections import defaultdict
 from dataclasses import dataclass
@@ -209,6 +209,8 @@ class TrackerEngine:
         # customers only (WorkItemHandlers fills it).
         self.columns_cache = defaultdict(dict)
         self.preload_started = False
+        # (customer, project) fetched in full by this engine — see _unsynced_customers.
+        self._fully_fetched: set = set()
 
     def _user_key(self) -> int:
         return getattr(self.query_engine, "user_key", 1)
@@ -285,25 +287,69 @@ class TrackerEngine:
         """
         return bool(self.manager and customer_name in self.manager.clients)
 
+    def projects(self, customer_name: str) -> list:
+        """The customer's tracker projects, main first: its connection's —
+        else (not connected) those of its cached work items."""
+        if self.manager:
+            projects = self.manager.projects(customer_name)
+            if projects:
+                return projects
+        if self.df is not None and "project" in self.df.columns:
+            cached = self.df.loc[self.df["customer_name"] == customer_name, "project"]
+            return list(dict.fromkeys(cached.dropna()))
+        return []
+
+    def project_mask(self, df: pd.DataFrame, customer: str, project: str | None = None):
+        """Rows of `customer` — in `project` when given. An item cached
+        without a project (before its customer linked several) counts as the
+        main project's until a sync records it."""
+        mask = df["customer_name"] == customer
+        if project and "project" in df.columns:
+            in_project = df["project"] == project
+            if project == (self.projects(customer) or [None])[0]:
+                in_project |= df["project"].isna()
+            mask &= in_project
+        return mask
+
+    def boards(self) -> list[tuple[str, str, str | None]]:
+        """The Board's tabs as (key, customer, project), by customer name: one
+        per customer with work items — or, for a customer with several
+        tracker projects, one per project (also those without items yet)."""
+        customers = set()
+        if self.df is not None:
+            customers |= set(self.df["customer_name"].dropna())
+        if self.manager:
+            customers |= {c for c in self.manager.clients if len(self.manager.projects(c)) > 1}
+        tabs = []
+        for customer in sorted(customers):
+            projects = self.projects(customer)
+            if len(projects) > 1:
+                tabs += [(board_key(customer, p), customer, p) for p in projects]
+            else:
+                tabs.append((customer, customer, None))
+        return tabs
+
     def get_available_projects(self) -> dict:
         """{customer_name: [project names in their org]} for connected customers,
         or {} when no manager. Feeds the customer form's project picker."""
         return self.manager.get_available_projects() if self.manager else {}
 
     def upload_attachment(self, customer_name, file_name, content,
-                          work_item_id=None):
+                          work_item_id=None, project=None):
         """Upload bytes as a tracker attachment for a customer; returns the URL
         or None. Used to embed pasted/inserted images in work-item
-        descriptions. `work_item_id` targets item-scoped stores (Jira)."""
+        descriptions. `work_item_id` targets item-scoped stores (Jira) and
+        the item's project; `project` names a new item's."""
         return (
             self.manager.upload_attachment(
-                customer_name, file_name, content, work_item_id
+                customer_name, file_name, content, work_item_id, project=project
             )
             if self.manager
             else None
         )
 
-    def get_work_item_options(self, customer_name: str | None = None):
+    def get_work_item_options(self, customer_name: str | None = None,
+                              project: str | None = None):
         """Active DevOps work items for the Git-ID picker.
 
         With ``customer_name``, returns a flat list of ``{"label", "id"}`` for
@@ -319,7 +365,7 @@ class TrackerEngine:
         # done-ish ones instead of whitelisting Azure's.
         active = self.df[~self.df["state"].isin(["Resolved", "Closed", "Removed", "Done"])]
         if customer_name is not None:
-            active = active[active["customer_name"] == customer_name]
+            active = active[self.project_mask(active, customer_name, project)]
         # Newest (highest id) first — most likely related to current work.
         active = active.sort_values("id", ascending=False)
 
@@ -383,6 +429,36 @@ class TrackerEngine:
         # TrackerManager.__init__ connects to every org (network I/O) — keep it
         # off the event loop so the UI stays responsive during startup.
         self.manager = await asyncio.to_thread(TrackerManager, df, self.log)
+
+    async def _unsynced_customers(self) -> set:
+        """Customers with several tracker projects of which one has no cached
+        items yet — and wasn't fetched in full by this engine already."""
+        if self.manager is None:
+            return set()
+        several = {c: self.manager.projects(c) for c in self.manager.clients}
+        several = {c: ps for c, ps in several.items() if len(ps) > 1}
+        if not several:
+            return set()
+        df = self.df
+        if df is None:
+            df = await self.query_engine.function_db("get_visible_devops_items")
+        cached = (set(zip(df["customer_name"], df["project"]))
+                  if df is not None and not df.empty and "project" in df.columns else set())
+        done = getattr(self, "_fully_fetched", set())
+        return {c for c, ps in several.items()
+                if any((c, p) not in cached and (c, p) not in done for p in ps)}
+
+    def _remember_projects(self) -> None:
+        """Tell each connection with several projects where its cached items
+        live — per-item calls then need no lookup."""
+        if self.manager is None or self.df is None or "project" not in self.df.columns:
+            return
+        for customer, client in self.manager.clients.items():
+            known = getattr(client, "_project_of", None)
+            if known is None or len(getattr(client, "projects", None) or []) <= 1:
+                continue
+            rows = self.df[(self.df["customer_name"] == customer) & self.df["project"].notna()]
+            known.update(zip(rows["id"].astype(int), rows["project"]))
 
     def provider_label(self, customer_name: str | None = None) -> str:
         """The customer's tracker name for UI labels ('Azure DevOps'/'Jira')."""
@@ -461,6 +537,17 @@ class TrackerEngine:
                 self.log.info(
                     f"Performing incremental refresh with max IDs per customer: {max_ids}",
                 )
+                # A tracker project linked since (or cached before projects
+                # were recorded) has older items the watermark would skip:
+                # such a customer is fetched in full, once.
+                unsynced = await self._unsynced_customers()
+                for customer in unsynced:
+                    max_ids.pop(customer, None)
+                    changed_dates.pop(customer, None)
+                    self._fully_fetched.update(
+                        (customer, p) for p in self.manager.projects(customer))
+                if unsynced:
+                    self.log.info(f"Fetching in full (a project not synced yet): {sorted(unsynced)}")
             else:
                 self.log.warning(
                     "No existing devops data found, performing full refresh"
@@ -520,5 +607,6 @@ class TrackerEngine:
             self.df["display_name"] = self.df.apply(
                 lambda row: f"{row['type']}: {int(row['id'])} - {row['title']}", axis=1
             )
+            self._remember_projects()
             self.log.info(f"DevOps dataframe loaded with {len(self.df)} rows")
 

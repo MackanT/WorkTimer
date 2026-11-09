@@ -1157,6 +1157,45 @@ tracker project below.
   Assignee card: a select refused the starting value `""` (a customer just
   added) or a default since removed from the assignees.
 
+## After 6.2.0
+
+- **Several tracker projects per customer** (2026-10-13; Azure DevOps, one
+  org — step 1 of a colleague's request). *Customers → Update* gets *More
+  tracker projects* (`customers.extra_tracker_projects`, migration 0007;
+  Postgres, devops trackers only), wired with the Tracker project in
+  add_data.py. **The connection** covers them all: `projects` (main first,
+  ones missing from the org left out), one WIQL query
+  (`[System.TeamProject] IN (…)`) for the sync, and each fetched item's
+  `System.TeamProject` cached (`work_items.tracker_project`, the frame's new
+  `project` column; SQLite drops it). Per-item calls — comments, updates,
+  the item link, attachments, branch links and repos — go to
+  `project_for(id)`: the sync's record (seeded from the cache on load),
+  else one org-wide read; moving a card and reading an item were org-wide
+  already. Creating takes a `project` (the add form's *Tracker project*,
+  shown only for a customer with several; the Board's tab presets it); a
+  parent link is org-wide. **The Board** has a tab per project
+  (`TrackerEngine.boards()`: key `Customer · Project`, also for projects
+  without items yet), board columns per tab (`columns_cache[key]`; the main
+  project's also under the customer, for Settings' defaults), and the
+  hierarchy shows the tab's project. **The stop dialog** (now
+  `build_devops_selector`, module level) shows a *Tracker project* select
+  for such a customer — the default work item's project first — filtering
+  the work-item list; the comment reaches the item's project. Two gaps the
+  review found, closed: the hourly sync asks only for items above the
+  customer's highest cached id, so a project linked later kept its older
+  items hidden — a customer with a project that has nothing cached is now
+  fetched in full once (`_unsynced_customers`); and items cached before
+  projects were recorded count as the main project's
+  (`TrackerEngine.project_mask`, shared by the Board, hierarchy, stop dialog
+  and pickers) until a sync records theirs. Contacts,
+  assignees and the default assignee stay per customer; *Fetch members* and
+  Jira stay single-project for now. Tests:
+  [test_tracker_projects.py](../tests/test_tracker_projects.py) (a fake
+  Azure SDK), the projects part of
+  [test_pg_database.py](../tests/test_pg_database.py), the Board and the
+  stop dialog in [test_smoke_pages.py](../tests/test_smoke_pages.py), the
+  Update tab in [test_smoke_pages_pg.py](../tests/test_smoke_pages_pg.py).
+
 ---
 
 ## Maybe, after 6.0.0

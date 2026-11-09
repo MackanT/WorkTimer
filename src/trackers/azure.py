@@ -74,11 +74,13 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
         org = row.get("org_url")
         if _blankish(pat) or _blankish(org):
             return None
+        extra = row.get("extra_tracker_projects")
         provider = cls(
             str(pat),
             f"https://dev.azure.com/{str(org).strip()}",
             log,
             project_name=row.get("tracker_project"),
+            extra_projects=list(extra) if isinstance(extra, (list, tuple)) else [],
         )
         provider.customer_name = str(row.get("customer_name") or "")
         return provider
@@ -110,6 +112,9 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
             wtype = fields.get("System.WorkItemType")
             if wtype not in wanted:
                 continue
+            project = fields.get("System.TeamProject")
+            if project:
+                self._project_of[int(item.id)] = project
             rows.append(
                 {
                     "customer_name": self.customer_name,
@@ -126,6 +131,7 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
                     # Already in the expand="All" payload — cached as plain text
                     # so board search / palette find can match description bodies.
                     "description": _plain_text(fields.get("System.Description")),
+                    "project": project,
                 }
             )
         if not rows:
@@ -135,18 +141,20 @@ class AzureDevOpsProvider(AzureDevOpsClient, TrackerProvider):
     # ── mutations ─────────────────────────────────────────────────────────
     def create_item(
         self, type_key, title, description=None, additional_fields=None,
-        markdown=False, parent=None,
+        markdown=False, parent=None, project=None,
     ):
-        """Create a work item of `type_key`, dispatching to the level-specific
-        creators (the root level takes no parent)."""
+        """Create a work item of `type_key` in `project` (default: the main
+        one), dispatching to the level-specific creators (the root level
+        takes no parent)."""
         if type_key == "Epic":
-            return self.create_epic(title, description, additional_fields, markdown)
+            return self.create_epic(
+                title, description, additional_fields, markdown, project=project)
         if type_key == "Feature":
             return self.create_feature(
-                title, description, additional_fields, markdown, parent
+                title, description, additional_fields, markdown, parent, project=project
             )
         return self.create_user_story(
-            title, description, additional_fields, markdown, parent
+            title, description, additional_fields, markdown, parent, project=project
         )
 
     # ── attachments ───────────────────────────────────────────────────────

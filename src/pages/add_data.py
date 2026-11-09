@@ -154,8 +154,23 @@ def _wire_tracker_projects(core, widgets: dict, data_fetcher) -> None:
         return
     customer, tracker, project = (widgets[n] for n in ("customer_name", "tracker_name",
                                                        "tracker_project"))
+    extra = widgets.get("extra_tracker_projects")  # Postgres: more projects of the org
     cache: dict = {}
     latest = {"n": 0}  # a customer change and its tracker change both refresh: the last wins
+    seen = {"options": [], "devops": False}
+
+    def sync_extra(keep=None):
+        """More tracker projects: the tracker's other projects (the main one
+        left out), shown for Azure DevOps only; `keep` replaces the picks."""
+        if extra is None:
+            return
+        main = project.value
+        current = keep if keep is not None else list(extra.widget.value or [])
+        chosen = [p for p in current if p and p != main]
+        choices = [p for p in seen["options"] if p != main]
+        choices += [p for p in chosen if p not in choices]  # a stored one still shows
+        extra.widget.set_options(choices, value=chosen)
+        extra.widget.set_visibility(seen["devops"])
 
     async def refresh(_=None):
         latest["n"] = n = latest["n"] + 1
@@ -184,9 +199,18 @@ def _wire_tracker_projects(core, widgets: dict, data_fetcher) -> None:
         else:
             project.widget.props(remove="hint")
         project.widget.update()
+        if extra is not None:
+            types = await data_fetcher("tracker_types") or {}
+            own_extra = (await data_fetcher("extra_projects_current") or {}).get(customer.value)
+            if n != latest["n"]:
+                return
+            seen.update(options=options, devops=types.get(name) == "devops")
+            sync_extra(list(own_extra or []) if (name and name == own_tracker) else [])
 
     customer.widget.on_value_change(refresh)
     tracker.widget.on_value_change(refresh)
+    if extra is not None:
+        project.widget.on_value_change(lambda _: sync_extra())
 
 
 def _amount(value) -> str:
@@ -740,6 +764,12 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                     data_sources["expected_work_pct"] = {}
                     data_sources["color"] = {}
                     data_sources["wage_current"] = {}  # the rate in force today (Postgres)
+                    data_sources["extra_projects_current"] = {}  # Postgres
+                    tdf = await QE.function_db("get_trackers")
+                    data_sources["tracker_types"] = (
+                        dict(zip(tdf["tracker_name"], tdf["integration_type"]))
+                        if not tdf.empty else {}
+                    )
                     for _, row in full_df.iterrows():
                         cname = row["customer_name"]
                         data_sources["new_customer_name"][cname] = cname
@@ -756,6 +786,9 @@ async def prepare_data_sources(core: AppCore, entity_type: str, operation: str) 
                         data_sources["color"][cname] = row["color"] or ""
                         if pd.notna(row.get("wage")):
                             data_sources["wage_current"][cname] = int(row["wage"])
+                        extras = row.get("extra_tracker_projects")
+                        if isinstance(extras, (list, tuple)):
+                            data_sources["extra_projects_current"][cname] = list(extras)
 
             elif operation == "reenable":
                 # Get customers that are disabled and have no active entry

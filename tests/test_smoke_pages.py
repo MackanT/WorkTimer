@@ -13,6 +13,7 @@ Isolation — this test must never touch real data:
 * the update check and the internet probe are stubbed, so it runs offline.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -151,3 +152,158 @@ async def test_tracker_customers_are_listed_for_their_contacts(user: User, seede
                        if isinstance(e, ui.select) and e.props.get("label") == "Customer"]
     assert customers.options[0] == "Beta"
     await user.should_see("Default Assignee")
+
+
+def _projects_engine(core, projects: dict, items: list):
+    """A TrackerEngine over cached `items` (customer, id, project, title) —
+    connections covering `projects` {customer: [main, …]}, none connected
+    for real."""
+    from collections import defaultdict
+
+    import pandas as pd
+
+    from src.globals import TrackerEngine
+    from src.tracker_manager import TrackerManager
+    from src.trackers.registry import create_provider_for_row
+
+    log = logging.getLogger("smoke.projects")
+    clients = {}
+    for customer, names in projects.items():
+        client = create_provider_for_row({
+            "customer_name": customer, "pat_token": "pat", "org_url": "acme",
+            "tracker_project": names[0], "integration_type": "devops"}, log)
+        client.projects, client.project_name = list(names), names[0]
+        clients[customer] = client
+    manager = TrackerManager.__new__(TrackerManager)
+    manager.clients, manager.log = clients, log
+    engine = TrackerEngine(core.query_engine, log)
+    engine.manager, engine.preload_started = manager, True
+    engine.columns_cache = defaultdict(dict)
+    engine.df = pd.DataFrame([{
+        "customer_name": c, "type": "User Story", "id": i, "title": t, "state": "New",
+        "parent_id": None, "board_column": "New", "board_column_done": 0, "assigned_to": "",
+        "changed_date": "2026-09-01T10:00:00", "priority": 2, "description": "", "project": p,
+        "display_name": f"User Story: {i} - {t}"} for c, i, p, t in items])
+    return engine
+
+
+async def test_each_tracker_project_gets_its_own_board_tab(user: User):
+    from nicegui import ui
+
+    from src.pages.board import board_page
+
+    await user.open("/time")
+    await page_built()
+    core = core_app._app_cores[user.client.id]
+    core.tracker_engine = _projects_engine(
+        core, {"Acme": ["Platform", "Mobile"], "Beta": ["Ops"]},
+        [("Acme", 1, "Platform", "Platform story"), ("Acme", 2, "Mobile", "Mobile story"),
+         ("Beta", 3, "Ops", "Beta story")])
+    with user.client:
+        await board_page()
+        tabs = [e.props.get("name") for e in user.client.elements.values() if isinstance(e, ui.tab)]
+        [board_tabs] = [e for e in user.client.elements.values()
+                        if isinstance(e, ui.tabs) and e.value == "Acme · Platform"]
+
+    assert ["Acme · Platform", "Acme · Mobile", "Beta"] == [t for t in tabs if t in (
+        "Acme · Platform", "Acme · Mobile", "Beta")]
+    await user.should_see("Platform story")
+    await user.should_not_see("Mobile story")
+
+    with user.client:
+        board_tabs.value = "Acme · Mobile"
+    await user.should_see("Mobile story")
+    await user.should_not_see("Platform story")
+
+
+async def test_the_stop_dialog_picks_the_project_then_its_work_item(user: User):
+    from nicegui import ui
+
+    from src.pages.time_tracking import build_devops_selector
+
+    await user.open("/time")
+    await page_built()
+    core = core_app._app_cores[user.client.id]
+    engine = _projects_engine(
+        core, {"Acme": ["Platform", "Mobile"]},
+        [("Acme", 1, "Platform", "Platform story"), ("Acme", 2, "Mobile", "Mobile story"),
+         ("Acme", 4, "Mobile", "Other mobile story")])
+
+    with user.client:
+        id_input, _ = build_devops_selector(engine, "Acme", 2, True)  # its default item: #2
+        [project] = [e for e in user.client.elements.values()
+                     if isinstance(e, ui.select) and e.props.get("label") == "Tracker project"]
+
+    assert (project.options, project.value) == (["Platform", "Mobile"], "Mobile")
+    assert set(id_input.options) == {"User Story: 2 - Mobile story", "User Story: 4 - Other mobile story"}
+    assert id_input.value == "User Story: 2 - Mobile story"
+    with user.client:
+        project.value = "Platform"
+    assert list(id_input.options) == ["User Story: 1 - Platform story"]
+    assert id_input.value is None
+
+
+async def test_one_project_customers_get_no_project_choice(user: User):
+    from nicegui import ui
+
+    from src.pages.time_tracking import build_devops_selector
+
+    await user.open("/time")
+    await page_built()
+    core = core_app._app_cores[user.client.id]
+    engine = _projects_engine(core, {"Beta": ["Ops"]}, [("Beta", 3, "Ops", "Beta story")])
+
+    with user.client:
+        id_input, _ = build_devops_selector(engine, "Beta", 0, False)
+        labels = [e.props.get("label") for e in user.client.elements.values()
+                  if isinstance(e, ui.select)]
+
+    assert "Tracker project" not in labels
+    assert list(id_input.options) == ["User Story: 3 - Beta story"]
+
+
+async def test_an_item_added_on_a_project_tab_is_created_in_that_project(user: User):
+    from nicegui import ui
+    from nicegui.testing.user_interaction import UserInteraction
+
+    from src.ui.work_item_forms import open_add_work_item_dialog
+
+    await user.open("/time")
+    await page_built()
+    core = core_app._app_cores[user.client.id]
+    core.tracker_engine = engine = _projects_engine(
+        core, {"Acme": ["Platform", "Mobile"]},
+        [("Acme", 1, "Platform", "Platform story"), ("Acme", 2, "Mobile", "Mobile story")])
+    created = []
+
+    def create_item(customer_name, type_key, title, **kwargs):
+        created.append((customer_name, type_key, title, kwargs.get("project")))
+        return True, "Created User Story with ID 99"
+
+    async def synced(incremental=False):
+        pass  # no tracker behind it
+
+    engine.manager.create_item, engine.refresh_tracker_data = create_item, synced
+    for key in ("Acme", "Acme · Platform", "Acme · Mobile"):  # no Azure to ask
+        engine.columns_cache[key] = {t: ["New", "Active"] for t in ("Epic", "Feature", "User Story")}
+    with user.client:
+        await open_add_work_item_dialog(core, preset_customer="Acme", preset_project="Mobile")
+        inputs = {e.props.get("label"): e for e in user.client.elements.values()
+                  if isinstance(e, (ui.input, ui.select))}
+    project = inputs["Tracker project"]
+    assert (project.value, project.visible) == ("Mobile", True)
+
+    with user.client:
+        inputs["Title"].value = "New story"
+        priority = inputs["Priority"]
+        priority.value = list(priority.options)[0]
+        [add] = [e for e in user.client.elements.values()
+                 if isinstance(e, ui.button) and e.text == "Add"]
+    UserInteraction(user, {add}, None).click()
+    for _ in range(60):
+        if created:
+            break
+        await asyncio.sleep(0.05)
+
+    assert created, list(user.notify.messages)
+    assert created[0][3] == "Mobile"

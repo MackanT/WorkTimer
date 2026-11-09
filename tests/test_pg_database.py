@@ -579,6 +579,51 @@ def test_an_import_reaches_only_the_users_own_data(db, pg_schema_db, tmp_path):
     assert other.get_imports()["import_batch"].tolist() == [theirs["import_batch"]]
 
 
+# ── several tracker projects per customer ───────────────────────────────────
+
+
+def _linked(db):
+    db.insert_tracker("Ops", "devops", org_url="ops", pat_token="pat")
+    db.insert_customer("Acme", "2026-01-01", 1000, tracker_name="Ops", tracker_project="Platform")
+
+
+def test_a_customers_extra_tracker_projects_are_saved_and_connected(db):
+    _linked(db)
+
+    db.update_customer("Acme", "Acme", extra_tracker_projects=["Mobile", "Platform", " Data ", "Mobile"])
+
+    [row] = db.get_current_customer_details().to_dict("records")
+    [connection] = db.get_tracker_connections().to_dict("records")
+    assert row["extra_tracker_projects"] == ["Mobile", "Data"]  # the main one left out, once each
+    assert connection["extra_tracker_projects"] == ["Mobile", "Data"]
+    db.update_customer("Acme", "Acme", color="#123456")  # not given: unchanged
+    assert db.get_current_customer_details().iloc[0]["extra_tracker_projects"] == ["Mobile", "Data"]
+    db.update_customer("Acme", "Acme", extra_tracker_projects=[])
+    assert db.get_current_customer_details().iloc[0]["extra_tracker_projects"] == []
+
+
+def test_cached_work_items_keep_their_project(db):
+    _linked(db)
+    item = {"customer_name": "Acme", "type": "User Story", "id": 1, "title": "A", "state": "New",
+            "parent_id": None, "board_column": "New", "board_column_done": 0, "assigned_to": "",
+            "changed_date": "2026-09-01T10:00:00", "priority": None, "description": ""}
+
+    db.update_devops_data(pd.DataFrame([{**item, "project": "Mobile"},
+                                        {**item, "id": 2, "project": None}]), mode="replace")
+
+    items = db.get_visible_devops_items()
+    assert items["project"].tolist() == ["Mobile", None]
+
+
+def test_the_projects_travel_in_a_backup(db):
+    _linked(db)
+    db.update_customer("Acme", "Acme", extra_tracker_projects=["Mobile"])
+
+    [customer] = db.export_data()["tables"]["customers"]
+
+    assert (customer["tracker_project"], customer["extra_tracker_projects"]) == ("Platform", ["Mobile"])
+
+
 # ── one instance per user ───────────────────────────────────────────────────
 
 
