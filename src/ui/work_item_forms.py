@@ -236,30 +236,17 @@ async def open_work_item_dialog(
     with ui.dialog().props("maximized") as dlg:
         with ui.card().style(_DIALOG_CARD_STYLE).props("flat bordered"):
             form_actions: dict = {"submit": None}
-            dirty_state: dict = {"is_dirty": False, "programmatic": True}
+            dirty_state: dict = {"is_dirty": False}
 
-            def _mark_dirty(_e=None):
-                if not dirty_state["programmatic"]:
-                    dirty_state["is_dirty"] = True
+            def _mark_dirty():
+                dirty_state["is_dirty"] = True
+                dlg.props("persistent")  # an outside click or Esc no longer closes it
 
             def _confirm_discard_or_close():
                 if not dirty_state["is_dirty"]:
                     dlg.close()
                     return
-                with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
-                    ui.label("Discard unsaved changes?").classes("text-sm font-semibold")
-                    ui.label("Your edits in this work item will be lost.").classes(
-                        "text-xs text-grey-5"
-                    )
-                    with ui.row().classes("w-full justify-end gap-2 mt-2"):
-                        ui.button("Keep editing", on_click=confirm_dlg.close).props("flat")
-
-                        def _discard():
-                            confirm_dlg.close()
-                            dlg.close()
-
-                        ui.button("Discard", on_click=_discard).props("color=negative")
-                confirm_dlg.open()
+                _confirm_discard(dlg, "Your edits in this work item will be lost.")
 
             async def _submit_from_header():
                 submit_fn = form_actions.get("submit")
@@ -470,11 +457,7 @@ async def open_work_item_dialog(
                                 type="warning",
                             )
 
-                    dirty_state["programmatic"] = False
-                    for field_name in ("state", "assigned_to", "priority", "description_editor"):
-                        w = widgets.get(field_name)
-                        if w:
-                            w.on_value_change(_mark_dirty)
+                    _watch_user_edits(widgets, _mark_dirty)
 
                     # Images: upload as tracker attachments (button + paste), now
                     # that we know the customer — only for trackers that support
@@ -562,10 +545,22 @@ async def open_add_work_item_dialog(
                 ui.space()
                 _add_btn = ui.button("Add", icon="save").props("dense color=primary")
                 _add_btn.on("click", _with_loading(_add_btn, _submit_from_header))
-                ui.button("Cancel", icon="close", on_click=dlg.close).props(
+                ui.button("Cancel", icon="close", on_click=lambda: _cancel_add()).props(
                     "flat dense color=grey-6"
                 )
             ui.separator()
+
+            add_state = {"edited": False}
+
+            def _on_user_edit():
+                add_state["edited"] = True
+                dlg.props("persistent")  # an outside click or Esc no longer closes it
+
+            def _cancel_add():
+                if add_state["edited"]:
+                    _confirm_discard(dlg, "The new work item hasn't been added yet.")
+                else:
+                    dlg.close()
 
             async def _on_add_success():
                 dlg.close()
@@ -580,6 +575,7 @@ async def open_add_work_item_dialog(
 
             _, widgets, load_fn, submit_fn = result if result else (None, {}, None, None)
             form_actions["submit"] = submit_fn
+            _watch_user_edits(widgets, _on_user_edit)
 
             if widgets:
                 if preset_customer and "customer_name" in widgets:
@@ -1412,6 +1408,40 @@ def _parent_options(DO, customer, project=None, wtype=None) -> list:
     df = DO.df
     return df[DO.project_mask(df, customer, project) & df["type"].isin(above)][
         "display_name"].tolist()
+
+
+def _confirm_discard(dlg, message: str) -> None:
+    """Ask before closing a dialog whose edits would be lost."""
+    with ui.dialog() as confirm_dlg, ui.card().classes("w-96"):
+        ui.label("Discard unsaved changes?").classes("text-sm font-semibold")
+        ui.label(message).classes("text-xs text-grey-5")
+        with ui.row().classes("w-full justify-end gap-2 mt-2"):
+            ui.button("Keep editing", on_click=confirm_dlg.close).props("flat")
+
+            def _discard():
+                confirm_dlg.close()
+                dlg.close()
+
+            ui.button("Discard", on_click=_discard).props("color=negative")
+    confirm_dlg.on("hide", lambda: confirm_dlg.delete())
+    confirm_dlg.open()
+
+
+def _watch_user_edits(widgets: dict, on_edit) -> None:
+    """`on_edit` on the first change the user makes in any field — a browser
+    event, so the form's own prefills, defaults and templates don't count."""
+    seen = {"edited": False}
+
+    def _edited(_e=None):
+        if not seen["edited"]:
+            seen["edited"] = True
+            on_edit()
+
+    for dw in widgets.values():
+        element = getattr(dw, "widget", None)
+        prop = getattr(element, "VALUE_PROP", None)
+        if prop:
+            element.on(f"update:{prop}", _edited)
 
 
 async def prepare_devops_data_sources(core, operation: str) -> dict:

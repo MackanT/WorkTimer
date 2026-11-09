@@ -526,3 +526,28 @@ async def test_a_datetime_field_reads_the_same_on_every_computer(user: User):
         clock.value = "2026-11-09 16:05"
     assert changes == ["2026-11-09 16:05"] and field.value == "2026-11-09 16:05"
 
+
+async def test_an_edited_add_dialog_stays_open_and_cancel_asks_first(user: User):
+    from nicegui import ui
+    from nicegui.testing.user_interaction import UserInteraction
+
+    from src.ui.work_item_forms import open_add_work_item_dialog
+
+    await user.open("/time")
+    await page_built()
+    core = core_app._app_cores[user.client.id]
+    core.tracker_engine = engine = _projects_engine(core, {"Beta": ["Ops"]},
+                                                    [("Beta", 3, "Ops", "Beta story")])
+    engine.columns_cache["Beta"] = {t: ["New", "Active"] for t in ("Epic", "Feature", "User Story")}
+    with user.client:
+        dlg = await open_add_work_item_dialog(core, preset_customer="Beta")
+        title = next(e for e in dlg.descendants()
+                     if isinstance(e, ui.input) and e.props.get("label") == "Title")
+        [cancel] = [e for e in dlg.descendants() if isinstance(e, ui.button) and e.text == "Cancel"]
+    assert "persistent" not in dlg.props  # untouched: a click outside still closes it
+
+    UserInteraction(user, {title}, None).trigger(f"update:{title.VALUE_PROP}")  # typed
+    assert "persistent" in dlg.props
+    UserInteraction(user, {cancel}, None).click()
+    await user.should_see("Discard unsaved changes?")
+    assert dlg.value  # still open until Discard
