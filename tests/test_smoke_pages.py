@@ -471,3 +471,33 @@ async def test_a_card_lists_its_open_children_and_its_plus_adds_one(user: User):
                         and inputs()["Work Item Type"].value == "Task"
                         and inputs()["Parent"].value == "User Story: 3 - Beta story"), {
         k: getattr(v, "value", None) for k, v in inputs().items()}
+
+
+async def test_the_stop_dialog_offers_open_items_of_any_process_tasks_included(user: User):
+    from src.pages.time_tracking import build_devops_selector
+    from src.trackers.process import AGILE
+
+    await user.open("/time")
+    await page_built()
+    core = core_app._app_cores[user.client.id]
+    engine = _projects_engine(
+        core, {"Acme": ["Platform", "Data"]},
+        [("Acme", 1, "Platform", "Story"), ("Acme", 2, "Platform", "Done story"),
+         ("Acme", 3, "Platform", "A task"), ("Acme", 4, "Data", "Doing issue"),
+         ("Acme", 5, "Data", "Done issue")])
+    engine.manager.clients["Acme"]._processes = {"Platform": AGILE, "Data": _basic()}
+    engine.df["type"] = ["User Story", "User Story", "Task", "Issue", "Issue"]
+    engine.df["state"] = ["Active", "Resolved", "New", "Doing", "Done"]
+    engine.df["state_category"] = engine._state_categories(engine.df)
+    engine.df["display_name"] = [f"{t}: {i} - {n}" for t, i, n in
+                                 zip(engine.df["type"], engine.df["id"], engine.df["title"])]
+
+    with user.client:
+        id_input, _ = build_devops_selector(engine, "Acme", 0, False)
+    assert list(id_input.options) == ["Task: 3 - A task", "User Story: 1 - Story"]
+
+    with user.client:
+        project = next(e for e in user.client.elements.values()
+                       if getattr(e, "props", {}).get("label") == "Tracker project")
+        project.value = "Data"
+    assert list(id_input.options) == ["Issue: 4 - Doing issue"]

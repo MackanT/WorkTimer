@@ -174,7 +174,7 @@ def build_devops_selector(tracker_engine, c_name, git_id, has_git_id):
         cust_df = (all_df if project is None
                    else all_df[tracker_engine.project_mask(all_df, c_name, project)])
         # Newest (highest id) first — most likely related to current work.
-        id_options = cust_df[cust_df["state"].isin(["Active", "New"])][
+        id_options = cust_df[tracker_engine.open_mask(cust_df)][
             ["display_name", "id"]
         ].dropna().sort_values("id", ascending=False)
         options = id_options["display_name"].tolist()

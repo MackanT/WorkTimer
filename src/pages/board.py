@@ -9,6 +9,7 @@ v2 — Live mode:
 
 import asyncio
 import math
+import pandas as pd
 from nicegui import app, context, ui
 from ..core.app import AppCore
 from ..user_paths import pref_key
@@ -16,7 +17,7 @@ from .. import helpers
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
 from ..ui.work_item_forms import open_add_work_item_dialog, open_work_item_dialog
 from ..trackers.base import DEFAULT_TYPE_HIERARCHY
-from ..trackers.process import REMOVED, guess_category, is_open
+from ..trackers.process import REMOVED, categories, is_closed, is_open
 from .hierarchy import create_hierarchy_view
 
 
@@ -295,7 +296,9 @@ async def board_page():
             skip_cols: set = set()
         else:
             ordered_cols = [c for c in ordered_cols_all if c not in done_cols]
-            row_mask = base_mask & (~DO.df["state"].isin(TERMINAL_STATES))
+            closed = [is_closed(c) for c in categories(DO.df)]
+            row_mask = base_mask & ~DO.df["state"].isin(TERMINAL_STATES) & ~pd.Series(
+                closed, index=DO.df.index, dtype=bool)
             skip_cols = done_cols
 
         field = _column_field(board, wtype)
@@ -474,10 +477,7 @@ async def board_page():
         if DO is None or DO.df is None or DO.df.empty or "parent_id" not in DO.df.columns:
             return {}
         sub = DO.df[DO.df["customer_name"] == filter_state["customer"]]
-        cats = (sub["state_category"] if "state_category" in sub.columns
-                else sub["state"].map(guess_category))
-        sub = sub[[is_open(st, c if isinstance(c, str) else None)
-                   for st, c in zip(sub["state"], cats)]]
+        sub = sub[[is_open(st, c) for st, c in zip(sub["state"], categories(sub))]]
         kids: dict[int, list[dict]] = {}
         for _, r in sub.sort_values("id").iterrows():
             pid = r.get("parent_id")

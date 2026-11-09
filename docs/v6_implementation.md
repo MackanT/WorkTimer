@@ -1195,6 +1195,41 @@ tracker project below.
   [test_pg_database.py](../tests/test_pg_database.py), the Board and the
   stop dialog in [test_smoke_pages.py](../tests/test_smoke_pages.py), the
   Update tab in [test_smoke_pages_pg.py](../tests/test_smoke_pages_pg.py).
+- **Each Azure DevOps project's own process** (2026-11-09; Basic, Agile,
+  Scrum, CMMI or custom — the colleague's second project is Basic). At
+  connect, two calls per project: the backlog configuration (no team
+  needed: portfolio levels by rank, the requirement level, the task level)
+  and `get_work_item_types` (every state with its category, Removed
+  included) become a `Process` (src/trackers/process.py: `Level`s root →
+  leaf, the task level last, and states per type); a project that can't be
+  read is `AGILE`, logged. The sync keeps each project's own types, tasks
+  included, and a project with a type that has nothing cached is fetched in
+  full once (`_unsynced_customers`). Board columns come from the board the
+  process names (Issues on Basic); creating takes any type, the root level
+  without a parent. `TrackerEngine` answers per (customer, project):
+  `process`, `levels`, `type_hierarchy` (above the task level),
+  `task_types`, `preferred_type` (the requirement level's default) and
+  `state_options(…, wtype)`; every cached item gets a `state_category`.
+  **Open** = Proposed or InProgress, never a state named Resolved (Agile
+  files it under InProgress) — `process.is_open`, `TrackerEngine.open_mask`
+  — for the stop dialog, the pickers and the lists under the cards;
+  **closed** = Completed or Removed (hidden on the Board and in the
+  Hierarchy); a state without a category is guessed by name (offline,
+  Jira). **The Board** gets a chip per type, the task level first; tasks
+  have no board, so the Task chip's columns are its states and a drop sets
+  `System.State`. Each card lists its open children behind a count line
+  named after the level below, and a ＋ adds the next level's default type
+  under it. **The Hierarchy** folds a story's tasks into a count node
+  `t<id>` that a click opens, ending in a "＋ task" node `a<id>` (also on a
+  story without tasks). **The add form**'s types, states and parents follow
+  the chosen project and type (the form's fetcher reads them live);
+  `visible_when` also takes the roles `@child` and `@working`, so Parent and
+  Source show by level; the update form's states follow the item. Settings'
+  per-type defaults and description templates list the connected projects'
+  types. Tests: [test_tracker_process.py](../tests/test_tracker_process.py),
+  the task nodes in [test_hierarchy.py](../tests/test_hierarchy.py), the
+  Board, add form and stop dialog in
+  [test_smoke_pages.py](../tests/test_smoke_pages.py).
 
 ---
 

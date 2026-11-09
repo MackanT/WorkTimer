@@ -25,6 +25,23 @@ def guess_category(state) -> str | None:
     return _GUESSED.get(str(state or "").strip().lower())
 
 
+def category_of(state, cached=None) -> str | None:
+    """A cached item's state category: the one its process gave it, else
+    guessed from the state's name."""
+    return cached if isinstance(cached, str) else guess_category(state)
+
+
+def categories(df) -> list:
+    """category_of() for each row of a work-item frame."""
+    cached = df["state_category"] if "state_category" in df.columns else [None] * len(df)
+    return [category_of(s, c) for s, c in zip(df["state"], cached)]
+
+
+def is_closed(category) -> bool:
+    """Finished or removed — hidden where only live work shows."""
+    return category in (COMPLETED, REMOVED)
+
+
 def is_open(state, category) -> bool:
     """Still to work on: not started or in progress (a state of unknown
     category counts too) — except one named Resolved, done in all but name

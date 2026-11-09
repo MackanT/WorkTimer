@@ -247,3 +247,22 @@ def test_without_task_types_tasks_draw_as_before():
     code = build_mermaid(_story_with_tasks(), "A")
 
     assert "n2 --> n5" in code and "t2(" not in code and "a3(" not in code
+
+
+def test_closed_and_done_follow_the_state_category():
+    df = _df([
+        {"customer_name": "A", "type": "Epic", "id": 1, "title": "E", "state": "Doing",
+         "state_category": "InProgress", "parent_id": None},
+        {"customer_name": "A", "type": "Issue", "id": 2, "title": "I1", "state": "Done",
+         "state_category": "Completed", "parent_id": 1},
+        {"customer_name": "A", "type": "Issue", "id": 3, "title": "I2", "state": "Shipping",
+         "state_category": "Resolved", "parent_id": 1},
+        {"customer_name": "A", "type": "Issue", "id": 4, "title": "I3", "state": "To Do",
+         "state_category": "Proposed", "parent_id": 1},
+    ])
+
+    code = build_mermaid(df, "A", count_type="Issue")
+
+    assert "n2(" not in code  # Basic's Done is closed: hidden
+    assert "class n3 done;" in code and "class n4 done;" not in code
+    assert "2 of 3 done" in build_mermaid(df, "A", include_closed=True, count_type="Issue")

@@ -253,3 +253,25 @@ def test_board_columns_come_from_the_board_the_process_names(connect):
         ["To Do", "Doing", "Done"], True)
     assert handlers.load_board_columns("Acme", "Task", "Data", "Acme · Data") is None
     assert asked == [("Issues", "Data")]
+
+
+def test_open_items_follow_the_state_category_on_any_process(connect):
+    engine = _engine(connect({"Home": AGILE_WITH_BUGS, "Data": BASIC})[0], [
+        (1, "Data", "Issue", "To Do"), (2, "Data", "Issue", "Doing"), (3, "Data", "Issue", "Done"),
+        (4, "Home", "User Story", "Resolved"), (5, "Home", "Task", "Active"),
+        (6, "Home", "Bug", "Closed"), (7, "Home", "Task", "Odd")])
+    engine.df["state_category"] = engine._state_categories(engine.df)
+    engine.df["display_name"] = [f"Item {i}" for i in engine.df["id"]]
+
+    assert engine.df[engine.open_mask(engine.df)]["id"].tolist() == [1, 2, 5, 7]
+    assert [o["id"] for o in engine.get_work_item_options("Acme")] == [7, 5, 2, 1]
+
+
+def test_settings_list_every_connected_projects_types(connect):
+    from src.pages.settings import _project_types
+
+    engine = _engine(connect({"Home": AGILE_WITH_BUGS, "Data": BASIC})[0])
+
+    assert _project_types(SimpleNamespace(tracker_engine=engine)) == [
+        "Epic", "Feature", "User Story", "Task", "Bug", "Issue"]
+    assert _project_types(SimpleNamespace(tracker_engine=engine), ["Other"]) == []

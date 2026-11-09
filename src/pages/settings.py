@@ -148,8 +148,10 @@ def _render_tracker_defaults_card(core) -> None:
             return [c for c, t in cust_map.items() if t == tname]
 
         def _tracker_levels(tname):
-            cls = get_provider_class(trackers.get(tname) or "devops")
-            levels = list(cls.type_hierarchy()) if cls else []
+            levels = _project_types(core, _tracker_customers(tname))
+            if not levels:  # no customer of it connected: the tracker's own
+                cls = get_provider_class(trackers.get(tname) or "devops")
+                levels = list(cls.type_hierarchy()) if cls else []
             return {ALL_TYPES: "All types", **{lv: lv for lv in levels}}
 
         with ui.row().classes("w-full gap-3 flex-wrap"):
@@ -193,7 +195,14 @@ def _render_tracker_defaults_card(core) -> None:
             for cust in _tracker_customers(tname):
                 if eng is not None:
                     try:
-                        states = eng.state_options(cust)
+                        # The type's own states, in a project that has it.
+                        for project in eng.projects(cust) or [None]:
+                            process = eng.process(cust, project)
+                            if (wtype == ALL_TYPES or process is None
+                                    or process.level_of(wtype) is not None):
+                                states = eng.state_options(
+                                    cust, project, None if wtype == ALL_TYPES else wtype)
+                                break
                     except Exception:
                         states = []
                 cols_by_type = (
@@ -644,6 +653,21 @@ async def _confirm_reset(what: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _project_types(core, customers=None) -> list:
+    """Every work-item type of the connected customers' tracker projects (all
+    of them, or `customers`), root → leaf, tasks included — Basic's Issue,
+    Scrum's Product Backlog Item, a Bug on the task level …"""
+    eng = core.tracker_engine
+    clients = (eng.manager.clients or {}) if eng is not None and eng.manager else {}
+    types: list = []
+    for customer in clients:
+        if customers is not None and customer not in customers:
+            continue
+        for project in eng.projects(customer) or [None]:
+            types += [t for level in eng.levels(customer, project) for t in level]
+    return list(dict.fromkeys(types))
+
+
 def _render_description_templates_card(core) -> None:
     """Per-level description templates for the add-work-item form (the
     markdown scaffold preloaded into a new Epic / Feature / User Story / …).
@@ -665,9 +689,9 @@ def _render_description_templates_card(core) -> None:
 
     current = dict(_live_field().get("templates") or {})
 
-    # Levels: the union of every registered tracker's hierarchy, plus any
-    # extra keys already carrying a template.
-    levels: list[str] = []
+    # Levels: the connected projects' types, the union of every registered
+    # tracker's hierarchy, plus any extra keys already carrying a template.
+    levels: list[str] = _project_types(core)
     for pkey in available_providers():
         try:
             for t in get_provider_class(pkey).type_hierarchy():

@@ -19,14 +19,13 @@ from ..core.app import AppCore
 from ..helpers import UI_STYLES
 from ..ui.work_item_forms import open_work_item_dialog
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
+from ..trackers.process import REMOVED, categories, category_of, is_closed, is_open
 
 # Per-client node-click handler, keyed by client id. A module dict (not
 # app.storage.client, which copies) so the JS-emitted click routes to the
 # current page render; cleaned up on disconnect.
 _hier_click_targets: dict = {}
 
-_TERMINAL_STATES = {"Closed", "Removed"}
-_DONE_STATES = {"Resolved", "Closed"}
 
 # Nodes are coloured by BOARD COLUMN (in progress / on hold / new …) — the
 # item type already reads from tree depth, while the column is the information
@@ -58,9 +57,9 @@ def _story_progress_map(
     full = df[df["customer_name"] == customer]
     children: dict[int, list[int]] = {}
     info: dict[int, tuple] = {}
-    for _, r in full.iterrows():
+    for (_, r), category in zip(full.iterrows(), categories(full)):
         rid = int(r["id"])
-        info[rid] = (str(r.get("type") or ""), str(r.get("state") or ""))
+        info[rid] = (str(r.get("type") or ""), str(r.get("state") or ""), category)
         pid = r.get("parent_id")
         if pid is not None and not pd.isna(pid):
             children.setdefault(int(pid), []).append(rid)
@@ -75,12 +74,12 @@ def _story_progress_map(
             if cur in seen:
                 continue
             seen.add(cur)
-            typ, st = info.get(cur, ("", ""))
-            if typ == count_type and st != "Removed":
+            typ, st, category = info.get(cur, ("", "", None))
+            if typ == count_type and category != REMOVED:
                 total += 1
-                # Done by Azure state name OR by done-token status (Jira's
+                # Done by state category OR by done-token status (Jira's
                 # state IS its board column, e.g. "Done").
-                if st in _DONE_STATES or st.strip().lower() in _DONE_COLUMN_TOKENS:
+                if not is_open(st, category) or st.strip().lower() in _DONE_COLUMN_TOKENS:
                     done += 1
             stack.extend(children.get(cur, []))
         progress[node_id] = (done, total)
@@ -151,7 +150,7 @@ def _descendants(sub: pd.DataFrame, root_id: int) -> set:
 def _filtered(df: pd.DataFrame, customer: str, include_closed: bool) -> pd.DataFrame:
     sub = df[df["customer_name"] == customer]
     if not include_closed:
-        sub = sub[~sub["state"].isin(_TERMINAL_STATES)]
+        sub = sub[[not is_closed(c) for c in categories(sub)]]
     return sub
 
 
@@ -168,8 +167,9 @@ def _visible_sub(df, customer, include_closed, focus_id):
 
 
 def _is_done_row(r) -> bool:
-    """Grey-out rule: a done-ish state OR sitting in a done-token board column."""
-    if str(r.get("state") or "") in _DONE_STATES:
+    """Grey-out rule: no longer open (by state category) OR sitting in a
+    done-token board column."""
+    if not is_open(r.get("state"), category_of(r.get("state"), r.get("state_category"))):
         return True
     return str(r.get("board_column") or "").strip().lower() in _DONE_COLUMN_TOKENS
 

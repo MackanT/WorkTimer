@@ -7,7 +7,7 @@ from .tracker_manager import TrackerManager
 from .trackers import azure as _azure_tracker  # noqa: F401
 from .trackers import jira as _jira_tracker  # noqa: F401
 from .trackers.base import DEFAULT_STATE_OPTIONS, DEFAULT_TYPE_HIERARCHY, board_key
-from .trackers.process import guess_category
+from .trackers.process import categories, guess_category, is_open
 from .database import Database
 from collections import defaultdict
 from dataclasses import dataclass
@@ -349,6 +349,14 @@ class TrackerEngine:
             else None
         )
 
+    @staticmethod
+    def open_mask(df: pd.DataFrame) -> pd.Series:
+        """The items still to work on — by state category, so any process
+        and tracker (process.is_open: not started or in progress, never
+        Resolved)."""
+        return pd.Series([is_open(s, c) for s, c in zip(df["state"], categories(df))],
+                         index=df.index, dtype=bool)
+
     def get_work_item_options(self, customer_name: str | None = None,
                               project: str | None = None):
         """Active DevOps work items for the Git-ID picker.
@@ -356,15 +364,12 @@ class TrackerEngine:
         With ``customer_name``, returns a flat list of ``{"label", "id"}`` for
         that customer. Without it, returns ``{customer_name: [...]}`` for every
         customer. Empty (list/dict respectively) when DevOps data isn't loaded,
-        so callers degrade to manual id entry. Uses the same Active/New filter
-        as the timer dialog's work-item selector.
+        so callers degrade to manual id entry. Uses the same open-items rule
+        as the timer dialog's work-item selector (open_mask).
         """
         if self.df is None or self.df.empty:
             return [] if customer_name is not None else {}
-        # Provider-neutral "open item" filter — state NAMES differ per tracker
-        # (ADO: Active/New..., Jira: To Do/In Progress...), so exclude the
-        # done-ish ones instead of whitelisting Azure's.
-        active = self.df[~self.df["state"].isin(["Resolved", "Closed", "Removed", "Done"])]
+        active = self.df[self.open_mask(self.df)]
         if customer_name is not None:
             active = active[self.project_mask(active, customer_name, project)]
         # Newest (highest id) first — most likely related to current work.
