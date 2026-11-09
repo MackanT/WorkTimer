@@ -64,14 +64,14 @@ def test_get_epics_feature_df_builds_hierarchy():
             "System.State": "Active", "System.Parent": 2,
             "System.BoardColumn": "New", "Microsoft.VSTS.Common.Priority": 3,
         }),
-        _FakeItem(4, {"System.WorkItemType": "Task", "System.Title": "ignored"}),
+        _FakeItem(4, {"System.WorkItemType": "Test Case", "System.Title": "ignored"}),
     ]
     mgr = _empty_manager()
     mgr.clients = {"CustA": _fake_provider(items)}
 
     ok, df = mgr.get_epics_feature_df()
     assert ok
-    # The non-Epic/Feature/Story item is dropped.
+    # A type on no backlog level is dropped.
     assert set(df["id"]) == {1, 2, 3}
 
     epic = df[df["id"] == 1].iloc[0]

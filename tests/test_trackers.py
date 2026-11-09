@@ -82,14 +82,14 @@ def test_fetch_work_items_normalizes_to_canonical_schema(monkeypatch):
             "Microsoft.VSTS.Common.Priority": 2,
             "System.Description": "<p>Fix the <b>login&nbsp;flow</b></p>",
         }),
-        SimpleNamespace(id=3, fields={"System.WorkItemType": "Task"}),  # filtered
+        SimpleNamespace(id=3, fields={"System.WorkItemType": "Test Case"}),  # filtered
     ]
     monkeypatch.setattr(
         p, "get_workitem_level", lambda **kw: (True, items)
     )
     df = p.fetch_work_items()
     assert list(df.columns) == WORK_ITEM_COLUMNS
-    assert len(df) == 2  # Task excluded
+    assert len(df) == 2  # Test Case excluded
     epic = df[df["id"] == 1].iloc[0]
     story = df[df["id"] == 2].iloc[0]
     assert epic["customer_name"] == "Acme"

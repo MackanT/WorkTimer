@@ -182,6 +182,7 @@ def _engine(projects: dict, items: list):
     engine = TrackerEngine.__new__(TrackerEngine)
     engine.manager = manager
     engine.df = pd.DataFrame([{"customer_name": c, "id": i, "project": p, "state": "New",
+                               "type": "User Story",
                                "display_name": f"User Story: {i} - Item {i}"}
                               for c, i, p in items])
     return engine
@@ -236,8 +237,13 @@ async def test_a_project_with_nothing_cached_has_its_customer_fetched_in_full_on
     cached id — a project linked later would keep its older items hidden."""
     import pandas as pd
 
+    from src.trackers.process import Level, Process
+
     engine = _engine({"Acme": ["Platform", "Mobile"], "Beta": ["Ops"]},
                      [("Acme", 1, "Platform"), ("Beta", 2, "Ops")])
+    stories = Process((Level("Stories", ("User Story",)),))  # every type cached
+    for client in engine.manager.clients.values():
+        client._processes = {p: stories for p in client.projects}
     asked = []
 
     def fetch(max_ids=None, changed_dates=None):
@@ -271,6 +277,7 @@ def test_a_board_that_cant_be_found_caches_no_columns_not_the_message():
     from collections import defaultdict
     from types import SimpleNamespace
 
+    from src.trackers.process import AGILE
     from src.ui.work_item_handlers import WorkItemHandlers
 
     client = SimpleNamespace(
@@ -278,7 +285,8 @@ def test_a_board_that_cant_be_found_caches_no_columns_not_the_message():
         get_board_columns_via_team_autodetect=lambda board_type, project=None: (
             False, f"No board '{board_type}' found in any team"))
     manager = SimpleNamespace(_get_client=lambda customer: client)
-    engine = SimpleNamespace(manager=manager, columns_cache=defaultdict(dict), preload_started=True)
+    engine = SimpleNamespace(manager=manager, columns_cache=defaultdict(dict), preload_started=True,
+                             process=lambda customer, project=None: AGILE)
 
     handlers = WorkItemHandlers(engine, _log)
     result = handlers.load_board_columns("Acme", "User Story", "Basic", "Acme · Basic")

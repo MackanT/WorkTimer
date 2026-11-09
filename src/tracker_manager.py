@@ -11,6 +11,8 @@ import base64
 import json
 from urllib.parse import quote
 
+from .trackers.process import AGILE, from_azure
+
 
 def _branch_artifact_url(project_id, repo_id, branch_name) -> str:
     """The vstfs artifact URL that links a git branch to a work item (what
@@ -343,6 +345,8 @@ class AzureDevOpsClient:
         self._project_of: dict = {}
         # Git repos per project, cached on first list_repositories().
         self._repos_cache: dict = {}
+        # Each covered project's process (levels, boards, states), at connect().
+        self._processes: dict = {}
 
     def connect(self):
         # Create a connection to the Azure DevOps organization
@@ -392,6 +396,24 @@ class AzureDevOpsClient:
             else:
                 self.log.error(f"Failed to connect to Azure DevOps: {e}")
                 raise Exception(f"Failed to connect to Azure DevOps: {e}")
+        self._processes = {p: self._read_process(p) for p in self.projects}
+
+    def _read_process(self, project):
+        """`project`'s levels, boards and states — Agile when Azure won't say."""
+        try:
+            work_client = self.connection.clients.get_work_client()
+            return from_azure(
+                work_client.get_backlog_configurations(TeamContext(project=project)),
+                self.wit_client.get_work_item_types(project))
+        except Exception as e:
+            self.log.warning(
+                f"Could not read the process of DevOps project '{project}' "
+                f"({e}); assuming Agile")
+            return AGILE
+
+    def process(self, project=None):
+        """The process of `project`, one of this customer's (default: the main one)."""
+        return self._processes.get(self._target_project(project), AGILE)
 
     def _team_project_clause(self) -> str:
         """WIQL: this customer's projects — one query covers them all."""

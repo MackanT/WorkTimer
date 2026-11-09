@@ -153,6 +153,12 @@ class TrackerProvider(ABC):
         work item. (ok, message). Default: not supported."""
         return (False, "Branch creation is not supported for this tracker")
 
+    def process(self, project=None):
+        """The work-item process of `project` (levels, boards, states with
+        their category — see process.py), or None where the tracker has none
+        to read: the class-level type_hierarchy() etc. then apply."""
+        return None
+
     def state_options(self) -> list:
         """State names for this tracker's work items, offered by the State
         dropdowns. Instance-level (may need a live call, e.g. Jira statuses);

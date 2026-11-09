@@ -57,7 +57,7 @@ class WorkItemHandlers:
             loop.run_in_executor(
                 None, self.load_board_columns, customer, board_type, project, key)
             for key, customer, project in boards
-            for board_type in ["Epic", "Feature", "User Story"]
+            for board_type in self.DO.type_hierarchy(customer, project)
             if self.devops_columns_cache[key].get(board_type) is None
         ]
         if tasks:
@@ -66,14 +66,9 @@ class WorkItemHandlers:
     def load_board_columns(self, customer_name: str, board_type: str,
                            project: str | None = None, key: str | None = None):
         """Loads and caches board columns for a given customer (one of its
-        tracker projects, under `key`) and board type. The main project's
-        are also the customer's own — what Settings' defaults offer."""
-        board_types = {
-            "Epic": "Epics",
-            "Feature": "Features",
-            "User Story": "Stories",
-        }
-
+        tracker projects, under `key`) and work-item type — the board its
+        project's process puts that type on. The main project's are also the
+        customer's own — what Settings' defaults offer."""
         if not customer_name or not self.DO.manager:
             return None
         client = self.DO.manager._get_client(customer_name)
@@ -82,14 +77,15 @@ class WorkItemHandlers:
         fetch_columns = getattr(client, "get_board_columns_via_team_autodetect", None)
         if fetch_columns is None:
             return None  # provider has no board-column API — cache stays empty
+        process = self.DO.process(customer_name, project)
+        board = process.board(board_type) if process else board_type
+        if board is None:
+            return None  # the task level: no board — its states are the columns
         kwargs = {"project": project} if project else {}
-        col_status, columns = fetch_columns(
-            board_type=board_types.get(board_type, "Stories"), **kwargs
-        )
+        col_status, columns = fetch_columns(board_type=board, **kwargs)
         if not col_status or not isinstance(columns, list):
-            # e.g. "No board 'Stories' found in any team": a project on another
-            # process (Basic: Issues) — cache "none", not the message, which
-            # the board drew one column per letter of.
+            # e.g. "No board 'Stories' found in any team" — cache "none", not
+            # the message, which the board drew one column per letter of.
             self.LOG.warning(
                 f"No {board_type} board columns for {key or customer_name}: {columns}")
             columns, col_status = [], False
