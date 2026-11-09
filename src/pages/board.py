@@ -16,6 +16,7 @@ from .. import helpers
 from ..ui.elements import page_card, segmented_chips, toolbar, toolbar_group
 from ..ui.work_item_forms import open_add_work_item_dialog, open_work_item_dialog
 from ..trackers.base import DEFAULT_TYPE_HIERARCHY
+from ..trackers.process import REMOVED
 from .hierarchy import create_hierarchy_view
 
 
@@ -67,13 +68,16 @@ async def board_page():
     DONE_COLUMN_LIMIT = int(_bsettings.get("done_column_limit", 10))
     DONE_TOKENS = {"done", "closed", "resolved", "completed"}
 
-    def _work_item_types(cust: str | None = None) -> tuple:
-        """This board's work-item types, leaf-first (chips/tab order) — from the
-        customer's tracker provider rather than hard-coded levels."""
-        levels = (
-            DO.type_hierarchy(cust) if DO is not None else DEFAULT_TYPE_HIERARCHY
-        )
-        return tuple(reversed(levels))
+    def _work_item_types(cust: str | None = None, project: str | None = None) -> tuple:
+        """This board's work-item types, leaf-first (chips/tab order), the task
+        level first — from the customer's tracker project rather than
+        hard-coded levels."""
+        if DO is None:
+            return tuple(reversed(DEFAULT_TYPE_HIERARCHY))
+        process = DO.process(cust, project)
+        if process is None:
+            return tuple(reversed(DO.type_hierarchy(cust)))
+        return tuple(t for level in reversed(process.levels) for t in level.types)
 
     # ── per-client mutable state (captured by all inner closures) ──────────────
     drag_state: dict = {"card": None}
@@ -100,10 +104,11 @@ async def board_page():
             _saved_board if _saved_board in board_names else board_names[0]
         )
         filter_state["customer"], filter_state["project"] = board_scope[filter_state["board"]]
-        # Preferred level for THIS customer's tracker (Jira's leaf is Sub-task
-        # but its working level is Story; Azure's leaf User Story is both).
+        # Preferred level for THIS customer's tracker project (Jira's leaf is
+        # Sub-task but its working level is Story; Basic's is Issue).
         if DO is not None:
-            filter_state["type"] = DO.preferred_type(filter_state["customer"])
+            filter_state["type"] = DO.preferred_type(
+                filter_state["customer"], filter_state["project"])
 
     # Per-customer indicator colours (shown as a dot on the customer tabs).
     cust_colors: dict = {}
@@ -121,7 +126,9 @@ async def board_page():
     # reads the shared customer selection.
     view_state = {"view": app.storage.user.get(pref_key(core.user_key, "devops_view"), "board")}
     hier = create_hierarchy_view(core, lambda: filter_state["customer"],
-                                 lambda: filter_state["project"])
+                                 lambda: filter_state["project"],
+                                 on_add=lambda wtype, parent: _open_add_dialog(
+                                     preset_type=wtype, preset_parent=parent))
 
     def _columns_cache():
         """This user's engine's board-column cache (empty until trackers are up)."""
@@ -129,8 +136,8 @@ async def board_page():
 
     # Seed known_cols from the ADO column cache (pre-loaded at startup).
     # Without this, the first render derives order from df insertion order which is arbitrary.
-    for _bn, (_cn, _) in board_scope.items():
-        for _wt in _work_item_types(_cn):
+    for _bn, (_cn, _pn) in board_scope.items():
+        for _wt in _work_item_types(_cn, _pn):
             _c = _columns_cache().get(_bn, {}).get(_wt)
             if _c:
                 known_cols[(_bn, _wt)] = list(_c)
@@ -142,8 +149,26 @@ async def board_page():
         customer, project = board_scope.get(board, (None, None))
         return DO.project_mask(DO.df, customer, project)
 
+    def _state_columns(board: str | None, item_type: str) -> list[str] | None:
+        """The task level's columns: its states, Removed left out — Azure has
+        no board for tasks, so moving a card changes its state. None for a
+        type with a board."""
+        customer, project = board_scope.get(board, (None, None))
+        if DO is None or item_type not in DO.task_types(customer, project):
+            return None
+        process = DO.process(customer, project)
+        return [s for s in DO.state_options(customer, project, item_type)
+                if process.category(item_type, s) != REMOVED]
+
+    def _column_field(board: str | None, item_type: str) -> str:
+        """The card field that names its column: the state on the task level."""
+        return "state" if _state_columns(board, item_type) is not None else "board_column"
+
     def _column_order(board: str, item_type: str) -> list[str]:
         """Return ordered column list; once a column is known it stays visible."""
+        states = _state_columns(board, item_type)
+        if states is not None:
+            return _sort_done_columns_last(_dedupe_columns(states))
         key = (board, item_type)
         cached = _columns_cache().get(board, {}).get(item_type)
         if cached:
@@ -272,9 +297,10 @@ async def board_page():
             row_mask = base_mask & (~DO.df["state"].isin(TERMINAL_STATES))
             skip_cols = done_cols
 
+        field = _column_field(board, wtype)
         data: dict[str, list[dict]] = {c: [] for c in ordered_cols}
         for _, row in DO.df[row_mask].iterrows():
-            raw_col = str(row.get("board_column") or "")
+            raw_col = str(row.get(field) or "")
             col = _canonical_column_name(raw_col, ordered_cols_all)
             if col in skip_cols:
                 continue  # surfaced via the Done drop-zone instead
@@ -300,7 +326,7 @@ async def board_page():
         if DO is None or DO.df is None or not board:
             return [], 0
         base_mask = (DO.df["type"] == wtype) & _in_board(board)
-        done_mask = base_mask & DO.df["board_column"].apply(
+        done_mask = base_mask & DO.df[_column_field(board, wtype)].apply(
             lambda v: _col_norm(v) in DONE_TOKENS
         )
         done_df = DO.df[done_mask]
@@ -324,23 +350,32 @@ async def board_page():
             ui.notify(notify_msg, type="positive", position="bottom-right")
 
     # ── move logic (shared by drag-drop and click-to-edit) ────────────────────
-    async def _do_move(item_id: int, title: str, customer: str, source_col: str, target_col: str):
-        """Persist a column change: local DB write → ADO API call → df reload."""
+    async def _do_move(item_id: int, title: str, customer: str, source_col: str, target_col: str,
+                       by_state: bool = False):
+        """Persist a column change — a state change on the task level: local
+        DB write → ADO API call → df reload."""
         if DO is None:
             return
 
+        local = ({"state": target_col} if by_state
+                 else {"board_column": target_col, "board_column_done": 0})
         await DO.query_engine.function_db(
             "update_devops_item_fields",
             work_item_id=item_id,
-            fields={"board_column": target_col, "board_column_done": 0},
+            fields=local,
             customer_name=customer,
         )
 
         if DO.manager:
             try:
-                ok, api_msg = await asyncio.to_thread(
-                    DO.manager.set_board_column, customer, item_id, target_col
-                )
+                if by_state:
+                    ok, api_msg = await asyncio.to_thread(
+                        DO.manager.update_work_item_fields, customer, item_id,
+                        {"System.State": target_col})
+                else:
+                    ok, api_msg = await asyncio.to_thread(
+                        DO.manager.set_board_column, customer, item_id, target_col
+                    )
             except Exception as exc:
                 ok, api_msg = False, str(exc)
 
@@ -361,8 +396,8 @@ async def board_page():
         # Scoped by customer — work item IDs are only unique per organization.
         if DO.df is not None:
             row_mask = (DO.df["id"] == item_id) & (DO.df["customer_name"] == customer)
-            DO.df.loc[row_mask, "board_column"] = target_col
-            DO.df.loc[row_mask, "board_column_done"] = 0
+            for field, value in local.items():
+                DO.df.loc[row_mask, field] = value
         await _reload_board_data(show_notify=False)
 
     # ── drag handlers ──────────────────────────────────────────────────────────
@@ -377,7 +412,8 @@ async def board_page():
         card_data = drag_state.get("card")
         if not card_data:
             return
-        source_col = str(card_data.get("board_column") or "")
+        by_state = _column_field(filter_state["board"], str(card_data.get("type"))) == "state"
+        source_col = str(card_data.get("state" if by_state else "board_column") or "")
         drag_state["card"] = None
 
         if source_col == target_col:
@@ -393,7 +429,7 @@ async def board_page():
             position="bottom-right",
             timeout=3000,
         )
-        await _do_move(item_id, title, customer, source_col, target_col)
+        await _do_move(item_id, title, customer, source_col, target_col, by_state)
         render_board.refresh()
 
     # ── click-to-edit dialog (full update form) ──────────────────────────────────
@@ -664,7 +700,7 @@ async def board_page():
     def render_type_chips():
         segmented_chips(
             core.theme,
-            [(t, t) for t in _work_item_types(filter_state["customer"])],
+            [(t, t) for t in _work_item_types(filter_state["customer"], filter_state["project"])],
             filter_state["type"],
             _on_type_chip_click,
         )
@@ -734,17 +770,17 @@ async def board_page():
     async def _open_add_from_hierarchy():
         """＋ in the hierarchy view: when a node is focused, pre-select it as the
         parent and default the new item to the next level down (Epic → Feature,
-        Feature → User Story). Whole-tree or leaf focus opens a plain add."""
+        Feature → User Story, User Story → Task). Whole-tree or leaf focus opens
+        a plain add."""
         focus = hier.get_focus()
-        levels = list(
-            DO.type_hierarchy(filter_state["customer"])
-            if DO is not None else DEFAULT_TYPE_HIERARCHY
+        levels = (
+            DO.levels(filter_state["customer"], filter_state["project"])
+            if DO is not None else [(t,) for t in DEFAULT_TYPE_HIERARCHY]
         )
         child_type = None
-        if focus and focus["type"] in levels:
-            idx = levels.index(focus["type"])
-            if idx + 1 < len(levels):
-                child_type = levels[idx + 1]
+        idx = next((i for i, lv in enumerate(levels) if focus and focus["type"] in lv), None)
+        if idx is not None and idx + 1 < len(levels):
+            child_type = levels[idx + 1][0]
         if focus and child_type:
             await _open_add_dialog(
                 preset_type=child_type, preset_parent=focus["display_name"]
@@ -812,10 +848,10 @@ async def board_page():
                     # Trackers differ in type names (User Story vs Story) — a
                     # stale type from the previous customer would blank the
                     # board, so snap to the new tracker's preferred level.
-                    types = _work_item_types(customer)
+                    types = _work_item_types(customer, project)
                     if filter_state["type"] not in types:
                         filter_state["type"] = (
-                            DO.preferred_type(customer) if DO is not None else types[0]
+                            DO.preferred_type(customer, project) if DO is not None else types[0]
                         )
                     render_type_chips.refresh()
                     render_board.refresh()

@@ -45,6 +45,7 @@ _COLUMN_PALETTE = (
 _DONE_COLUMN_TOKENS = {"done", "closed", "resolved", "completed"}
 _DONE_COLOR = "#334155"
 _NO_COLUMN_COLOR = "#475569"
+_TASKS_COLOR = "#1e293b"
 
 
 def _story_progress_map(
@@ -192,6 +193,25 @@ def column_styles(sub: pd.DataFrame) -> dict:
     }
 
 
+def _drawn(sub: pd.DataFrame, task_types: tuple = (), open_tasks=frozenset()):
+    """(items drawn as nodes, {parent id: its visible tasks}) — tasks are drawn
+    only under an expanded parent; one whose parent isn't drawn is left out."""
+    if sub.empty or not task_types:
+        return sub, {}
+    is_task = sub["type"].isin(task_types)
+    items, tasks = sub[~is_task], sub[is_task]
+    present = set(items["id"].astype(int))
+    by_parent: dict = {}
+    for _, r in tasks.sort_values("id").iterrows():
+        pid = r.get("parent_id")
+        if pid is not None and not pd.isna(pid) and int(pid) in present:
+            by_parent.setdefault(int(pid), []).append(r)
+    shown = [r for pid, rows in by_parent.items() if pid in open_tasks for r in rows]
+    if shown:
+        items = pd.concat([items, pd.DataFrame(shown)])
+    return items, by_parent
+
+
 def build_mermaid(
     df: pd.DataFrame,
     customer: str,
@@ -199,6 +219,9 @@ def build_mermaid(
     focus_id: int | None = None,
     direction: str = "TD",
     count_type: str = "User Story",
+    task_types: tuple = (),
+    open_tasks=frozenset(),
+    task_parents: tuple = (),
 ) -> str:
     """Return a Mermaid flowchart of one customer's work-item hierarchy.
 
@@ -206,10 +229,16 @@ def build_mermaid(
     no column in a neutral slate). An item whose parent isn't in the rendered set
     (filtered out, or a non-Epic/Feature/Story parent) becomes a root. When
     focus_id is given, only that item and its descendants are shown. `direction`
-    is a Mermaid flowchart direction (TD = top-down, LR = left-right). Returns an
-    empty string when there is nothing to show.
+    is a Mermaid flowchart direction (TD = top-down, LR = left-right). Tasks
+    (`task_types`) hang off their parent as one count node t<id> ("3 tasks ▸")
+    that a click opens — `open_tasks` holds the open parents — the list closed
+    by a "＋ task" node a<id>; a `task_parents` item without tasks gets just
+    that. Returns an empty string when there is nothing to show.
     """
     sub = _visible_sub(df, customer, include_closed, focus_id)
+    if sub.empty:
+        return ""
+    sub, tasks_of = _drawn(sub, task_types, open_tasks)
     if sub.empty:
         return ""
 
@@ -230,6 +259,11 @@ def build_mermaid(
     header.append(
         f"classDef done fill:{_DONE_COLOR},stroke:{_DONE_COLOR},color:#cbd5e1;"
     )
+    if task_types:
+        header.append(
+            f"classDef tasks fill:{_TASKS_COLOR},stroke:#64748b,color:#cbd5e1,"
+            "stroke-dasharray: 4 3;"
+        )
 
     node_lines = []
     for _, r in sub.iterrows():
@@ -255,13 +289,35 @@ def build_mermaid(
         node_lines.append(f"class n{wid} {cls};")
 
     edge_lines = []
+    tasks_shown = {int(r["id"]) for rows in tasks_of.values() for r in rows}
     for _, r in sub.iterrows():
         pid = r.get("parent_id")
         if pid is None or pd.isna(pid):
             continue
         pid = int(pid)
-        if pid in present:
+        if int(r["id"]) in tasks_shown:
+            edge_lines.append(f"t{pid} --> n{int(r['id'])}")
+        elif pid in present:
             edge_lines.append(f"n{pid} --> n{int(r['id'])}")
+
+    for _, r in sub.iterrows():
+        wid = int(r["id"])
+        if wid in tasks_shown:
+            continue
+        rows = tasks_of.get(wid, [])
+        if rows:
+            arrow = "▾" if wid in open_tasks else "▸"
+            noun = "task" if len(rows) == 1 else "tasks"
+            node_lines += [f't{wid}("{len(rows)} {noun} {arrow}")', f"class t{wid} tasks;"]
+            edge_lines.append(f"n{wid} --> t{wid}")
+            if wid not in open_tasks:
+                continue
+            edge_lines.append(f"t{wid} --> a{wid}")
+        elif str(r.get("type")) in task_parents:
+            edge_lines.append(f"n{wid} --> a{wid}")
+        else:
+            continue
+        node_lines += [f'a{wid}("＋ task")', f"class a{wid} tasks;"]
 
     lines = header + node_lines + edge_lines
     if edge_lines:
@@ -316,11 +372,12 @@ def focus_options(
     return opts
 
 
-def create_hierarchy_view(core, get_customer, get_project=lambda: None):
+def create_hierarchy_view(core, get_customer, get_project=lambda: None, on_add=None):
     """Embeddable Hierarchy view (Mermaid tree + its toolbar controls) for the
     Board page's view toggle. `get_customer` returns the currently-selected
     customer (shared with the board), `get_project` its tracker project when
-    the board's tab is one of a customer's several. Returns a controller
+    the board's tab is one of a customer's several; `on_add(type, parent)`
+    (async) opens the add form for a "＋ task" node. Returns a controller
     exposing render_controls(), render_zoom_controls(), render_content(),
     set_customer() and refresh()."""
     DO = core.tracker_engine
@@ -333,6 +390,7 @@ def create_hierarchy_view(core, get_customer, get_project=lambda: None):
         "focus_id": None,
         "zoom": 1.0,
         "direction": "TD",
+        "open_tasks": set(),  # parents whose tasks are shown
     }
     def _items():
         """The work items in view: all — or, on one of a customer's several
@@ -362,13 +420,18 @@ def create_hierarchy_view(core, get_customer, get_project=lambda: None):
                 ui.label("No tracker data available.").classes(f"text-{muted} mt-2")
             return
 
+        customer, project = state["customer"], state["project"]
+        working = DO.preferred_type(customer, project)
         code = build_mermaid(
             _items(),
-            state["customer"],
+            customer,
             include_closed=state["show_closed"],
             focus_id=state["focus_id"],
             direction=state["direction"],
-            count_type=DO.preferred_type(state["customer"]),
+            count_type=working,
+            task_types=DO.task_types(customer, project),
+            open_tasks=state["open_tasks"],
+            task_parents=next((lv for lv in DO.levels(customer, project) if working in lv), ()),
         )
         if not code:
             with ui.column().classes("items-center justify-center w-full").style(
@@ -390,9 +453,13 @@ def create_hierarchy_view(core, get_customer, get_project=lambda: None):
         """Board-column colour legend for the currently visible slice — built
         from the same mapping build_mermaid uses, so it always matches."""
         sub = (
-            _visible_sub(
-                _items(), state["customer"], state["show_closed"], state["focus_id"]
-            )
+            _drawn(
+                _visible_sub(
+                    _items(), state["customer"], state["show_closed"], state["focus_id"]
+                ),
+                DO.task_types(state["customer"], state["project"]),
+                state["open_tasks"],
+            )[0]
             if (DO is not None and _items() is not None)
             else pd.DataFrame()
         )
@@ -427,7 +494,7 @@ def create_hierarchy_view(core, get_customer, get_project=lambda: None):
                 _items(),
                 state["customer"],
                 state["show_closed"],
-                parent_types=tuple(DO.type_hierarchy(state["customer"])[:-1]),
+                parent_types=tuple(DO.type_hierarchy(state["customer"], state["project"])[:-1]),
             )
             if (DO is not None and _items() is not None and state["customer"])
             else {"": "Whole tree"}
@@ -465,16 +532,34 @@ def create_hierarchy_view(core, get_customer, get_project=lambda: None):
 
         await open_work_item_dialog(core, row, on_success=_after)
 
+    async def _on_node_click(kind: str, item_id: int):
+        """n<id>: the item; t<id>: open/close its tasks; a<id>: a new task
+        under it (the list opens, so the new task shows once it's made)."""
+        if kind == "n":
+            await _open_item_dialog(item_id)
+            return
+        if kind == "t":
+            state["open_tasks"] ^= {item_id}
+        else:
+            state["open_tasks"].add(item_id)
+            parent = _items()[(_items()["id"] == item_id)
+                              & (_items()["customer_name"] == state["customer"])]
+            tasks = DO.task_types(state["customer"], state["project"])
+            if on_add is not None and tasks and not parent.empty:
+                await on_add(tasks[0], parent.iloc[0]["display_name"])
+        _refresh_views()
+
     client = ui.context.client
-    _hier_click_targets[client.id] = _open_item_dialog
+    _hier_click_targets[client.id] = _on_node_click
     if not app.storage.client.get("hier_click_registered"):
         app.storage.client["hier_click_registered"] = True
 
         async def _dispatch(e, target=client):
             handler = _hier_click_targets.get(target.id)
-            if handler:
+            node = re.fullmatch(r"([nta])(\d+)", str(e.args))
+            if handler and node:
                 with target:
-                    await handler(int(e.args))
+                    await handler(node[1], int(node[2]))
 
         ui.on("hier_node_click", _dispatch)
         client.on_disconnect(
@@ -527,8 +612,8 @@ def create_hierarchy_view(core, get_customer, get_project=lambda: None):
                     if (!e.target.closest('.wt-hier-graph')) return;
                     var node = e.target.closest('.node');
                     if (!node) return;
-                    var m = (node.id || '').match(/n(\\d+)/);
-                    if (m) emitEvent('hier_node_click', parseInt(m[1], 10));
+                    var m = (node.id || '').match(/(?:^|-)([nta])(\\d+)(?=-|$)/);
+                    if (m) emitEvent('hier_node_click', m[1] + m[2]);
                 }, true);
             }
             """
@@ -568,6 +653,7 @@ def create_hierarchy_view(core, get_customer, get_project=lambda: None):
     def set_customer(customer, project=None):
         state["customer"] = customer
         state["project"] = project
+        state["open_tasks"] = set()
         state["focus_id"] = (
             default_focus_id(_items(), customer, state["show_closed"])
             if (DO is not None and _items() is not None and customer)

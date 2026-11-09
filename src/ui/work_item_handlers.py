@@ -172,10 +172,9 @@ class WorkItemHandlers:
             project=project,
         )
 
-        # Parent applies to every level below the hierarchy root (Azure:
-        # Feature/User Story; Jira: Story/Sub-task).
-        root_type = self.DO.type_hierarchy(customer_name)[0]
-        if work_item_type != root_type:
+        # Parent applies to every level below the project's root (Azure:
+        # all but Epic; Jira: Story/Sub-task).
+        if work_item_type not in self.DO.levels(customer_name, project)[0]:
             parent_id = None
             if wid.get("parent_name"):
                 parent_id = int(helpers.extract_devops_id(wid["parent_name"]))
@@ -495,7 +494,9 @@ class WorkItemHandlers:
                 current_column_widget.widget.props("readonly outlined")
 
             # Board column options from preloaded cache (API only called once
-            # at startup) — the item's own project's board.
+            # at startup) — the item's own project's board; a task has none.
+            if b_type in self.DO.task_types(c_name, item_project):
+                return
             columns, col_status = await self._board_columns(c_name, b_type, item_project)
             if columns is None:
                 self.LOG.warning(f"Could not load board columns for {c_name}/{b_type}")
@@ -544,6 +545,11 @@ class WorkItemHandlers:
                 c_name = customer_widget.value if customer_widget else None
                 b_type = work_item_widget.value if work_item_widget else None
                 project = project_widget.value if project_widget is not None else None
+                if b_type in self.DO.task_types(c_name, project):
+                    board_column_widget.widget.options = []  # no board on the task level
+                    board_column_widget.widget.value = None
+                    board_column_widget.widget.update()
+                    return
                 columns, col_status = await self._board_columns(c_name, b_type, project)
                 if columns is None:
                     self.LOG.warning(f"Could not load board columns for {c_name}/{b_type}")

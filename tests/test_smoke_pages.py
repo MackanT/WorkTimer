@@ -307,3 +307,116 @@ async def test_an_item_added_on_a_project_tab_is_created_in_that_project(user: U
 
     assert created, list(user.notify.messages)
     assert created[0][3] == "Mobile"
+
+
+def _basic():
+    from src.trackers.process import Level, Process
+
+    states = {"To Do": "Proposed", "Doing": "InProgress", "Done": "Completed"}
+    return Process((Level("Epics", ("Epic",)), Level("Issues", ("Issue",)),
+                    Level("Tasks", ("Task",), tasks=True)),
+                   {t: states for t in ("Epic", "Issue", "Task")})
+
+
+async def _until(check, tries: int = 60):
+    for _ in range(tries):
+        if check():
+            return True
+        await asyncio.sleep(0.05)
+    return check()
+
+
+async def test_the_add_form_offers_the_chosen_projects_types_and_states(user: User):
+    """A customer's second project on Basic: Epic/Issue/Task with To Do/Doing/
+    Done — back on the Agile one, its own levels and states again."""
+    from nicegui import ui
+
+    from src.trackers.process import AGILE
+    from src.ui.work_item_forms import open_add_work_item_dialog
+
+    await user.open("/time")
+    await page_built()
+    core = core_app._app_cores[user.client.id]
+    core.tracker_engine = engine = _projects_engine(
+        core, {"Acme": ["Platform", "Data"]}, [("Acme", 1, "Platform", "Platform story")])
+    engine.manager.clients["Acme"]._processes = {"Platform": AGILE, "Data": _basic()}
+    for key, types in (("Acme", AGILE.types), ("Acme · Platform", AGILE.types),
+                       ("Acme · Data", ("Epic", "Issue"))):  # no Azure to ask
+        engine.columns_cache[key] = {t: ["New", "Active"] for t in types}
+    with user.client:
+        await open_add_work_item_dialog(core, preset_customer="Acme", preset_project="Data")
+        inputs = {e.props.get("label"): e for e in user.client.elements.values()
+                  if isinstance(e, (ui.input, ui.select))}
+    wtype, state = inputs["Work Item Type"], inputs["State"]
+
+    assert await _until(lambda: list(wtype.options) == ["Epic", "Issue", "Task"]), wtype.options
+    assert wtype.value == "Issue"
+    assert await _until(lambda: list(state.options) == ["To Do", "Doing", "Done"]), state.options
+    assert state.value == "To Do"
+
+    with user.client:
+        wtype.value = "Task"
+    assert await _until(lambda: inputs["Parent"].visible and not inputs["Source"].visible
+                        and not inputs["Initial Board Column"].visible)
+
+    with user.client:
+        inputs["Tracker project"].value = "Platform"
+    assert await _until(lambda: list(wtype.options) == ["Epic", "Feature", "User Story", "Task"])
+    assert await _until(lambda: state.value == "New"), state.value
+
+
+async def test_the_task_chip_shows_states_and_a_drop_changes_the_state(user: User):
+    """Azure has no board for tasks: the Task chip's columns are its states
+    (Removed left out, Closed the Done zone), and a drop sets the state."""
+    from nicegui import ui
+    from nicegui.testing.user_interaction import UserInteraction
+
+    from src.pages.board import board_page
+    from src.trackers.process import AGILE
+
+    await user.open("/time")
+    await page_built()
+    core = core_app._app_cores[user.client.id]
+    core.tracker_engine = engine = _projects_engine(core, {"Beta": ["Ops"]},
+                                                    [("Beta", 3, "Ops", "Beta story")])
+    engine.manager.clients["Beta"]._processes = {"Ops": AGILE}
+    engine.df.loc[len(engine.df)] = {**engine.df.iloc[0].to_dict(), "type": "Task", "id": 7,
+                                     "title": "Write tests", "state": "Active", "parent_id": 3,
+                                     "board_column": "", "display_name": "Task: 7 - Write tests"}
+    engine.columns_cache["Beta"] = {t: ["New", "Active", "Closed"] for t in AGILE.types}
+    updated = []
+
+    def update_work_item_fields(customer, work_item_id, fields, markdown=False):
+        updated.append((customer, work_item_id, fields))
+        return True, "ok"
+
+    async def loaded():
+        pass  # nothing in the database behind these items
+
+    engine.manager.update_work_item_fields, engine.load_df = update_work_item_fields, loaded
+    with user.client:
+        await board_page()
+        [chip] = [e for e in user.client.elements.values()
+                  if isinstance(e, ui.button) and e.text == "Task"]
+    UserInteraction(user, {chip}, None).click()
+    await user.should_see("Write tests")
+
+    def column(name):
+        return next(e for e in user.client.elements.values()
+                    if isinstance(e, ui.card) and "board-col" in e.classes
+                    and any(isinstance(d, ui.label) and d.text == name for d in e.descendants()))
+
+    with user.client:
+        columns = [d.text for e in user.client.elements.values()
+                   if isinstance(e, ui.card) and "board-col" in e.classes
+                   for d in e.descendants() if isinstance(d, ui.label)
+                   and "font-semibold" in d.classes]
+        [card] = [e for e in user.client.elements.values()
+                  if isinstance(e, ui.card) and "board-card" in e.classes]
+    assert columns[:2] == ["New", "Active"] and "Removed" not in columns
+    UserInteraction(user, {card}, None).trigger("dragstart")
+    UserInteraction(user, {column("New")}, None).trigger("drop")
+
+    assert await _until(lambda: updated), list(user.notify.messages)
+    assert updated == [("Beta", 7, {"System.State": "New"})]
+    assert engine.df.set_index("id").loc[7, "state"] == "New"

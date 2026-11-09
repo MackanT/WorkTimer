@@ -133,8 +133,10 @@ board_devops_forms:
           - Other
         optional: True
         conditional: true
+        # @working: the working level of any process (Issue, Product Backlog
+        # Item, Requirement …); @child: any type that takes a parent.
         visible_when:
-          work_item_type: [User Story, Story]
+          work_item_type: [User Story, Story, "@working"]
       - name: contact_person
         label: Contact Person
         type: select
@@ -145,7 +147,7 @@ board_devops_forms:
         parent: customer_name
         conditional: true
         visible_when:
-          work_item_type: [User Story, Story]
+          work_item_type: [User Story, Story, "@working"]
       - name: assigned_to
         label: Assigned To
         type: select
@@ -170,7 +172,7 @@ board_devops_forms:
         parent: customer_name
         conditional: true
         visible_when:
-          work_item_type: [Feature, User Story, Story, Sub-task]
+          work_item_type: [Feature, User Story, Story, Sub-task, "@child"]
       - name: priority
         label: Priority
         type: select

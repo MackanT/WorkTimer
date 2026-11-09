@@ -540,6 +540,15 @@ class TrackerEngine:
         process = client.process(project)
         return process.types if process else client.type_hierarchy()
 
+    def levels(self, customer_name: str | None = None, project: str | None = None) -> list:
+        """Each work-item level's types root → leaf, the task level included —
+        one type per level for a tracker without a process."""
+        client = self._client(customer_name) or self._client()
+        process = client.process(project) if client is not None else None
+        if process is None:
+            return [(t,) for t in self.type_hierarchy(customer_name)]
+        return [level.types for level in process.levels]
+
     def task_types(self, customer_name: str | None = None, project: str | None = None) -> tuple:
         """The types on the level below the working one (Task; Bug where a
         team tracks bugs with tasks) — none for a tracker without one."""
